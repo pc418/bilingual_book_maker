@@ -147,6 +147,50 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_
     --api_format customapi --api_base https://your.host/translate
   ```
 
+## Migrating from the old flags
+
+Commands written against the old CLI keep working. Every removed flag is
+rewritten into the endpoint surface before the run starts, and each rewrite
+prints what it became so you can update the command at your leisure:
+
+```
+$ bbook_maker --book_name book.epub --model gpt4omini --openai_key sk-...
+deprecated: --openai_key is now --key
+deprecated: --model gpt4omini is now --model_list gpt-4o-mini
+```
+
+| Old | Rewritten to |
+|---|---|
+| `--model chatgptapi` / `gpt4` / `gpt4o` / `gpt4omini` / `gpt5mini` / `o1` / `o1mini` / `o1preview` / `o3mini` | `--model_list <that model>` |
+| `--model openai --model_list X` | `--model_list X` |
+| `--model claude` (or an exact `claude-*` id) | `--api_format anthropic --model_list <id>` |
+| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model_list gemini-flash-latest` / `gemini-pro-latest` |
+| `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
+| `--model xai` | `--api_base https://api.x.ai/v1 --model_list grok-beta` |
+| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model_list qwen-mt-*` |
+| `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
+| `--custom_api URL` | `--api_format customapi --api_base URL` |
+| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
+| `--ollama_model M` | `--api_base http://localhost:11434/v1 --model_list M` |
+| `--deployment_id D` | `--model_list D`, with `--api_base` at the deployment's URL |
+| `--provider NAME` | expanded from `bbm_providers.json` into `--api_base` / `--api_format` / `--model_list` |
+| `--interval` | dropped; it only applied to the removed gemini route |
+
+Notes:
+
+- Old key variables still work for the route that implied them:
+  `BBM_GROQ_API_KEY` authenticates a translated `--model groq` command,
+  `BBM_GOOGLE_GEMINI_KEY` a translated `--model gemini`, and so on.
+- Anything you pass in the new flags wins, so `--model gemini --api_base
+  https://my-gateway/v1` keeps your gateway.
+- Model ids come from the *old* preset lists, so a translated command runs
+  what it used to run rather than being moved onto a newer model. Some of
+  those models have since been retired; the endpoint's own model check says
+  so plainly.
+- An alias with no faithful equivalent (`--model gpt3`) is an error rather
+  than a guess — sending an unknown alias on as a model id would bill a book
+  to a model nobody chose.
+
 ## Use
 
 - Once the translation is complete, a bilingual book named `${book_name}_bilingual.epub` would be generated for EPUB inputs; for TXT/MD/SRT inputs a bilingual text (or subtitle) file named `${book_name}_bilingual.txt` (or `_bilingual.srt`) will be generated. For **PDF inputs** the tool will produce a bilingual `.txt` fallback and will also attempt to create `${book_name}_bilingual.epub` — if EPUB creation fails, the TXT fallback remains so you do not need to retranslate.

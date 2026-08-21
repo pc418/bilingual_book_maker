@@ -132,6 +132,45 @@ LM Studio、Ollama 等。详见[模型与语言](./docs/model_lang.md)。
     --api_format customapi --api_base https://your.host/translate
   ```
 
+## 从旧参数迁移
+
+以前写好的命令仍然可用。所有被移除的参数会在运行前自动改写成新的接口参数，
+并打印改写结果，方便你之后更新命令：
+
+```
+$ bbook_maker --book_name book.epub --model gpt4omini --openai_key sk-...
+deprecated: --openai_key is now --key
+deprecated: --model gpt4omini is now --model_list gpt-4o-mini
+```
+
+| 旧写法 | 改写为 |
+|---|---|
+| `--model chatgptapi` / `gpt4` / `gpt4o` / `gpt4omini` / `gpt5mini` / `o1` / `o1mini` / `o1preview` / `o3mini` | `--model_list <对应模型>` |
+| `--model openai --model_list X` | `--model_list X` |
+| `--model claude`（或具体的 `claude-*` ID） | `--api_format anthropic --model_list <id>` |
+| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model_list gemini-flash-latest` / `gemini-pro-latest` |
+| `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
+| `--model xai` | `--api_base https://api.x.ai/v1 --model_list grok-beta` |
+| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model_list qwen-mt-*` |
+| `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
+| `--custom_api URL` | `--api_format customapi --api_base URL` |
+| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
+| `--ollama_model M` | `--api_base http://localhost:11434/v1 --model_list M` |
+| `--deployment_id D` | `--model_list D`，并把 `--api_base` 指向该部署的地址 |
+| `--provider NAME` | 从 `bbm_providers.json` 展开为 `--api_base` / `--api_format` / `--model_list` |
+| `--interval` | 已删除，它只对已移除的 gemini 路由有效 |
+
+说明：
+
+- 旧的 key 环境变量对相应路由依然有效：改写后的 `--model groq` 仍会读取
+  `BBM_GROQ_API_KEY`，`--model gemini` 仍会读取 `BBM_GOOGLE_GEMINI_KEY`。
+- 你显式写的新参数优先，所以 `--model gemini --api_base https://my-gateway/v1`
+  会保留你的网关地址。
+- 模型 ID 取自**旧的**预设列表，保证改写后跑的还是原来那个模型，而不是悄悄换成
+  更新的模型。其中部分模型现已下线，接口自身的模型校验会明确报错。
+- 没有对应关系的别名（如 `--model gpt3`）会直接报错而不是猜测——把未知别名当作
+  模型 ID 发出去，可能让整本书跑在没人选择的模型上。
+
 ## 使用说明
 
 - 翻译完会生成一本 `{book_name}_bilingual.epub` 的双语书

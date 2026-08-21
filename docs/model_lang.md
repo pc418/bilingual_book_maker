@@ -10,6 +10,10 @@ bbook_maker --book_name book.epub \
   --model_list gpt-5-mini --language ja
 ```
 
+Old `--model` commands still work — they are rewritten into these flags and
+the substitution is printed. See "Migrating from the old flags" in the README
+for the full table.
+
 ## The three flags
 
 | Flag | Meaning |

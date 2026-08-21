@@ -23,6 +23,13 @@ export for that vendor:
 `google`, `deeplfree`, `tencent` and `customapi` need no key, and neither
 does an endpoint on localhost.
 
+The old per-vendor variables — `BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`,
+`BBM_XAI_API_KEY`, `BBM_QWEN_API_KEY`, and a provider file's `env_key` — are
+still read when an old-style command implies that route (see "Migrating from
+the old flags" in the README). They are not consulted for a command written
+in the new flags, where `--api_base` decides the endpoint and the key must
+match it.
+
 The CLI does not read `.env` files. Export the variables first, or source a
 git-ignored file before running: `set -a; source .env; set +a; bbook_maker ...`
 

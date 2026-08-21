@@ -74,9 +74,13 @@ Key lookup order: `--key`, then `BBM_API_KEY`, then `OPENAI_API_KEY` /
 `ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` / `BBM_DEEPL_API_KEY` depending on
 the format. Endpoints on localhost need no key.
 
-Removed in this fork: `--model`, the per-vendor `--*_key` flags, `--provider`,
-`--api_key`, `--ollama_model`, `--deployment_id`, `--interval`. Passing one
-prints the flag that replaced it.
+`--model`, the per-vendor `--*_key` flags, `--provider`, `--api_key`,
+`--ollama_model`, `--deployment_id` and `--interval` are no longer part of the
+parser, but old command lines still run: `book_maker/legacy_cli.py` rewrites
+them into the flags above before the run starts and prints each substitution.
+The mapping table is in the README's "Migrating from the old flags". Old
+per-vendor key variables (`BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, …) are
+still consulted for the route that implied them.
 
 Do not put secrets directly on a shared command line. Environment variables are safer for
 agent and CI use. The CLI does **not** load `.env` files itself: export the variables first,

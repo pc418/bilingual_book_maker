@@ -10,6 +10,7 @@ from rich import print
 from rich.markup import escape
 
 from book_maker.loader import BOOK_LOADER_DICT
+from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
@@ -30,40 +31,6 @@ FORMAT_ENV_KEYS = {
 FORMATS_REQUIRING_KEY = ("openai", "anthropic", "caiyun", "deepl")
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal")
-
-# Flags this fork removed, and what replaced them. Without this an old command
-# line either dies on an unhelpful "unrecognized arguments" or — worse, before
-# allow_abbrev=False — quietly matched a different flag by prefix: `--model
-# gpt4` set `--model_list gpt4`.
-REMOVED_OPTIONS = {
-    "--model": "--api_format and --model_list (e.g. --model_list gpt-5-mini)",
-    "-m": "--api_format and --model_list (e.g. --model_list gpt-5-mini)",
-    "--openai_key": "--key",
-    "--claude_key": "--key",
-    "--gemini_key": "--key",
-    "--groq_key": "--key",
-    "--xai_key": "--key",
-    "--qwen_key": "--key",
-    "--caiyun_key": "--key",
-    "--deepl_key": "--key",
-    "--api_key": "--key",
-    "--custom_api": "--api_base with --api_format customapi",
-    "--ollama_model": "--api_base http://localhost:11434/v1 with --model_list",
-    "--deployment_id": "--api_base pointed at the deployment's endpoint",
-    "--provider": "--api_base, --key and --api_format",
-    "--interval": "nothing; it only ever applied to the removed gemini route",
-}
-
-
-def reject_removed_options(argv):
-    """Fail with the replacement rather than a bare parse error."""
-    for arg in argv:
-        name = arg.split("=", 1)[0]
-        if name in REMOVED_OPTIONS:
-            raise SystemExit(
-                f"{name} was removed from this fork. Use {REMOVED_OPTIONS[name]} "
-                f"instead. Routes are chosen by endpoint now, not by model name."
-            )
 
 
 def infer_api_format(api_base):
@@ -88,9 +55,15 @@ def is_local_endpoint(api_base):
     return (urlparse(api_base).hostname or "").lower() in LOCAL_HOSTS
 
 
-def resolve_api_key(api_format, explicit_key, api_base):
-    """The key to use, or a loud failure naming where one was looked for."""
-    env_names = FORMAT_ENV_KEYS.get(api_format, ("BBM_API_KEY",))
+def resolve_api_key(api_format, explicit_key, api_base, extra_env_keys=()):
+    """The key to use, or a loud failure naming where one was looked for.
+
+    `extra_env_keys` carries the variables an old command line implies — a
+    translated `--model groq` still authenticates from BBM_GROQ_API_KEY.
+    """
+    env_names = FORMAT_ENV_KEYS.get(api_format, ("BBM_API_KEY",)) + tuple(
+        extra_env_keys
+    )
     key = explicit_key or next((env[n] for n in env_names if env.get(n)), "")
     if key:
         return key
@@ -208,7 +181,11 @@ def parse_prompt_arg(prompt_arg):
 
 def main():
     translate_format_list = list(FORMAT_DICT.keys())
-    reject_removed_options(sys.argv[1:])
+    # Old command lines are rewritten into the endpoint surface before the
+    # parser sees them; see book_maker/legacy_cli.py.
+    legacy = translate_legacy_argv(sys.argv[1:])
+    for notice in legacy.notices:
+        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
     # No prefix abbreviation: `--model` must not resolve to `--model_list`.
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument(
@@ -526,7 +503,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         "print). Currently epub only.",
     )
 
-    options = parser.parse_args()
+    options = parser.parse_args(legacy.argv)
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
@@ -604,7 +581,9 @@ So you are close to reaching the limit. You have to choose your own value, there
     api_format = options.api_format or infer_api_format(options.api_base)
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
-    API_KEY = resolve_api_key(api_format, options.key, options.api_base)
+    API_KEY = resolve_api_key(
+        api_format, options.key, options.api_base, legacy.env_keys
+    )
 
     book_type = get_book_type(options.book_name)
     support_type_list = list(BOOK_LOADER_DICT.keys())
