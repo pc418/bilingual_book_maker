@@ -1,110 +1,108 @@
-# Models and languages
+# Endpoints, models and languages
 
-`book_maker/translator/__init__.py::MODEL_DICT` and `bbook_maker --help` are the source of
-truth for built-in `--model` choices. The list changes as providers add and retire models;
-do not infer a valid CLI value from a marketing model name.
+A route is chosen by the endpoint it talks to, not by a model name. There is
+no built-in model list to keep up to date: `--model_list` takes whatever ids
+your endpoint serves.
 
-## Model routing
+```sh
+bbook_maker --book_name book.epub \
+  --api_base https://api.openai.com/v1 --key sk-... \
+  --model_list gpt-5-mini --language ja
+```
 
-`--model` selects a built-in translator route. It is mutually exclusive with `--provider`.
+## The three flags
 
-### OpenAI-compatible routes
-
-| `--model` value | Behavior |
+| Flag | Meaning |
 |---|---|
-| `chatgptapi` | Default GPT-3.5-family preset/discovery route. |
-| `gpt4` | GPT-4 preset/discovery route. |
-| `gpt4omini` | GPT-4o-mini preset. |
-| `gpt4o` | GPT-4o preset. |
-| `gpt5mini` | GPT-5-mini preset. |
-| `o1preview`, `o1`, `o1mini`, `o3mini` | Matching reasoning-model presets. |
-| `openai` | Arbitrary OpenAI-compatible model IDs; requires `--model_list`. |
+| `--api_base` | Endpoint URL. Defaults to the format's official host. |
+| `--key` | API key. Comma-separate several to rotate them and spread rate limits. |
+| `--api_format` | Wire format. Inferred from `--api_base`; pass it only when the guess is wrong. |
 
-Use `--openai_key` or, preferably, `BBM_OPENAI_API_KEY`. `OPENAI_API_KEY` remains supported
-for backward compatibility.
+`--api_format` is one of `openai` (default), `anthropic`, or the fixed
+machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
+`tencent`, `customapi`.
 
-```sh
-bbook_maker --book_name book.epub --model openai \
-  --model_list gpt-4.1-mini --language ja
-```
+Inference is deliberately simple: a host ending in `anthropic.com` means the
+anthropic shape, everything else means the OpenAI shape. A gateway serving
+the anthropic protocol from its own domain needs `--api_format anthropic`.
 
-An OpenAI-compatible gateway can be selected with `--api_base`. The endpoint still has to
-serve the OpenAI chat-completions request shape.
+Credentials come from `--key`, then `BBM_API_KEY`, then the format's
+conventional variable — see [Environment settings](./env_settings.md). An
+endpoint on localhost needs no key.
 
-### Anthropic Claude
+## OpenAI-compatible endpoints
 
-`claude` selects the translator's default Claude model. Exact built-in Claude IDs are also
-accepted, including the Claude 4/4.1/4.5/4.6 entries shown by `bbook_maker --help`.
-Because argparse validates `--model`, an arbitrary `claude-*` string is **not** accepted
-unless it is in that displayed list. Use `BBM_CLAUDE_API_KEY` (or `--claude_key`).
+Everything below is the same route with a different `--api_base`. Structured
+output, `--use_context`, parallel workers, async and the Batch API are
+available on all of them to the extent the endpoint itself supports them —
+support is probed at runtime rather than assumed from the model name.
 
-```sh
-bbook_maker --book_name book.epub --model claude-sonnet-4-6 --language zh-hans
-```
-
-For an unlisted Claude ID on a gateway, use `--provider` or an OpenAI-compatible gateway
-with `--model openai --model_list ...`.
-
-### Gemini
-
-- `--model gemini`: Gemini Flash route; accepts an exact comma-separated `--model_list`.
-- `--model geminipro`: Gemini Pro preset.
-- `--interval`: Gemini request interval in seconds.
-
-Use `BBM_GOOGLE_GEMINI_KEY` (or `--gemini_key`).
-
-### Qwen-MT
-
-- `--model qwen` defaults to `qwen-mt-turbo`.
-- `--model qwen-mt-turbo` selects the faster/cheaper MT model.
-- `--model qwen-mt-plus` selects the higher-quality MT model.
-- `--source_lang` sets the source language; its default is `auto`.
-
-Use `BBM_QWEN_API_KEY` (or `--qwen_key`).
-
-### Other built-in routes
-
-| `--model` value | Credential |
+| Vendor | `--api_base` |
 |---|---|
-| `groq` | `BBM_GROQ_API_KEY`; requires `--model_list`. |
-| `xai` | `BBM_XAI_API_KEY`. |
-| `google` | No API key. |
-| `caiyun` | `BBM_CAIYUN_API_KEY`. |
-| `deepl` | `BBM_DEEPL_API_KEY`. |
-| `deeplfree` | No API key. |
-| `tencentransmart` | No API key. |
-| `customapi` | `BBM_CUSTOM_API` (legacy custom translator). |
-
-## Custom providers
-
-Use `--provider NAME` for a provider declared in project-level
-`./bbm_providers.json` or global `~/.bbm/providers.json`. A provider may use the `openai`,
-`claude`, `gemini`, or `qwen` API style and can supply a base URL, default model IDs, and
-the name of its key environment variable.
+| OpenAI | `https://api.openai.com/v1` (default) |
+| Groq | `https://api.groq.com/openai/v1` |
+| xAI | `https://api.x.ai/v1` |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` |
+| Alibaba Qwen (DashScope) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| SiliconFlow | `https://api.siliconflow.cn/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Azure OpenAI | the deployment's OpenAI-compatible URL; `--model_list` names the deployment |
+| Ollama | `http://localhost:11434/v1` |
+| vLLM / LM Studio / llama.cpp | whatever host they serve |
 
 ```sh
-bbook_maker --book_name book.epub --provider deepseek \
-  --model_list deepseek-chat --language zh-hans
+bbook_maker --book_name book.epub \
+  --api_base https://api.groq.com/openai/v1 --key gsk-... \
+  --model_list llama-3.3-70b-versatile
 ```
 
-Prefer the provider's configured environment variable. `--api_key` works but exposes a
-secret in shell history and process listings.
+`--extra_body` passes vendor-specific request fields on this route.
 
-## Ollama
+## Anthropic
 
-`--ollama_model MODEL` uses the local OpenAI-compatible Ollama endpoint. The default base
-is `http://localhost:11434/v1`; override it with `--api_base` for a remote server.
+```sh
+bbook_maker --book_name book.epub \
+  --api_base https://api.anthropic.com --key sk-ant-... \
+  --model_list claude-sonnet-4-6 --language zh-hans
+```
+
+Any model id the endpoint serves is accepted. Claude uses one model per run,
+so extra `--model_list` entries are announced and ignored rather than
+silently dropped. A gateway that serves the anthropic shape from an
+OpenAI-style `/v1` base is handled: the trailing `/v1` is trimmed, because
+the SDK appends its own.
+
+Classification through this format uses the prompt rung — the endpoint is not
+asked to compile a schema.
+
+## Machine-translation engines
+
+These speak their own protocols, take no model, and ignore `--model_list`
+(passing it is an error rather than a silent no-op).
+
+| `--api_format` | Credential |
+|---|---|
+| `google` | none |
+| `deeplfree` | none |
+| `tencent` | none |
+| `customapi` | none; the endpoint URL goes in `--api_base` |
+| `caiyun` | required |
+| `deepl` | required (RapidAPI DeepL Translator) |
+
+They translate text and nothing else: no context window, no structured
+output, and no plan classification.
 
 ## Languages
 
-`--language LANGUAGE` sets the target language and defaults to `zh-hans`. The accepted
-choices are generated from `book_maker/utils.py`; run the installed CLI to see the current
-list:
+`--language LANGUAGE` sets the target language and defaults to `zh-hans`. The
+accepted choices are generated from `book_maker/utils.py`:
 
 ```sh
 bbook_maker --help
-bbook_maker --book_name book.epub --model google --language ja
+bbook_maker --book_name book.epub --api_format google --language ja
 ```
 
-Not every provider supports every language accepted by the common parser. Provider-specific
-translators may map or reject unsupported source/target combinations.
+`--source_lang` states the source language for endpoints that want it rather
+than detecting it; the default is `auto`. Not every endpoint supports every
+language the parser accepts.

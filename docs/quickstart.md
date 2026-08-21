@@ -10,17 +10,17 @@ After successfully install the package, you can see `bbook-maker` is in the outp
 ## Use
 You can use by command `bbook_maker`. A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
 ```sh
-bbook_maker --book_name ${path of a book} --openai_key ${openai_key}
+bbook_maker --book_name ${path of a book} --key ${openai_key} --model_list gpt-5-mini
 
 # Example
-bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key}
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini
 ```
 Or, you can use the [script](https://github.com/yihong0618/bilingual_book_maker/blob/main/make_book.py) provided by repository.
 ```sh
-python3 make_book.py --book_name ${path of a book} --openai_key ${openai_key}
+python3 make_book.py --book_name ${path of a book} --key ${openai_key} --model_list gpt-5-mini
 
 # Example
-python3 make_book.py --book_name test_books/animal_farm.epub --openai_key ${openai_key}
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini
 ```
 
 The output extension depends on the input loader. EPUB inputs produce

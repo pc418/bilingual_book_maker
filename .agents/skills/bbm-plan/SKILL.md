@@ -37,13 +37,13 @@ and one API key for wherever that model lives. `MODEL` and `BBM_API_BASE`
 are skill-level fields; make_book.py does not read them from env, you
 translate them into flags.
 
-**The model name picks the route; the key only proves you may use it.** An
-id the repo has never heard of cannot go in `--model` at all (argparse
-limits it to `MODEL_DICT` keys) — it travels in `--model_list`, and which
-`--model` carries it depends on the endpoint shape, which step 1b
-establishes by probing. Route table, probe recipes, and the `--provider`
-mechanism for non-OpenAI gateways: **`references/providers.md`**, to read
-before the first command whenever `MODEL` is not a plain `gpt-*` id.
+**The endpoint picks the route; the model id is just a string you pass
+along.** Any id reaches any endpoint through `--model_list` — there is no
+name whitelist. What varies is the wire format, which is inferred from
+`--api_base` and only needs `--api_format anthropic` when an anthropic-shaped
+gateway lives on its own domain. Probe recipes and per-format capability
+caveats: **`references/providers.md`**, to read before the first command
+whenever the endpoint is not a plain OpenAI-shaped host.
 
 Source `.env` in the same Bash call as the run:
 `set -a; source .env; set +a; …`. Never echo values; verify presence with
@@ -64,7 +64,7 @@ settled (OpenAI shape shown — the common case):
 set -a; source .env; set +a
 API_BASE_FLAG=()
 [ -n "$BBM_API_BASE" ] && API_BASE_FLAG=(--api_base "$BBM_API_BASE")
-ROUTE=(--model openai --model_list "$MODEL")   # ← from step 1b
+ROUTE=(--key "$KEY" --model_list "$MODEL")   # ← shape from step 1b
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
   --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}"
 ```
@@ -248,9 +248,8 @@ changed intentionally.
 
 | decision | flag | choose it when |
 |---|---|---|
-| route | `--model openai --model_list "$MODEL"` | the endpoint took the OpenAI shape at step 1b — the default for gateways, and the only route that accepts an arbitrary model id without a provider file |
-| | `--model <MODEL_DICT key>` | `$MODEL` is literally one of those keys and you want its native client (`claude-…`, `gemini`, `groq`, `qwen`) |
-| | `--provider <name> --model_list "$MODEL"` | a non-OpenAI shape *and* a custom model id — the only combination the other two cannot express (`references/providers.md`) |
+| route | `--model_list "$MODEL"` | the endpoint took the OpenAI shape at step 1b — the default, and what every gateway serves |
+| | `--api_format anthropic --model_list "$MODEL"` | the endpoint answered `/v1/messages` and its host is not `anthropic.com` (on anthropic.com the format is inferred) |
 | output form | *(default)* bilingual | user reads both languages side by side — the usual ask |
 | | `--single_translate` | user wants a translated-only book, original replaced |
 | speed | *(default)* sequential | small book (< ~30 chapters), or first run with a new endpoint |
