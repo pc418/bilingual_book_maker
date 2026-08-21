@@ -91,7 +91,8 @@ These speak their own protocols, take no model, and ignore `--model_list`
 | `deepl` | required (RapidAPI DeepL Translator) |
 
 They translate text and nothing else: no context window, no structured
-output, and no plan classification.
+output, and no plan classification. `--source_lang` reaches `customapi`
+(it goes into the request body); the others detect the source themselves.
 
 ## Languages
 

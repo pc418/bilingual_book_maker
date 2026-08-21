@@ -18,7 +18,9 @@ class Caiyun(Base):
         self.api_url = "https://api.interpreter.caiyunai.com/v1/translator"
         self.headers = {
             "content-type": "application/json",
-            "x-authorization": f"token {key}",
+            # One key per request, set by rotate_key: `key` may be the whole
+            # comma-separated list, which is not a credential.
+            "x-authorization": f"token {next(self.keys)}",
         }
         # caiyun api only supports: zh2en, zh2ja, en2zh, ja2zh
         self.translate_type = "auto2zh"
@@ -28,9 +30,10 @@ class Caiyun(Base):
             self.translate_type = "auto2ja"
 
     def rotate_key(self):
-        pass
+        self.headers["x-authorization"] = f"token {next(self.keys)}"
 
     def translate(self, text):
+        self.rotate_key()
         # for caiyun translate src issue #279
         text_list = text.splitlines()
         num = None

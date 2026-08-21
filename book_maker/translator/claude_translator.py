@@ -39,7 +39,8 @@ class Claude(Base):
         super().__init__(key, language)
         base_url = _sdk_base_url(api_base)
         self.api_url = base_url or "https://api.anthropic.com"
-        self.client = Anthropic(base_url=base_url, api_key=key, timeout=20)
+        # One key, not the whole comma-separated list; rotate_key advances it.
+        self.client = Anthropic(base_url=base_url, api_key=next(self.keys), timeout=20)
         self.model = "claude-haiku-4-5-20251001"  # default it for now
         self.language = language
         self.prompt_template = (
@@ -54,10 +55,13 @@ class Claude(Base):
         self.context_paragraph_limit = context_paragraph_limit
 
     def rotate_key(self):
-        pass
+        """Advance to the next key, as the comma-separated form promises.
 
-    def set_claude_model(self, model_name):
-        self.model = model_name
+        `Anthropic.api_key` is writable, so this needs no new client. Without
+        it a multi-key run sent the literal string "a,b" as the credential
+        and failed authentication.
+        """
+        self.client.api_key = next(self.keys)
 
     def set_model_list(self, model_list):
         """The `--model_list` surface, so `--provider` can reach this class.
