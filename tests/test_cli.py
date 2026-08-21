@@ -208,33 +208,46 @@ def test_classify_model_flag_implies_model_mode(tmp_path):
     assert "--plan-classify agent" in " ".join(proc.stdout.split())
 
 
-def test_model_list_without_a_model_to_choose_fails_loud(tmp_path):
-    # the machine-translation formats run one fixed engine; honoring
-    # --model_list is impossible, so refuse rather than ignore it
+def test_naming_a_model_for_a_fixed_engine_fails_loud(tmp_path):
+    # the machine-translation formats run one fixed engine; honoring a model
+    # is impossible, so refuse rather than ignore it
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
     proc = _cli(
-        "--book_name", str(src), "--api_format", "google", "--model_list", "some-model"
+        "--book_name", str(src), "--api_format", "google", "--model", "some-model"
     )
     assert proc.returncode == 1
-    assert "--model_list" in proc.stdout
+    assert "--model" in proc.stdout
     assert "google" in proc.stdout
 
 
-def test_llm_format_without_model_list_fails_loud(tmp_path):
+def test_naming_a_model_twice_fails_loud(tmp_path):
+    # two answers to "which model is this run using" is one too many
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name", str(src), "--key", "k",
+        "--model", "a", "--model_list", "b",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "once" in output
+
+
+def test_llm_format_without_a_model_fails_loud(tmp_path):
     # nothing is preset any more: a run that never names a model has nothing
     # to fall back on, and must say so before it spends a key
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
     proc = _cli("--book_name", str(src), "--key", "sk-test")
     assert proc.returncode != 0
-    assert "--model_list" in proc.stdout + proc.stderr
+    assert "--model" in proc.stdout + proc.stderr
 
 
 def test_missing_key_names_where_it_looked(tmp_path):
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
-    proc = _cli("--book_name", str(src), "--model_list", "some-model")
+    proc = _cli("--book_name", str(src), "--model", "some-model")
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0
     assert "--key" in output
@@ -251,13 +264,27 @@ def test_anthropic_format_is_inferred_from_the_endpoint(tmp_path):
         str(src),
         "--api_base",
         "https://api.anthropic.com",
-        "--model_list",
+        "--model",
         "claude-haiku-4-5-20251001",
     )
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0
     assert "anthropic endpoint" in output
     assert "ANTHROPIC_API_KEY" in output
+
+
+def test_a_route_specific_key_outranks_a_generic_one(monkeypatch):
+    # an old --model groq command implies BBM_GROQ_API_KEY; picking
+    # OPENAI_API_KEY instead would send one vendor's credential to another
+    from book_maker.cli import resolve_api_key
+
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setenv("BBM_GROQ_API_KEY", "groq-secret")
+
+    key = resolve_api_key("openai", "", "https://api.groq.com/openai/v1",
+                          ("BBM_GROQ_API_KEY",))
+
+    assert key == "groq-secret"
 
 
 def test_a_local_endpoint_needs_no_key(tmp_path, monkeypatch):

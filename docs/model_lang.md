@@ -7,7 +7,7 @@ your endpoint serves.
 ```sh
 bbook_maker --book_name book.epub \
   --api_base https://api.openai.com/v1 --key sk-... \
-  --model_list gpt-5-mini --language ja
+  --model gpt-5-mini --language ja
 ```
 
 Old `--model` commands still work — they are rewritten into these flags and
@@ -18,17 +18,29 @@ for the full table.
 
 | Flag | Meaning |
 |---|---|
-| `--api_base` | Endpoint URL. Defaults to the format's official host. |
+| `--model` | Model id, exactly as the endpoint names it. |
+| `--api_base` | Endpoint URL. Defaults to the format's official host; `…/v1`, `…/v1/` and `…/v1/chat/completions` all work. |
 | `--key` | API key. Comma-separate several to rotate them and spread rate limits. |
-| `--api_format` | Wire format. Inferred from `--api_base`; pass it only when the guess is wrong. |
+| `--api_format` | Wire format. Inferred; pass it only when the guess is wrong. |
+
+`--model_list a,b` rotates across several models and is also what older
+commands used; name a model in one flag or the other, not both.
 
 `--api_format` is one of `openai` (default), `anthropic`, or the fixed
 machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
 `tencent`, `customapi`.
 
-Inference is deliberately simple: a host ending in `anthropic.com` means the
-anthropic shape, everything else means the OpenAI shape. A gateway serving
-the anthropic protocol from its own domain needs `--api_format anthropic`.
+Inference goes in this order: an explicit `--api_format` wins; then the
+`--api_base` host (`anthropic.com` means the anthropic shape, anything else
+the OpenAI shape); then, when no endpoint was named, a model id mentioning
+`claude` or `anthropic` — `anthropic/claude-sonnet-4-6` included.
+
+A wrong guess costs one request rather than the run: if the anthropic shape
+was inferred and the endpoint answers 404/405 on `/v1/messages`, the route
+switches to `openai` for the rest of the run and prints why. That fallback
+only applies to an endpoint you named — on Anthropic's own host a 404 means
+the model does not exist, and retrying elsewhere would just fail differently.
+A rejected key never triggers it.
 
 Credentials come from `--key`, then `BBM_API_KEY`, then the format's
 conventional variable — see [Environment settings](./env_settings.md). An
@@ -58,7 +70,7 @@ support is probed at runtime rather than assumed from the model name.
 ```sh
 bbook_maker --book_name book.epub \
   --api_base https://api.groq.com/openai/v1 --key gsk-... \
-  --model_list llama-3.3-70b-versatile
+  --model llama-3.3-70b-versatile
 ```
 
 `--extra_body` passes vendor-specific request fields on this route.
@@ -68,7 +80,7 @@ bbook_maker --book_name book.epub \
 ```sh
 bbook_maker --book_name book.epub \
   --api_base https://api.anthropic.com --key sk-ant-... \
-  --model_list claude-sonnet-4-6 --language zh-hans
+  --model claude-sonnet-4-6 --language zh-hans
 ```
 
 Any model id the endpoint serves is accepted. Claude uses one model per run,
@@ -82,8 +94,8 @@ asked to compile a schema.
 
 ## Machine-translation engines
 
-These speak their own protocols, take no model, and ignore `--model_list`
-(passing it is an error rather than a silent no-op).
+These speak their own protocols and take no model, so naming one is an error
+rather than a silent no-op.
 
 | `--api_format` | Credential |
 |---|---|

@@ -17,10 +17,10 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制�
 
 ```shell
 pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --test
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
 或
 pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --test
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
 ```
 
 ## 翻译服务
@@ -29,12 +29,21 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_
 
 | 参数 | 含义 |
 |------|------|
+| `--model` | 模型 ID，直接写你的接口所使用的名字 |
 | `--api_base` | 接口地址，缺省为该格式的官方地址 |
 | `--key` | API key，用英文逗号分隔多个可轮换使用 |
-| `--api_format` | 接口协议格式，默认由 `--api_base` 推断，猜错时才需要显式指定 |
+| `--api_format` | 接口协议格式，默认自动推断，猜错时才需要显式指定 |
 
-`--model_list` 直接写你的接口所使用的模型 ID，没有预设列表，也没有别名表；
-厂商上新模型时不需要改这里。
+`--model` 写真实模型 ID —— `gpt-5-mini`、`claude-sonnet-4-6`，或网关使用的
+`openai/gpt-5-mini` 这类带前缀写法。没有预设列表，也没有别名表；厂商上新模型时
+不需要改这里。（旧的别名如 `gpt4` 仍可用，会被自动改写并打印提示。）
+
+协议格式会自动判断：显式的 `--api_format` 优先，其次看 `--api_base` 的域名，
+最后看模型 ID 里是否含有 `claude` 或 `anthropic`。万一判断错了（例如网关用
+OpenAI 协议提供 Claude 模型），第一次请求就会发现并自动切换到 `openai`。
+
+`--api_base` 可以直接粘贴文档里的地址：`https://host/v1`、结尾多一个斜杠、
+或者整条 `https://host/v1/chat/completions`，效果相同。
 
 `--api_format` 可选值：`openai`（默认）、`anthropic`，以及固定的机器翻译引擎
 `google`、`caiyun`、`deepl`、`deeplfree`、`tencent`、`customapi`。
@@ -50,7 +59,7 @@ LM Studio、Ollama 等。详见[模型与语言](./docs/model_lang.md)。
 * OpenAI 以及所有 OpenAI 兼容接口
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --key ${key} --model_list gpt-5-mini
+  python3 make_book.py --book_name test_books/animal_farm.epub --key ${key} --model gpt-5-mini
   ```
 
   换一个 `--api_base` 就是换一家厂商：
@@ -58,21 +67,21 @@ LM Studio、Ollama 等。详见[模型与语言](./docs/model_lang.md)。
   ```shell
   # Groq
   python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.groq.com/openai/v1 --key ${groq_key} --model_list llama-3.3-70b-versatile
+    --api_base https://api.groq.com/openai/v1 --key ${groq_key} --model llama-3.3-70b-versatile
 
   # xAI
   python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.x.ai/v1 --key ${xai_key} --model_list grok-4
+    --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-4
 
   # Gemini（OpenAI 兼容端点）
   python3 make_book.py --book_name test_books/animal_farm.epub \
     --api_base https://generativelanguage.googleapis.com/v1beta/openai/ \
-    --key ${gemini_key} --model_list gemini-2.5-flash
+    --key ${gemini_key} --model gemini-2.5-flash
 
   # 通义千问（百炼兼容模式）
   python3 make_book.py --book_name test_books/animal_farm.epub \
     --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 \
-    --key ${qwen_key} --model_list qwen-mt-turbo
+    --key ${qwen_key} --model qwen-mt-turbo
   ```
 
 * Claude
@@ -81,7 +90,7 @@ LM Studio、Ollama 等。详见[模型与语言](./docs/model_lang.md)。
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.anthropic.com --key ${claude_key} --model_list claude-sonnet-4-6
+    --api_base https://api.anthropic.com --key ${claude_key} --model claude-sonnet-4-6
   ```
 
 * Ollama 等本地服务
@@ -90,7 +99,7 @@ LM Studio、Ollama 等。详见[模型与语言](./docs/model_lang.md)。
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base http://localhost:11434/v1 --model_list ${ollama_model_name}
+    --api_base http://localhost:11434/v1 --model ${ollama_model_name}
   ```
 
 * 谷歌翻译
@@ -140,24 +149,25 @@ LM Studio、Ollama 等。详见[模型与语言](./docs/model_lang.md)。
 ```
 $ bbook_maker --book_name book.epub --model gpt4omini --openai_key sk-...
 deprecated: --openai_key is now --key
-deprecated: --model gpt4omini is now --model_list gpt-4o-mini
+deprecated: --model gpt4omini is now --model gpt-4o-mini
 ```
 
 | 旧写法 | 改写为 |
 |---|---|
-| `--model chatgptapi` / `gpt4` / `gpt4o` / `gpt4omini` / `gpt5mini` / `o1` / `o1mini` / `o1preview` / `o3mini` | `--model_list <对应模型>` |
+| `--model chatgptapi` / `gpt4` / `gpt4o` / `gpt4omini` / `gpt5mini` / `o1` / `o1mini` / `o1preview` / `o3mini` | `--model <对应模型>` |
 | `--model openai --model_list X` | `--model_list X` |
-| `--model claude`（或具体的 `claude-*` ID） | `--api_format anthropic --model_list <id>` |
-| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model_list gemini-flash-latest` / `gemini-pro-latest` |
+| `--model claude` | `--model claude-haiku-4-5-20251001` |
+| 具体的 `claude-*` ID | 保持不变，anthropic 格式由 ID 推断 |
+| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-flash-latest` / `gemini-pro-latest` |
 | `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
-| `--model xai` | `--api_base https://api.x.ai/v1 --model_list grok-beta` |
-| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model_list qwen-mt-*` |
+| `--model xai` | `--api_base https://api.x.ai/v1 --model grok-beta` |
+| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
 | `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
 | `--custom_api URL` | `--api_format customapi --api_base URL` |
 | `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
-| `--ollama_model M` | `--api_base http://localhost:11434/v1 --model_list M` |
-| `--deployment_id D` | `--model_list D`，并把 `--api_base` 指向该部署的地址 |
-| `--provider NAME` | 从 `bbm_providers.json` 展开为 `--api_base` / `--api_format` / `--model_list` |
+| `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
+| `--deployment_id D` | `--model D`，并把 `--api_base` 改写为该部署的 `/openai/v1` 路径 |
+| `--provider NAME` | 从 `bbm_providers.json` 展开为 `--api_base` / `--api_format` / `--model` |
 | `--interval` | 已删除，它只对已移除的 gemini 路由有效 |
 
 说明：
@@ -168,8 +178,10 @@ deprecated: --model gpt4omini is now --model_list gpt-4o-mini
   会保留你的网关地址。
 - 模型 ID 取自**旧的**预设列表，保证改写后跑的还是原来那个模型，而不是悄悄换成
   更新的模型。其中部分模型现已下线，接口自身的模型校验会明确报错。
-- 没有对应关系的别名（如 `--model gpt3`）会直接报错而不是猜测——把未知别名当作
-  模型 ID 发出去，可能让整本书跑在没人选择的模型上。
+- 不属于旧别名的 `--model` 值会原样传递：它们就是模型 ID，这也是现在的常态。
+- 没有任何别名会改变**实际使用的模型**。两个与真实 ID 重叠的情况：`o1` 改写后
+  仍是 `o1`；`qwen-mt-turbo` / `qwen-mt-plus` 会额外补上百炼的接口地址——那是
+  唯一提供这两个模型的地方——你自己写的 `--api_base` 优先。
 
 ## 使用说明
 
@@ -178,16 +190,18 @@ deprecated: --model gpt4omini is now --model_list gpt-4o-mini
 
 ## 参数说明
 
-- `--api_base`、`--key`、`--api_format`、`--model_list`：
+- `--model`、`--api_base`、`--key`、`--api_format`：
 
-  用来决定走哪条路由。`--api_format` 会从 `--api_base` 推断（`api.anthropic.com`
-  推断为 `anthropic`，其余为 `openai`），所以大多数命令只需要写 `--api_base`、
-  `--key` 和 `--model_list`。
+  用来决定走哪条路由。大多数命令只需要写 `--model`、`--key`，必要时加
+  `--api_base`；协议格式由接口域名推断，没写地址时则看模型 ID。
+
+  `--model_list a,b,c` 用于在多个模型之间轮换以分摊限流，同时也保留给旧命令使用。
+  模型只能在其中一个参数里写，不能两个都写。
 
   | `--api_format` | Key | 模型 |
   |----------------|-----|------|
-  | `openai`（默认） | 必填 | 必须提供 `--model_list` |
-  | `anthropic` | 必填 | 必须提供 `--model_list` |
+  | `openai`（默认） | 必填 | 必须提供 `--model` |
+  | `anthropic` | 必填 | 必须提供 `--model` |
   | `google` | 不需要 | 固定引擎 |
   | `deeplfree` | 不需要 | 固定引擎 |
   | `tencent` | 不需要 | 固定引擎 |
@@ -253,11 +267,11 @@ deprecated: --model gpt4omini is now --model_list gpt-4o-mini
   # 先免费预览会翻译哪些内容（不需要 key）
   python3 make_book.py --book_name my_book.epub --plan-dry-run
   # 翻译整个分区
-  python3 make_book.py --book_name my_book.epub --key ${key} --model_list gpt-5-mini --plan-classify most
+  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify most
   # 先让模型分流一遍版面装置（页眉、页码等）
-  python3 make_book.py --book_name my_book.epub --key ${key} --model_list gpt-5-mini --plan-classify model
+  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify model
   # 或交给 coding agent 判断（停下、打印指引，然后重跑）
-  python3 make_book.py --book_name my_book.epub --key ${key} --model_list gpt-5-mini --plan-classify agent
+  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify agent
   ```
 
 - `--exclude-translate-tags`:
@@ -389,13 +403,13 @@ deprecated: --model gpt4omini is now --model_list gpt-4o-mini
 
 ```shell
 # 如果你想快速测一下
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --test
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
 
 # 或翻译完整本书
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --language zh-hans
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --language zh-hans
 
 # Or translate the whole book using Gemini
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model_list gemini-2.5-flash
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-2.5-flash
 
 # 指定环境变量来略过 --key
 export BBM_API_KEY=${your_api_key}
@@ -404,7 +418,7 @@ export BBM_API_KEY=${your_api_key}
 python3 make_book.py --book_name test_books/animal_farm.epub --api_format deepl --key ${deepl_key} --language ja
 
 # Use the Claude model with Japanese
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.anthropic.com --key ${claude_key} --model_list claude-sonnet-4-6 --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.anthropic.com --key ${claude_key} --model claude-sonnet-4-6 --language ja
 
 # Use the CustomAPI model with Japanese
 python3 make_book.py --book_name test_books/animal_farm.epub --api_format customapi --api_base ${custom_api} --language ja
@@ -442,10 +456,10 @@ export BBM_CAIYUN_API_KEY=${your_api_key}
 更加小白的示例
 
 ```shell
-python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model_list gpt-5-mini --api_base 'https://xxxxx/v1'
+python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
 
 # 有可能你不需要 python3 而是python
-python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model_list gpt-5-mini --api_base 'https://xxxxx/v1'
+python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
 ```
 
 [演示视频](https://www.bilibili.com/video/BV1XX4y1d75D/?t=0h07m08s)
@@ -454,10 +468,10 @@ python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model_list g
 使用 Azure OpenAI service
 
 ```shell
-python3 make_book.py --book_name 'animal_farm.epub' --key XXXXX --model_list deployment-name --api_base 'https://example-endpoint.openai.azure.com/openai/v1'
+python3 make_book.py --book_name 'animal_farm.epub' --key XXXXX --model deployment-name --api_base 'https://example-endpoint.openai.azure.com/openai/v1'
 
 # Or python3 is not in your PATH
-python make_book.py --book_name 'animal_farm.epub' --key XXXXX --model_list deployment-name --api_base 'https://example-endpoint.openai.azure.com/openai/v1'
+python make_book.py --book_name 'animal_farm.epub' --key XXXXX --model deployment-name --api_base 'https://example-endpoint.openai.azure.com/openai/v1'
 ```
 
 ## 注意

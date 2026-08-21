@@ -12,13 +12,25 @@ You pick an **endpoint**, not a model name. Three things describe a route:
 
 | Flag | What it is |
 |------|-----------|
+| `--model` | the model id, exactly as your endpoint names it |
 | `--api_base` | the endpoint URL. Defaults to the format's official host |
 | `--key` | the API key (comma-separate several to rotate them) |
-| `--api_format` | the wire format. Inferred from `--api_base`; pass it only when the guess is wrong |
+| `--api_format` | the wire format. Inferred; pass it only when the guess is wrong |
 
-`--model_list` then names the model(s) exactly as your endpoint names them —
-no preset lists, no alias table, nothing to update when a vendor ships a new
-model.
+`--model` takes a real model id — `gpt-5-mini`, `claude-sonnet-4-6`, or a
+namespaced `openai/gpt-5-mini` for gateways that use those. No preset lists,
+no alias table, nothing to update when a vendor ships a new model. (Old alias
+values like `gpt4` still work; they are translated with a note.)
+
+The format is worked out for you: an explicit `--api_format` wins, otherwise
+the `--api_base` host decides, otherwise a model id mentioning `claude` or
+`anthropic` means the Anthropic shape. If that guess is wrong — a gateway
+serving Claude models over the OpenAI shape — the first request says so and
+the run switches to `openai` by itself.
+
+`--api_base` accepts the URL as you find it in a provider's docs:
+`https://host/v1`, a trailing slash, or the whole
+`https://host/v1/chat/completions` all mean the same thing.
 
 `--api_format` values: `openai` (default), `anthropic`, and the fixed
 machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
@@ -42,10 +54,10 @@ A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
 
 ```shell
 pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --test
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
 OR
 pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --test
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
 ```
 
 ## Translate Service
@@ -60,7 +72,7 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_
 * OpenAI, and every OpenAI-compatible endpoint
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --key ${key} --model_list gpt-5-mini
+  python3 make_book.py --book_name test_books/animal_farm.epub --key ${key} --model gpt-5-mini
   ```
 
   Point `--api_base` elsewhere to use the same route for any other vendor:
@@ -68,25 +80,25 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_
   ```shell
   # Groq
   python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.groq.com/openai/v1 --key ${groq_key} --model_list llama-3.3-70b-versatile
+    --api_base https://api.groq.com/openai/v1 --key ${groq_key} --model llama-3.3-70b-versatile
 
   # xAI
   python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.x.ai/v1 --key ${xai_key} --model_list grok-4
+    --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-4
 
   # DeepSeek
   python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.deepseek.com/v1 --key ${key} --model_list deepseek-chat
+    --api_base https://api.deepseek.com/v1 --key ${key} --model deepseek-chat
 
   # Gemini, through its OpenAI-compatible endpoint
   python3 make_book.py --book_name test_books/animal_farm.epub \
     --api_base https://generativelanguage.googleapis.com/v1beta/openai/ \
-    --key ${gemini_key} --model_list gemini-2.5-flash
+    --key ${gemini_key} --model gemini-2.5-flash
 
   # Alibaba Qwen, through DashScope's compatible mode
   python3 make_book.py --book_name test_books/animal_farm.epub \
     --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 \
-    --key ${qwen_key} --model_list qwen-mt-turbo
+    --key ${qwen_key} --model qwen-mt-turbo
   ```
 
 * [Claude](https://console.anthropic.com/docs)
@@ -96,7 +108,7 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub \
     --api_base https://api.anthropic.com --key ${claude_key} \
-    --model_list claude-sonnet-4-6
+    --model claude-sonnet-4-6
   ```
 
 * [Ollama](https://github.com/ollama/ollama) and other local servers
@@ -105,7 +117,7 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base http://localhost:11434/v1 --model_list ${ollama_model_name}
+    --api_base http://localhost:11434/v1 --model ${ollama_model_name}
   ```
 
 * Google Translate
@@ -156,24 +168,25 @@ prints what it became so you can update the command at your leisure:
 ```
 $ bbook_maker --book_name book.epub --model gpt4omini --openai_key sk-...
 deprecated: --openai_key is now --key
-deprecated: --model gpt4omini is now --model_list gpt-4o-mini
+deprecated: --model gpt4omini is now --model gpt-4o-mini
 ```
 
 | Old | Rewritten to |
 |---|---|
-| `--model chatgptapi` / `gpt4` / `gpt4o` / `gpt4omini` / `gpt5mini` / `o1` / `o1mini` / `o1preview` / `o3mini` | `--model_list <that model>` |
+| `--model chatgptapi` / `gpt4` / `gpt4o` / `gpt4omini` / `gpt5mini` / `o1` / `o1mini` / `o1preview` / `o3mini` | `--model <that model>` |
 | `--model openai --model_list X` | `--model_list X` |
-| `--model claude` (or an exact `claude-*` id) | `--api_format anthropic --model_list <id>` |
-| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model_list gemini-flash-latest` / `gemini-pro-latest` |
+| `--model claude` | `--model claude-haiku-4-5-20251001` |
+| an exact `claude-*` id | unchanged — the anthropic format is inferred from the id |
+| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-flash-latest` / `gemini-pro-latest` |
 | `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
-| `--model xai` | `--api_base https://api.x.ai/v1 --model_list grok-beta` |
-| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model_list qwen-mt-*` |
+| `--model xai` | `--api_base https://api.x.ai/v1 --model grok-beta` |
+| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
 | `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
 | `--custom_api URL` | `--api_format customapi --api_base URL` |
 | `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
-| `--ollama_model M` | `--api_base http://localhost:11434/v1 --model_list M` |
-| `--deployment_id D` | `--model_list D`, with `--api_base` at the deployment's URL |
-| `--provider NAME` | expanded from `bbm_providers.json` into `--api_base` / `--api_format` / `--model_list` |
+| `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
+| `--deployment_id D` | `--model D`, with `--api_base` rewritten to the deployment's `/openai/v1` path |
+| `--provider NAME` | expanded from `bbm_providers.json` into `--api_base` / `--api_format` / `--model` |
 | `--interval` | dropped; it only applied to the removed gemini route |
 
 Notes:
@@ -187,9 +200,12 @@ Notes:
   what it used to run rather than being moved onto a newer model. Some of
   those models have since been retired; the endpoint's own model check says
   so plainly.
-- An alias with no faithful equivalent (`--model gpt3`) is an error rather
-  than a guess — sending an unknown alias on as a model id would bill a book
-  to a model nobody chose.
+- `--model` values that are not old aliases pass through untouched: they are
+  model ids, which is the normal case now.
+- No alias changes *which model* runs. Two overlap with real ids: `o1`
+  translates to itself, and `qwen-mt-turbo` / `qwen-mt-plus` additionally fill
+  in DashScope's endpoint — the only host serving them — which your own
+  `--api_base` overrides.
 
 ## Use
 
@@ -198,16 +214,20 @@ Notes:
 
 ## Params
 
-- `--api_base`, `--key`, `--api_format`, `--model_list`:
+- `--model`, `--api_base`, `--key`, `--api_format`:
 
-  How a route is chosen. `--api_format` is inferred from `--api_base` (an
-  `api.anthropic.com` host means `anthropic`, anything else means `openai`),
-  so most runs only pass `--api_base`, `--key` and `--model_list`.
+  How a route is chosen. Most runs pass `--model`, `--key` and sometimes
+  `--api_base`; the format is inferred from the endpoint host, or failing
+  that from the model id.
+
+  `--model_list a,b,c` is kept for rotating across several models to spread
+  rate limits, and for compatibility with older commands. Name a model in one
+  flag or the other, not both.
 
   | `--api_format` | Key | Model |
   |----------------|-----|-------|
-  | `openai` (default) | required | `--model_list` required |
-  | `anthropic` | required | `--model_list` required |
+  | `openai` (default) | required | `--model` required |
+  | `anthropic` | required | `--model` required |
   | `google` | none | fixed engine |
   | `deeplfree` | none | fixed engine |
   | `tencent` | none | fixed engine |
@@ -306,11 +326,11 @@ Notes:
   # inspect what would be translated (free, no key needed)
   python3 make_book.py --book_name my_book.epub --plan-dry-run
   # translate the whole partition
-  python3 make_book.py --book_name my_book.epub --key ${key} --model_list gpt-5-mini --plan-classify most
+  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify most
   # let a model triage the apparatus first
-  python3 make_book.py --book_name my_book.epub --key ${key} --model_list gpt-5-mini --plan-classify model
+  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify model
   # or hand the triage to a coding agent (stops, prints instructions, then rerun)
-  python3 make_book.py --book_name my_book.epub --key ${key} --model_list gpt-5-mini --plan-classify agent
+  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify agent
   ```
 
 - `--exclude-translate-tags`:
@@ -452,7 +472,7 @@ Notes:
   JSON string with the desired parameters.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
+  python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
   ```
 
 ### Examples
@@ -461,49 +481,49 @@ Notes:
 
 ```shell
 # Test quickly
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --test --language zh-hans
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test --language zh-hans
 
 # Test quickly for src
-python3 make_book.py --book_name test_books/Lex_Fridman_episode_322.srt --key ${openai_key} --model_list gpt-5-mini --test
+python3 make_book.py --book_name test_books/Lex_Fridman_episode_322.srt --key ${openai_key} --model gpt-5-mini --test
 
 # Or translate the whole book
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --language zh-hans
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --language zh-hans
 
 # Or translate the whole book using Gemini flash
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model_list gemini-2.5-flash
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-2.5-flash
 
 # Translate an EPUB with parallel chapter processing
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini --parallel-workers 4
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --parallel-workers 4
 
 # Use Gemini through its OpenAI-compatible endpoint, rotating two models
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model_list gemini-2.5-flash,gemini-2.0-flash
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-2.5-flash,gemini-2.0-flash
 
 # Set env BBM_API_KEY (or OPENAI_API_KEY) to omit --key
 export BBM_API_KEY=${your_api_key}
 
 # Translate to Japanese with context
-python3 make_book.py --book_name test_books/animal_farm.epub --model_list gpt-5-mini --use_context --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5-mini --use_context --language ja
 
 # Name the exact model the endpoint serves
-python3 make_book.py --book_name test_books/animal_farm.epub --model_list gpt-5-mini --key ${openai_key}
+python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5-mini --key ${openai_key}
 
 **Note** any other OpenAI-compatible host works the same way
-python3 make_book.py --book_name test_books/animal_farm.epub --model_list yi-34b-chat-0205 --key ${openai_key} --api_base "https://api.lingyiwanwu.com/v1"
+python3 make_book.py --book_name test_books/animal_farm.epub --model yi-34b-chat-0205 --key ${openai_key} --api_base "https://api.lingyiwanwu.com/v1"
 
 # Rotate several models to spread rate limits
-python3 make_book.py --book_name test_books/animal_farm.epub --model_list gpt-5-mini,gpt-4o-mini --key ${openai_key}
+python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5-mini,gpt-4o-mini --key ${openai_key}
 
 # Use the DeepL model with Japanese
 python3 make_book.py --book_name test_books/animal_farm.epub --api_format deepl --key ${deepl_key} --language ja
 
 # Use Claude with Japanese
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.anthropic.com --key ${claude_key} --model_list claude-sonnet-4-6 --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.anthropic.com --key ${claude_key} --model claude-sonnet-4-6 --language ja
 
 # Use your own translation API with Japanese
 python3 make_book.py --book_name test_books/animal_farm.epub --api_format customapi --api_base ${custom_api} --language ja
 
 # Any OpenAI-compatible vendor (e.g. DeepSeek)
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.deepseek.com/v1 --key sk-xxx --model_list deepseek-chat --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat --language ja
 
 # Translate contents in <div> and <p>
 python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags div,p
@@ -543,10 +563,10 @@ export BBM_CAIYUN_API_KEY=${your_api_key}
 More understandable example
 
 ```shell
-python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model_list gpt-5-mini --api_base 'https://xxxxx/v1'
+python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
 
 # Or python3 is not in your PATH
-python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model_list gpt-5-mini --api_base 'https://xxxxx/v1'
+python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
 ```
 
 Azure OpenAI has no dedicated flag: point `--api_base` at the deployment's
@@ -569,7 +589,7 @@ $book_name=your_book_name # $book_name="animal_farm.epub"
 $openai_key=your_api_key # $openai_key="sk-xxx"
 $language=your_language # see utils.py
 
-docker run --rm --name bilingual_book_maker --mount type=bind,source=$folder_path,target='/app/test_books' bilingual_book_maker --book_name "/app/test_books/$book_name" --key $openai_key --model_list gpt-5-mini --language $language
+docker run --rm --name bilingual_book_maker --mount type=bind,source=$folder_path,target='/app/test_books' bilingual_book_maker --book_name "/app/test_books/$book_name" --key $openai_key --model gpt-5-mini --language $language
 
 # Linux
 export folder_path=${your_folder_path}
@@ -577,14 +597,14 @@ export book_name=${your_book_name}
 export openai_key=${your_api_key}
 export language=${your_language}
 
-docker run --rm --name bilingual_book_maker --mount type=bind,source=${folder_path},target='/app/test_books' bilingual_book_maker --book_name "/app/test_books/${book_name}" --key ${openai_key} --model_list gpt-5-mini --language "${language}"
+docker run --rm --name bilingual_book_maker --mount type=bind,source=${folder_path},target='/app/test_books' bilingual_book_maker --book_name "/app/test_books/${book_name}" --key ${openai_key} --model gpt-5-mini --language "${language}"
 ```
 
 For example:
 
 ```shell
 # Linux
-docker run --rm --name bilingual_book_maker --mount type=bind,source=/home/user/my_books,target='/app/test_books' bilingual_book_maker --book_name /app/test_books/animal_farm.epub --key sk-XXX --model_list gpt-5-mini --test --test_num 1 --language zh-hant
+docker run --rm --name bilingual_book_maker --mount type=bind,source=/home/user/my_books,target='/app/test_books' bilingual_book_maker --book_name /app/test_books/animal_farm.epub --key sk-XXX --model gpt-5-mini --test --test_num 1 --language zh-hant
 ```
 
 ## Notes

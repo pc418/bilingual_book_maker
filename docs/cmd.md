@@ -64,11 +64,16 @@ A route is an endpoint, not a model name.
 
 | Option | Purpose |
 |---|---|
-| `--api_base URL` | The endpoint to translate against. Defaults to the format's official host. |
+| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Old alias values are translated with a note. |
+| `--api_base URL` | The endpoint to translate against. Defaults to the format's official host. A pasted `…/v1/chat/completions` or trailing slash is trimmed. |
 | `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's conventional variable. |
-| `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from `--api_base` when omitted. |
-| `--model_list IDS` | Comma-separated model IDs exactly as the endpoint names them. Required for `openai` and `anthropic`; the first is primary, the rest rotate. |
+| `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id. |
+| `--model_list IDS` | Several model IDs to rotate across, comma-separated. Kept for compatibility and for rotation; a single model belongs in `--model`. Naming a model in both flags is an error. |
 | `--source_lang LANG` | Source language for endpoints that want it stated; default `auto`. |
+
+If the anthropic format is inferred from a model id but the endpoint does not
+serve `/v1/messages`, the first request falls back to the `openai` format for
+the rest of the run and says so. `--api_format` skips that attempt.
 
 Key lookup order: `--key`, then `BBM_API_KEY`, then `OPENAI_API_KEY` /
 `ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` / `BBM_DEEPL_API_KEY` depending on

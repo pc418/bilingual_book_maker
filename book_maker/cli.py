@@ -33,20 +33,49 @@ FORMATS_REQUIRING_KEY = ("openai", "anthropic", "caiyun", "deepl")
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal")
 
 
-def infer_api_format(api_base):
-    """Which wire format the endpoint speaks, guessed from its host.
+def infer_api_format(api_base, model=""):
+    """Which wire format the endpoint speaks, guessed from host then model.
 
-    Only the anthropic shape is distinguishable by address; everything else
-    that matters — vendors, gateways, ollama, vllm — speaks the OpenAI shape,
-    so that is the default. `--api_format` overrides this whenever the guess
-    is wrong.
+    The address is the stronger signal: whoever names an endpoint has said
+    where the request goes. Only when no endpoint is named does the model id
+    decide, and there the giveaway is `claude` or `anthropic` — including a
+    namespaced `anthropic/claude-sonnet-4-6`, which is still an Anthropic
+    model however it is addressed.
+
+    Guessing wrong is cheap: a gateway that serves those ids over the OpenAI
+    shape answers the first anthropic request with a 404, and the route falls
+    back once (see `Claude._build_openai_fallback`). `--api_format` overrides
+    all of this outright.
     """
-    if not api_base:
-        return "openai"
-    host = (urlparse(api_base).hostname or "").lower()
-    if host.endswith("anthropic.com"):
+    if api_base:
+        host = (urlparse(api_base).hostname or "").lower()
+        return "anthropic" if host.endswith("anthropic.com") else "openai"
+    name = (model or "").lower()
+    if "claude" in name or "anthropic" in name:
         return "anthropic"
     return "openai"
+
+
+# Endpoint paths people paste in along with the base. The SDKs build these
+# themselves, so a base carrying one produces /v1/chat/completions/chat/completions.
+_ENDPOINT_SUFFIXES = ("/chat/completions", "/messages", "/completions")
+
+
+def normalize_api_base(api_base):
+    """Trim a pasted request path off `--api_base`.
+
+    Copying the URL out of a provider's docs or a curl line is the common
+    way to get this flag, and those URLs end at the endpoint rather than the
+    base. Trailing slashes go too, so `.../v1/` and `.../v1` are one thing.
+    """
+    if not api_base:
+        return api_base
+    base = api_base.strip().rstrip("/")
+    for suffix in _ENDPOINT_SUFFIXES:
+        if base.lower().endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    return base
 
 
 def is_local_endpoint(api_base):
@@ -60,9 +89,12 @@ def resolve_api_key(api_format, explicit_key, api_base, extra_env_keys=()):
 
     `extra_env_keys` carries the variables an old command line implies — a
     translated `--model groq` still authenticates from BBM_GROQ_API_KEY.
+    They come first: they name the endpoint being called, so with both
+    OPENAI_API_KEY and BBM_GROQ_API_KEY exported, a groq command must not
+    hand the OpenAI key to Groq.
     """
-    env_names = FORMAT_ENV_KEYS.get(api_format, ("BBM_API_KEY",)) + tuple(
-        extra_env_keys
+    env_names = tuple(extra_env_keys) + FORMAT_ENV_KEYS.get(
+        api_format, ("BBM_API_KEY",)
     )
     key = explicit_key or next((env[n] for n in env_names if env.get(n)), "")
     if key:
@@ -231,6 +263,17 @@ def main():
         type=int,
         default=10,
         help="how many paragraphs will be translated for testing",
+    )
+    parser.add_argument(
+        "-m",
+        "--model",
+        dest="model",
+        type=str,
+        default=None,
+        metavar="MODEL",
+        help="model id, exactly as the endpoint names it (e.g. gpt-5-mini, "
+        "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Old alias "
+        "values are translated to their model with a note",
     )
     parser.add_argument(
         "--api_format",
@@ -464,9 +507,9 @@ So you are close to reaching the limit. You have to choose your own value, there
         "--model_list",
         type=str,
         dest="model_list",
-        help="Comma-separated model IDs to use, exactly as the endpoint names "
-        "them. The first is used, the rest are rotated. Required for the "
-        "openai and anthropic formats",
+        help="several model IDs to rotate across, comma-separated, to spread "
+        "rate limits. Kept for compatibility with older commands; a single "
+        "model belongs in --model",
     )
     parser.add_argument(
         "--batch",
@@ -578,7 +621,23 @@ So you are close to reaching the limit. You have to choose your own value, there
         os.environ["http_proxy"] = PROXY
         os.environ["https_proxy"] = PROXY
 
-    api_format = options.api_format or infer_api_format(options.api_base)
+    # A model may be named once, in either flag. Accepting both would leave
+    # two answers to "which model is this run using".
+    if options.model and options.model_list:
+        raise SystemExit(
+            "Name the model once: --model for a single model, --model_list "
+            "only to rotate across several."
+        )
+    model_names = [
+        name.strip()
+        for name in (options.model_list.split(",") if options.model_list else [options.model or ""])
+        if name.strip()
+    ]
+
+    options.api_base = normalize_api_base(options.api_base)
+    api_format = options.api_format or infer_api_format(
+        options.api_base, model_names[0] if model_names else ""
+    )
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
     API_KEY = resolve_api_key(
@@ -722,22 +781,22 @@ So you are close to reaching the limit. You have to choose your own value, there
     if api_format in LLM_FORMATS:
         # No preset lists any more: the endpoint names its own models, and a
         # run that does not say which one to use has nothing to fall back on.
-        if not options.model_list:
+        if not model_names:
             raise SystemExit(
-                f"--model_list is required for the {api_format} format. Pass "
-                f"the model id the endpoint uses, e.g. --model_list gpt-5-mini"
+                f"--model is required for the {api_format} format. Pass the "
+                f"model id the endpoint uses, e.g. --model gpt-5-mini"
             )
         try:
-            e.translate_model.set_model_list(options.model_list.split(","))
+            e.translate_model.set_model_list(model_names)
         except Exception as ex:
             print(f"[red]Error: {ex}[/red]")
             exit(1)
-    elif options.model_list:
+    elif model_names:
         # These formats translate through a fixed engine and take no model, so
         # honoring the flag is impossible; saying so beats ignoring it.
         print(
-            f"[bold red]Error: --model_list is not supported by the "
-            f"{api_format} format, which has no model to choose.[/bold red]"
+            f"[bold red]Error: the {api_format} format has no model to "
+            f"choose, so --model is not supported by it.[/bold red]"
         )
         exit(1)
     if options.block_size > 0:

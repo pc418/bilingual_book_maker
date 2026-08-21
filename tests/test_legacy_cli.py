@@ -57,12 +57,24 @@ class TestOpenAIPresets:
     def test_each_preset_becomes_its_first_model(self, alias, model):
         # the preset's own head model, not a newer one: translating must not
         # quietly move a run onto a model the user never asked for
-        assert rewrite("--model", alias) == ["--model_list", model]
+        assert rewrite("--model", alias) == ["--model", model]
 
     def test_the_openai_alias_keeps_the_users_model_list(self):
         assert rewrite("--model", "openai", "--model_list", "yi-34b") == [
             "--model_list",
             "yi-34b",
+        ]
+
+    def test_a_real_model_id_passes_through_untouched(self):
+        # --model now names an actual model; only the old aliases translate
+        assert rewrite("--model", "gpt-5.6-luna") == ["--model", "gpt-5.6-luna"]
+        assert notices("--model", "gpt-5.6-luna") == ""
+
+    def test_a_vendor_prefixed_id_passes_through(self):
+        # gateways address models as "vendor/model"
+        assert rewrite("--model", "openai/gpt-5.6-luna") == [
+            "--model",
+            "openai/gpt-5.6-luna",
         ]
 
     def test_an_explicit_model_list_wins_over_the_preset_default(self):
@@ -72,28 +84,23 @@ class TestOpenAIPresets:
         ]
 
     def test_the_equals_form_is_understood(self):
-        assert rewrite("--model=gpt4o") == ["--model_list", "gpt-4o"]
+        assert rewrite("--model=gpt4o") == ["--model", "gpt-4o"]
 
     def test_the_short_form_is_understood(self):
-        assert rewrite("-m", "gpt4o") == ["--model_list", "gpt-4o"]
+        assert rewrite("-m", "gpt4o") == ["--model", "gpt-4o"]
 
 
 class TestVendorRoutes:
-    def test_claude_becomes_the_anthropic_format(self):
+    def test_the_bare_claude_alias_becomes_its_old_default_model(self):
         assert rewrite("--model", "claude") == [
-            "--api_format",
-            "anthropic",
-            "--model_list",
+            "--model",
             "claude-haiku-4-5-20251001",
         ]
 
-    def test_an_exact_claude_id_is_carried_over(self):
-        assert rewrite("--model", "claude-opus-4-6") == [
-            "--api_format",
-            "anthropic",
-            "--model_list",
-            "claude-opus-4-6",
-        ]
+    def test_an_exact_claude_id_passes_through(self):
+        # the anthropic format is inferred from the id at route time, so the
+        # legacy layer has nothing to add here
+        assert rewrite("--model", "claude-opus-4-6") == ["--model", "claude-opus-4-6"]
 
     @pytest.mark.parametrize(
         "alias,base,model",
@@ -122,12 +129,7 @@ class TestVendorRoutes:
         ],
     )
     def test_vendors_become_their_openai_compatible_endpoint(self, alias, base, model):
-        assert rewrite("--model", alias) == [
-            "--api_base",
-            base,
-            "--model_list",
-            model,
-        ]
+        assert rewrite("--model", alias) == ["--api_base", base, "--model", model]
 
     def test_groq_keeps_the_required_model_list(self):
         assert rewrite("--model", "groq", "--model_list", "llama3-8b-8192") == [
@@ -141,7 +143,7 @@ class TestVendorRoutes:
         # a gateway serving gemini ids is the whole reason someone passes both
         assert flags("--model", "gemini", "--api_base", "https://gw/v1") == {
             "--api_base": "https://gw/v1",
-            "--model_list": "gemini-flash-latest",
+            "--model": "gemini-flash-latest",
         }
 
     @pytest.mark.parametrize(
@@ -174,7 +176,7 @@ class TestKeys:
         ],
     )
     def test_every_key_flag_becomes_key(self, flag):
-        assert rewrite(flag, "secret") == ["--key", "secret"]
+        assert flags(flag, "secret")["--key"] == "secret"
 
     def test_the_legacy_key_variable_is_still_consulted(self):
         # --model gemini now routes through the openai format, whose variables
@@ -188,12 +190,11 @@ class TestKeys:
 
 class TestEndpointFlags:
     def test_ollama_becomes_a_local_endpoint(self):
-        assert rewrite("--ollama_model", "llama3") == [
-            "--api_base",
-            "http://localhost:11434/v1",
-            "--model_list",
-            "llama3",
-        ]
+        assert flags("--ollama_model", "llama3") == {
+            "--api_base": "http://localhost:11434/v1",
+            "--model": "llama3",
+            "--key": "ollama",  # ollama authenticates nobody
+        }
 
     def test_custom_api_carries_its_url_to_api_base(self):
         assert rewrite("--custom_api", "https://host/t") == [
@@ -206,7 +207,10 @@ class TestEndpointFlags:
     def test_azure_deployment_becomes_the_model(self):
         assert flags(
             "--api_base", "https://x.openai.azure.com", "--deployment_id", "dep"
-        ) == {"--api_base": "https://x.openai.azure.com", "--model_list": "dep"}
+        ) == {
+            "--api_base": "https://x.openai.azure.com/openai/v1",
+            "--model": "dep",
+        }
 
     def test_interval_is_dropped_with_a_word_about_it(self):
         assert rewrite("--interval", "0.5", "--model_list", "m") == [
@@ -242,7 +246,7 @@ class TestProvider:
         assert result.argv == [
             "--api_base",
             "https://api.deepseek.com/v1",
-            "--model_list",
+            "--model",
             "deepseek-chat",
         ]
         assert "BBM_DEEPSEEK_API_KEY" in result.env_keys
@@ -267,7 +271,7 @@ class TestProvider:
             "anthropic",
             "--api_base",
             "https://gw.example.com",
-            "--model_list",
+            "--model",
             "claude-haiku-4.5",
         ]
 
@@ -278,10 +282,91 @@ class TestProvider:
             translate_legacy_argv(["--provider", "ghost"])
 
 
+class TestFaithfulness:
+    """An old command must keep doing what it did, or say why it cannot."""
+
+    def test_the_old_default_model_is_supplied(self):
+        # `bbook_maker --book_name b.epub --openai_key sk-...` named no model:
+        # the old parser defaulted to chatgptapi. Without this the rewritten
+        # command dies on "no model named".
+        assert flags("--openai_key", "sk") == {
+            "--key": "sk",
+            "--model": "gpt-3.5-turbo",
+        }
+
+    def test_no_default_is_invented_for_a_machine_translation_route(self):
+        assert rewrite("--model", "google") == ["--api_format", "google"]
+
+    def test_the_key_matching_the_route_wins(self):
+        # sending the OpenAI key to Groq would disclose a credential to a
+        # third party; the old CLI picked the route's own key flag
+        assert flags(
+            "--model", "groq", "--openai_key", "OPEN", "--groq_key", "GROQ",
+            "--model_list", "llama3",
+        )["--key"] == "GROQ"
+
+    def test_an_unrelated_key_flag_is_still_honored_alone(self):
+        assert flags("--model", "groq", "--openai_key", "OPEN",
+                     "--model_list", "m")["--key"] == "OPEN"
+
+    def test_every_provider_default_model_is_kept(self, tmp_path, monkeypatch):
+        (tmp_path / "bbm_providers.json").write_text(json.dumps({"providers": {"p": {
+            "api_style": "openai", "base_url": "https://p/v1",
+            "default_models": ["a", "b", "c"]}}}))
+        monkeypatch.chdir(tmp_path)
+
+        # the old path handed the whole list to set_model_list, which rotates
+        assert flags("--provider", "p")["--model_list"] == "a,b,c"
+
+    def test_a_malformed_project_provider_file_fails_loud(self, tmp_path, monkeypatch):
+        (tmp_path / "bbm_providers.json").write_text("{not json")
+        monkeypatch.chdir(tmp_path)
+
+        # silently falling through to the global file could run the book
+        # against a different endpoint than the one configured here
+        with pytest.raises(SystemExit, match="bbm_providers.json"):
+            translate_legacy_argv(["--provider", "p"])
+
+    def test_custom_api_falls_back_to_its_environment_variable(self, monkeypatch):
+        monkeypatch.setenv("BBM_CUSTOM_API", "https://env-host/t")
+
+        assert flags("--model", "customapi") == {
+            "--api_format": "customapi",
+            "--api_base": "https://env-host/t",
+        }
+
+    def test_ollama_stays_keyless_on_a_remote_host(self):
+        # the old CLI passed a placeholder key for every ollama route, so a
+        # LAN server needed no credential
+        assert flags(
+            "--ollama_model", "llama3", "--api_base", "http://192.168.1.9:11434/v1"
+        ) == {
+            "--key": "ollama",
+            "--api_base": "http://192.168.1.9:11434/v1",
+            "--model": "llama3",
+        }
+
+    def test_azure_reaches_its_openai_compatible_path(self):
+        # a bare resource root has no /chat/completions; Azure serves the
+        # OpenAI shape under /openai/v1
+        assert flags(
+            "--api_base", "https://res.openai.azure.com", "--deployment_id", "dep"
+        ) == {
+            "--api_base": "https://res.openai.azure.com/openai/v1",
+            "--model": "dep",
+        }
+
+    def test_an_azure_base_already_pointing_at_v1_is_left_alone(self):
+        assert flags(
+            "--api_base", "https://res.openai.azure.com/openai/v1",
+            "--deployment_id", "dep",
+        )["--api_base"] == "https://res.openai.azure.com/openai/v1"
+
+
 class TestNotices:
     def test_each_rewrite_states_its_replacement(self):
         text = notices("--model", "gpt4", "--openai_key", "sk")
-        assert "--model" in text and "--model_list" in text
+        assert "--model gpt4 is now --model gpt-4" in text
         assert "--openai_key" in text and "--key" in text
 
     def test_a_secret_is_never_echoed(self):
@@ -295,11 +380,8 @@ class TestNotices:
         assert "--api_base" in text  # says the user's own was kept
 
     def test_a_fully_superseded_translation_says_so(self):
-        text = notices(
-            "--model", "gpt4", "--model_list", "gpt-4.1"
-        )
+        text = notices("--model", "gpt4", "--model_list", "gpt-4.1")
         assert "--model_list" in text
-        assert "gpt-4" not in text.replace("gpt-4.1", "")
 
     def test_a_legacy_flag_without_a_value_explains_itself(self):
         # argparse would say "unrecognized arguments: --model", which reads
@@ -307,8 +389,7 @@ class TestNotices:
         with pytest.raises(SystemExit, match="needs a value"):
             translate_legacy_argv(["--model"])
 
-    def test_an_unknown_model_alias_fails_loud(self):
-        # silently treating it as a model id would send an alias like "gpt3"
-        # to the endpoint and fail there with a confusing message
-        with pytest.raises(SystemExit, match="gpt3"):
-            translate_legacy_argv(["--model", "gpt3"])
+    def test_an_unrecognized_value_is_a_model_id_not_an_error(self):
+        # --model names an actual model now; only the old aliases translate,
+        # and an id this fork has never heard of is the normal case
+        assert rewrite("--model", "gpt3") == ["--model", "gpt3"]

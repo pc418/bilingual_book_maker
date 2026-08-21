@@ -63,7 +63,8 @@ _MT_FORMATS = {
     "customapi": "customapi",
 }
 
-# Old per-vendor key flags. All of them are just a key now.
+# Old per-vendor key flags. All of them are just a key now, but which one to
+# take matters: a command carrying two keys must send each vendor its own.
 _KEY_FLAGS = (
     "--openai_key",
     "--claude_key",
@@ -75,6 +76,19 @@ _KEY_FLAGS = (
     "--deepl_key",
     "--api_key",
 )
+
+# `--model` alias -> the key flag that alias used to read.
+_ALIAS_KEY_FLAG = {
+    "gemini": "--gemini_key",
+    "geminipro": "--gemini_key",
+    "groq": "--groq_key",
+    "xai": "--xai_key",
+    "qwen": "--qwen_key",
+    "qwen-mt-turbo": "--qwen_key",
+    "qwen-mt-plus": "--qwen_key",
+    "caiyun": "--caiyun_key",
+    "deepl": "--deepl_key",
+}
 
 # Where each provider file's api_style lands on the new surface.
 _API_STYLE_ROUTES = {
@@ -105,10 +119,14 @@ def _fail(message):
 def _load_provider(name):
     """The provider entry `name`, from the same files the old CLI read."""
     for path in _PROVIDER_FILES:
+        if not path.exists():
+            continue
         try:
             config = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
+        except (OSError, json.JSONDecodeError) as e:
+            # Falling through to the global file would silently run the book
+            # against a different endpoint than this directory configures.
+            _fail(f"{path} could not be read: {e}")
         provider = config.get("providers", {}).get(name)
         if provider:
             return provider
@@ -117,6 +135,31 @@ def _load_provider(name):
         f"bbm_providers.json or ~/.bbm/providers.json. Pass the endpoint "
         f"directly instead: --api_base <url> --key <key> --model_list <model>."
     )
+
+
+def _value_of(argv, flag):
+    """Value of `flag` in argv, in either the spaced or `=` form."""
+    for i, arg in enumerate(argv):
+        if arg == flag and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith(f"{flag}="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _drop_flag(argv, flag):
+    out = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == flag:
+            i += 2
+            continue
+        if argv[i].startswith(f"{flag}="):
+            i += 1
+            continue
+        out.append(argv[i])
+        i += 1
+    return out
 
 
 def _split(argv):
@@ -176,14 +219,24 @@ def translate_legacy_argv(argv):
     api_format = None
     api_base = None
     model = None
+    # A --model value that is not an alias: returned untouched, never
+    # weighed against the user's other flags here.
+    passthrough_model = None
     # What the user wrote that caused a route rewrite, named in the notice.
     route_source = None
 
-    for flag in _KEY_FLAGS:
-        if flag in legacy:
-            rest = ["--key", legacy[flag]] + rest
-            notices.append(f"{flag} is now --key")
-            break
+    # Which key flag to honor depends on the route, so pick it after the
+    # alias is known. Preferring position would hand vendor A's key to B.
+    alias = legacy.get("--model", "")
+    preferred = _ALIAS_KEY_FLAG.get(alias)
+    if alias.startswith("claude"):
+        preferred = "--claude_key"
+    key_flag = next(
+        (f for f in (preferred,) + _KEY_FLAGS if f and f in legacy), None
+    )
+    if key_flag:
+        rest = ["--key", legacy[key_flag]] + rest
+        notices.append(f"{key_flag} is now --key")
 
     if "--interval" in legacy:
         notices.append(
@@ -200,7 +253,8 @@ def translate_legacy_argv(argv):
         api_format, style_base = _API_STYLE_ROUTES[style]
         api_base = provider.get("base_url") or style_base
         defaults = provider.get("default_models") or []
-        model = defaults[0] if defaults else None
+        # The old path handed the whole list to set_model_list, which rotates.
+        model = ",".join(defaults) if defaults else None
         if provider.get("env_key"):
             env_keys.append(provider["env_key"])
         route_source = f"--provider {name}"
@@ -213,10 +267,10 @@ def translate_legacy_argv(argv):
         elif alias == "openai":
             notices.append("--model openai is now the default; just --model_list")
             route_source = None
-        elif alias.startswith("claude"):
-            api_format = "anthropic"
-            model = "claude-haiku-4-5-20251001" if alias == "claude" else alias
-            route_source = f"--model {alias}"
+        elif alias == "claude":
+            # the bare alias was a stand-in for a default model
+            model = "claude-haiku-4-5-20251001"
+            route_source = "--model claude"
         elif alias in _VENDOR_ROUTES:
             api_base, model, env_key = _VENDOR_ROUTES[alias]
             env_keys.append(env_key)
@@ -224,17 +278,24 @@ def translate_legacy_argv(argv):
         elif alias in _MT_FORMATS:
             api_format = _MT_FORMATS[alias]
             route_source = f"--model {alias}"
+            if alias == "customapi":
+                # the endpoint used to arrive as --custom_api or its variable
+                api_base = api_base or os.environ.get("BBM_CUSTOM_API", "")
         else:
-            _fail(
-                f"--model {alias} has no equivalent in this fork, and guessing "
-                f"one could bill a book to a model you did not choose. Name the "
-                f"endpoint instead: --api_base <url> --model_list <model id>."
-            )
+            # Not an old alias: --model names an actual model id, which is
+            # the normal case now. Hand it straight back so the parser sees
+            # the flag the user typed — including any conflict with
+            # --model_list, which is not this module's to resolve.
+            passthrough_model = alias
 
     if "--ollama_model" in legacy:
         api_base = api_base or "http://localhost:11434/v1"
         model = legacy["--ollama_model"]
         route_source = "--ollama_model"
+        if not key_flag:
+            # ollama authenticates nobody, on localhost or a LAN box alike;
+            # the old CLI passed this placeholder for every ollama route.
+            rest = ["--key", "ollama"] + rest
 
     if "--custom_api" in legacy:
         api_format = "customapi"
@@ -244,6 +305,36 @@ def translate_legacy_argv(argv):
     if "--deployment_id" in legacy:
         model = legacy["--deployment_id"]
         route_source = "--deployment_id"
+        # A bare Azure resource root serves nothing at /chat/completions;
+        # the OpenAI shape lives under /openai/v1. Rewrite the base the user
+        # gave rather than leaving a command that 404s.
+        given = _value_of(rest, "--api_base")
+        if given and "azure.com" in given and "/openai/v1" not in given:
+            api_base = given.rstrip("/") + "/openai/v1"
+            rest = _drop_flag(rest, "--api_base")
+            has_base = False
+            notices.append(
+                "Azure now goes through its OpenAI-compatible endpoint; "
+                f"--api_base became {api_base}"
+            )
+
+    # The old parser defaulted to --model chatgptapi, so a command with only
+    # a key named no model at all. Without this it now dies on
+    # "--model_list is required" -- a working command turned into an error.
+    if (
+        model is None
+        and passthrough_model is None
+        and not has_models
+        and api_format in (None, "openai")
+        and "--model" not in legacy
+    ):
+        model = _OPENAI_PRESETS["chatgptapi"]
+        notices.append(
+            f"no --model was given; the old default is --model_list {model}"
+        )
+
+    if passthrough_model is not None:
+        rest = ["--model", passthrough_model] + rest
 
     prefix = []
     superseded = []
@@ -254,7 +345,10 @@ def translate_legacy_argv(argv):
         prefix += ["--api_base", api_base] if not has_base else []
         superseded += ["--api_base"] if has_base else []
     if model:
-        prefix += ["--model_list", model] if not has_models else []
+        # --model_list exists for rotation across several models; a single
+        # model belongs in --model, which is what the user typed.
+        flag = "--model_list" if "," in model else "--model"
+        prefix += [flag, model] if not has_models else []
         superseded += ["--model_list"] if has_models else []
 
     # Describe what was actually applied. Announcing a default that the
