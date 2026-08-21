@@ -27,10 +27,13 @@ from openai import (
 from book_maker.translator.capabilities import (
     STRUCTURED_FAILURE_THRESHOLD,
     CapabilityLedger,
+    ModelUnavailable,
     ProbeDeferred,
     classify_bad_request,
     grade_probe_response,
     probe_structured_output,
+    verify_model_reachable,
+    verify_models,
 )
 
 REQUEST = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
@@ -260,6 +263,81 @@ class TestTemperature:
         assert ledger.sampling_kwargs("m", 0.3) == {}
         # ...but only for the model that refused.
         assert ledger.sampling_kwargs("other", 0.3) == {"temperature": 0.3}
+
+
+class TestModelVerification:
+    """Which models the endpoint will actually serve."""
+
+    def _listing_client(self, ids, create=None):
+        listing = SimpleNamespace(
+            model_dump=lambda: {"data": [{"id": i} for i in ids]}
+        )
+        return SimpleNamespace(
+            models=SimpleNamespace(list=lambda: listing),
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(create=create or Mock())
+            ),
+        )
+
+    def test_available_models_keep_the_requested_order(self):
+        """Rotation follows what the user typed, not set/hash order."""
+        client = self._listing_client(["c", "b", "a"])
+
+        result = verify_models(client, ["a", "b", "c"])
+
+        assert result["success"] is True
+        assert result["available_models"] == ["a", "b", "c"]
+
+    def test_unknown_models_are_reported_but_do_not_block(self):
+        client = self._listing_client(["a"])
+
+        result = verify_models(client, ["a", "ghost"])
+
+        assert result["success"] is True
+        assert result["available_models"] == ["a"]
+        assert result["unavailable_models"] == ["ghost"]
+
+    def test_nothing_available_fails_loud(self):
+        client = self._listing_client(["other"])
+
+        result = verify_models(client, ["a", "b"])
+
+        assert result["success"] is False
+        assert result["available_models"] == []
+        assert result["unavailable_models"] == ["a", "b"]
+
+    def test_endpoints_without_a_model_listing_are_asked_directly(self):
+        """A server with only /chat/completions must still be usable."""
+        create = Mock(return_value=_completion("ok"))
+        client = SimpleNamespace(
+            models=SimpleNamespace(
+                list=Mock(side_effect=_api_error(NotFoundError, 404))
+            ),
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+        )
+
+        result = verify_models(client, ["only-model"])
+
+        assert result["success"] is True
+        assert result["available_models"] == ["only-model"]
+        assert create.call_args.kwargs["model"] == "only-model"
+
+    def test_reachability_check_sends_a_minimal_request(self):
+        create = Mock(return_value=_completion("ok"))
+
+        verify_model_reachable(_client(create), "test-model")
+
+        request = create.call_args.kwargs
+        assert request["model"] == "test-model"
+        assert request["max_tokens"] == 10
+        # The model owns its sampling here; this asks reachability, nothing else.
+        assert "temperature" not in request
+
+    def test_an_unreachable_model_raises(self):
+        create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+
+        with pytest.raises(ModelUnavailable, match="not accessible"):
+            verify_model_reachable(_client(create), "ghost")
 
 
 class TestBadRequestClassification:

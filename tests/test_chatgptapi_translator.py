@@ -28,7 +28,6 @@ from book_maker.translator.chatgptapi_translator import (
     single_translation_model,
     single_translation_schema,
 )
-from book_maker.translator.groq_translator import GroqClient
 
 # Every translator built by `_translator` uses this language, so the structured
 # fields are named after it.
@@ -569,22 +568,6 @@ def test_batch_success_returns_paragraphs():
 
 
 # --------------------------------------------------------------------------
-# Subclasses that do not route through openai_client must not be probed
-# --------------------------------------------------------------------------
-
-
-def test_groq_never_probes_for_structured_outputs():
-    create = Mock(return_value=_completion("plain"))
-    translator = _translator(create=create, cls=GroqClient)
-
-    translator._ensure_structured_support()
-
-    assert GroqClient.SUPPORTS_STRUCTURED_OUTPUTS is False
-    assert translator.capabilities.verdicts["test-model"] is False
-    assert create.call_count == 0
-
-
-# --------------------------------------------------------------------------
 # Item 6: temperature must not be forced onto models that only accept their
 # default, and a temperature 400 must not be blamed on the JSON schema
 # --------------------------------------------------------------------------
@@ -883,18 +866,6 @@ def test_structured_batch_prompt_ends_on_the_target_language():
 # --------------------------------------------------------------------------
 # Unrelated probe, kept from before
 # --------------------------------------------------------------------------
-
-
-def test_model_validation_probe_uses_model_defaults():
-    create = Mock(return_value=_completion("ok"))
-    translator = _translator(create=create)
-
-    translator._validate_model_with_test("test-model", "Test")
-
-    request = create.call_args.kwargs
-    assert request["model"] == "test-model"
-    assert request["max_tokens"] == 10
-    assert "temperature" not in request
 
 
 # --------------------------------------------------------------------------

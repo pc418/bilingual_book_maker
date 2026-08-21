@@ -22,8 +22,23 @@ BOOK = REPO / "test_books" / "animal_farm.epub"
 HERMETIC = Path(__file__).resolve().parent / "hermetic"
 
 
+# Credentials the CLI falls back to. Left in place they would decide test
+# outcomes from whatever the developer happens to have exported.
+KEY_ENV_VARS = (
+    "BBM_API_KEY",
+    "OPENAI_API_KEY",
+    "BBM_OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "BBM_CLAUDE_API_KEY",
+    "BBM_CAIYUN_API_KEY",
+    "BBM_DEEPL_API_KEY",
+)
+
+
 def _env():
     env = dict(os.environ)
+    for name in KEY_ENV_VARS:
+        env.pop(name, None)
     env["PYTHONPATH"] = os.pathsep.join(
         [str(HERMETIC), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
@@ -43,7 +58,7 @@ def _cli(*args):
 def _run(tmp_path, *args):
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
-    proc = _cli("--book_name", str(src), "--model", "google", *args)
+    proc = _cli("--book_name", str(src), "--api_format", "google", *args)
     return proc, src.parent / (src.stem + "_plan.json")
 
 
@@ -150,7 +165,7 @@ def test_classify_flag_rejects_non_epub_books(tmp_path):
     src = tmp_path / "the_little_prince.txt"
     src.write_bytes((REPO / "test_books" / "the_little_prince.txt").read_bytes())
     proc = _cli(
-        "--book_name", str(src), "--model", "google", "--plan-classify", "agent"
+        "--book_name", str(src), "--api_format", "google", "--plan-classify", "agent"
     )
     assert proc.returncode == 1
     assert "epub-only" in proc.stdout
@@ -193,25 +208,68 @@ def test_classify_model_flag_implies_model_mode(tmp_path):
     assert "--plan-classify agent" in " ".join(proc.stdout.split())
 
 
-def test_model_list_with_a_preset_model_fails_loud(tmp_path):
-    # --model chatgptapi runs a hardcoded GPT-3.5 discovery and ignores
-    # --model_list entirely; silently dropping the user's explicit model
-    # choice cost a live run — refuse the combination instead
+def test_model_list_without_a_model_to_choose_fails_loud(tmp_path):
+    # the machine-translation formats run one fixed engine; honoring
+    # --model_list is impossible, so refuse rather than ignore it
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name", str(src), "--api_format", "google", "--model_list", "some-model"
+    )
+    assert proc.returncode == 1
+    assert "--model_list" in proc.stdout
+    assert "google" in proc.stdout
+
+
+def test_llm_format_without_model_list_fails_loud(tmp_path):
+    # nothing is preset any more: a run that never names a model has nothing
+    # to fall back on, and must say so before it spends a key
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--key", "sk-test")
+    assert proc.returncode != 0
+    assert "--model_list" in proc.stdout + proc.stderr
+
+
+def test_missing_key_names_where_it_looked(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model_list", "some-model")
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "--key" in output
+    assert "BBM_API_KEY" in output
+
+
+def test_anthropic_format_is_inferred_from_the_endpoint(tmp_path):
+    # --api_format is not required when the host already says which shape it
+    # speaks; the key error proves which route was selected
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
     proc = _cli(
         "--book_name",
         str(src),
-        "--model",
-        "chatgptapi",
-        "--openai_key",
-        "sk-test",
+        "--api_base",
+        "https://api.anthropic.com",
         "--model_list",
-        "some-model",
+        "claude-haiku-4-5-20251001",
     )
-    assert proc.returncode == 1
-    assert "--model_list" in proc.stdout
-    assert "openai" in proc.stdout
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "anthropic endpoint" in output
+    assert "ANTHROPIC_API_KEY" in output
+
+
+def test_a_local_endpoint_needs_no_key(tmp_path, monkeypatch):
+    # ollama and friends authenticate nobody; requiring a key there was pure
+    # ceremony (the old CLI had a dedicated --ollama_model flag for it)
+    from book_maker.cli import resolve_api_key
+
+    monkeypatch.delenv("BBM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("BBM_OPENAI_API_KEY", raising=False)
+
+    assert resolve_api_key("openai", "", "http://localhost:11434/v1") == "local"
 
 
 def test_quiet_flag_is_accepted(tmp_path):
@@ -242,18 +300,3 @@ def test_kobo_mode_does_not_require_book_name(tmp_path, monkeypatch):
     main()
 
     assert (tmp_path / f"{src.stem}_plan.json").exists()
-
-
-def test_groq_model_list_does_not_use_openai_validation(monkeypatch):
-    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
-    from book_maker.translator.groq_translator import GroqClient
-
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("OpenAI model validation must not run for Groq")
-
-    monkeypatch.setattr(ChatGPTAPI, "_validate_custom_models", fail_if_called)
-    client = object.__new__(GroqClient)
-    client.set_model_list(["llama-3.3-70b-versatile"])
-
-    assert client.model == "llama-3.3-70b-versatile"
-    assert next(client.model_list) == "llama-3.3-70b-versatile"

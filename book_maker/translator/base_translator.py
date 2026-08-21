@@ -80,9 +80,6 @@ class Base(ABC):
     def translate(self, text):
         pass
 
-    def set_deployment_id(self, deployment_id):
-        pass
-
     # ---------------------------------------------------------------- JSON
     # Plan classification asks a translator one structured question. It needs
     # a JSON object carrying legal values — not an endpoint that honors the

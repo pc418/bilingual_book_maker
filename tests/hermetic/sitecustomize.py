@@ -13,7 +13,7 @@ pass at all. Live translation is covered by tests/test_integration.py, which
 is explicitly about talking to real providers.
 """
 
-from book_maker.translator import MODEL_DICT
+from book_maker.translator import FORMAT_DICT
 
 
 class OfflineTranslator:
@@ -26,12 +26,6 @@ class OfflineTranslator:
         self.is_test = False
 
     def rotate_key(self):
-        pass
-
-    def set_deployment_id(self, *args, **kwargs):
-        pass
-
-    def set_interval(self, *args, **kwargs):
         pass
 
     def set_model_list(self, *args, **kwargs):
@@ -47,4 +41,4 @@ class OfflineTranslator:
         return [self.translate(line) for line in str(text).splitlines()]
 
 
-MODEL_DICT["google"] = OfflineTranslator
+FORMAT_DICT["google"] = OfflineTranslator

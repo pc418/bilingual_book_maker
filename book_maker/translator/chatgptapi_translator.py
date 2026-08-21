@@ -11,9 +11,7 @@ from threading import Lock
 from openai import (
     APIConnectionError,
     APITimeoutError,
-    AsyncAzureOpenAI,
     AsyncOpenAI,
-    AzureOpenAI,
     BadRequestError,
     InternalServerError,
     LengthFinishReasonError,
@@ -39,6 +37,7 @@ from .capabilities import (
     StructuredOutputUnsupported,
     classify_bad_request,
     probe_structured_output,
+    verify_models,
 )
 from ..structured import (
     RungRejected,
@@ -157,55 +156,6 @@ def single_translation_schema(language):
     }
 
 
-GPT35_MODEL_LIST = [
-    "gpt-3.5-turbo",
-    "gpt-3.5-turbo-1106",
-    "gpt-3.5-turbo-16k",
-    "gpt-3.5-turbo-0613",
-    "gpt-3.5-turbo-16k-0613",
-    "gpt-3.5-turbo-0301",
-    "gpt-3.5-turbo-0125",
-]
-GPT4_MODEL_LIST = [
-    "gpt-4-1106-preview",
-    "gpt-4",
-    "gpt-4-32k",
-    "gpt-4o-2024-05-13",
-    "gpt-4-0613",
-    "gpt-4-32k-0613",
-]
-
-GPT4oMINI_MODEL_LIST = [
-    "gpt-4o-mini",
-    "gpt-4o-mini-2024-07-18",
-]
-GPT4o_MODEL_LIST = [
-    "gpt-4o",
-    "gpt-4o-2024-05-13",
-    "gpt-4o-2024-08-06",
-    "chatgpt-4o-latest",
-]
-GPT5MINI_MODEL_LIST = [
-    "gpt-5-mini",
-    "gpt-5.4-mini",
-]
-O1PREVIEW_MODEL_LIST = [
-    "o1-preview",
-    "o1-preview-2024-09-12",
-]
-O1_MODEL_LIST = [
-    "o1",
-    "o1-2024-12-17",
-]
-O1MINI_MODEL_LIST = [
-    "o1-mini",
-    "o1-mini-2024-09-12",
-]
-O3MINI_MODEL_LIST = [
-    "o3-mini",
-]
-
-
 class ChatGPTAPI(Base):
     DEFAULT_PROMPT = "Please help me to translate,`{text}` to {language}, please return only translated content not include the origin text"
 
@@ -245,7 +195,6 @@ class ChatGPTAPI(Base):
             or ""
         )
         self.system_content = environ.get("OPENAI_API_SYS_MSG") or ""
-        self.deployment_id = None
         self.temperature = temperature
         self.model_list = None
         self.context_flag = context_flag
@@ -410,17 +359,10 @@ class ChatGPTAPI(Base):
         return messages
 
     def _create_async_client(self, key):
-        if self.deployment_id:
-            return AsyncAzureOpenAI(
-                api_key=key,
-                azure_endpoint=self.api_base,
-                api_version="2023-07-01-preview",
-                azure_deployment=self.deployment_id,
-            )
         return AsyncOpenAI(api_key=key, base_url=self.api_base)
 
     def _get_async_client(self, key):
-        cache_key = (self.api_base, self.deployment_id, key)
+        cache_key = (self.api_base, key)
         with self._api_lock:
             if cache_key not in self._async_clients:
                 self._async_clients[cache_key] = self._create_async_client(key)
@@ -842,267 +784,47 @@ class ChatGPTAPI(Base):
         self._note_structured_success()
         return paragraphs
 
-    def set_deployment_id(self, deployment_id):
-        self.deployment_id = deployment_id
-        self.openai_client = AzureOpenAI(
-            api_key=next(self.keys),
-            azure_endpoint=self.api_base,
-            api_version="2023-07-01-preview",
-            azure_deployment=self.deployment_id,
-        )
-
-    def _check_model_availability(self, model_list, model_family_name):
-        """Check if any models from the model_list are available from the API.
-        Returns True if at least one model is available, False otherwise.
-        """
-        if not model_list:
-            print(
-                f"[red]Error: No {model_family_name} models are available from the API.[/red]"
-            )
-            print(
-                "[yellow]Please check your API key, endpoint, and model permissions.[/yellow]"
-            )
-            return False
-        return True
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(Exception),
-        reraise=True,
-    )
-    def _fetch_api_models_with_retry(self):
-        """Fetch available models from API with retry logic.
-        Returns list of model IDs, or None if the models API is not available (e.g., 404).
-        """
-        try:
-            return [
-                i["id"] for i in self.openai_client.models.list().model_dump()["data"]
-            ]
-        except (NotFoundError, BadRequestError):
-            # 404 or 400 — models endpoint not supported by this API provider
-            print(
-                "[yellow]Model availability check skipped: API does not support models endpoint.[/yellow]"
-            )
-            return None
-        except Exception as e:
-            print(
-                f"[yellow]Error checking model availability: {e}. Retrying...[/yellow]"
-            )
-            raise
-
     def _validate_custom_models(self, custom_model_list):
-        """Validate that custom models exist in the API's model list.
-        Returns a dict with 'success', 'available_models', and 'unavailable_models' keys.
-        """
-        api_models = self._fetch_api_models_with_retry()
-
-        # If models API is not available, validate by testing each model directly
-        if api_models is None:
-            available_models = []
-            unavailable_models = []
-
-            for model_name in custom_model_list:
-                try:
-                    self._validate_model_with_test(model_name, "custom")
-                    available_models.append(model_name)
-                except Exception as e:
-                    print(f"[red]{e}[/red]")
-                    unavailable_models.append(model_name)
-
-            if not available_models:
-                return {
-                    "success": False,
-                    "available_models": [],
-                    "unavailable_models": custom_model_list,
-                    "api_models": [],
-                }
-
-            if unavailable_models:
-                print(
-                    f"[yellow]Warning: {unavailable_models} not accessible, using {available_models}[/yellow]"
-                )
-
-            return {
-                "success": True,
-                "available_models": available_models,
-                "unavailable_models": unavailable_models,
-                "api_models": [],
-            }
-
-        available_models = list(set(custom_model_list) & set(api_models))
-        unavailable_models = list(set(custom_model_list) - set(api_models))
-
-        if not available_models:
-            print(
-                f"[red]Error: None of the custom models {custom_model_list} are available in the API.[/red]"
-            )
-            print(f"[yellow]Available models: {api_models}[/yellow]")
-            print(
-                "[yellow]Please check your model name, API key, endpoint, and model permissions.[/yellow]"
-            )
-            return {
-                "success": False,
-                "available_models": [],
-                "unavailable_models": custom_model_list,
-                "api_models": api_models,
-            }
-
-        # If some models are not available, warn but continue with available ones
-        if unavailable_models:
-            print(
-                f"[yellow]Warning: Models {unavailable_models} not found in API, using available models: {available_models}[/yellow]"
-            )
-
-        return {
-            "success": True,
-            "available_models": available_models,
-            "unavailable_models": unavailable_models,
-            "api_models": api_models,
-        }
-
-    def _set_models(
-        self, model_family_name: str, default_azure_model: str, allowed_models: set
-    ):
-        """Generic method to set available models based on model family.
-
-        Args:
-            model_family_name: Human-readable name for error messages (e.g., "GPT-3.5")
-            default_azure_model: Default model name to use for Azure deployments
-            allowed_models: Set of allowed model IDs to intersect with API models
-        """
-        # For Azure deployments, use the default model directly
-        if self.deployment_id:
-            self.model_list = cycle([default_azure_model])
-            self.model = default_azure_model
-            return
-
-        # For regular OpenAI client, fetch and filter available models
-        my_model_list = self._fetch_api_models_with_retry()
-
-        # If models API is not available, validate by testing each model directly
-        if my_model_list is None:
-            available_models = []
-            unavailable_models = []
-
-            for model_name in allowed_models:
-                try:
-                    self._validate_model_with_test(model_name, model_family_name)
-                    available_models.append(model_name)
-                except Exception as e:
-                    print(f"[red]{e}[/red]")
-                    unavailable_models.append(model_name)
-
-            if not available_models:
-                raise Exception(
-                    f"No {model_family_name} models are accessible. "
-                    f"Please check the model names and your API permissions."
-                )
-
-            if unavailable_models:
-                print(
-                    f"[yellow]Warning: {unavailable_models} not accessible, using {available_models}[/yellow]"
-                )
-
-            print(
-                f"[yellow]Using {model_family_name} models without API validation: {available_models}[/yellow]"
-            )
-            model_list = available_models
-        else:
-            model_list = list(set(my_model_list) & allowed_models)
-            if not self._check_model_availability(model_list, model_family_name):
-                raise Exception(
-                    f"No {model_family_name} models available. Available models: {my_model_list}"
-                )
-        print(f"Using model list {model_list}")
-        self.model_list = cycle(model_list)
-        self.model = model_list[0]
-
-    def _validate_model_with_test(self, model_name: str, model_family_name: str):
-        """Validate a model by making a test request when models API is unavailable.
-        Raises Exception if the model is not accessible.
-
-        NOTE: This makes a real API call (~10 tokens) to verify the model works.
-        This adds a small delay on startup but provides early error detection.
-        """
-        print(
-            f"[yellow]Model validation: Making a test API call to verify '{model_name}' is accessible. "
-            f"This uses ~10 tokens.[/yellow]"
-        )
-        try:
-            # Make a minimal test request
-            test_messages = [{"role": "user", "content": "Say 'ok'"}]
-            self.openai_client.chat.completions.create(
-                model=model_name,
-                messages=test_messages,
-                max_tokens=10,
-            )
-            print(f"[green]Model '{model_name}' is accessible and working.[/green]")
-        except Exception as e:
-            raise Exception(
-                f"Model '{model_name}' from family '{model_family_name}' is not accessible. "
-                f"Error: {e}. "
-                f"Please check the model name and your API permissions."
-            )
-
-    def set_gpt35_models(self, ollama_model=""):
-        if ollama_model:
-            self.model_list = cycle([ollama_model])
-            self.model = ollama_model
-            return
-        self._set_models("GPT-3.5", "gpt-35-turbo", set(GPT35_MODEL_LIST))
-
-    def set_gpt4_models(self):
-        self._set_models("GPT-4", "gpt-4", set(GPT4_MODEL_LIST))
-
-    def set_gpt4omini_models(self):
-        self._set_models("GPT-4o-mini", "gpt-4o-mini", set(GPT4oMINI_MODEL_LIST))
-
-    def set_gpt4o_models(self):
-        self._set_models("GPT-4o", "gpt-4o", set(GPT4o_MODEL_LIST))
-
-    def set_gpt5mini_models(self):
-        self._set_models("GPT-5-mini", "gpt-5-mini", set(GPT5MINI_MODEL_LIST))
-
-    def set_o1preview_models(self):
-        self._set_models("O1-preview", "o1-preview", set(O1PREVIEW_MODEL_LIST))
-
-    def set_o1_models(self):
-        self._set_models("O1", "o1", set(O1_MODEL_LIST))
-
-    def set_o1mini_models(self):
-        self._set_models("O1-mini", "o1-mini", set(O1MINI_MODEL_LIST))
-
-    def set_o3mini_models(self):
-        self._set_models("O3-mini", "o3-mini", set(O3MINI_MODEL_LIST))
+        """Which of these models this endpoint will serve (see capabilities)."""
+        return verify_models(self.openai_client, custom_model_list)
 
     def set_model_list(self, model_list):
-        model_list = list(set(model_list))
+        """The only way models get set: whatever the user named, in that order.
+
+        No name is special. Rotation follows the order given — the old
+        `set()` pass made it depend on hash order, so the same command could
+        start on a different model between runs.
+        """
+        seen = {}
+        for name in model_list:
+            name = (name or "").strip()
+            if name:
+                seen.setdefault(name, None)
+        model_list = list(seen)
         if not model_list:
-            raise Exception(
+            raise ValueError(
                 "Empty model list provided. Use --model_list with at least one model name."
             )
 
-        # Validate custom models against API
-        if not self.deployment_id:  # Skip for Azure deployments
-            validation_result = self._validate_custom_models(model_list)
-            if not validation_result["success"]:
-                raise Exception(
-                    f"Custom model validation failed. "
-                    f"Requested: {model_list}. "
-                    f"Unavailable: {validation_result['unavailable_models']}. "
-                    f"Available models in API: {validation_result['api_models']}. "
-                    f"Check your model name, API key, and permissions."
-                )
-            # If some models were partially available, use only the available ones
-            if validation_result["unavailable_models"]:
-                model_list = validation_result["available_models"]
+        validation_result = self._validate_custom_models(model_list)
+        if not validation_result["success"]:
+            raise ValueError(
+                f"Custom model validation failed. "
+                f"Requested: {model_list}. "
+                f"Unavailable: {validation_result['unavailable_models']}. "
+                f"Available models in API: {validation_result['api_models']}. "
+                f"Check your model name, API key, and permissions."
+            )
+        # If some models were partially available, use only the available ones
+        if validation_result["unavailable_models"]:
+            model_list = [
+                m for m in model_list if m in set(validation_result["available_models"])
+            ]
 
         print(f"Using model list {model_list}")
         self.model_list = cycle(model_list)
-        self.model = model_list[
-            0
-        ]  # Set initial model so it's available before rotate_model() is called
+        # Set the initial model so it is available before rotate_model() runs.
+        self.model = model_list[0]
 
     def batch_init(self, book_name):
         self.book_name = self.sanitize_book_name(book_name)

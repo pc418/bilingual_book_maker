@@ -30,6 +30,11 @@ from openai import (
     UnprocessableEntityError,
 )
 from rich import print
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+
+class ModelUnavailable(Exception):
+    """This endpoint will not serve the named model."""
 
 
 class StructuredOutputUnsupported(Exception):
@@ -191,6 +196,111 @@ def classify_bad_request(error):
     if "response_format" in text or "json_schema" in text:
         return "schema"
     return "other"
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(Exception),
+    reraise=True,
+)
+def fetch_endpoint_models(client):
+    """Model ids the endpoint admits to, or None when it has no such endpoint.
+
+    None is not an error: plenty of OpenAI-compatible servers implement
+    `/chat/completions` and nothing else, so the caller falls back to asking
+    each named model directly.
+    """
+    try:
+        return [i["id"] for i in client.models.list().model_dump()["data"]]
+    except (NotFoundError, BadRequestError):
+        print(
+            "[yellow]Model availability check skipped: API does not support "
+            "models endpoint.[/yellow]"
+        )
+        return None
+    except Exception as e:
+        print(f"[yellow]Error checking model availability: {e}. Retrying...[/yellow]")
+        raise
+
+
+def verify_model_reachable(client, model_name):
+    """Confirm one model answers, for endpoints with no model listing.
+
+    Costs a real request (~10 tokens). Worth it: the alternative is finding
+    out three hours into a book that half the rotation was a typo.
+    """
+    print(
+        f"[yellow]Model validation: Making a test API call to verify "
+        f"'{model_name}' is accessible. This uses ~10 tokens.[/yellow]"
+    )
+    try:
+        client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": "Say 'ok'"}],
+            max_tokens=10,
+        )
+    except Exception as e:
+        raise ModelUnavailable(
+            f"Model '{model_name}' is not accessible. Error: {e}. "
+            f"Please check the model name and your API permissions."
+        )
+    print(f"[green]Model '{model_name}' is accessible and working.[/green]")
+
+
+def verify_models(client, model_list):
+    """Which of `model_list` this endpoint will actually serve.
+
+    Returns success plus the split, in the order the caller asked for, so
+    rotation order stays the order the user typed.
+    """
+    api_models = fetch_endpoint_models(client)
+
+    if api_models is None:
+        available, unavailable = [], []
+        for model_name in model_list:
+            try:
+                verify_model_reachable(client, model_name)
+                available.append(model_name)
+            except ModelUnavailable as e:
+                print(f"[red]{e}[/red]")
+                unavailable.append(model_name)
+        api_models = []
+    else:
+        served = set(api_models)
+        available = [m for m in model_list if m in served]
+        unavailable = [m for m in model_list if m not in served]
+
+    if not available:
+        print(
+            f"[red]Error: None of the models {list(model_list)} are available "
+            f"in the API.[/red]"
+        )
+        if api_models:
+            print(f"[yellow]Available models: {api_models}[/yellow]")
+        print(
+            "[yellow]Please check your model name, API key, endpoint, and "
+            "model permissions.[/yellow]"
+        )
+        return {
+            "success": False,
+            "available_models": [],
+            "unavailable_models": list(model_list),
+            "api_models": api_models,
+        }
+
+    if unavailable:
+        print(
+            f"[yellow]Warning: {unavailable} not accessible, using "
+            f"{available}[/yellow]"
+        )
+
+    return {
+        "success": True,
+        "available_models": available,
+        "unavailable_models": unavailable,
+        "api_models": api_models,
+    }
 
 
 class CapabilityLedger:
