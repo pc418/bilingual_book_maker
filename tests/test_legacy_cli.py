@@ -287,6 +287,26 @@ class TestNotices:
     def test_a_secret_is_never_echoed(self):
         assert "sk-secret" not in notices("--openai_key", "sk-secret")
 
+    def test_a_notice_never_claims_a_flag_that_was_overridden(self):
+        # reporting the default base while the run used the user's gateway
+        # describes a run that did not happen
+        text = notices("--model", "gemini", "--api_base", "https://gw/v1")
+        assert "generativelanguage" not in text
+        assert "--api_base" in text  # says the user's own was kept
+
+    def test_a_fully_superseded_translation_says_so(self):
+        text = notices(
+            "--model", "gpt4", "--model_list", "gpt-4.1"
+        )
+        assert "--model_list" in text
+        assert "gpt-4" not in text.replace("gpt-4.1", "")
+
+    def test_a_legacy_flag_without_a_value_explains_itself(self):
+        # argparse would say "unrecognized arguments: --model", which reads
+        # as "no such flag" when the real problem is a missing value
+        with pytest.raises(SystemExit, match="needs a value"):
+            translate_legacy_argv(["--model"])
+
     def test_an_unknown_model_alias_fails_loud(self):
         # silently treating it as a model id would send an alias like "gpt3"
         # to the endpoint and fail there with a confusing message

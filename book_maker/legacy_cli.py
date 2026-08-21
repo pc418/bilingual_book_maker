@@ -152,9 +152,10 @@ def _split(argv):
             value = argv[i + 1]
             i += 1
         else:
-            rest.append(arg)  # let argparse report the missing value
-            i += 1
-            continue
+            _fail(
+                f"{name} needs a value. It is also a flag this fork replaced; "
+                f"see \"Migrating from the old flags\" in the README."
+            )
         taken[aliases.get(name, name)] = value
         i += 1
     return rest, taken
@@ -175,6 +176,8 @@ def translate_legacy_argv(argv):
     api_format = None
     api_base = None
     model = None
+    # What the user wrote that caused a route rewrite, named in the notice.
+    route_source = None
 
     for flag in _KEY_FLAGS:
         if flag in legacy:
@@ -200,35 +203,27 @@ def translate_legacy_argv(argv):
         model = defaults[0] if defaults else None
         if provider.get("env_key"):
             env_keys.append(provider["env_key"])
-        notices.append(
-            f"--provider {name} is now its endpoint directly: "
-            f"--api_base {api_base}" + (f" --model_list {model}" if model else "")
-        )
+        route_source = f"--provider {name}"
 
     if "--model" in legacy:
         alias = legacy["--model"]
         if alias in _OPENAI_PRESETS:
             model = _OPENAI_PRESETS[alias]
-            notices.append(f"--model {alias} is now --model_list {model}")
+            route_source = f"--model {alias}"
         elif alias == "openai":
             notices.append("--model openai is now the default; just --model_list")
+            route_source = None
         elif alias.startswith("claude"):
             api_format = "anthropic"
             model = "claude-haiku-4-5-20251001" if alias == "claude" else alias
-            notices.append(
-                f"--model {alias} is now --api_format anthropic --model_list {model}"
-            )
+            route_source = f"--model {alias}"
         elif alias in _VENDOR_ROUTES:
             api_base, model, env_key = _VENDOR_ROUTES[alias]
             env_keys.append(env_key)
-            notices.append(
-                f"--model {alias} now reaches its OpenAI-compatible endpoint: "
-                f"--api_base {api_base}"
-                + (f" --model_list {model}" if model else "")
-            )
+            route_source = f"--model {alias}"
         elif alias in _MT_FORMATS:
             api_format = _MT_FORMATS[alias]
-            notices.append(f"--model {alias} is now --api_format {api_format}")
+            route_source = f"--model {alias}"
         else:
             _fail(
                 f"--model {alias} has no equivalent in this fork, and guessing "
@@ -239,31 +234,42 @@ def translate_legacy_argv(argv):
     if "--ollama_model" in legacy:
         api_base = api_base or "http://localhost:11434/v1"
         model = legacy["--ollama_model"]
-        notices.append(
-            f"--ollama_model is now --api_base {api_base} --model_list {model}"
-        )
+        route_source = "--ollama_model"
 
     if "--custom_api" in legacy:
         api_format = "customapi"
         api_base = legacy["--custom_api"]
-        notices.append(
-            f"--custom_api is now --api_format customapi --api_base {api_base}"
-        )
+        route_source = "--custom_api"
 
     if "--deployment_id" in legacy:
         model = legacy["--deployment_id"]
-        notices.append(
-            f"--deployment_id is now the model name: --model_list {model}. "
-            f"Point --api_base at the deployment's OpenAI-compatible URL."
-        )
+        route_source = "--deployment_id"
 
     prefix = []
-    if api_format and not has_format:
-        prefix += ["--api_format", api_format]
-    if api_base and not has_base:
-        prefix += ["--api_base", api_base]
-    if model and not has_models:
-        prefix += ["--model_list", model]
+    superseded = []
+    if api_format:
+        prefix += ["--api_format", api_format] if not has_format else []
+        superseded += ["--api_format"] if has_format else []
+    if api_base:
+        prefix += ["--api_base", api_base] if not has_base else []
+        superseded += ["--api_base"] if has_base else []
+    if model:
+        prefix += ["--model_list", model] if not has_models else []
+        superseded += ["--model_list"] if has_models else []
+
+    # Describe what was actually applied. Announcing a default that the
+    # user's own flag overrode would report a run that did not happen.
+    if route_source:
+        if prefix:
+            note = f"{route_source} is now {' '.join(prefix)}"
+            if superseded:
+                note += f" (your own {', '.join(superseded)} kept)"
+        else:
+            note = (
+                f"{route_source} is fully covered by the "
+                f"{', '.join(superseded)} you passed"
+            )
+        notices.append(note)
 
     return LegacyTranslation(
         argv=prefix + rest,
