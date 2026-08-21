@@ -16,7 +16,6 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 from anthropic import BadRequestError as AnthropicBadRequest
-from google.genai import errors as genai_errors
 
 from book_maker.structured import (
     RungRejected,
