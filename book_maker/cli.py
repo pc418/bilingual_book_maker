@@ -8,6 +8,7 @@ from rich import print
 from rich.markup import escape
 
 from book_maker.loader import BOOK_LOADER_DICT
+from book_maker.loader.ledger import PlanLedgerError
 from book_maker.translator import MODEL_DICT
 from book_maker.provider_loader import get_provider, get_translator_class
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
@@ -325,9 +326,10 @@ def main():
         "book, then decide which tag signatures are worth translating. "
         "'none' (default): no plan — translate the --translate-tags "
         "selection as usual. "
-        "'most': translate the whole partition, no classification. "
-        "'model': an LLM rules on the uncertain signatures in-pipeline, then "
-        "the run continues. "
+        "'most': translate the whole partition, no classification, no plan "
+        "file. "
+        "'model': an LLM rules on every undecided signature, then the run "
+        "continues and translates the book; unresolved rows stop it instead. "
         "'agent': write the plan JSON with samples, print instructions to "
         "paste into a coding-agent session, and stop before translating — "
         "rerun the same command afterwards to translate",
@@ -404,11 +406,10 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="retranslate",
         nargs=4,
         type=str,
-        help="""--retranslate "$translated_filepath" "file_name_in_epub" "start_str" "end_str"(optional)
-        Retranslate from start_str to end_str's tag:
-        python3 "make_book.py" --book_name "test_books/animal_farm.epub" --retranslate 'test_books/animal_farm_bilingual.epub' 'index_split_002.html' 'in spite of the present book shortage which' 'This kind of thing is not a good symptom. Obviously'
-        Retranslate start_str's tag:
-        python3 "make_book.py" --book_name "test_books/animal_farm.epub" --retranslate 'test_books/animal_farm_bilingual.epub' 'index_split_002.html' 'in spite of the present book shortage which'
+        help="""--retranslate "$translated_filepath" "file_name_in_epub" "start_str" "end_str"
+        Retranslate from start_str through end_str. All four arguments are required;
+        pass an empty end_str ('') to retranslate only the start_str tag, and an empty
+        file_name_in_epub ('') to find the internal filename automatically.
 """,
     )
     parser.add_argument(
@@ -456,7 +457,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         "--model_list",
         type=str,
         dest="model_list",
-        help="Rather than using our preset lists of models, specify exactly the models you want as a comma separated list `gpt-4-32k,gpt-3.5-turbo-0125` (Currently only supports: `openai`)",
+        help="Rather than using preset model lists, specify exact model IDs as a comma-separated list. Supported with --model openai, groq, or gemini, and with --provider",
     )
     parser.add_argument(
         "--batch",
@@ -481,7 +482,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="parallel_workers",
         type=int,
         default=1,
-        help="Number of parallel workers for EPUB chapter processing. Use 2-4 for better performance. Default: 1",
+        help="Number of parallel workers for EPUB chapters or Markdown batches/sections. Use 2-4 for better performance. Default: 1",
     )
     parser.add_argument(
         "--extra_body",
@@ -516,6 +517,17 @@ So you are close to reaching the limit. You have to choose your own value, there
 
     if options.provider and options.model:
         parser.error("--provider and --model are mutually exclusive")
+
+    # Kobo mode supplies the source book itself. Resolve it before validating
+    # --book_name so users do not need a meaningless placeholder file.
+    if options.book_from == "kobo":
+        from book_maker import obok
+
+        if options.device_path is None:
+            raise Exception(
+                "Device path is not given, please specify the path by --device_path <DEVICE_PATH>",
+            )
+        options.book_name = obok.cli_main(options.device_path)
 
     if not options.book_name:
         print("Error: please provide the path of your book using --book_name <path>")
@@ -561,15 +573,16 @@ So you are close to reaching the limit. You have to choose your own value, there
             )
         else:
             plan.save_json(plan_path, book_path=options.book_name)
-            print(f"plan written to {plan_path} (edit signature actions to override)")
-            # classification needs credentials, which dry-run must not: both
-            # --plan-classify entries act on the run that *creates* the JSON,
-            # and this dry run just created it
             print(
-                "note: this plan JSON now pins the decisions — a later "
-                "--plan-classify model/agent run will find it and translate "
-                "as-is. Delete it first to let a classifier weigh in, or "
-                "edit the actions here to stay fully manual"
+                f"plan written to {plan_path} — every row is a question: decide "
+                f'it by setting "action", "decided_by" and "content_type"'
+            )
+            # classification needs credentials, which a dry run must not
+            print(
+                "note: nothing here is decided yet. A later --plan-classify "
+                "model run rules on every row still null, an agent run hands "
+                "them to a coding agent, and rows you decide yourself are "
+                "left alone by both"
             )
         return
 
@@ -654,16 +667,6 @@ So you are close to reaching the limit. You have to choose your own value, there
     else:
         API_KEY = ""
 
-    if options.book_from == "kobo":
-        from book_maker import obok
-
-        device_path = options.device_path
-        if device_path is None:
-            raise Exception(
-                "Device path is not given, please specify the path by --device_path <DEVICE_PATH>",
-            )
-        options.book_name = obok.cli_main(device_path)
-
     book_type = get_book_type(options.book_name)
     support_type_list = list(BOOK_LOADER_DICT.keys())
     if book_type not in support_type_list:
@@ -710,17 +713,41 @@ So you are close to reaching the limit. You have to choose your own value, there
         parallel_workers=options.parallel_workers,
         **loader_kwargs,
     )
-    # Parse and set extra_body if provided
+    # Parse and set extra_body only on request paths that consume it. Setting
+    # an arbitrary attribute on the other translators used to print success
+    # and then silently drop the fields.
     if options.extra_body:
-        try:
-            import json
-
-            extra_body = json.loads(options.extra_body)
-            e.translate_model.extra_body = extra_body
-            print(f"[bold blue]Extra body parameters:[/bold blue] {extra_body}")
-        except json.JSONDecodeError as e:
-            print(f"[bold red]Error:[/bold red] Invalid JSON in --extra_body: {e}")
-            exit(1)
+        openai_models = {
+            "openai",
+            "chatgptapi",
+            "gpt4",
+            "gpt4omini",
+            "gpt4o",
+            "gpt5mini",
+            "o1preview",
+            "o1",
+            "o1mini",
+            "o3mini",
+            "xai",
+        }
+        supports_extra_body = options.model in openai_models or (
+            options.provider
+            and provider_cfg
+            and provider_cfg.get("api_style") == "openai"
+        )
+        if not supports_extra_body:
+            print(
+                f"[bold yellow]Warning:[/bold yellow] --extra_body is ignored "
+                f"by the selected {options.model or options.provider} route"
+            )
+        else:
+            try:
+                extra_body = json.loads(options.extra_body)
+                e.translate_model.extra_body = extra_body
+                print(f"[bold blue]Extra body parameters:[/bold blue] {extra_body}")
+            except json.JSONDecodeError as ex:
+                print(f"[bold red]Error:[/bold red] Invalid JSON in --extra_body: {ex}")
+                exit(1)
     # other options
     if options.sentence_mode:
         e.sentence_mode = True
@@ -773,11 +800,12 @@ So you are close to reaching the limit. You have to choose your own value, there
     if hasattr(e, "plan_min_coverage"):
         e.plan_min_coverage = options.plan_min_coverage
         e.poetry_group_size = options.poetry_group_size
-        # the loader keeps its original pipeline: plan mode is triggered by
-        # translate_tags == "auto", and its classify entries are
-        # none/model/agent — the CLI's 'most' is plan mode with no
-        # classification, i.e. the loader's 'none'
-        e.plan_classify = classify_mode if classify_mode != "most" else "none"
+        # plan mode is triggered by translate_tags == "auto"; the classify
+        # entry reaches the loader as chosen. "most" in particular must stay
+        # distinguishable from "no plan": it is the deliberate
+        # translate-everything decision, and the loader has to know it was
+        # made rather than infer it from the absence of one.
+        e.plan_classify = classify_mode
         e.plan_classify_model = options.plan_classify_model or None
     if options.quiet and hasattr(e, "quiet"):
         e.quiet = True
@@ -892,7 +920,15 @@ So you are close to reaching the limit. You have to choose your own value, there
                     "Provider has no default_models. Please provide --model_list"
                 )
 
-    e.make_bilingual_book()
+    try:
+        e.make_bilingual_book()
+    except PlanLedgerError as err:
+        # The plan JSON is the one file this workflow asks a person (or an
+        # agent) to hand-edit, so its lint errors are the failure a user is
+        # most likely to see — print them like every other plan failure,
+        # not as a traceback.
+        print(f"[bold red]{escape(str(err))}[/bold red]")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
