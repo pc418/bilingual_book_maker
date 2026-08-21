@@ -27,6 +27,7 @@ from book_maker.structured import (
     unwrap_schema_echo,
 )
 from book_maker.translator.base_translator import Base
+from book_maker.translator.capabilities import CapabilityLedger
 from book_maker.translator.claude_translator import Claude, _sdk_base_url
 from book_maker.translator.gemini_translator import Gemini, _openapi_schema
 from book_maker.translator.groq_translator import GroqClient
@@ -581,8 +582,8 @@ class TestGroqWiring:
                 )
             )
         )
-        groq._structured_support = {"llama3-8b-8192": False}
-        groq._structured_lock = threading.RLock()
+        groq.capabilities = CapabilityLedger()
+        groq.capabilities.verdicts["llama3-8b-8192"] = False
 
         with patch("book_maker.translator.groq_translator.Groq") as client:
             client.return_value.chat.completions.create.return_value = SimpleNamespace(

@@ -6,23 +6,20 @@ from os import environ
 from itertools import cycle
 import json
 from functools import lru_cache
-from threading import Lock, RLock
+from threading import Lock
 
 from openai import (
     APIConnectionError,
     APITimeoutError,
     AsyncAzureOpenAI,
     AsyncOpenAI,
-    AuthenticationError,
     AzureOpenAI,
     BadRequestError,
     InternalServerError,
     LengthFinishReasonError,
     NotFoundError,
     OpenAI,
-    PermissionDeniedError,
     RateLimitError,
-    UnprocessableEntityError,
 )
 from pydantic import ConfigDict, Field, ValidationError, create_model
 from rich import print
@@ -35,6 +32,14 @@ from tenacity import (
 )
 
 from .base_translator import Base, TranslationContext, TranslationResult
+from .capabilities import (
+    ENTRY_RUNG,
+    RUNG_REFUSAL_ERRORS,
+    CapabilityLedger,
+    StructuredOutputUnsupported,
+    classify_bad_request,
+    probe_structured_output,
+)
 from ..structured import (
     RungRejected,
     extract_json_object,
@@ -49,14 +54,6 @@ PROMPT_ENV_MAP = {
     "user": "BBM_CHATGPTAPI_USER_MSG_TEMPLATE",
     "system": "BBM_CHATGPTAPI_SYS_MSG",
 }
-
-
-class StructuredOutputUnsupported(Exception):
-    """The endpoint does not really apply the JSON Schema we sent.
-
-    Raised only for capability answers, never for model or transport errors, so
-    callers can demote to the delimiter method instead of retrying.
-    """
 
 
 # The schema is the last thing the model reads before it decodes, and a bare
@@ -159,65 +156,6 @@ def single_translation_schema(language):
         },
     }
 
-
-# Capability probe. The prompt asks for plain text and the schema pins a
-# single-value enum, so the only way `PROBE_EXPECTED` can come back is if the
-# server actually applied the schema to decoding. A proxy that accepts
-# `response_format` and quietly drops it answers with the prompted text instead.
-# Deliberately language-free: this asks whether the endpoint honors schemas at
-# all, and a translation-shaped probe would confuse that with a bad translation.
-
-# The API's own default. Sending it explicitly changes nothing for models that
-# accept it, and is a hard 400 for models that only allow their default.
-DEFAULT_TEMPERATURE = 1.0
-
-PROBE_PROMPT = "Reply with the single word: ignored. Do not output JSON."
-PROBE_KEY = "probe"
-PROBE_EXPECTED = "schema_ok"
-STRUCTURED_PROBE_SCHEMA = {
-    "name": "structured_output_probe",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {PROBE_KEY: {"type": "string", "enum": [PROBE_EXPECTED]}},
-        "required": [PROBE_KEY],
-        "additionalProperties": False,
-    },
-}
-
-# A permanent answer about this endpoint: no key, no access, no such model.
-# Nothing downstream recovers from these, and swallowing them would pin the whole
-# run to the delimiter method because of a typo in the key.
-PROBE_FATAL_ERRORS = (
-    AuthenticationError,
-    PermissionDeniedError,
-    NotFoundError,
-)
-
-# Router hiccups. These say nothing about schema support, but they also do not
-# mean the run is over: API gateways go away and come back, and a book is
-# expected to translate across hours of that. The probe therefore *defers* —
-# records no verdict, uses the delimiter method for this one call, and probes
-# again on the next paragraph. The real request behind it hits the same outage
-# and gets tenacity's retries, which is where transient failures belong.
-PROBE_TRANSIENT_ERRORS = (
-    APIConnectionError,
-    APITimeoutError,
-    RateLimitError,
-)
-
-# A refusal of the *request shape*, which a simpler rung may not trigger: an
-# unsupported `response_format`, a schema the endpoint will not compile, a
-# payload it will not size. Distinct from PROBE_FATAL_ERRORS (no key, no model
-# — descending cannot help) and from transport errors (retrying can).
-RUNG_REFUSAL_ERRORS = (
-    BadRequestError,
-    UnprocessableEntityError,
-)
-
-# One garbled response from a proxy must not cost the whole book its structured
-# mode. A genuinely unsupported endpoint still pays at most this many attempts.
-STRUCTURED_FAILURE_THRESHOLD = 2
 
 GPT35_MODEL_LIST = [
     "gpt-3.5-turbo",
@@ -324,19 +262,12 @@ class ChatGPTAPI(Base):
         self.result_content_cache = {}
         self._api_lock = Lock()
         self._async_clients = {}
-        # Reentrant: the probe records its verdict while still holding the lock.
-        self._structured_lock = RLock()
         self.extra_body = extra_body or {}
 
-        # Both keyed by model, because --model_list rotates across models of
-        # differing capability. Structured support is probed on first use;
-        # temperature support is learned from the first rejection.
-        self._structured_support = {}
-        self._temperature_unsupported = {}
-        # Consecutive capability failures per model, and models whose probe was
-        # postponed by an outage (tracked only to keep the log to one line).
-        self._structured_failures = {}
-        self._probe_deferred = set()
+        # What this endpoint turned out to support, learned at runtime and
+        # keyed by model because --model_list rotates across models of
+        # differing capability.
+        self.capabilities = CapabilityLedger()
         self.model = (
             None  # Will be set by rotate_model() after model_list is initialized
         )
@@ -344,18 +275,16 @@ class ChatGPTAPI(Base):
     def _probe_verdict(self, model=None):
         """The endpoint's graded schema support, probed once per model.
 
-        One of "strict", "shape", "json" or False. The probe runs while
-        holding the lock so that N parallel workers issue one probe per model,
-        not N.
+        One of "strict", "shape", "json" or False. Subclasses that do not route
+        through `self.openai_client` probe nothing: sending the capability
+        request to the wrong endpoint would answer about the wrong server.
         """
         model = model or self.model
-        with self._structured_lock:
-            if model not in self._structured_support:
-                if self.SUPPORTS_STRUCTURED_OUTPUTS:
-                    self._test_structured_outputs(model)
-                else:
-                    self._structured_support[model] = False
-            return self._structured_support.get(model, False)
+        probe = self._probe if self.SUPPORTS_STRUCTURED_OUTPUTS else None
+        return self.capabilities.ensure_verdict(model, probe)
+
+    def _probe(self, model):
+        return probe_structured_output(self.openai_client, model)
 
     def _ensure_structured_support(self, model=None):
         """Whether *translation* may use a schema. Only "strict" qualifies.
@@ -372,155 +301,18 @@ class ChatGPTAPI(Base):
         return self._probe_verdict(model) == "strict"
 
     def _structured_enabled(self):
-        return self._structured_support.get(self.model, False) == "strict"
-
-    def _defer_probe(self, model, error):
-        """Postpone the verdict: record nothing so the next call probes again."""
-        with self._structured_lock:
-            first_time = model not in self._probe_deferred
-            self._probe_deferred.add(model)
-        if first_time:
-            print(
-                f"[yellow]ℹ could not probe '{model}' right now ({error}); "
-                f"using the delimiter method until the endpoint answers[/yellow]"
-            )
+        return self.capabilities.verdicts.get(self.model, False) == "strict"
 
     def _note_structured_success(self):
         """A working structured call clears the model's failure streak."""
-        if self._structured_failures.get(self.model):
-            with self._structured_lock:
-                self._structured_failures.pop(self.model, None)
+        self.capabilities.note_success(self.model)
 
     def _demote_structured_outputs(self, reason):
-        """Count a capability failure and, on a streak, stop paying for it.
-
-        The caller falls back for the current paragraph or batch either way. The
-        streak is what keeps a single garbled proxy response from disabling
-        structured outputs for the rest of a multi-hour run, while an endpoint
-        that really ignores the schema still costs only
-        `STRUCTURED_FAILURE_THRESHOLD` attempts instead of three tenacity
-        retries per batch, forever.
-        """
-        with self._structured_lock:
-            failures = self._structured_failures.get(self.model, 0) + 1
-            self._structured_failures[self.model] = failures
-            demote = failures >= STRUCTURED_FAILURE_THRESHOLD
-            already_demoted = self._structured_support.get(self.model) is False
-            if demote:
-                self._structured_support[self.model] = False
-
-        if demote:
-            if not already_demoted:
-                print(
-                    f"[yellow]ℹ '{self.model}' did not honor the JSON schema "
-                    f"({reason}); switching to the delimiter method[/yellow]"
-                )
-        else:
-            print(
-                f"[yellow]ℹ '{self.model}' did not honor the JSON schema "
-                f"({reason}); falling back for this one and trying structured "
-                f"outputs once more[/yellow]"
-            )
-
-    def _test_structured_outputs(self, model=None):
-        """Probe whether the endpoint really applies a strict JSON Schema.
-
-        Grades the response body: accepting the request proves nothing, because
-        OpenAI-compatible proxies routinely accept `response_format` and drop it.
-        No temperature and no token cap — the probe must test exactly one
-        capability, and a cap would be rejected by o-series/gpt-5 models or eaten
-        by reasoning tokens, producing a false negative.
-        """
-        model = model or self.model
-        try:
-            completion = self.openai_client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": PROBE_PROMPT}],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": STRUCTURED_PROBE_SCHEMA,
-                },
-            )
-        except PROBE_FATAL_ERRORS:
-            raise
-        except PROBE_TRANSIENT_ERRORS as e:
-            self._defer_probe(model, e)
-            return
-        except Exception as e:
-            # Ambiguous (400 for an unknown param, 500 from a local server, ...):
-            # not a usable endpoint for schemas either way, so degrade loudly.
-            self._record_probe_result(model, f"request rejected: {e}")
-            return
-
-        self._record_probe_result(model, self._grade_probe_response(completion))
-
-    @staticmethod
-    def _grade_probe_response(completion):
-        """Grade a probe completion: 'strict', 'shape', 'json', 'unsupported'.
-
-        The prompt asks for plain text, so anything JSON-shaped that comes
-        back is evidence of *some* structuring. The four verdicts map onto the
-        four entry rungs, which is all a verdict is used for in
-        classification — a wrong guess costs one request, not the run.
-        """
-        choice = completion.choices[0]
-        if getattr(choice, "finish_reason", "stop") != "stop":
-            return "unsupported"
-
-        content = getattr(choice.message, "content", None)
-        if not content:
-            return "unsupported"
-
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            return "unsupported"
-
-        # Right JSON, wrong keys: json mode is on, the schema was not applied.
-        # Worth knowing — such an endpoint should enter at the json_object
-        # rung rather than being lumped in with prose-only ones.
-        if not isinstance(parsed, dict) or set(parsed) != {PROBE_KEY}:
-            return "json"
-        if not isinstance(parsed[PROBE_KEY], str):
-            return "json"
-
-        # Some backends honor the structure but ignore `enum`. Still usable: our
-        # real schemas constrain shape only, never values.
-        return "strict" if parsed[PROBE_KEY] == PROBE_EXPECTED else "shape"
-
-    def _record_probe_result(self, model, verdict):
-        """Store the verdict string; False means no schema support at all."""
-        stored = verdict if verdict in ("strict", "shape", "json") else False
-        with self._structured_lock:
-            self._structured_support[model] = stored
-        if stored == "shape":
-            print(
-                f"[yellow]ℹ '{model}' honors JSON schema shape but not value "
-                f"constraints; using the delimiter method for translation, "
-                f"schema kept for classification[/yellow]"
-            )
-        elif stored == "json":
-            print(
-                f"[yellow]ℹ '{model}' returns JSON but does not apply the "
-                f"schema; using the delimiter method for translation, "
-                f"classification asks in the prompt[/yellow]"
-            )
-        elif not stored:
-            print(
-                f"[yellow]ℹ '{model}' doesn't apply JSON schema ({verdict}), "
-                f"using delimiter method[/yellow]"
-            )
+        """Count a capability failure and, on a streak, stop paying for it."""
+        self.capabilities.demote(self.model, reason)
 
     # Hoisted to `structured.py` — every provider's bottom rung needs it.
     _extract_json_object = staticmethod(extract_json_object)
-
-    # Probe verdict -> the cheapest rung worth *starting* at. Advisory only:
-    # descent is failure-driven, so a wrong guess costs one request.
-    ENTRY_RUNG = {
-        "strict": "json_schema",
-        "shape": "json_schema",
-        "json": "json_object",
-    }
 
     def structured_rungs(self, prompt, schema, model=None):
         """json_schema -> json_object + described schema -> plain prompt.
@@ -537,7 +329,7 @@ class ChatGPTAPI(Base):
             ("json_object", lambda: self._json_object_rung(prompt, schema, target)),
             ("prompt", lambda: self._prompt_rung(prompt, schema, target)),
         ]
-        entry = self.ENTRY_RUNG.get(self._probe_verdict(target), "prompt")
+        entry = ENTRY_RUNG.get(self._probe_verdict(target), "prompt")
         start = next(i for i, (name, _) in enumerate(ladder) if name == entry)
         return ladder[start:]
 
@@ -676,16 +468,9 @@ class ChatGPTAPI(Base):
         try:
             completion = await create(self._sampling_kwargs(model))
         except BadRequestError as e:
-            if self._classify_bad_request(e) != "temperature":
+            if classify_bad_request(e) != "temperature":
                 raise
-            with self._structured_lock:
-                first_time = not self._temperature_unsupported.get(model)
-                self._temperature_unsupported[model] = True
-            if first_time:
-                print(
-                    f"[yellow]ℹ '{model}' rejected temperature={self.temperature}; "
-                    f"retrying with the model default[/yellow]"
-                )
+            self._note_temperature_rejected(model)
             completion = await create({})
 
         translated = completion.choices[0].message.content or ""
@@ -702,34 +487,17 @@ class ChatGPTAPI(Base):
             await client.close()
 
     def _sampling_kwargs(self, model=None):
-        """Sampling parameters to send, or nothing when the model owns them.
+        """Sampling parameters to send, or nothing when the model owns them."""
+        return self.capabilities.sampling_kwargs(model or self.model, self.temperature)
 
-        `DEFAULT_TEMPERATURE` is the API's own default, so sending it changes no
-        output — but gpt-5.x and the o-series reject *any* explicit temperature,
-        so an unrequested default is pure downside. A model that turned one down
-        is remembered and never asked again.
-        """
-        model = model or self.model
-        if self._temperature_unsupported.get(model):
-            return {}
-        if self.temperature is None or self.temperature == DEFAULT_TEMPERATURE:
-            return {}
-        return {"temperature": self.temperature}
+    _classify_bad_request = staticmethod(classify_bad_request)
 
-    @staticmethod
-    def _classify_bad_request(error):
-        """Say what a 400 was actually about: 'temperature', 'schema' or 'other'.
-
-        Without this, a temperature rejection is misread as "no schema support":
-        the model gets demoted for the rest of the run and the real cause never
-        reaches the user.
-        """
-        text = str(error).lower()
-        if "temperature" in text:
-            return "temperature"
-        if "response_format" in text or "json_schema" in text:
-            return "schema"
-        return "other"
+    def _note_temperature_rejected(self, model):
+        if self.capabilities.note_temperature_rejected(model):
+            print(
+                f"[yellow]ℹ '{model}' rejected temperature={self.temperature}; "
+                f"retrying with the model default[/yellow]"
+            )
 
     def _request(self, call, model=None):
         """Issue an API call, retrying once without temperature if refused."""
@@ -737,16 +505,9 @@ class ChatGPTAPI(Base):
         try:
             return call(self._sampling_kwargs(model))
         except BadRequestError as e:
-            if self._classify_bad_request(e) != "temperature":
+            if classify_bad_request(e) != "temperature":
                 raise
-            with self._structured_lock:
-                first_time = not self._temperature_unsupported.get(model)
-                self._temperature_unsupported[model] = True
-            if first_time:
-                print(
-                    f"[yellow]ℹ '{model}' rejected temperature={self.temperature}; "
-                    f"retrying with the model default[/yellow]"
-                )
+            self._note_temperature_rejected(model)
             return call({})
 
     def create_chat_completion(self, text):

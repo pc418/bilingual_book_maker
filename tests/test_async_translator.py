@@ -14,6 +14,7 @@ from book_maker.translator.base_translator import (
     TranslationContext,
     TranslationResult,
 )
+from book_maker.translator.capabilities import CapabilityLedger
 from book_maker.translator.chatgptapi_translator import ChatGPTAPI
 from book_maker.translator.groq_translator import GroqClient
 
@@ -66,8 +67,7 @@ def _chatgpt_for_async_test():
     translator.deployment_id = None
     translator.api_base = None
     translator._api_lock = threading.Lock()
-    translator._structured_lock = threading.RLock()
-    translator._temperature_unsupported = {}
+    translator.capabilities = CapabilityLedger()
     translator._async_clients = {}
     return translator
 
@@ -193,7 +193,7 @@ def test_chatgpt_async_retries_without_rejected_temperature(monkeypatch):
     first, second = client.chat.completions.create.await_args_list
     assert first.kwargs["temperature"] == 0.2
     assert "temperature" not in second.kwargs
-    assert translator._temperature_unsupported["test-model"] is True
+    assert translator.capabilities.temperature_unsupported["test-model"] is True
 
 
 def test_chatgpt_async_does_not_retry_unrelated_bad_request(monkeypatch):
