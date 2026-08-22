@@ -10,19 +10,23 @@ There is no model-name whitelist any more. A route is three flags plus the
 model id the endpoint itself uses:
 
 ```
---api_base "$ROOT"  --key "$KEY"  [--api_format anthropic]  --model_list "$MODEL"
+--api_base "$ROOT"  --key "$KEY"  [--api_format ...]  --model "$MODEL"
 ```
 
-`--api_format` is inferred from the host (`*.anthropic.com` → `anthropic`,
-everything else → `openai`), so pass it only when the endpoint serves the
-anthropic protocol from some other domain. Any model id reaches any endpoint;
-nothing needs to be registered first.
+`--api_format` is inferred: the `--api_base` host first (`*.anthropic.com` →
+`anthropic`, else `openai`), then the model id (`claude`/`anthropic` in it →
+`anthropic`). Pass it only to correct a wrong guess. Any model id reaches any
+endpoint; nothing needs to be registered first.
 
 | the endpoint speaks | flags |
 |---|---|
-| the OpenAI shape | `--api_base "$ROOT/v1" --model_list "$MODEL"` |
-| the anthropic shape, on an anthropic.com host | `--api_base "$ROOT" --model_list "$MODEL"` |
+| the OpenAI shape | `--api_base "$ROOT/v1" --model "$MODEL"` |
+| the anthropic shape, on an anthropic.com host | `--api_base "$ROOT" --model "$MODEL"` |
 | the anthropic shape, on a gateway domain | the same plus `--api_format anthropic` |
+
+A wrong anthropic guess costs one request: the endpoint answers 404/405 and
+the run switches to `openai` for good, saying so. `--api_format openai` skips
+that attempt. `--api_base` may be pasted with its path (`.../v1/chat/completions`).
 
 Gemini, Groq, xAI, Qwen and every aggregator are reached through the OpenAI
 shape — their native wrappers were removed, and their OpenAI-compatible
@@ -80,7 +84,7 @@ curl -sS "$ROOT/v1/chat/completions" \
 ```
 
 Passes when the body has `.choices[0]`. → `--api_base "$ROOT/v1" --key "$KEY"
---model_list "$MODEL"`
+--model "$MODEL"`
 
 **Anthropic shape**. `max_tokens` is *mandatory* here, unlike above; 16 is
 past every floor seen so far.
@@ -93,7 +97,7 @@ curl -sS "$ROOT/v1/messages" \
 ```
 
 Passes when the body has `.content[0]`. → `--api_base "$ROOT" --key "$KEY"
---model_list "$MODEL"` (add `--api_format anthropic` when the host is not
+--model "$MODEL"` (add `--api_format anthropic` when the host is not
 anthropic.com). The reply's `model` field echoes the id the endpoint actually
 resolved to (`claude-haiku-4.5` → `claude-haiku-4-5-20251001`). Real Anthropic requires
 `x-api-key`; gateways commonly accept `Authorization: Bearer` too, so try

@@ -54,7 +54,7 @@ LM Studio、Ollama 等。详见[模型与语言](./docs/model_lang.md)。
 
 - `--key` 指定 API key，多个用英文逗号分隔(xxx,xxx,xxx)，可以减少接口调用次数限制带来的错误。
   也可以设置环境变量 `BBM_API_KEY`，`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 同样有效。
-- `openai` 和 `anthropic` 格式必须提供 `--model_list`，第一个是主模型，其余轮换使用。
+- `openai` 和 `anthropic` 格式必须提供 `--model`，写接口自己的模型 ID。
 
 * OpenAI 以及所有 OpenAI 兼容接口
 
@@ -424,7 +424,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://
 python3 make_book.py --book_name test_books/animal_farm.epub --api_format customapi --api_base ${custom_api} --language ja
 
 # 任意 OpenAI 兼容厂商（如 DeepSeek）
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.deepseek.com/v1 --key sk-xxx --model_list deepseek-chat --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat --language ja
 
 # Translate contents in <div> and <p>
 python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags div,p

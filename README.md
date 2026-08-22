@@ -65,8 +65,8 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model 
 - `--key` takes the API key. Several comma-separated keys (`xxx,xxx,xxx`) are
   rotated to spread rate limits. Or set `BBM_API_KEY`; the conventional
   `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` are also honored.
-- `--model_list` is required for the `openai` and `anthropic` formats, and
-  takes the endpoint's own model ids. The first is used; the rest rotate.
+- `--model` is required for the `openai` and `anthropic` formats, and takes
+  the endpoint's own model id.
 - Add `--use_context` to send a context paragraph with each passage (see below).
 
 * OpenAI, and every OpenAI-compatible endpoint
@@ -496,7 +496,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://
 python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --parallel-workers 4
 
 # Use Gemini through its OpenAI-compatible endpoint, rotating two models
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-2.5-flash,gemini-2.0-flash
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model_list gemini-2.5-flash,gemini-2.0-flash
 
 # Set env BBM_API_KEY (or OPENAI_API_KEY) to omit --key
 export BBM_API_KEY=${your_api_key}
@@ -511,7 +511,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5-mini 
 python3 make_book.py --book_name test_books/animal_farm.epub --model yi-34b-chat-0205 --key ${openai_key} --api_base "https://api.lingyiwanwu.com/v1"
 
 # Rotate several models to spread rate limits
-python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5-mini,gpt-4o-mini --key ${openai_key}
+python3 make_book.py --book_name test_books/animal_farm.epub --model_list gpt-5-mini,gpt-4o-mini --key ${openai_key}
 
 # Use the DeepL model with Japanese
 python3 make_book.py --book_name test_books/animal_farm.epub --api_format deepl --key ${deepl_key} --language ja

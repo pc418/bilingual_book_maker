@@ -98,11 +98,11 @@ or source a local git-ignored file before running, for example
 Use this option to preview the result if you haven't paid for the service or just want to test. Note that there is a limit and it may take some time.
 
 ```sh
-bbook_maker --book_name test_books/Lex_Fridman_episode_322.srt --key ${openai_key} --model_list gpt-5-mini  --test
+bbook_maker --book_name test_books/Lex_Fridman_episode_322.srt --key ${openai_key} --model gpt-5-mini  --test
 ```
 
 ```sh
-bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini  --test --language zh-hans
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini  --test --language zh-hans
 ```
 
 `--test_num <TEST_NUM>`<br>
@@ -160,15 +160,15 @@ Use this option to specify proxy server for internet access. Enter a string such
 
 If you want to change api_base like using Cloudflare Workers, use this option to support it.<br>
 
-    bbook_maker --book_name 'animal_farm.epub' --key sk-XXXXX --model_list gpt-5-mini --api_base 'https://xxxxx/v1'
+    bbook_maker --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
 **Note: the api url should be '`https://xxxx/v1`'. Quotation marks are required.**
 
 ## Microsoft Azure Endpoints
 
 Azure has no dedicated flag. Point `--api_base` at the deployment's
-OpenAI-compatible URL and name the deployment in `--model_list`:
+OpenAI-compatible URL and name the deployment in `--model`:
 
-    bbook_maker --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model_list 'deployment-name'
+    bbook_maker --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model 'deployment-name'
 
 ## Batch size (txt only)
 `--batch_size`<br>

@@ -37,13 +37,12 @@ and one API key for wherever that model lives. `MODEL` and `BBM_API_BASE`
 are skill-level fields; make_book.py does not read them from env, you
 translate them into flags.
 
-**The endpoint picks the route; the model id is just a string you pass
-along.** Any id reaches any endpoint through `--model_list` — there is no
-name whitelist. What varies is the wire format, which is inferred from
-`--api_base` and only needs `--api_format anthropic` when an anthropic-shaped
-gateway lives on its own domain. Probe recipes and per-format capability
-caveats: **`references/providers.md`**, to read before the first command
-whenever the endpoint is not a plain OpenAI-shaped host.
+**`--model "$MODEL"` takes the id verbatim; there is no name whitelist.** The
+wire format is inferred — `--api_base` host first, then a `claude`/`anthropic`
+id — so `--api_format` is only for correcting a wrong guess. An anthropic
+guess that misses falls back to `openai` after one request. Probe recipes and
+per-format capability caveats: **`references/providers.md`**, to read before
+the first command whenever the endpoint is not a plain OpenAI-shaped host.
 
 Source `.env` in the same Bash call as the run:
 `set -a; source .env; set +a; …`. Never echo values; verify presence with
@@ -64,7 +63,7 @@ settled (OpenAI shape shown — the common case):
 set -a; source .env; set +a
 API_BASE_FLAG=()
 [ -n "$BBM_API_BASE" ] && API_BASE_FLAG=(--api_base "$BBM_API_BASE")
-ROUTE=(--key "$KEY" --model_list "$MODEL")   # ← shape from step 1b
+ROUTE=(--key "$KEY" --model "$MODEL")   # ← add --api_format only if step 1b says so
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
   --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}"
 ```
@@ -248,8 +247,9 @@ changed intentionally.
 
 | decision | flag | choose it when |
 |---|---|---|
-| route | `--model_list "$MODEL"` | the endpoint took the OpenAI shape at step 1b — the default, and what every gateway serves |
-| | `--api_format anthropic --model_list "$MODEL"` | the endpoint answered `/v1/messages` and its host is not `anthropic.com` (on anthropic.com the format is inferred) |
+| route | `--model "$MODEL"` | the usual case — the format is inferred from `--api_base`, or from a `claude`/`anthropic` id |
+| | `+ --api_format anthropic` | an anthropic-shaped gateway on its own domain, where the host cannot say so |
+| | `+ --api_format openai` | a gateway serving `claude` ids over `/chat/completions`; skips the one-request fallback |
 | output form | *(default)* bilingual | user reads both languages side by side — the usual ask |
 | | `--single_translate` | user wants a translated-only book, original replaced |
 | speed | *(default)* sequential | small book (< ~30 chapters), or first run with a new endpoint |

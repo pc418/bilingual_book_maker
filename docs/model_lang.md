@@ -1,7 +1,7 @@
 # Endpoints, models and languages
 
 A route is chosen by the endpoint it talks to, not by a model name. There is
-no built-in model list to keep up to date: `--model_list` takes whatever ids
+no built-in model list to keep up to date: `--model` takes whatever id
 your endpoint serves.
 
 ```sh
@@ -63,7 +63,7 @@ support is probed at runtime rather than assumed from the model name.
 | Alibaba Qwen (DashScope) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | SiliconFlow | `https://api.siliconflow.cn/v1` |
 | OpenRouter | `https://openrouter.ai/api/v1` |
-| Azure OpenAI | the deployment's OpenAI-compatible URL; `--model_list` names the deployment |
+| Azure OpenAI | the deployment's OpenAI-compatible URL; `--model` names the deployment |
 | Ollama | `http://localhost:11434/v1` |
 | vLLM / LM Studio / llama.cpp | whatever host they serve |
 
