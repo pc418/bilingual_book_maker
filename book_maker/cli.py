@@ -61,14 +61,18 @@ def infer_api_format(api_base, model=""):
 _ENDPOINT_SUFFIXES = ("/chat/completions", "/messages", "/completions")
 
 
-def normalize_api_base(api_base):
+def normalize_api_base(api_base, api_format):
     """Trim a pasted request path off `--api_base`.
 
     Copying the URL out of a provider's docs or a curl line is the common
     way to get this flag, and those URLs end at the endpoint rather than the
     base. Trailing slashes go too, so `.../v1/` and `.../v1` are one thing.
+
+    Only for the SDK-backed formats, which build the request path themselves.
+    `customapi` posts to this URL verbatim, so a path is the address, not
+    noise to strip.
     """
-    if not api_base:
+    if not api_base or api_format not in LLM_FORMATS:
         return api_base
     base = api_base.strip().rstrip("/")
     for suffix in _ENDPOINT_SUFFIXES:
@@ -634,10 +638,10 @@ So you are close to reaching the limit. You have to choose your own value, there
         if name.strip()
     ]
 
-    options.api_base = normalize_api_base(options.api_base)
     api_format = options.api_format or infer_api_format(
         options.api_base, model_names[0] if model_names else ""
     )
+    options.api_base = normalize_api_base(options.api_base, api_format)
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
     API_KEY = resolve_api_key(

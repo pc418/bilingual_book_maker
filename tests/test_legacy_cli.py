@@ -297,6 +297,14 @@ class TestFaithfulness:
     def test_no_default_is_invented_for_a_machine_translation_route(self):
         assert rewrite("--model", "google") == ["--api_format", "google"]
 
+    def test_no_default_is_invented_when_a_fixed_format_was_named(self):
+        # `--api_format google --interval 0.5` asks for one deprecated flag to
+        # be dropped; inventing an OpenAI model turns that into an error
+        assert rewrite("--api_format", "google", "--interval", "0.5") == [
+            "--api_format",
+            "google",
+        ]
+
     def test_the_key_matching_the_route_wins(self):
         # sending the OpenAI key to Groq would disclose a credential to a
         # third party; the old CLI picked the route's own key flag

@@ -127,6 +127,37 @@ class TestAnthropicFallback:
         with pytest.raises(AnthropicNotFound):
             translator.translate("text")
 
+    def test_anthropics_own_host_never_falls_back_even_when_named(self):
+        # the documented command passes --api_base https://api.anthropic.com;
+        # a 404 there means the model does not exist, and retrying on
+        # /chat/completions hides that behind a second, stranger error
+        translator = self._claude(
+            self._not_found(), api_base="https://api.anthropic.com"
+        )
+
+        with pytest.raises(AnthropicNotFound):
+            translator.translate("text")
+
+    def test_the_fallback_carries_the_context_settings(self):
+        with patch("book_maker.translator.claude_translator.Anthropic"):
+            translator = Claude(
+                "k",
+                "zh-hans",
+                api_base="https://gw.example.com",
+                context_flag=True,
+                context_paragraph_limit=7,
+            )
+        translator.model = "claude-sonnet-4-6"
+
+        with patch(
+            "book_maker.translator.chatgptapi_translator.ChatGPTAPI"
+        ) as chatgpt:
+            translator._build_openai_fallback()
+
+        kwargs = chatgpt.call_args.kwargs
+        assert kwargs["context_flag"] is True
+        assert kwargs["context_paragraph_limit"] == 7
+
     @pytest.mark.parametrize(
         "given,expected",
         [
@@ -145,6 +176,29 @@ class TestAnthropicFallback:
             translator._build_openai_fallback()
 
         assert chatgpt.call_args.kwargs["api_base"] == expected
+
+
+class TestBaseNormalization:
+    def test_an_sdk_route_loses_a_pasted_request_path(self):
+        from book_maker.cli import normalize_api_base
+
+        assert (
+            normalize_api_base("https://h/v1/chat/completions", "openai")
+            == "https://h/v1"
+        )
+        assert normalize_api_base("https://h/v1/", "openai") == "https://h/v1"
+
+    def test_a_literal_endpoint_is_left_exactly_as_given(self):
+        # customapi posts to this URL itself; trimming a path it needs would
+        # send every request somewhere else
+        from book_maker.cli import normalize_api_base
+
+        for url in (
+            "https://h/completions",
+            "https://h/messages",
+            "https://h/translate/",
+        ):
+            assert normalize_api_base(url, "customapi") == url
 
 
 class TestKeyRotation:

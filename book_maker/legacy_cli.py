@@ -321,11 +321,16 @@ def translate_legacy_argv(argv):
     # The old parser defaulted to --model chatgptapi, so a command with only
     # a key named no model at all. Without this it now dies on
     # "--model_list is required" -- a working command turned into an error.
+    # A format the user named outright decides whether a model applies at
+    # all: the fixed engines have none, so supplying one turns a request to
+    # drop a deprecated flag into an error.
+    named_format = _value_of(rest, "--api_format")
     if (
         model is None
         and passthrough_model is None
         and not has_models
         and api_format in (None, "openai")
+        and named_format in (None, "openai")
         and "--model" not in legacy
     ):
         model = _OPENAI_PRESETS["chatgptapi"]

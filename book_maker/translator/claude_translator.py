@@ -1,4 +1,5 @@
 from itertools import cycle
+from urllib.parse import urlparse
 
 from rich import print
 from anthropic import (
@@ -41,6 +42,10 @@ def _sdk_base_url(api_base):
 # and transport errors say nothing about the wire format and must not trigger
 # a second endpoint being tried with the same key.
 _WRONG_SHAPE_STATUSES = (404, 405)
+
+# Anthropic's own hosts serve no OpenAI route, so a 404 from one is an answer
+# about the *model*, not the wire format. Retrying elsewhere would bury it.
+_ANTHROPIC_HOSTS = ("anthropic.com",)
 
 
 class Claude(Base):
@@ -116,6 +121,11 @@ class Claude(Base):
             # The default host is Anthropic's own. A 404 there means the model
             # does not exist, and retrying on /chat/completions cannot help.
             return False
+        host = (urlparse(self.requested_api_base).hostname or "").lower()
+        if any(host == h or host.endswith(f".{h}") for h in _ANTHROPIC_HOSTS):
+            # Named explicitly, as the documented command does, but still the
+            # one host where the OpenAI shape does not exist.
+            return False
         if isinstance(error, NotFoundError):
             return True
         return (
@@ -140,6 +150,7 @@ class Claude(Base):
             prompt_sys_msg=self.prompt_sys_msg,
             temperature=self.temperature,
             context_flag=self.context_flag,
+            context_paragraph_limit=self.context_paragraph_limit,
         )
         # Straight assignment rather than set_model_list: the model is already
         # chosen, and re-validating it would spend requests mid-run.
