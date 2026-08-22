@@ -9,7 +9,9 @@ class CustomAPI(Base):
     Custom API translator
     """
 
-    def __init__(self, key, language, api_base=None, source_lang="auto", **kwargs) -> None:
+    def __init__(
+        self, key, language, api_base=None, source_lang="auto", **kwargs
+    ) -> None:
         super().__init__(key, language)
         # The endpoint is the whole configuration here, so it arrives as
         # --api_base like every other route. `key` used to carry the URL

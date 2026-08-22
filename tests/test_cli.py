@@ -226,8 +226,14 @@ def test_naming_a_model_twice_fails_loud(tmp_path):
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
     proc = _cli(
-        "--book_name", str(src), "--key", "k",
-        "--model", "a", "--model_list", "b",
+        "--book_name",
+        str(src),
+        "--key",
+        "k",
+        "--model",
+        "a",
+        "--model_list",
+        "b",
     )
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0
@@ -281,8 +287,9 @@ def test_a_route_specific_key_outranks_a_generic_one(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
     monkeypatch.setenv("BBM_GROQ_API_KEY", "groq-secret")
 
-    key = resolve_api_key("openai", "", "https://api.groq.com/openai/v1",
-                          ("BBM_GROQ_API_KEY",))
+    key = resolve_api_key(
+        "openai", "", "https://api.groq.com/openai/v1", ("BBM_GROQ_API_KEY",)
+    )
 
     assert key == "groq-secret"
 

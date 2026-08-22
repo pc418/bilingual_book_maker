@@ -634,7 +634,11 @@ So you are close to reaching the limit. You have to choose your own value, there
         )
     model_names = [
         name.strip()
-        for name in (options.model_list.split(",") if options.model_list else [options.model or ""])
+        for name in (
+            options.model_list.split(",")
+            if options.model_list
+            else [options.model or ""]
+        )
         if name.strip()
     ]
 

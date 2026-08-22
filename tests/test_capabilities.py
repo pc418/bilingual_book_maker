@@ -47,7 +47,9 @@ def _completion(content, finish_reason="stop"):
 
 
 def _api_error(cls, status_code, message="boom"):
-    return cls(message, response=httpx.Response(status_code, request=REQUEST), body=None)
+    return cls(
+        message, response=httpx.Response(status_code, request=REQUEST), body=None
+    )
 
 
 def _client(create):
@@ -269,14 +271,10 @@ class TestModelVerification:
     """Which models the endpoint will actually serve."""
 
     def _listing_client(self, ids, create=None):
-        listing = SimpleNamespace(
-            model_dump=lambda: {"data": [{"id": i} for i in ids]}
-        )
+        listing = SimpleNamespace(model_dump=lambda: {"data": [{"id": i} for i in ids]})
         return SimpleNamespace(
             models=SimpleNamespace(list=lambda: listing),
-            chat=SimpleNamespace(
-                completions=SimpleNamespace(create=create or Mock())
-            ),
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create or Mock())),
         )
 
     def test_available_models_keep_the_requested_order(self):

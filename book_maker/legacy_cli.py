@@ -197,7 +197,7 @@ def _split(argv):
         else:
             _fail(
                 f"{name} needs a value. It is also a flag this fork replaced; "
-                f"see \"Migrating from the old flags\" in the README."
+                f'see "Migrating from the old flags" in the README.'
             )
         taken[aliases.get(name, name)] = value
         i += 1
@@ -231,9 +231,7 @@ def translate_legacy_argv(argv):
     preferred = _ALIAS_KEY_FLAG.get(alias)
     if alias.startswith("claude"):
         preferred = "--claude_key"
-    key_flag = next(
-        (f for f in (preferred,) + _KEY_FLAGS if f and f in legacy), None
-    )
+    key_flag = next((f for f in (preferred,) + _KEY_FLAGS if f and f in legacy), None)
     if key_flag:
         rest = ["--key", legacy[key_flag]] + rest
         notices.append(f"{key_flag} is now --key")
@@ -334,9 +332,7 @@ def translate_legacy_argv(argv):
         and "--model" not in legacy
     ):
         model = _OPENAI_PRESETS["chatgptapi"]
-        notices.append(
-            f"no --model was given; the old default is --model_list {model}"
-        )
+        notices.append(f"no --model was given; the old default is --model_list {model}")
 
     if passthrough_model is not None:
         rest = ["--model", passthrough_model] + rest

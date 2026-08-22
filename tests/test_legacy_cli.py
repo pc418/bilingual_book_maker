@@ -308,19 +308,42 @@ class TestFaithfulness:
     def test_the_key_matching_the_route_wins(self):
         # sending the OpenAI key to Groq would disclose a credential to a
         # third party; the old CLI picked the route's own key flag
-        assert flags(
-            "--model", "groq", "--openai_key", "OPEN", "--groq_key", "GROQ",
-            "--model_list", "llama3",
-        )["--key"] == "GROQ"
+        assert (
+            flags(
+                "--model",
+                "groq",
+                "--openai_key",
+                "OPEN",
+                "--groq_key",
+                "GROQ",
+                "--model_list",
+                "llama3",
+            )["--key"]
+            == "GROQ"
+        )
 
     def test_an_unrelated_key_flag_is_still_honored_alone(self):
-        assert flags("--model", "groq", "--openai_key", "OPEN",
-                     "--model_list", "m")["--key"] == "OPEN"
+        assert (
+            flags("--model", "groq", "--openai_key", "OPEN", "--model_list", "m")[
+                "--key"
+            ]
+            == "OPEN"
+        )
 
     def test_every_provider_default_model_is_kept(self, tmp_path, monkeypatch):
-        (tmp_path / "bbm_providers.json").write_text(json.dumps({"providers": {"p": {
-            "api_style": "openai", "base_url": "https://p/v1",
-            "default_models": ["a", "b", "c"]}}}))
+        (tmp_path / "bbm_providers.json").write_text(
+            json.dumps(
+                {
+                    "providers": {
+                        "p": {
+                            "api_style": "openai",
+                            "base_url": "https://p/v1",
+                            "default_models": ["a", "b", "c"],
+                        }
+                    }
+                }
+            )
+        )
         monkeypatch.chdir(tmp_path)
 
         # the old path handed the whole list to set_model_list, which rotates
@@ -365,10 +388,15 @@ class TestFaithfulness:
         }
 
     def test_an_azure_base_already_pointing_at_v1_is_left_alone(self):
-        assert flags(
-            "--api_base", "https://res.openai.azure.com/openai/v1",
-            "--deployment_id", "dep",
-        )["--api_base"] == "https://res.openai.azure.com/openai/v1"
+        assert (
+            flags(
+                "--api_base",
+                "https://res.openai.azure.com/openai/v1",
+                "--deployment_id",
+                "dep",
+            )["--api_base"]
+            == "https://res.openai.azure.com/openai/v1"
+        )
 
 
 class TestNotices:

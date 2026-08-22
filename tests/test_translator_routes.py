@@ -24,9 +24,10 @@ class TestCustomAPIEndpoint:
     def test_the_endpoint_comes_from_api_base(self):
         translator = CustomAPI("", "Japanese", api_base="https://host/translate")
 
-        with patch(
-            "book_maker.translator.custom_api_translator.requests.post"
-        ) as post, patch("book_maker.translator.custom_api_translator.time.sleep"):
+        with (
+            patch("book_maker.translator.custom_api_translator.requests.post") as post,
+            patch("book_maker.translator.custom_api_translator.time.sleep"),
+        ):
             post.return_value = SimpleNamespace(text='{"data": "訳"}')
             assert translator.translate("text") == "訳"
 
@@ -45,9 +46,10 @@ class TestCustomAPIEndpoint:
             "", "Japanese", api_base="https://host/t", source_lang="English"
         )
 
-        with patch(
-            "book_maker.translator.custom_api_translator.requests.post"
-        ) as post, patch("book_maker.translator.custom_api_translator.time.sleep"):
+        with (
+            patch("book_maker.translator.custom_api_translator.requests.post") as post,
+            patch("book_maker.translator.custom_api_translator.time.sleep"),
+        ):
             post.return_value = SimpleNamespace(text='{"data": "訳"}')
             translator.translate("text")
 
@@ -149,9 +151,7 @@ class TestAnthropicFallback:
             )
         translator.model = "claude-sonnet-4-6"
 
-        with patch(
-            "book_maker.translator.chatgptapi_translator.ChatGPTAPI"
-        ) as chatgpt:
+        with patch("book_maker.translator.chatgptapi_translator.ChatGPTAPI") as chatgpt:
             translator._build_openai_fallback()
 
         kwargs = chatgpt.call_args.kwargs
@@ -170,9 +170,7 @@ class TestAnthropicFallback:
             translator = Claude("k", "zh-hans", api_base=given)
         translator.model = "claude-sonnet-4-6"
 
-        with patch(
-            "book_maker.translator.chatgptapi_translator.ChatGPTAPI"
-        ) as chatgpt:
+        with patch("book_maker.translator.chatgptapi_translator.ChatGPTAPI") as chatgpt:
             translator._build_openai_fallback()
 
         assert chatgpt.call_args.kwargs["api_base"] == expected
