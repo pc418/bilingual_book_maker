@@ -1,17 +1,120 @@
 import argparse
 import json
 import os
+import sys
 from os import environ as env
 from pathlib import Path
+from urllib.parse import urlparse
 
 from rich import print
 from rich.markup import escape
 
 from book_maker.loader import BOOK_LOADER_DICT
+from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
-from book_maker.translator import MODEL_DICT
-from book_maker.provider_loader import get_provider, get_translator_class
+from book_maker.translator import FORMAT_DICT, LLM_FORMATS
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
+
+# Where each format looks for a key when --key is absent. $BBM_API_KEY is the
+# one this project asks for; the rest are the variables people already have
+# exported for that vendor.
+FORMAT_ENV_KEYS = {
+    "openai": ("BBM_API_KEY", "OPENAI_API_KEY", "BBM_OPENAI_API_KEY"),
+    "anthropic": ("BBM_API_KEY", "ANTHROPIC_API_KEY", "BBM_CLAUDE_API_KEY"),
+    "caiyun": ("BBM_API_KEY", "BBM_CAIYUN_API_KEY"),
+    "deepl": ("BBM_API_KEY", "BBM_DEEPL_API_KEY"),
+}
+
+# Formats that will not work at all without a credential. The others are
+# public endpoints (google, deeplfree, tencent) or carry their own address
+# instead of a key (customapi).
+FORMATS_REQUIRING_KEY = ("openai", "anthropic", "caiyun", "deepl")
+
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal")
+
+
+def infer_api_format(api_base, model=""):
+    """Which wire format the endpoint speaks, guessed from host then model.
+
+    The address is the stronger signal: whoever names an endpoint has said
+    where the request goes. Only when no endpoint is named does the model id
+    decide, and there the giveaway is `claude` or `anthropic` — including a
+    namespaced `anthropic/claude-sonnet-4-6`, which is still an Anthropic
+    model however it is addressed.
+
+    Guessing wrong is cheap: a gateway that serves those ids over the OpenAI
+    shape answers the first anthropic request with a 404, and the route falls
+    back once (see `Claude._build_openai_fallback`). `--api_format` overrides
+    all of this outright.
+    """
+    if api_base:
+        host = (urlparse(api_base).hostname or "").lower()
+        return "anthropic" if host.endswith("anthropic.com") else "openai"
+    name = (model or "").lower()
+    if "claude" in name or "anthropic" in name:
+        return "anthropic"
+    return "openai"
+
+
+# Endpoint paths people paste in along with the base. The SDKs build these
+# themselves, so a base carrying one produces /v1/chat/completions/chat/completions.
+_ENDPOINT_SUFFIXES = ("/chat/completions", "/messages", "/completions")
+
+
+def normalize_api_base(api_base, api_format):
+    """Trim a pasted request path off `--api_base`.
+
+    Copying the URL out of a provider's docs or a curl line is the common
+    way to get this flag, and those URLs end at the endpoint rather than the
+    base. Trailing slashes go too, so `.../v1/` and `.../v1` are one thing.
+
+    Only for the SDK-backed formats, which build the request path themselves.
+    `customapi` posts to this URL verbatim, so a path is the address, not
+    noise to strip.
+    """
+    if not api_base or api_format not in LLM_FORMATS:
+        return api_base
+    base = api_base.strip().rstrip("/")
+    for suffix in _ENDPOINT_SUFFIXES:
+        if base.lower().endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    return base
+
+
+def is_local_endpoint(api_base):
+    if not api_base:
+        return False
+    return (urlparse(api_base).hostname or "").lower() in LOCAL_HOSTS
+
+
+def resolve_api_key(api_format, explicit_key, api_base, extra_env_keys=()):
+    """The key to use, or a loud failure naming where one was looked for.
+
+    `extra_env_keys` carries the variables an old command line implies — a
+    translated `--model groq` still authenticates from BBM_GROQ_API_KEY.
+    They come first: they name the endpoint being called, so with both
+    OPENAI_API_KEY and BBM_GROQ_API_KEY exported, a groq command must not
+    hand the OpenAI key to Groq.
+    """
+    env_names = tuple(extra_env_keys) + FORMAT_ENV_KEYS.get(
+        api_format, ("BBM_API_KEY",)
+    )
+    key = explicit_key or next((env[n] for n in env_names if env.get(n)), "")
+    if key:
+        return key
+
+    # A server on this machine is not authenticating anyone, but the OpenAI
+    # SDK refuses to construct without some string.
+    if is_local_endpoint(api_base):
+        return "local"
+
+    if api_format in FORMATS_REQUIRING_KEY:
+        raise SystemExit(
+            f"No API key for the {api_format} endpoint. Pass --key, or set "
+            f"one of: {', '.join(env_names)}."
+        )
+    return ""
 
 
 def get_book_type(book_name):
@@ -113,8 +216,14 @@ def parse_prompt_arg(prompt_arg):
 
 
 def main():
-    translate_model_list = list(MODEL_DICT.keys())
-    parser = argparse.ArgumentParser()
+    translate_format_list = list(FORMAT_DICT.keys())
+    # Old command lines are rewritten into the endpoint surface before the
+    # parser sees them; see book_maker/legacy_cli.py.
+    legacy = translate_legacy_argv(sys.argv[1:])
+    for notice in legacy.notices:
+        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
+    # No prefix abbreviation: `--model` must not resolve to `--model_list`.
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument(
         "--book_name",
         dest="book_name",
@@ -135,73 +244,17 @@ def main():
         type=str,
         help="Path of e-reader device",
     )
-    ########## KEYS ##########
+    ########## ENDPOINT ##########
     parser.add_argument(
-        "--openai_key",
-        dest="openai_key",
+        "--key",
+        dest="key",
         type=str,
         default="",
-        help="OpenAI api key,if you have more than one key, please use comma"
-        " to split them to go beyond the rate limits",
+        help="API key for the endpoint. Several comma-separated keys are "
+        "rotated to go beyond per-key rate limits. Falls back to $BBM_API_KEY, "
+        "then to the format's conventional variable ($OPENAI_API_KEY, "
+        "$ANTHROPIC_API_KEY)",
     )
-    parser.add_argument(
-        "--caiyun_key",
-        dest="caiyun_key",
-        type=str,
-        help="you can apply caiyun key from here (https://dashboard.caiyunapp.com/user/sign_in/)",
-    )
-    parser.add_argument(
-        "--deepl_key",
-        dest="deepl_key",
-        type=str,
-        help="you can apply deepl key from here (https://rapidapi.com/splintPRO/api/dpl-translator",
-    )
-    parser.add_argument(
-        "--claude_key",
-        dest="claude_key",
-        type=str,
-        help="you can find claude key from here (https://console.anthropic.com/account/keys)",
-    )
-
-    parser.add_argument(
-        "--custom_api",
-        dest="custom_api",
-        type=str,
-        help="you should build your own translation api",
-    )
-
-    # for Google Gemini
-    parser.add_argument(
-        "--gemini_key",
-        dest="gemini_key",
-        type=str,
-        help="You can get Gemini Key from  https://makersuite.google.com/app/apikey",
-    )
-
-    # for Groq
-    parser.add_argument(
-        "--groq_key",
-        dest="groq_key",
-        type=str,
-        help="You can get Groq Key from  https://console.groq.com/keys",
-    )
-
-    # for xAI
-    parser.add_argument(
-        "--xai_key",
-        dest="xai_key",
-        type=str,
-        help="You can get xAI Key from  https://console.x.ai/",
-    )
-
-    # for Qwen
-    parser.add_argument(
-        "--qwen_key",
-        dest="qwen_key",
-        type=str,
-        help="You can get Qwen Key from  https://bailian.console.aliyun.com/?tab=model#/api-key",
-    )
-
     parser.add_argument(
         "--test",
         dest="test",
@@ -221,17 +274,21 @@ def main():
         dest="model",
         type=str,
         default=None,
-        choices=translate_model_list,  # support DeepL later
         metavar="MODEL",
-        help="model to use, available: {%(choices)s}",
+        help="model id, exactly as the endpoint names it (e.g. gpt-5-mini, "
+        "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Old alias "
+        "values are translated to their model with a note",
     )
     parser.add_argument(
-        "--ollama_model",
-        dest="ollama_model",
+        "--api_format",
+        dest="api_format",
         type=str,
-        default="",
-        metavar="MODEL",
-        help="use ollama",
+        default=None,
+        choices=translate_format_list,
+        metavar="FORMAT",
+        help="wire format the endpoint speaks, available: {%(choices)s}. "
+        "Inferred from --api_base when omitted (anthropic hosts -> anthropic, "
+        "everything else -> openai)",
     )
     parser.add_argument(
         "--language",
@@ -256,19 +313,15 @@ def main():
         default="",
         help="use proxy like http://127.0.0.1:7890",
     )
-    parser.add_argument(
-        "--deployment_id",
-        dest="deployment_id",
-        type=str,
-        help="the deployment name you chose when you deployed the model",
-    )
-    # args to change api_base
+    # The endpoint. Everything else about the route is inferred from it.
     parser.add_argument(
         "--api_base",
         metavar="API_BASE_URL",
         dest="api_base",
         type=str,
-        help="specify base url other than the OpenAI's official API address",
+        help="endpoint to translate against, e.g. https://api.openai.com/v1, "
+        "https://api.anthropic.com, a gateway, or http://localhost:11434/v1 "
+        "for ollama. Defaults to the format's official host",
     )
     parser.add_argument(
         "--exclude_filelist",
@@ -439,13 +492,14 @@ So you are close to reaching the limit. You have to choose your own value, there
         "--temperature",
         type=float,
         default=1.0,
-        help="temperature parameter for `chatgptapi`/`gpt4`/`gpt4omini`/`gpt4o`/`gpt5mini`/`claude`/`gemini`",
+        help="sampling temperature. Not sent when it equals the API default, "
+        "and dropped for models that reject an explicit one",
     )
     parser.add_argument(
         "--source_lang",
         type=str,
         default="auto",
-        help="source language for translation models like `qwen` (default: auto-detect)",
+        help="source language, for endpoints that want it stated (default: auto-detect)",
     )
     parser.add_argument(
         "--block_size",
@@ -457,7 +511,9 @@ So you are close to reaching the limit. You have to choose your own value, there
         "--model_list",
         type=str,
         dest="model_list",
-        help="Rather than using preset model lists, specify exact model IDs as a comma-separated list. Supported with --model openai, groq, or gemini, and with --provider",
+        help="several model IDs to rotate across, comma-separated, to spread "
+        "rate limits. Kept for compatibility with older commands; a single "
+        "model belongs in --model",
     )
     parser.add_argument(
         "--batch",
@@ -470,12 +526,6 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="batch_use_flag",
         action="store_true",
         help="Use pre-generated batch translations to create files. Run with --batch first before using this option",
-    )
-    parser.add_argument(
-        "--interval",
-        type=float,
-        default=0.01,
-        help="Request interval in seconds (e.g., 0.1 for 100ms). Currently only supported for Gemini models. Default: 0.01",
     )
     parser.add_argument(
         "--parallel-workers",
@@ -499,24 +549,8 @@ So you are close to reaching the limit. You have to choose your own value, there
         "(for log files and non-interactive runs; reports and errors still "
         "print). Currently epub only.",
     )
-    parser.add_argument(
-        "--provider",
-        dest="provider",
-        type=str,
-        help="Use a custom provider defined in bbm_providers.json (mutually exclusive with --model)",
-    )
-    parser.add_argument(
-        "--api_key",
-        dest="api_key",
-        type=str,
-        default="",
-        help="API key for custom providers (used with --provider)",
-    )
 
-    options = parser.parse_args()
-
-    if options.provider and options.model:
-        parser.error("--provider and --model are mutually exclusive")
+    options = parser.parse_args(legacy.argv)
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
@@ -591,81 +625,32 @@ So you are close to reaching the limit. You have to choose your own value, there
         os.environ["http_proxy"] = PROXY
         os.environ["https_proxy"] = PROXY
 
-    provider_cfg = None
-    if options.provider:
-        provider_cfg = get_provider(options.provider)
-        translate_model = get_translator_class(provider_cfg["api_style"])
-    elif options.model:
-        translate_model = MODEL_DICT.get(options.model)
-    else:
-        translate_model = MODEL_DICT.get("chatgptapi")
-        options.model = "chatgptapi"
-    assert translate_model is not None, "unsupported model"
-    API_KEY = ""
-    if options.model in [
-        "openai",
-        "chatgptapi",
-        "gpt4",
-        "gpt4omini",
-        "gpt4o",
-        "gpt5mini",
-        "o1preview",
-        "o1",
-        "o1mini",
-        "o3mini",
-    ]:
-        if OPENAI_API_KEY := (
-            options.openai_key
-            or env.get(
-                "OPENAI_API_KEY",
-            )  # XXX: for backward compatibility, deprecate soon
-            or env.get(
-                "BBM_OPENAI_API_KEY",
-            )  # suggest adding `BBM_` prefix for all the bilingual_book_maker ENVs.
-        ):
-            API_KEY = OPENAI_API_KEY
-            # patch
-        elif options.ollama_model:
-            # any string is ok, can't be empty
-            API_KEY = "ollama"
-        else:
-            raise Exception(
-                "OpenAI API key not provided, please google how to obtain it",
-            )
-    elif options.model == "caiyun":
-        API_KEY = options.caiyun_key or env.get("BBM_CAIYUN_API_KEY")
-        if not API_KEY:
-            raise Exception("Please provide caiyun key")
-    elif options.model == "deepl":
-        API_KEY = options.deepl_key or env.get("BBM_DEEPL_API_KEY")
-        if not API_KEY:
-            raise Exception("Please provide deepl key")
-    elif options.model and options.model.startswith("claude"):
-        API_KEY = options.claude_key or env.get("BBM_CLAUDE_API_KEY")
-        if not API_KEY:
-            raise Exception("Please provide claude key")
-    elif options.model == "customapi":
-        API_KEY = options.custom_api or env.get("BBM_CUSTOM_API")
-        if not API_KEY:
-            raise Exception("Please provide custom translate api")
-    elif options.model in ["gemini", "geminipro"]:
-        API_KEY = options.gemini_key or env.get("BBM_GOOGLE_GEMINI_KEY")
-    elif options.model == "groq":
-        API_KEY = options.groq_key or env.get("BBM_GROQ_API_KEY")
-    elif options.model == "xai":
-        API_KEY = options.xai_key or env.get("BBM_XAI_API_KEY")
-    elif options.model and options.model.startswith("qwen"):
-        # "qwen" itself is a MODEL_DICT choice; matching only "qwen-" left it
-        # with an empty key, so the documented alias could never authenticate.
-        API_KEY = options.qwen_key or env.get("BBM_QWEN_API_KEY")
-    elif options.provider:
-        env_key_name = provider_cfg.get("env_key", "") if provider_cfg else ""
-        API_KEY = options.api_key or (env.get(env_key_name) if env_key_name else "")
-        if not API_KEY:
-            hint = f" or set {env_key_name}" if env_key_name else ""
-            raise Exception(f"Please provide API key via --api_key{hint}")
-    else:
-        API_KEY = ""
+    # A model may be named once, in either flag. Accepting both would leave
+    # two answers to "which model is this run using".
+    if options.model and options.model_list:
+        raise SystemExit(
+            "Name the model once: --model for a single model, --model_list "
+            "only to rotate across several."
+        )
+    model_names = [
+        name.strip()
+        for name in (
+            options.model_list.split(",")
+            if options.model_list
+            else [options.model or ""]
+        )
+        if name.strip()
+    ]
+
+    api_format = options.api_format or infer_api_format(
+        options.api_base, model_names[0] if model_names else ""
+    )
+    options.api_base = normalize_api_base(options.api_base, api_format)
+    translate_model = FORMAT_DICT.get(api_format)
+    assert translate_model is not None, f"unsupported api format: {api_format}"
+    API_KEY = resolve_api_key(
+        api_format, options.key, options.api_base, legacy.env_keys
+    )
 
     book_type = get_book_type(options.book_name)
     support_type_list = list(BOOK_LOADER_DICT.keys())
@@ -681,15 +666,8 @@ So you are close to reaching the limit. You have to choose your own value, there
         # use the value for prompt
         language = LANGUAGES.get(language, language)
 
-    # change api_base for issue #42
+    # None lets each SDK use its own official host.
     model_api_base = options.api_base
-
-    if options.ollama_model and not model_api_base:
-        # ollama default api_base
-        model_api_base = "http://localhost:11434/v1"
-
-    if options.provider and provider_cfg and not model_api_base:
-        model_api_base = provider_cfg.get("base_url")
 
     loader_kwargs = {}
     if book_type == "pdf":
@@ -717,28 +695,10 @@ So you are close to reaching the limit. You have to choose your own value, there
     # an arbitrary attribute on the other translators used to print success
     # and then silently drop the fields.
     if options.extra_body:
-        openai_models = {
-            "openai",
-            "chatgptapi",
-            "gpt4",
-            "gpt4omini",
-            "gpt4o",
-            "gpt5mini",
-            "o1preview",
-            "o1",
-            "o1mini",
-            "o3mini",
-            "xai",
-        }
-        supports_extra_body = options.model in openai_models or (
-            options.provider
-            and provider_cfg
-            and provider_cfg.get("api_style") == "openai"
-        )
-        if not supports_extra_body:
+        if api_format != "openai":
             print(
                 f"[bold yellow]Warning:[/bold yellow] --extra_body is ignored "
-                f"by the selected {options.model or options.provider} route"
+                f"by the {api_format} route"
             )
         else:
             try:
@@ -826,99 +786,33 @@ So you are close to reaching the limit. You have to choose your own value, there
     # Note: Default block_size is now 1 (delimiter-based translation) for better quality
     if options.retranslate:
         e.retranslate = options.retranslate
-    if options.deployment_id:
-        # only work for ChatGPT api for now
-        # later maybe support others
-        assert options.model in [
-            "chatgptapi",
-            "gpt4",
-            "gpt4omini",
-            "gpt4o",
-            "gpt5mini",
-            "o1",
-            "o1preview",
-            "o1mini",
-            "o3mini",
-        ], "only support chatgptapi for deployment_id"
-        if not options.api_base:
-            raise ValueError("`api_base` must be provided when using `deployment_id`")
-        e.translate_model.set_deployment_id(options.deployment_id)
-    if options.model in ("openai", "groq"):
-        # Currently only supports `openai` when you also have --model_list set
-        if options.model_list:
-            try:
-                e.translate_model.set_model_list(options.model_list.split(","))
-            except Exception as ex:
-                print(f"[red]Error: {ex}[/red]")
-                exit(1)
-        else:
-            raise ValueError(
-                "When using `openai` model, you must also provide `--model_list`. For default model sets use `--model chatgptapi` or `--model gpt4` or `--model gpt4omini` or `--model gpt5mini`",
+    if api_format in LLM_FORMATS:
+        # No preset lists any more: the endpoint names its own models, and a
+        # run that does not say which one to use has nothing to fall back on.
+        if not model_names:
+            raise SystemExit(
+                f"--model is required for the {api_format} format. Pass the "
+                f"model id the endpoint uses, e.g. --model gpt-5-mini"
             )
-    elif options.model_list and options.model != "gemini" and not options.provider:
-        # every other --model value runs its own preset model discovery and
-        # would silently drop the explicit model choice — the worst outcome
-        # for a user pointing at a proxy that only serves that model
+        try:
+            e.translate_model.set_model_list(model_names)
+        except Exception as ex:
+            print(f"[red]Error: {ex}[/red]")
+            exit(1)
+    elif model_names:
+        # These formats translate through a fixed engine and take no model, so
+        # honoring the flag is impossible; saying so beats ignoring it.
         print(
-            f"[bold red]Error: --model_list is only honored by --model openai, "
-            f"groq or gemini (or a --provider); --model {options.model} uses "
-            f"its own preset models and would silently ignore it.[/bold red]"
+            f"[bold red]Error: the {api_format} format has no model to "
+            f"choose, so --model is not supported by it.[/bold red]"
         )
         exit(1)
-    # TODO refactor, quick fix for gpt4 model
-    if options.model == "chatgptapi":
-        if options.ollama_model:
-            e.translate_model.set_gpt35_models(ollama_model=options.ollama_model)
-        else:
-            e.translate_model.set_gpt35_models()
-    if options.model == "gpt4":
-        e.translate_model.set_gpt4_models()
-    if options.model == "gpt4omini":
-        e.translate_model.set_gpt4omini_models()
-    if options.model == "gpt4o":
-        e.translate_model.set_gpt4o_models()
-    if options.model == "gpt5mini":
-        e.translate_model.set_gpt5mini_models()
-    if options.model == "o1preview":
-        e.translate_model.set_o1preview_models()
-    if options.model == "o1":
-        e.translate_model.set_o1_models()
-    if options.model == "o1mini":
-        e.translate_model.set_o1mini_models()
-    if options.model == "o3mini":
-        e.translate_model.set_o3mini_models()
-    if options.model and options.model.startswith("claude-"):
-        e.translate_model.set_claude_model(options.model)
-    if options.model and options.model.startswith("qwen-"):
-        e.translate_model.set_qwen_model(options.model)
     if options.block_size > 0:
         e.block_size = options.block_size
     if options.batch_flag:
         e.batch_flag = options.batch_flag
     if options.batch_use_flag:
         e.batch_use_flag = options.batch_use_flag
-
-    if options.model in ("gemini", "geminipro"):
-        e.translate_model.set_interval(options.interval)
-    if options.model == "gemini":
-        if options.model_list:
-            e.translate_model.set_model_list(options.model_list.split(","))
-        else:
-            e.translate_model.set_geminiflash_models()
-    if options.model == "geminipro":
-        e.translate_model.set_geminipro_models()
-
-    if options.provider and provider_cfg:
-        if options.model_list:
-            e.translate_model.set_model_list(options.model_list.split(","))
-        else:
-            default_models = provider_cfg.get("default_models", [])
-            if default_models:
-                e.translate_model.set_model_list(default_models)
-            else:
-                raise ValueError(
-                    "Provider has no default_models. Please provide --model_list"
-                )
 
     try:
         e.make_bilingual_book()

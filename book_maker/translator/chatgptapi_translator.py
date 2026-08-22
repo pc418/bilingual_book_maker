@@ -6,23 +6,18 @@ from os import environ
 from itertools import cycle
 import json
 from functools import lru_cache
-from threading import Lock, RLock
+from threading import Lock
 
 from openai import (
     APIConnectionError,
     APITimeoutError,
-    AsyncAzureOpenAI,
     AsyncOpenAI,
-    AuthenticationError,
-    AzureOpenAI,
     BadRequestError,
     InternalServerError,
     LengthFinishReasonError,
     NotFoundError,
     OpenAI,
-    PermissionDeniedError,
     RateLimitError,
-    UnprocessableEntityError,
 )
 from pydantic import ConfigDict, Field, ValidationError, create_model
 from rich import print
@@ -35,6 +30,15 @@ from tenacity import (
 )
 
 from .base_translator import Base, TranslationContext, TranslationResult
+from .capabilities import (
+    ENTRY_RUNG,
+    RUNG_REFUSAL_ERRORS,
+    CapabilityLedger,
+    StructuredOutputUnsupported,
+    classify_bad_request,
+    probe_structured_output,
+    verify_models,
+)
 from ..structured import (
     RungRejected,
     extract_json_object,
@@ -49,14 +53,6 @@ PROMPT_ENV_MAP = {
     "user": "BBM_CHATGPTAPI_USER_MSG_TEMPLATE",
     "system": "BBM_CHATGPTAPI_SYS_MSG",
 }
-
-
-class StructuredOutputUnsupported(Exception):
-    """The endpoint does not really apply the JSON Schema we sent.
-
-    Raised only for capability answers, never for model or transport errors, so
-    callers can demote to the delimiter method instead of retrying.
-    """
 
 
 # The schema is the last thing the model reads before it decodes, and a bare
@@ -160,114 +156,6 @@ def single_translation_schema(language):
     }
 
 
-# Capability probe. The prompt asks for plain text and the schema pins a
-# single-value enum, so the only way `PROBE_EXPECTED` can come back is if the
-# server actually applied the schema to decoding. A proxy that accepts
-# `response_format` and quietly drops it answers with the prompted text instead.
-# Deliberately language-free: this asks whether the endpoint honors schemas at
-# all, and a translation-shaped probe would confuse that with a bad translation.
-
-# The API's own default. Sending it explicitly changes nothing for models that
-# accept it, and is a hard 400 for models that only allow their default.
-DEFAULT_TEMPERATURE = 1.0
-
-PROBE_PROMPT = "Reply with the single word: ignored. Do not output JSON."
-PROBE_KEY = "probe"
-PROBE_EXPECTED = "schema_ok"
-STRUCTURED_PROBE_SCHEMA = {
-    "name": "structured_output_probe",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {PROBE_KEY: {"type": "string", "enum": [PROBE_EXPECTED]}},
-        "required": [PROBE_KEY],
-        "additionalProperties": False,
-    },
-}
-
-# A permanent answer about this endpoint: no key, no access, no such model.
-# Nothing downstream recovers from these, and swallowing them would pin the whole
-# run to the delimiter method because of a typo in the key.
-PROBE_FATAL_ERRORS = (
-    AuthenticationError,
-    PermissionDeniedError,
-    NotFoundError,
-)
-
-# Router hiccups. These say nothing about schema support, but they also do not
-# mean the run is over: API gateways go away and come back, and a book is
-# expected to translate across hours of that. The probe therefore *defers* —
-# records no verdict, uses the delimiter method for this one call, and probes
-# again on the next paragraph. The real request behind it hits the same outage
-# and gets tenacity's retries, which is where transient failures belong.
-PROBE_TRANSIENT_ERRORS = (
-    APIConnectionError,
-    APITimeoutError,
-    RateLimitError,
-)
-
-# A refusal of the *request shape*, which a simpler rung may not trigger: an
-# unsupported `response_format`, a schema the endpoint will not compile, a
-# payload it will not size. Distinct from PROBE_FATAL_ERRORS (no key, no model
-# — descending cannot help) and from transport errors (retrying can).
-RUNG_REFUSAL_ERRORS = (
-    BadRequestError,
-    UnprocessableEntityError,
-)
-
-# One garbled response from a proxy must not cost the whole book its structured
-# mode. A genuinely unsupported endpoint still pays at most this many attempts.
-STRUCTURED_FAILURE_THRESHOLD = 2
-
-GPT35_MODEL_LIST = [
-    "gpt-3.5-turbo",
-    "gpt-3.5-turbo-1106",
-    "gpt-3.5-turbo-16k",
-    "gpt-3.5-turbo-0613",
-    "gpt-3.5-turbo-16k-0613",
-    "gpt-3.5-turbo-0301",
-    "gpt-3.5-turbo-0125",
-]
-GPT4_MODEL_LIST = [
-    "gpt-4-1106-preview",
-    "gpt-4",
-    "gpt-4-32k",
-    "gpt-4o-2024-05-13",
-    "gpt-4-0613",
-    "gpt-4-32k-0613",
-]
-
-GPT4oMINI_MODEL_LIST = [
-    "gpt-4o-mini",
-    "gpt-4o-mini-2024-07-18",
-]
-GPT4o_MODEL_LIST = [
-    "gpt-4o",
-    "gpt-4o-2024-05-13",
-    "gpt-4o-2024-08-06",
-    "chatgpt-4o-latest",
-]
-GPT5MINI_MODEL_LIST = [
-    "gpt-5-mini",
-    "gpt-5.4-mini",
-]
-O1PREVIEW_MODEL_LIST = [
-    "o1-preview",
-    "o1-preview-2024-09-12",
-]
-O1_MODEL_LIST = [
-    "o1",
-    "o1-2024-12-17",
-]
-O1MINI_MODEL_LIST = [
-    "o1-mini",
-    "o1-mini-2024-09-12",
-]
-O3MINI_MODEL_LIST = [
-    "o3-mini",
-]
-
-
 class ChatGPTAPI(Base):
     DEFAULT_PROMPT = "Please help me to translate,`{text}` to {language}, please return only translated content not include the origin text"
 
@@ -307,7 +195,6 @@ class ChatGPTAPI(Base):
             or ""
         )
         self.system_content = environ.get("OPENAI_API_SYS_MSG") or ""
-        self.deployment_id = None
         self.temperature = temperature
         self.model_list = None
         self.context_flag = context_flag
@@ -324,19 +211,12 @@ class ChatGPTAPI(Base):
         self.result_content_cache = {}
         self._api_lock = Lock()
         self._async_clients = {}
-        # Reentrant: the probe records its verdict while still holding the lock.
-        self._structured_lock = RLock()
         self.extra_body = extra_body or {}
 
-        # Both keyed by model, because --model_list rotates across models of
-        # differing capability. Structured support is probed on first use;
-        # temperature support is learned from the first rejection.
-        self._structured_support = {}
-        self._temperature_unsupported = {}
-        # Consecutive capability failures per model, and models whose probe was
-        # postponed by an outage (tracked only to keep the log to one line).
-        self._structured_failures = {}
-        self._probe_deferred = set()
+        # What this endpoint turned out to support, learned at runtime and
+        # keyed by model because --model_list rotates across models of
+        # differing capability.
+        self.capabilities = CapabilityLedger()
         self.model = (
             None  # Will be set by rotate_model() after model_list is initialized
         )
@@ -344,18 +224,16 @@ class ChatGPTAPI(Base):
     def _probe_verdict(self, model=None):
         """The endpoint's graded schema support, probed once per model.
 
-        One of "strict", "shape", "json" or False. The probe runs while
-        holding the lock so that N parallel workers issue one probe per model,
-        not N.
+        One of "strict", "shape", "json" or False. Subclasses that do not route
+        through `self.openai_client` probe nothing: sending the capability
+        request to the wrong endpoint would answer about the wrong server.
         """
         model = model or self.model
-        with self._structured_lock:
-            if model not in self._structured_support:
-                if self.SUPPORTS_STRUCTURED_OUTPUTS:
-                    self._test_structured_outputs(model)
-                else:
-                    self._structured_support[model] = False
-            return self._structured_support.get(model, False)
+        probe = self._probe if self.SUPPORTS_STRUCTURED_OUTPUTS else None
+        return self.capabilities.ensure_verdict(model, probe)
+
+    def _probe(self, model):
+        return probe_structured_output(self.openai_client, model)
 
     def _ensure_structured_support(self, model=None):
         """Whether *translation* may use a schema. Only "strict" qualifies.
@@ -372,155 +250,18 @@ class ChatGPTAPI(Base):
         return self._probe_verdict(model) == "strict"
 
     def _structured_enabled(self):
-        return self._structured_support.get(self.model, False) == "strict"
-
-    def _defer_probe(self, model, error):
-        """Postpone the verdict: record nothing so the next call probes again."""
-        with self._structured_lock:
-            first_time = model not in self._probe_deferred
-            self._probe_deferred.add(model)
-        if first_time:
-            print(
-                f"[yellow]ℹ could not probe '{model}' right now ({error}); "
-                f"using the delimiter method until the endpoint answers[/yellow]"
-            )
+        return self.capabilities.verdicts.get(self.model, False) == "strict"
 
     def _note_structured_success(self):
         """A working structured call clears the model's failure streak."""
-        if self._structured_failures.get(self.model):
-            with self._structured_lock:
-                self._structured_failures.pop(self.model, None)
+        self.capabilities.note_success(self.model)
 
     def _demote_structured_outputs(self, reason):
-        """Count a capability failure and, on a streak, stop paying for it.
-
-        The caller falls back for the current paragraph or batch either way. The
-        streak is what keeps a single garbled proxy response from disabling
-        structured outputs for the rest of a multi-hour run, while an endpoint
-        that really ignores the schema still costs only
-        `STRUCTURED_FAILURE_THRESHOLD` attempts instead of three tenacity
-        retries per batch, forever.
-        """
-        with self._structured_lock:
-            failures = self._structured_failures.get(self.model, 0) + 1
-            self._structured_failures[self.model] = failures
-            demote = failures >= STRUCTURED_FAILURE_THRESHOLD
-            already_demoted = self._structured_support.get(self.model) is False
-            if demote:
-                self._structured_support[self.model] = False
-
-        if demote:
-            if not already_demoted:
-                print(
-                    f"[yellow]ℹ '{self.model}' did not honor the JSON schema "
-                    f"({reason}); switching to the delimiter method[/yellow]"
-                )
-        else:
-            print(
-                f"[yellow]ℹ '{self.model}' did not honor the JSON schema "
-                f"({reason}); falling back for this one and trying structured "
-                f"outputs once more[/yellow]"
-            )
-
-    def _test_structured_outputs(self, model=None):
-        """Probe whether the endpoint really applies a strict JSON Schema.
-
-        Grades the response body: accepting the request proves nothing, because
-        OpenAI-compatible proxies routinely accept `response_format` and drop it.
-        No temperature and no token cap — the probe must test exactly one
-        capability, and a cap would be rejected by o-series/gpt-5 models or eaten
-        by reasoning tokens, producing a false negative.
-        """
-        model = model or self.model
-        try:
-            completion = self.openai_client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": PROBE_PROMPT}],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": STRUCTURED_PROBE_SCHEMA,
-                },
-            )
-        except PROBE_FATAL_ERRORS:
-            raise
-        except PROBE_TRANSIENT_ERRORS as e:
-            self._defer_probe(model, e)
-            return
-        except Exception as e:
-            # Ambiguous (400 for an unknown param, 500 from a local server, ...):
-            # not a usable endpoint for schemas either way, so degrade loudly.
-            self._record_probe_result(model, f"request rejected: {e}")
-            return
-
-        self._record_probe_result(model, self._grade_probe_response(completion))
-
-    @staticmethod
-    def _grade_probe_response(completion):
-        """Grade a probe completion: 'strict', 'shape', 'json', 'unsupported'.
-
-        The prompt asks for plain text, so anything JSON-shaped that comes
-        back is evidence of *some* structuring. The four verdicts map onto the
-        four entry rungs, which is all a verdict is used for in
-        classification — a wrong guess costs one request, not the run.
-        """
-        choice = completion.choices[0]
-        if getattr(choice, "finish_reason", "stop") != "stop":
-            return "unsupported"
-
-        content = getattr(choice.message, "content", None)
-        if not content:
-            return "unsupported"
-
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            return "unsupported"
-
-        # Right JSON, wrong keys: json mode is on, the schema was not applied.
-        # Worth knowing — such an endpoint should enter at the json_object
-        # rung rather than being lumped in with prose-only ones.
-        if not isinstance(parsed, dict) or set(parsed) != {PROBE_KEY}:
-            return "json"
-        if not isinstance(parsed[PROBE_KEY], str):
-            return "json"
-
-        # Some backends honor the structure but ignore `enum`. Still usable: our
-        # real schemas constrain shape only, never values.
-        return "strict" if parsed[PROBE_KEY] == PROBE_EXPECTED else "shape"
-
-    def _record_probe_result(self, model, verdict):
-        """Store the verdict string; False means no schema support at all."""
-        stored = verdict if verdict in ("strict", "shape", "json") else False
-        with self._structured_lock:
-            self._structured_support[model] = stored
-        if stored == "shape":
-            print(
-                f"[yellow]ℹ '{model}' honors JSON schema shape but not value "
-                f"constraints; using the delimiter method for translation, "
-                f"schema kept for classification[/yellow]"
-            )
-        elif stored == "json":
-            print(
-                f"[yellow]ℹ '{model}' returns JSON but does not apply the "
-                f"schema; using the delimiter method for translation, "
-                f"classification asks in the prompt[/yellow]"
-            )
-        elif not stored:
-            print(
-                f"[yellow]ℹ '{model}' doesn't apply JSON schema ({verdict}), "
-                f"using delimiter method[/yellow]"
-            )
+        """Count a capability failure and, on a streak, stop paying for it."""
+        self.capabilities.demote(self.model, reason)
 
     # Hoisted to `structured.py` — every provider's bottom rung needs it.
     _extract_json_object = staticmethod(extract_json_object)
-
-    # Probe verdict -> the cheapest rung worth *starting* at. Advisory only:
-    # descent is failure-driven, so a wrong guess costs one request.
-    ENTRY_RUNG = {
-        "strict": "json_schema",
-        "shape": "json_schema",
-        "json": "json_object",
-    }
 
     def structured_rungs(self, prompt, schema, model=None):
         """json_schema -> json_object + described schema -> plain prompt.
@@ -537,7 +278,7 @@ class ChatGPTAPI(Base):
             ("json_object", lambda: self._json_object_rung(prompt, schema, target)),
             ("prompt", lambda: self._prompt_rung(prompt, schema, target)),
         ]
-        entry = self.ENTRY_RUNG.get(self._probe_verdict(target), "prompt")
+        entry = ENTRY_RUNG.get(self._probe_verdict(target), "prompt")
         start = next(i for i, (name, _) in enumerate(ladder) if name == entry)
         return ladder[start:]
 
@@ -618,17 +359,10 @@ class ChatGPTAPI(Base):
         return messages
 
     def _create_async_client(self, key):
-        if self.deployment_id:
-            return AsyncAzureOpenAI(
-                api_key=key,
-                azure_endpoint=self.api_base,
-                api_version="2023-07-01-preview",
-                azure_deployment=self.deployment_id,
-            )
         return AsyncOpenAI(api_key=key, base_url=self.api_base)
 
     def _get_async_client(self, key):
-        cache_key = (self.api_base, self.deployment_id, key)
+        cache_key = (self.api_base, key)
         with self._api_lock:
             if cache_key not in self._async_clients:
                 self._async_clients[cache_key] = self._create_async_client(key)
@@ -676,16 +410,9 @@ class ChatGPTAPI(Base):
         try:
             completion = await create(self._sampling_kwargs(model))
         except BadRequestError as e:
-            if self._classify_bad_request(e) != "temperature":
+            if classify_bad_request(e) != "temperature":
                 raise
-            with self._structured_lock:
-                first_time = not self._temperature_unsupported.get(model)
-                self._temperature_unsupported[model] = True
-            if first_time:
-                print(
-                    f"[yellow]ℹ '{model}' rejected temperature={self.temperature}; "
-                    f"retrying with the model default[/yellow]"
-                )
+            self._note_temperature_rejected(model)
             completion = await create({})
 
         translated = completion.choices[0].message.content or ""
@@ -702,34 +429,17 @@ class ChatGPTAPI(Base):
             await client.close()
 
     def _sampling_kwargs(self, model=None):
-        """Sampling parameters to send, or nothing when the model owns them.
+        """Sampling parameters to send, or nothing when the model owns them."""
+        return self.capabilities.sampling_kwargs(model or self.model, self.temperature)
 
-        `DEFAULT_TEMPERATURE` is the API's own default, so sending it changes no
-        output — but gpt-5.x and the o-series reject *any* explicit temperature,
-        so an unrequested default is pure downside. A model that turned one down
-        is remembered and never asked again.
-        """
-        model = model or self.model
-        if self._temperature_unsupported.get(model):
-            return {}
-        if self.temperature is None or self.temperature == DEFAULT_TEMPERATURE:
-            return {}
-        return {"temperature": self.temperature}
+    _classify_bad_request = staticmethod(classify_bad_request)
 
-    @staticmethod
-    def _classify_bad_request(error):
-        """Say what a 400 was actually about: 'temperature', 'schema' or 'other'.
-
-        Without this, a temperature rejection is misread as "no schema support":
-        the model gets demoted for the rest of the run and the real cause never
-        reaches the user.
-        """
-        text = str(error).lower()
-        if "temperature" in text:
-            return "temperature"
-        if "response_format" in text or "json_schema" in text:
-            return "schema"
-        return "other"
+    def _note_temperature_rejected(self, model):
+        if self.capabilities.note_temperature_rejected(model):
+            print(
+                f"[yellow]ℹ '{model}' rejected temperature={self.temperature}; "
+                f"retrying with the model default[/yellow]"
+            )
 
     def _request(self, call, model=None):
         """Issue an API call, retrying once without temperature if refused."""
@@ -737,16 +447,9 @@ class ChatGPTAPI(Base):
         try:
             return call(self._sampling_kwargs(model))
         except BadRequestError as e:
-            if self._classify_bad_request(e) != "temperature":
+            if classify_bad_request(e) != "temperature":
                 raise
-            with self._structured_lock:
-                first_time = not self._temperature_unsupported.get(model)
-                self._temperature_unsupported[model] = True
-            if first_time:
-                print(
-                    f"[yellow]ℹ '{model}' rejected temperature={self.temperature}; "
-                    f"retrying with the model default[/yellow]"
-                )
+            self._note_temperature_rejected(model)
             return call({})
 
     def create_chat_completion(self, text):
@@ -1081,267 +784,47 @@ class ChatGPTAPI(Base):
         self._note_structured_success()
         return paragraphs
 
-    def set_deployment_id(self, deployment_id):
-        self.deployment_id = deployment_id
-        self.openai_client = AzureOpenAI(
-            api_key=next(self.keys),
-            azure_endpoint=self.api_base,
-            api_version="2023-07-01-preview",
-            azure_deployment=self.deployment_id,
-        )
-
-    def _check_model_availability(self, model_list, model_family_name):
-        """Check if any models from the model_list are available from the API.
-        Returns True if at least one model is available, False otherwise.
-        """
-        if not model_list:
-            print(
-                f"[red]Error: No {model_family_name} models are available from the API.[/red]"
-            )
-            print(
-                "[yellow]Please check your API key, endpoint, and model permissions.[/yellow]"
-            )
-            return False
-        return True
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(Exception),
-        reraise=True,
-    )
-    def _fetch_api_models_with_retry(self):
-        """Fetch available models from API with retry logic.
-        Returns list of model IDs, or None if the models API is not available (e.g., 404).
-        """
-        try:
-            return [
-                i["id"] for i in self.openai_client.models.list().model_dump()["data"]
-            ]
-        except (NotFoundError, BadRequestError):
-            # 404 or 400 — models endpoint not supported by this API provider
-            print(
-                "[yellow]Model availability check skipped: API does not support models endpoint.[/yellow]"
-            )
-            return None
-        except Exception as e:
-            print(
-                f"[yellow]Error checking model availability: {e}. Retrying...[/yellow]"
-            )
-            raise
-
     def _validate_custom_models(self, custom_model_list):
-        """Validate that custom models exist in the API's model list.
-        Returns a dict with 'success', 'available_models', and 'unavailable_models' keys.
-        """
-        api_models = self._fetch_api_models_with_retry()
-
-        # If models API is not available, validate by testing each model directly
-        if api_models is None:
-            available_models = []
-            unavailable_models = []
-
-            for model_name in custom_model_list:
-                try:
-                    self._validate_model_with_test(model_name, "custom")
-                    available_models.append(model_name)
-                except Exception as e:
-                    print(f"[red]{e}[/red]")
-                    unavailable_models.append(model_name)
-
-            if not available_models:
-                return {
-                    "success": False,
-                    "available_models": [],
-                    "unavailable_models": custom_model_list,
-                    "api_models": [],
-                }
-
-            if unavailable_models:
-                print(
-                    f"[yellow]Warning: {unavailable_models} not accessible, using {available_models}[/yellow]"
-                )
-
-            return {
-                "success": True,
-                "available_models": available_models,
-                "unavailable_models": unavailable_models,
-                "api_models": [],
-            }
-
-        available_models = list(set(custom_model_list) & set(api_models))
-        unavailable_models = list(set(custom_model_list) - set(api_models))
-
-        if not available_models:
-            print(
-                f"[red]Error: None of the custom models {custom_model_list} are available in the API.[/red]"
-            )
-            print(f"[yellow]Available models: {api_models}[/yellow]")
-            print(
-                "[yellow]Please check your model name, API key, endpoint, and model permissions.[/yellow]"
-            )
-            return {
-                "success": False,
-                "available_models": [],
-                "unavailable_models": custom_model_list,
-                "api_models": api_models,
-            }
-
-        # If some models are not available, warn but continue with available ones
-        if unavailable_models:
-            print(
-                f"[yellow]Warning: Models {unavailable_models} not found in API, using available models: {available_models}[/yellow]"
-            )
-
-        return {
-            "success": True,
-            "available_models": available_models,
-            "unavailable_models": unavailable_models,
-            "api_models": api_models,
-        }
-
-    def _set_models(
-        self, model_family_name: str, default_azure_model: str, allowed_models: set
-    ):
-        """Generic method to set available models based on model family.
-
-        Args:
-            model_family_name: Human-readable name for error messages (e.g., "GPT-3.5")
-            default_azure_model: Default model name to use for Azure deployments
-            allowed_models: Set of allowed model IDs to intersect with API models
-        """
-        # For Azure deployments, use the default model directly
-        if self.deployment_id:
-            self.model_list = cycle([default_azure_model])
-            self.model = default_azure_model
-            return
-
-        # For regular OpenAI client, fetch and filter available models
-        my_model_list = self._fetch_api_models_with_retry()
-
-        # If models API is not available, validate by testing each model directly
-        if my_model_list is None:
-            available_models = []
-            unavailable_models = []
-
-            for model_name in allowed_models:
-                try:
-                    self._validate_model_with_test(model_name, model_family_name)
-                    available_models.append(model_name)
-                except Exception as e:
-                    print(f"[red]{e}[/red]")
-                    unavailable_models.append(model_name)
-
-            if not available_models:
-                raise Exception(
-                    f"No {model_family_name} models are accessible. "
-                    f"Please check the model names and your API permissions."
-                )
-
-            if unavailable_models:
-                print(
-                    f"[yellow]Warning: {unavailable_models} not accessible, using {available_models}[/yellow]"
-                )
-
-            print(
-                f"[yellow]Using {model_family_name} models without API validation: {available_models}[/yellow]"
-            )
-            model_list = available_models
-        else:
-            model_list = list(set(my_model_list) & allowed_models)
-            if not self._check_model_availability(model_list, model_family_name):
-                raise Exception(
-                    f"No {model_family_name} models available. Available models: {my_model_list}"
-                )
-        print(f"Using model list {model_list}")
-        self.model_list = cycle(model_list)
-        self.model = model_list[0]
-
-    def _validate_model_with_test(self, model_name: str, model_family_name: str):
-        """Validate a model by making a test request when models API is unavailable.
-        Raises Exception if the model is not accessible.
-
-        NOTE: This makes a real API call (~10 tokens) to verify the model works.
-        This adds a small delay on startup but provides early error detection.
-        """
-        print(
-            f"[yellow]Model validation: Making a test API call to verify '{model_name}' is accessible. "
-            f"This uses ~10 tokens.[/yellow]"
-        )
-        try:
-            # Make a minimal test request
-            test_messages = [{"role": "user", "content": "Say 'ok'"}]
-            self.openai_client.chat.completions.create(
-                model=model_name,
-                messages=test_messages,
-                max_tokens=10,
-            )
-            print(f"[green]Model '{model_name}' is accessible and working.[/green]")
-        except Exception as e:
-            raise Exception(
-                f"Model '{model_name}' from family '{model_family_name}' is not accessible. "
-                f"Error: {e}. "
-                f"Please check the model name and your API permissions."
-            )
-
-    def set_gpt35_models(self, ollama_model=""):
-        if ollama_model:
-            self.model_list = cycle([ollama_model])
-            self.model = ollama_model
-            return
-        self._set_models("GPT-3.5", "gpt-35-turbo", set(GPT35_MODEL_LIST))
-
-    def set_gpt4_models(self):
-        self._set_models("GPT-4", "gpt-4", set(GPT4_MODEL_LIST))
-
-    def set_gpt4omini_models(self):
-        self._set_models("GPT-4o-mini", "gpt-4o-mini", set(GPT4oMINI_MODEL_LIST))
-
-    def set_gpt4o_models(self):
-        self._set_models("GPT-4o", "gpt-4o", set(GPT4o_MODEL_LIST))
-
-    def set_gpt5mini_models(self):
-        self._set_models("GPT-5-mini", "gpt-5-mini", set(GPT5MINI_MODEL_LIST))
-
-    def set_o1preview_models(self):
-        self._set_models("O1-preview", "o1-preview", set(O1PREVIEW_MODEL_LIST))
-
-    def set_o1_models(self):
-        self._set_models("O1", "o1", set(O1_MODEL_LIST))
-
-    def set_o1mini_models(self):
-        self._set_models("O1-mini", "o1-mini", set(O1MINI_MODEL_LIST))
-
-    def set_o3mini_models(self):
-        self._set_models("O3-mini", "o3-mini", set(O3MINI_MODEL_LIST))
+        """Which of these models this endpoint will serve (see capabilities)."""
+        return verify_models(self.openai_client, custom_model_list)
 
     def set_model_list(self, model_list):
-        model_list = list(set(model_list))
+        """The only way models get set: whatever the user named, in that order.
+
+        No name is special. Rotation follows the order given — the old
+        `set()` pass made it depend on hash order, so the same command could
+        start on a different model between runs.
+        """
+        seen = {}
+        for name in model_list:
+            name = (name or "").strip()
+            if name:
+                seen.setdefault(name, None)
+        model_list = list(seen)
         if not model_list:
-            raise Exception(
+            raise ValueError(
                 "Empty model list provided. Use --model_list with at least one model name."
             )
 
-        # Validate custom models against API
-        if not self.deployment_id:  # Skip for Azure deployments
-            validation_result = self._validate_custom_models(model_list)
-            if not validation_result["success"]:
-                raise Exception(
-                    f"Custom model validation failed. "
-                    f"Requested: {model_list}. "
-                    f"Unavailable: {validation_result['unavailable_models']}. "
-                    f"Available models in API: {validation_result['api_models']}. "
-                    f"Check your model name, API key, and permissions."
-                )
-            # If some models were partially available, use only the available ones
-            if validation_result["unavailable_models"]:
-                model_list = validation_result["available_models"]
+        validation_result = self._validate_custom_models(model_list)
+        if not validation_result["success"]:
+            raise ValueError(
+                f"Custom model validation failed. "
+                f"Requested: {model_list}. "
+                f"Unavailable: {validation_result['unavailable_models']}. "
+                f"Available models in API: {validation_result['api_models']}. "
+                f"Check your model name, API key, and permissions."
+            )
+        # If some models were partially available, use only the available ones
+        if validation_result["unavailable_models"]:
+            model_list = [
+                m for m in model_list if m in set(validation_result["available_models"])
+            ]
 
         print(f"Using model list {model_list}")
         self.model_list = cycle(model_list)
-        self.model = model_list[
-            0
-        ]  # Set initial model so it's available before rotate_model() is called
+        # Set the initial model so it is available before rotate_model() runs.
+        self.model = model_list[0]
 
     def batch_init(self, book_name):
         self.book_name = self.sanitize_book_name(book_name)

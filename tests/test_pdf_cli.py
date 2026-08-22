@@ -40,7 +40,7 @@ def test_pdf_cli_creates_txt_and_optional_epub(tmp_path):
             "--test",
             "--test_num",
             "5",
-            "--model",
+            "--api_format",
             "google",
         ],
         check=True,

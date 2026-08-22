@@ -156,3 +156,11 @@ tools/epubcheck-*/
 # where runs put what they produce: the corpus gate writes its partition
 # audit here, and translated books land next to it
 output/
+
+# local work records, never committed (see AGENTS.md): dated docs/ notes,
+# the live plan, the prompt log, and personal run scripts
+/docs/[0-9]*.md
+/plan.md
+/user-msg-log.md
+/translate*.sh
+/CLAUDE.md

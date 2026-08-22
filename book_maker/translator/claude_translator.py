@@ -1,29 +1,59 @@
-import re
+from itertools import cycle
+from urllib.parse import urlparse
+
 from rich import print
-from anthropic import Anthropic, BadRequestError, UnprocessableEntityError
+from anthropic import (
+    Anthropic,
+    APIStatusError,
+    BadRequestError,
+    NotFoundError,
+    UnprocessableEntityError,
+)
 
 from .base_translator import Base
 from ..structured import RungRejected
 
 
 def _sdk_base_url(api_base):
-    """Trim a trailing `/v1` the SDK is going to add back.
+    """Trim the request path the SDK is going to add back.
 
-    `Anthropic(base_url=...)` appends `/v1/messages` itself, so an api_base
-    copied from an OpenAI-shaped gateway (`https://host/v1`) produces
-    `/v1/v1/messages` and a 403 whose text — "HTTP node only allows access to
-    inference API paths" — points nowhere near the cause.
+    `Anthropic(base_url=...)` appends `/v1/messages` itself, so a URL copied
+    from a gateway's docs (`https://host/v1`, or the whole
+    `https://host/v1/messages`) produces `/v1/v1/messages` and a 403 whose
+    text — "HTTP node only allows access to inference API paths" — points
+    nowhere near the cause.
     """
     if not api_base:
         return None
-    base = api_base.rstrip("/")
+    base = api_base.strip().rstrip("/")
+    trimmed = False
+    if base.endswith("/messages"):
+        base = base[: -len("/messages")].rstrip("/")
+        trimmed = True
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
+        trimmed = True
+    if trimmed:
         print(f"[dim]using anthropic base_url {base} (the SDK adds /v1)[/dim]")
     return base
 
 
+# A gateway that does not serve /v1/messages answers like this. Auth, quota
+# and transport errors say nothing about the wire format and must not trigger
+# a second endpoint being tried with the same key.
+_WRONG_SHAPE_STATUSES = (404, 405)
+
+# Anthropic's own hosts serve no OpenAI route, so a 404 from one is an answer
+# about the *model*, not the wire format. Retrying elsewhere would bury it.
+_ANTHROPIC_HOSTS = ("anthropic.com",)
+
+
 class Claude(Base):
+    # Class-level defaults so a partially built instance (tests, subclasses)
+    # still answers the questions every request path asks.
+    requested_api_base = None
+    _fallback = None
+
     def __init__(
         self,
         key,
@@ -39,7 +69,14 @@ class Claude(Base):
         super().__init__(key, language)
         base_url = _sdk_base_url(api_base)
         self.api_url = base_url or "https://api.anthropic.com"
-        self.client = Anthropic(base_url=base_url, api_key=key, timeout=20)
+        # Kept as given: the OpenAI fallback needs the user's own URL, not the
+        # trimmed one this SDK wants.
+        self.requested_api_base = api_base
+        self.key_string = key
+        # One key, not the whole comma-separated list; rotate_key advances it.
+        self.client = Anthropic(base_url=base_url, api_key=next(self.keys), timeout=20)
+        # Set on the first wrong-shape answer; every later call goes through it.
+        self._fallback = None
         self.model = "claude-haiku-4-5-20251001"  # default it for now
         self.language = language
         self.prompt_template = (
@@ -54,19 +91,19 @@ class Claude(Base):
         self.context_paragraph_limit = context_paragraph_limit
 
     def rotate_key(self):
-        pass
+        """Advance to the next key, as the comma-separated form promises.
 
-    def set_claude_model(self, model_name):
-        self.model = model_name
+        `Anthropic.api_key` is writable, so this needs no new client. Without
+        it a multi-key run sent the literal string "a,b" as the credential
+        and failed authentication.
+        """
+        self.client.api_key = next(self.keys)
 
     def set_model_list(self, model_list):
-        """The `--model_list` surface, so `--provider` can reach this class.
+        """Take the model to use. Any id the endpoint serves is accepted.
 
-        `--model` is limited to MODEL_DICT keys, so a gateway's own id
-        (`claude-haiku-4.5`) could not otherwise reach the anthropic shape at
-        all; cli.py calls this for every `--provider`, and its absence here
-        was an AttributeError. Claude has no model rotation, so the first
-        entry wins — announced, not silently.
+        Claude has no model rotation, so when several are named the first
+        wins — announced, not silently.
         """
         models = [m.strip() for m in model_list if m and m.strip()]
         if not models:
@@ -77,6 +114,58 @@ class Claude(Base):
                 f"'{models[0]}' and ignoring {len(models) - 1} more[/yellow]"
             )
         self.model = models[0]
+
+    def _is_wrong_shape(self, error):
+        """Whether `error` says this endpoint does not speak the anthropic shape."""
+        if not self.requested_api_base:
+            # The default host is Anthropic's own. A 404 there means the model
+            # does not exist, and retrying on /chat/completions cannot help.
+            return False
+        host = (urlparse(self.requested_api_base).hostname or "").lower()
+        if any(host == h or host.endswith(f".{h}") for h in _ANTHROPIC_HOSTS):
+            # Named explicitly, as the documented command does, but still the
+            # one host where the OpenAI shape does not exist.
+            return False
+        if isinstance(error, NotFoundError):
+            return True
+        return (
+            isinstance(error, APIStatusError)
+            and getattr(error, "status_code", None) in _WRONG_SHAPE_STATUSES
+        )
+
+    def _build_openai_fallback(self):
+        """The same endpoint, model and key, spoken as OpenAI instead."""
+        from .chatgptapi_translator import ChatGPTAPI
+
+        base = (self.requested_api_base or "").rstrip("/")
+        if not base.endswith("/v1"):
+            # `_sdk_base_url` trimmed /v1 for the anthropic SDK, which appends
+            # its own path; the OpenAI SDK expects the /v1 to be there.
+            base = f"{base}/v1"
+        fallback = ChatGPTAPI(
+            self.key_string,
+            self.language,
+            api_base=base,
+            prompt_template=self.prompt_template,
+            prompt_sys_msg=self.prompt_sys_msg,
+            temperature=self.temperature,
+            context_flag=self.context_flag,
+            context_paragraph_limit=self.context_paragraph_limit,
+        )
+        # Straight assignment rather than set_model_list: the model is already
+        # chosen, and re-validating it would spend requests mid-run.
+        fallback.model_list = cycle([self.model])
+        fallback.model = self.model
+        return fallback
+
+    def _switch_to_openai(self, error):
+        self._fallback = self._build_openai_fallback()
+        print(
+            f"[yellow]ℹ this endpoint does not answer the anthropic shape "
+            f"({error}); switching to the openai format for the rest of the "
+            f"run. Pass --api_format openai to skip this attempt.[/yellow]"
+        )
+        return self._fallback
 
     def create_messages(self, text, intermediate_messages=None):
         """Create messages for the current translation request"""
@@ -138,6 +227,8 @@ class Claude(Base):
         Deliberately outside the translation flow: no context pairs, no
         prompt template, no saved history.
         """
+        if self._fallback:
+            return self._fallback._chat_completion(prompt, model)
         try:
             r = self.client.messages.create(
                 max_tokens=4096,
@@ -146,23 +237,35 @@ class Claude(Base):
             )
         except (BadRequestError, UnprocessableEntityError) as e:
             raise RungRejected(e) from e
+        except APIStatusError as e:
+            if not self._is_wrong_shape(e):
+                raise
+            return self._switch_to_openai(e)._chat_completion(prompt, model)
         return "".join(
             block.text for block in r.content if getattr(block, "type", "") == "text"
         )
 
     def translate(self, text):
+        if self._fallback:
+            return self._fallback.translate(text)
+
         self.rotate_key()
 
         # Create messages with context
         messages = self.create_messages(text, self.create_context_messages())
 
-        r = self.client.messages.create(
-            max_tokens=4096,
-            messages=messages,
-            system=self.prompt_sys_msg,
-            temperature=self.temperature,
-            model=self.model,
-        )
+        try:
+            r = self.client.messages.create(
+                max_tokens=4096,
+                messages=messages,
+                system=self.prompt_sys_msg,
+                temperature=self.temperature,
+                model=self.model,
+            )
+        except APIStatusError as e:
+            if not self._is_wrong_shape(e):
+                raise
+            return self._switch_to_openai(e).translate(text)
         t_text = r.content[0].text
 
         if self.context_flag:

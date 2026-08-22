@@ -54,31 +54,38 @@ sections after it provide additional notes for selected workflows.
 | `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. |
 | `--batch` | Submit an EPUB ChatGPT Batch API job; incompatible with plan mode. |
 | `--batch-use` | Consume a previously submitted batch job; incompatible with plan mode. |
-| `--interval SECONDS` | Gemini request interval; default `0.01`. |
-| `--extra_body JSON` | Extra request fields for ChatGPT/OpenAI-derived request paths (including OpenAI-style custom providers and xAI); other translators such as Claude, Gemini, Qwen, and Groq ignore it. |
+| `--extra_body JSON` | Extra request fields for the `openai` route; other formats ignore it and say so. |
 | `--quiet` | Suppress EPUB progress bars and paragraph echoes, not reports/errors. |
 | `--proxy URL` | Set HTTP/HTTPS proxy environment variables for the run. |
 
-### Model routing and credentials
+### Endpoint and credentials
+
+A route is an endpoint, not a model name.
 
 | Option | Purpose |
 |---|---|
-| `--model MODEL` / `-m MODEL` | Built-in translator route. Mutually exclusive with `--provider`. |
-| `--model_list IDS` | Exact comma-separated IDs for OpenAI, Groq, Gemini, or a custom provider. |
-| `--provider NAME` | Provider from project/global `bbm_providers.json`; conflicts with `--model`. |
-| `--api_key KEY` | Custom-provider key; prefer its configured environment variable. |
-| `--api_base URL` | Override the selected translator endpoint. |
-| `--deployment_id ID` | Azure OpenAI deployment; also requires `--api_base`. |
-| `--ollama_model MODEL` | Ollama model; defaults its endpoint to `http://localhost:11434/v1`. |
-| `--openai_key KEY` | OpenAI-compatible key; prefer `BBM_OPENAI_API_KEY`. |
-| `--claude_key KEY` | Anthropic key; prefer `BBM_CLAUDE_API_KEY`. |
-| `--gemini_key KEY` | Gemini key; prefer `BBM_GOOGLE_GEMINI_KEY`. |
-| `--groq_key KEY` | Groq key; prefer `BBM_GROQ_API_KEY`. |
-| `--xai_key KEY` | xAI key; prefer `BBM_XAI_API_KEY`. |
-| `--qwen_key KEY` | Qwen key; prefer `BBM_QWEN_API_KEY`. |
-| `--deepl_key KEY` | DeepL key; prefer `BBM_DEEPL_API_KEY`. |
-| `--caiyun_key KEY` | Caiyun key; prefer `BBM_CAIYUN_API_KEY`. |
-| `--custom_api VALUE` | Legacy custom translator API; prefer `BBM_CUSTOM_API`. |
+| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Old alias values are translated with a note. |
+| `--api_base URL` | The endpoint to translate against. Defaults to the format's official host. A pasted `…/v1/chat/completions` or trailing slash is trimmed. |
+| `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's conventional variable. |
+| `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id. |
+| `--model_list IDS` | Several model IDs to rotate across, comma-separated. Kept for compatibility and for rotation; a single model belongs in `--model`. Naming a model in both flags is an error. |
+| `--source_lang LANG` | Source language for endpoints that want it stated; default `auto`. |
+
+If the anthropic format is inferred from a model id but the endpoint does not
+serve `/v1/messages`, the first request falls back to the `openai` format for
+the rest of the run and says so. `--api_format` skips that attempt.
+
+Key lookup order: `--key`, then `BBM_API_KEY`, then `OPENAI_API_KEY` /
+`ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` / `BBM_DEEPL_API_KEY` depending on
+the format. Endpoints on localhost need no key.
+
+`--model`, the per-vendor `--*_key` flags, `--provider`, `--api_key`,
+`--ollama_model`, `--deployment_id` and `--interval` are no longer part of the
+parser, but old command lines still run: `book_maker/legacy_cli.py` rewrites
+them into the flags above before the run starts and prints each substitution.
+The mapping table is in the README's "Migrating from the old flags". Old
+per-vendor key variables (`BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, …) are
+still consulted for the route that implied them.
 
 Do not put secrets directly on a shared command line. Environment variables are safer for
 agent and CI use. The CLI does **not** load `.env` files itself: export the variables first,
@@ -91,11 +98,11 @@ or source a local git-ignored file before running, for example
 Use this option to preview the result if you haven't paid for the service or just want to test. Note that there is a limit and it may take some time.
 
 ```sh
-bbook_maker --book_name test_books/Lex_Fridman_episode_322.srt --openai_key ${openai_key}  --test
+bbook_maker --book_name test_books/Lex_Fridman_episode_322.srt --key ${openai_key} --model gpt-5-mini  --test
 ```
 
 ```sh
-bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key}  --test --language zh-hans
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini  --test --language zh-hans
 ```
 
 `--test_num <TEST_NUM>`<br>
@@ -153,18 +160,15 @@ Use this option to specify proxy server for internet access. Enter a string such
 
 If you want to change api_base like using Cloudflare Workers, use this option to support it.<br>
 
-    bbook_maker --book_name 'animal_farm.epub' --openai_key sk-XXXXX --api_base 'https://xxxxx/v1'
+    bbook_maker --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
 **Note: the api url should be '`https://xxxx/v1`'. Quotation marks are required.**
 
 ## Microsoft Azure Endpoints
-`--api_base <API_BASE_URL>` `--deployment_id <DEPLOYMENT_ID>`<br>
 
-You can use the api endpoint provided from Microsoft.
+Azure has no dedicated flag. Point `--api_base` at the deployment's
+OpenAI-compatible URL and name the deployment in `--model`:
 
-
-    bbook_maker --book_name 'animal_farm.epub' --openai_key XXXXX --api_base 'https://example-endpoint.openai.azure.com' --deployment_id 'deployment-name'
-
-**Note : Current only support chatgptapi model for deployment_id. And `api_base` must be provided when using `deployment_id`. You can check [here](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/create-resource?pivots=web-portal) for more information about `deployment_id`.**
+    bbook_maker --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model 'deployment-name'
 
 ## Batch size (txt only)
 `--batch_size`<br>

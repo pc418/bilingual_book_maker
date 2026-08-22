@@ -14,8 +14,8 @@ from book_maker.translator.base_translator import (
     TranslationContext,
     TranslationResult,
 )
+from book_maker.translator.capabilities import CapabilityLedger
 from book_maker.translator.chatgptapi_translator import ChatGPTAPI
-from book_maker.translator.groq_translator import GroqClient
 
 
 class SyncOnlyTranslator(Base):
@@ -66,8 +66,7 @@ def _chatgpt_for_async_test():
     translator.deployment_id = None
     translator.api_base = None
     translator._api_lock = threading.Lock()
-    translator._structured_lock = threading.RLock()
-    translator._temperature_unsupported = {}
+    translator.capabilities = CapabilityLedger()
     translator._async_clients = {}
     return translator
 
@@ -105,8 +104,17 @@ def test_sync_only_provider_rejects_async_translation():
         asyncio.run(translator.translate_async("text"))
 
 
+class CustomTransportTranslator(ChatGPTAPI):
+    """A subclass that sends its requests somewhere other than openai_client."""
+
+    def create_chat_completion(self, text):
+        raise AssertionError("not used")
+
+
 def test_chatgpt_subclass_with_custom_transport_rejects_native_async():
-    translator = GroqClient.__new__(GroqClient)
+    # the async path talks to the OpenAI SDK directly, so a subclass that
+    # overrode the sync transport must not be silently routed around it
+    translator = CustomTransportTranslator.__new__(CustomTransportTranslator)
 
     with pytest.raises(AsyncTranslationUnsupported):
         asyncio.run(translator.translate_async("text"))
@@ -157,25 +165,6 @@ def test_chatgpt_native_async_translation_keeps_context_explicit(monkeypatch):
     assert client.closed is False
 
 
-def test_azure_async_client_uses_existing_deployment_configuration(monkeypatch):
-    translator = _chatgpt_for_async_test()
-    translator.deployment_id = "deployment"
-    translator.api_base = "https://example.openai.azure.com"
-    client = object()
-    factory = Mock(return_value=client)
-    monkeypatch.setattr(
-        "book_maker.translator.chatgptapi_translator.AsyncAzureOpenAI", factory
-    )
-
-    assert translator._create_async_client("azure-key") is client
-    factory.assert_called_once_with(
-        api_key="azure-key",
-        azure_endpoint="https://example.openai.azure.com",
-        api_version="2023-07-01-preview",
-        azure_deployment="deployment",
-    )
-
-
 def test_chatgpt_async_retries_without_rejected_temperature(monkeypatch):
     translator = _chatgpt_for_async_test()
     translator.temperature = 0.2
@@ -193,7 +182,7 @@ def test_chatgpt_async_retries_without_rejected_temperature(monkeypatch):
     first, second = client.chat.completions.create.await_args_list
     assert first.kwargs["temperature"] == 0.2
     assert "temperature" not in second.kwargs
-    assert translator._temperature_unsupported["test-model"] is True
+    assert translator.capabilities.temperature_unsupported["test-model"] is True
 
 
 def test_chatgpt_async_does_not_retry_unrelated_bad_request(monkeypatch):
