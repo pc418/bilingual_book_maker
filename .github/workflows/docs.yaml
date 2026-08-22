@@ -4,6 +4,13 @@ on:
     branches:
       - main
 
+# This fork's default workflow token is read-only, so `mkdocs gh-deploy`
+# could not push gh-pages: "Permission to ... denied to github-actions[bot]".
+# Granted here rather than by widening the repository-wide default, so only
+# this job can write.
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
