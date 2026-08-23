@@ -161,6 +161,6 @@ output/
 # the live plan, the prompt log, and personal run scripts
 /docs/[0-9]*.md
 /plan.md
-/user-msg-log.md
+/prompt-log.md
 /translate*.sh
 /CLAUDE.md

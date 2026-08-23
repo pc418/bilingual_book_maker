@@ -59,11 +59,12 @@ from .ledger import (
     VALID_ACTIONS,
     Ledger,
     make_key,
+    same_evidence,
 )
 
 # Every action a plan JSON may carry; anything else is a typo and must fail
 # loud — a misspelled "skip" silently treated as translate would quietly undo
-# the user's decision. Schema 4 has exactly two, plus null for "not yet
+# the user's decision. The schema has exactly two, plus null for "not yet
 # decided": who decided lives in `decided_by`, not inside the action.
 VALID_PLAN_ACTIONS = VALID_ACTIONS
 
@@ -306,9 +307,17 @@ def parse_css_display(css_text):
     css_text = re.sub(r"/\*.*?\*/", " ", css_text, flags=re.S)
     unconditional, conditional = _flatten_at_rules(css_text)
     rules = _display_rules(unconditional)
-    conditions = {}
+    conditional_displays = {}
     for condition, text in conditional:
-        for key in _display_rules(text):
+        displays = conditional_displays.setdefault(condition, {})
+        for key, value in _display_rules(text).items():
+            displays.pop(key, None)
+            displays[key] = value
+    conditions = {}
+    for condition, displays in conditional_displays.items():
+        for key, value in displays.items():
+            if value != "none":
+                continue
             conditions.setdefault(key, [])
             if condition not in conditions[key]:
                 conditions[key].append(condition)
@@ -1284,11 +1293,32 @@ def partition_file(
 # ------------------------------------------------------------------- plan
 
 
+def planning_settings(
+    exclude_tags, poetry_group_size, only_files=None, exclude_files=None
+):
+    """Canonical settings whose selected occurrence evidence depends on them."""
+    return {
+        "exclude_tags": sorted(exclude_tags),
+        "poetry_group_size": poetry_group_size,
+        "only_files": sorted(only_files or ()),
+        "exclude_files": sorted(exclude_files or ()),
+    }
+
+
 class TranslationPlan:
-    def __init__(self, files, exclude_tags, poetry_group_size):
+    def __init__(
+        self,
+        files,
+        exclude_tags,
+        poetry_group_size,
+        only_files=None,
+        exclude_files=None,
+    ):
         self.files = files
         self.exclude_tags = tuple(exclude_tags)
         self.poetry_group_size = poetry_group_size
+        self.only_files = frozenset(only_files or ())
+        self.exclude_files = frozenset(exclude_files or ())
 
     @property
     def total_chars(self):
@@ -1312,14 +1342,27 @@ class TranslationPlan:
             return 1.0
         return self.translate_chars / total
 
-    def build_ledger(self, decisions=None):
+    def build_ledger(self, decisions=None, overrides=None):
         """Every signature this book contains, with its evidence.
 
-        Built from `all_units` — the partition *before* decisions are
-        applied — so a skipped signature keeps its row. `decisions` is a
-        loaded ledger whose answers and provenance are carried forward onto
-        the fresh rows.
+        Built from `all_units`, which keeps a row for a signature this run
+        will skip. `decisions` is a loaded ledger whose answers and
+        provenance are carried forward onto the fresh rows.
+
+        `overrides` is what the partition was built with, and it is needed
+        to know whether the evidence is comparable at all: an *inline* skip
+        removes its text before segments are formed, so the surrounding
+        block runs — their count, their characters, their samples, even
+        their folio suffixes — describe a different partition from the one
+        a plan written without that skip recorded. Comparing the two would
+        reopen the very decisions that produced the override, on every
+        single run. Block skips are applied after `all_units` is complete
+        and leave the evidence untouched, so they stay comparable.
         """
+        evidence_comparable = not any(
+            key.startswith("inline:") and _action_of(decision) == "skip"
+            for key, decision in (overrides or {}).items()
+        )
         ledger = Ledger()
         for f in self.files:
             # one pass per file, not two: the conditional-CSS evidence is
@@ -1347,9 +1390,18 @@ class TranslationPlan:
                     )
         ledger.finalize(self.total_chars)
         if decisions is not None:
+            ledger.reopened_keys.update(decisions.reopened_keys)
+            ledger.settings_changed = decisions.settings_changed
             for key, row in ledger.rows.items():
                 prior = decisions.rows.get(key)
                 if prior is None:
+                    continue
+                if evidence_comparable and not same_evidence(row, prior):
+                    if any(
+                        prior.get(field) is not None
+                        for field in ("action", "decided_by", "content_type")
+                    ):
+                        ledger.reopened_keys.add(key)
                     continue
                 row["action"] = prior.get("action")
                 row["decided_by"] = prior.get("decided_by")
@@ -1437,6 +1489,12 @@ class TranslationPlan:
             "exclude_tags": list(self.exclude_tags),
             "poetry_group_size": self.poetry_group_size,
             "book_sha256": file_sha256(book_path),
+            "planning_settings": planning_settings(
+                self.exclude_tags,
+                self.poetry_group_size,
+                self.only_files,
+                self.exclude_files,
+            ),
         }
 
     def save_json(self, path, book_path=None, ledger=None):
@@ -1468,7 +1526,7 @@ def file_sha256(path):
     return digest
 
 
-def load_plan_overrides(json_path, book_path):
+def load_plan_overrides(json_path, book_path, expected_settings=None):
     """Load a saved plan and turn its answers into partition overrides.
 
     Returns ``(ledger, overrides)`` where overrides maps a scoped key to
@@ -1487,6 +1545,12 @@ def load_plan_overrides(json_path, book_path):
     `require_decided` is the separate last gate before money is spent.
     """
     ledger = Ledger.load(json_path, expected_sha256=file_sha256(book_path))
+    if (
+        expected_settings is not None
+        and ledger.meta.get("planning_settings") != expected_settings
+    ):
+        ledger.settings_changed = True
+        ledger.reopen_decisions()
     overrides = {
         key: (row["action"], row["decided_by"])
         for key, row in ledger.rows.items()
@@ -1599,4 +1663,10 @@ def build_plan(
             next_group_id=next_group_id,
         )
         files.append(fp)
-    return TranslationPlan(files, exclude_tags, poetry_group_size)
+    return TranslationPlan(
+        files,
+        exclude_tags,
+        poetry_group_size,
+        only_files=only_files,
+        exclude_files=exclude_files,
+    )
