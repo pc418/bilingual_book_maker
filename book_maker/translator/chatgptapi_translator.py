@@ -245,6 +245,7 @@ class ChatGPTAPI(Base):
         self._session_cache_warned = False
         self._session_cache_seen = False
         self._session_requests = 0
+        self._compact_failures = 0
         if context_paragraph_limit > 0:
             # not set by user, use default
             self.context_paragraph_limit = context_paragraph_limit
@@ -367,18 +368,25 @@ class ChatGPTAPI(Base):
             if self.model_list:
                 self.model = next(self.model_list)
 
-    def create_messages(self, text, intermediate_messages=None):
+    def _user_content(self, text):
+        """The user message for one unit: pinned terms plus the prompt.
+
+        Deterministic for a given (text, glossary), which is what lets session
+        mode store exactly what it sent without threading the string around.
+        """
         content = self.prompt_template.format(
             text=text, language=self.language, crlf="\n"
         )
-
         # Pinned terms belong to *this* unit, so they go in the fresh tail
-        # message. In session mode anything above it is the cached prefix: a
-        # block that changes per unit would invalidate the cache on every
-        # request, which costs far more than the few tokens it spends here.
+        # message rather than the system prompt: a block that varies per unit
+        # sitting in a fixed position would invalidate the cached prefix on
+        # every request. Once this message is frozen into the history it stops
+        # varying, so it is stable there.
         glossary_block = self.glossary.prompt_block(text) if self.glossary else ""
-        if glossary_block:
-            content = f"{glossary_block}\n\n{content}"
+        return f"{glossary_block}\n\n{content}" if glossary_block else content
+
+    def create_messages(self, text, intermediate_messages=None):
+        content = self._user_content(text)
 
         sys_content = self.system_content or self.prompt_sys_msg.format(crlf="\n")
         messages = [
@@ -584,6 +592,11 @@ class ChatGPTAPI(Base):
     # should not be nagged.
     CACHE_WARN_AFTER = 10
 
+    # Compact attempts before giving up on a summary and starting clean. More
+    # than one so a transient error does not cost the accumulated context;
+    # bounded so a broken endpoint cannot grow the history forever.
+    COMPACT_ATTEMPTS = 3
+
     def _note_cache_usage(self, completion):
         """Warn once if session mode never gets a cache read billed back.
 
@@ -641,14 +654,27 @@ class ChatGPTAPI(Base):
             )
             report_text = completion.choices[0].message.content or ""
         except Exception as e:
-            # A failed compact must not end a multi-hour run: drop the window
-            # and continue uncontexted rather than losing the book.
+            # Keep the window. One rate-limited or dropped request is not a
+            # reason to throw away a book's worth of accumulated context — the
+            # budget stays exceeded, so the next unit simply tries again.
+            self._compact_failures += 1
+            give_up = self._compact_failures >= self.COMPACT_ATTEMPTS
             print(
-                f"[yellow]ℹ handoff report failed ({e}); starting the next "
-                f"context window without a summary[/yellow]"
+                f"[yellow]ℹ handoff report failed ({e}); "
+                + (
+                    "starting the next context window without a summary"
+                    if give_up
+                    else "keeping the current context and retrying on the next paragraph"
+                )
+                + "[/yellow]"
             )
-            self.session.reset(seed="")
+            if give_up:
+                # Bounded: without this the history would grow past the
+                # budget forever on a persistently failing endpoint.
+                self._compact_failures = 0
+                self.session.reset(seed="")
             return
+        self._compact_failures = 0
 
         glossary_lines = ""
         if self.glossary_auto:
@@ -668,11 +694,24 @@ class ChatGPTAPI(Base):
             glossary_lines=glossary_lines,
         )
         if self.handoff_path:
-            report.append_to(self.handoff_path)
+            try:
+                report.append_to(self.handoff_path)
+            except OSError as e:
+                # The paragraph is already translated and billed. Failing here
+                # would send get_translation's retry policy round again and
+                # pay for the same paragraph up to three more times.
+                print(
+                    f"[yellow]ℹ could not write {self.handoff_path} ({e}); "
+                    f"the run continues without a saved handoff[/yellow]"
+                )
         self.session.reset(seed=report.seed_text())
 
     def _save_session_context(self, text, t_text):
-        self.session.append(text, t_text)
+        # Store what was *sent*, not the bare source. The next request replays
+        # this message verbatim, so any difference — the prompt template, a
+        # glossary block — would make the newest pair a cache miss, and the
+        # run would re-read a paragraph at full input price every request.
+        self.session.append(self._user_content(text), t_text)
         if self.session.should_compact(self._session_budget()):
             self._compact_session()
 

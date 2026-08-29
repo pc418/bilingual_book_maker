@@ -163,3 +163,27 @@ class TestJsonHandoff:
     def test_to_lines_roundtrips_through_parse(self):
         g = Glossary.parse("Winston → 温斯顿 # note\nJulia → 茱莉亚\n")
         assert Glossary.parse(g.to_lines()).entries == g.entries
+
+
+class TestMixedScriptAndFolding:
+    """Findings from the adversarial review."""
+
+    def test_mixed_script_term_keeps_its_latin_boundary(self):
+        g = Glossary.parse("AI模型 → AI model\n")
+        assert g.matches("这个AI模型很好")
+        # The term starts with a latin letter, so XAI模型 is a different word.
+        assert not g.matches("这个XAI模型很好")
+
+    def test_mixed_script_term_with_cjk_edge_still_matches_inside_text(self):
+        g = Glossary.parse("模型AI → model AI\n")
+        assert g.matches("那个模型AI跑得快")
+
+    def test_supplementary_plane_cjk_matches_as_a_substring(self):
+        g = Glossary.parse("\U00020000 → glyph\n")
+        assert g.matches("甲\U00020000乙")
+
+    def test_dedup_and_matching_agree_on_case(self):
+        """Deduplicating more aggressively than matching would drop a pin."""
+        g = Glossary.parse("Stra\u00dfe → 街道\nSTRASSE → 大街\n")
+        for entry in g.entries:
+            assert g.matches(entry.term), f"stored {entry.term!r} does not match itself"

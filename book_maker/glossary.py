@@ -24,9 +24,19 @@ from pathlib import Path
 _ARROW = re.compile(r"\s*(?:→|->)\s*")
 _ARROW_OUT = " → "
 
-# Han, Hiragana, Katakana, Hangul. A term containing any of these has no
-# meaningful word boundary, so it matches as a substring.
-_CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]")
+# Han (including the supplementary-plane extensions, where many rarer name
+# characters live), Hiragana, Katakana, Hangul. CJK is written without
+# spaces, so these characters have no word boundary to anchor to.
+_CJK = re.compile(
+    "[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af"
+    "\U00020000-\U0002ffff\U00030000-\U0003134f]"
+)
+
+
+# What may continue a latin word. Deliberately not `\w`, which in Python
+# includes CJK: guarding "AI模型" with `(?<!\w)` would refuse to match inside
+# "这个AI模型" because 个 counts as a word character.
+_LATIN_WORD = "A-Za-z0-9_\u00c0-\u024f"
 
 
 @dataclass(frozen=True)
@@ -65,21 +75,25 @@ def _matcher(entry: GlossaryEntry) -> re.Pattern:
     The term is always escaped — "C++" is a literal, not a quantifier.
     """
     literal = re.escape(entry.term)
-    if _is_cjk(entry.term):
-        pattern = literal
-    else:
-        pattern = rf"(?<!\w){literal}(?!\w)"
+    # Guard each edge on its own. A term is often mixed script ("AI模型"), and
+    # deciding by "contains any CJK" would drop the boundary the latin edge
+    # still needs — letting "AI模型" fire inside "XAI模型".
+    left = "" if _is_cjk(entry.term[0]) else rf"(?<![{_LATIN_WORD}])"
+    right = "" if _is_cjk(entry.term[-1]) else rf"(?![{_LATIN_WORD}])"
     flags = 0 if entry.case_sensitive else re.IGNORECASE
-    return re.compile(pattern, flags)
+    return re.compile(f"{left}{literal}{right}", flags)
 
 
 class Glossary:
     """An ordered, de-duplicated set of pinned terms."""
 
     def __init__(self, entries=()):
+        # Keyed with lower(), matching re.IGNORECASE. casefold() folds harder
+        # (ß -> ss), so it would merge two terms the matcher still treats as
+        # distinct — and the survivor would then not match the other's text.
         deduped: dict[str, GlossaryEntry] = {}
         for entry in entries:
-            deduped[entry.term.casefold()] = entry
+            deduped[entry.term.lower()] = entry
         self.entries = tuple(deduped.values())
         self._matchers = [(e, _matcher(e)) for e in self.entries]
 
@@ -152,9 +166,9 @@ class Glossary:
     # ---- lookup and matching ---------------------------------------------
 
     def lookup(self, term: str) -> GlossaryEntry | None:
-        folded = term.casefold()
+        folded = term.lower()
         for entry in self.entries:
-            if entry.term.casefold() == folded:
+            if entry.term.lower() == folded:
                 return entry
         return None
 

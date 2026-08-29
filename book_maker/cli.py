@@ -251,6 +251,26 @@ def run_codex_login(device_code=False):
         return 1
 
 
+# Below this a window cannot hold even one paragraph with its translation, so
+# every unit would trigger a paid handoff report.
+MIN_COMPACT_BUDGET = 500
+
+
+def compact_budget(value):
+    """argparse type for --context-compact-at: a usable positive budget."""
+    try:
+        budget = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}")
+    if budget < MIN_COMPACT_BUDGET:
+        raise argparse.ArgumentTypeError(
+            f"a compact budget of {budget} is too small to be useful; use at "
+            f"least {MIN_COMPACT_BUDGET} estimated tokens (2500 is the "
+            f"cheapest setting on most endpoints)"
+        )
+    return budget
+
+
 def resolve_context_mode(options):
     """`(context_flag, context_mode)` from the parsed `--use_context` value.
 
@@ -542,7 +562,7 @@ So you are close to reaching the limit. You have to choose your own value, there
     parser.add_argument(
         "--context-compact-at",
         dest="context_compact_at",
-        type=int,
+        type=compact_budget,
         default=None,
         help="session mode only: estimated-token budget for the history "
         "before it is compacted into a translator handoff report. Default: "

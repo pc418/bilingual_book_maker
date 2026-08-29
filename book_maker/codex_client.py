@@ -100,15 +100,24 @@ class CodexAppServer:
         self.process = None
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
+        # stdin is written by callers *and* by the reader thread's denials, so
+        # it needs a lock of its own — one that is never held while waiting on
+        # `_cond`, or the reader could block the only stdout consumer.
+        self._write_lock = threading.Lock()
         self._next_id = 0
         self._replies: dict[int, dict] = {}
         self._notifications: list[dict] = []
+        # Notifications are consumed by index, so pruning shifts every live
+        # mark. `_consumed` records how many were dropped so marks stay valid.
+        self._consumed = 0
+        # Absolute marks of in-flight waiters; pruning never goes below them.
+        self._active_marks: list[int] = []
         self._reader = None
         self._stopped = False
 
     # ---- lifecycle --------------------------------------------------------
 
-    def start(self):
+    def start(self, init_timeout=DEFAULT_REQUEST_TIMEOUT):
         if self.process is not None:
             return self
         try:
@@ -126,10 +135,17 @@ class CodexAppServer:
 
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
-        self.request(
-            "initialize",
-            {"clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION}},
-        )
+        try:
+            self.request(
+                "initialize",
+                {"clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION}},
+                timeout=init_timeout,
+            )
+        except CodexError:
+            # A sidecar that never finished the handshake is useless and must
+            # not be left running: a retry loop would spawn one per attempt.
+            self.close()
+            raise
         return self
 
     def close(self):
@@ -140,6 +156,11 @@ class CodexAppServer:
             return
         try:
             process.terminate()
+        except Exception:
+            pass
+        # Reap it, so a long-lived run does not accumulate zombies.
+        try:
+            process.wait(timeout=5)
         except Exception:
             pass
         with self._cond:
@@ -164,18 +185,24 @@ class CodexAppServer:
                     message = json.loads(line)
                 except json.JSONDecodeError:
                     continue  # the sidecar also prints non-protocol chatter
+                deny_id = None
                 with self._cond:
                     if "id" in message and ("result" in message or "error" in message):
                         self._replies[message["id"]] = message
                     elif "method" in message and "id" in message:
                         # A ServerRequest (an approval). We run read-only with
-                        # approvals off, so one arriving means something we did
-                        # not plan for: refuse it rather than block the turn.
-                        self._deny(message["id"])
-                        continue
+                        # approvals off, so one arriving is unplanned: refuse
+                        # it rather than let the turn block on it.
+                        deny_id = message["id"]
                     elif "method" in message:
                         self._notifications.append(message)
                     self._cond.notify_all()
+                if deny_id is not None:
+                    # Outside the lock: this writes to stdin, and stdin can
+                    # backpressure. Blocking here while holding `_cond` would
+                    # stall the only stdout reader, and a sidecar blocked
+                    # writing stdout would then deadlock against us.
+                    self._deny(deny_id)
         except (ValueError, OSError):
             pass  # process went away; waiters fail on their own timeouts
         finally:
@@ -184,23 +211,31 @@ class CodexAppServer:
                 self._cond.notify_all()
 
     def _deny(self, request_id):
-        self._write(
-            {
-                "id": request_id,
-                "error": {
-                    "code": -32601,
-                    "message": "bilingual-book-maker runs codex non-interactively",
-                },
-            }
-        )
+        try:
+            self._write(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": "bilingual-book-maker runs codex non-interactively",
+                    },
+                }
+            )
+        except CodexError:
+            pass  # the connection is already gone; waiters will time out
 
     def _write(self, payload):
         process = self.process
         if process is None:
             raise CodexError("the codex app-server is not running")
         try:
-            process.stdin.write(json.dumps(payload) + "\n")
-            process.stdin.flush()
+            # One writer at a time: a TextIOWrapper gives no interleaving
+            # guarantee, and a half-written line would corrupt the stream for
+            # every later request.
+            with self._write_lock:
+                process.stdin.write(json.dumps(payload) + "\n")
+                process.stdin.flush()
         except (BrokenPipeError, ValueError, OSError) as e:
             raise CodexError(f"lost the connection to codex app-server: {e}") from e
 
@@ -261,6 +296,11 @@ class CodexAppServer:
     def login_start(self, device_code=False):
         """Begin a login. Returns what the user has to do; codex does the rest."""
         kind = "chatgptDeviceCode" if device_code else "chatgpt"
+        # Marked before the request goes out: a login that completes fast can
+        # push `account/login/completed` before we get here, and a mark taken
+        # afterwards would skip past it and wait out the whole timeout.
+        with self._cond:
+            self._login_mark = self._consumed + len(self._notifications)
         result = self.request("account/login/start", {"type": kind})
         return LoginPrompt(
             login_id=result.get("loginId", ""),
@@ -276,7 +316,7 @@ class CodexAppServer:
         note = self._await_notification(
             lambda m: m.get("method") == "account/login/completed",
             timeout=timeout,
-            mark=len(self._notifications),
+            mark=getattr(self, "_login_mark", self._consumed),
         )
         if note is None:
             raise CodexLoginRequired("timed out waiting for the ChatGPT login")
@@ -318,7 +358,7 @@ class CodexAppServer:
         """
         timeout = DEFAULT_TURN_TIMEOUT if timeout is None else timeout
         with self._cond:
-            mark = len(self._notifications)
+            mark = self._consumed + len(self._notifications)
 
         params = {"threadId": thread_id, "input": [{"type": "text", "text": text}]}
         if output_schema is not None:
@@ -341,7 +381,27 @@ class CodexAppServer:
             raise CodexTurnFailed(
                 f"the codex turn timed out after {timeout}s with no answer"
             )
+        # A completed turn's notifications are finished with. A book is
+        # thousands of turns, and every `turn/completed` carries the full
+        # translated text, so keeping them would hold most of the book in
+        # memory twice over.
+        self._prune_notifications()
         return self._turn_text(note["params"].get("turn") or {})
+
+    def _prune_notifications(self):
+        """Drop notifications no live waiter can still be scanning for.
+
+        Marks are absolute positions in the whole stream, so pruning is safe
+        as long as nothing is dropped below the earliest mark still in use.
+        """
+        with self._cond:
+            floor = min(
+                self._active_marks, default=self._consumed + len(self._notifications)
+            )
+            drop = floor - self._consumed
+            if drop > 0:
+                del self._notifications[:drop]
+                self._consumed += drop
 
     @staticmethod
     def _turn_text(turn):
@@ -355,14 +415,25 @@ class CodexAppServer:
         raise CodexTurnFailed("the codex turn produced no assistant message")
 
     def _await_notification(self, matches, timeout, mark):
-        """Wait for the first notification at or after `mark` that matches."""
-        deadline_check = lambda: (  # noqa: E731 - reads better inline here
-            any(matches(m) for m in self._notifications[mark:]) or self._stopped
-        )
+        """Wait for the first notification at or after `mark` that matches.
+
+        `mark` is an absolute position in the whole notification stream, so it
+        stays valid across pruning; `_consumed` converts it to a list index.
+        The mark is registered while waiting so pruning cannot drop out from
+        under this scan.
+        """
+
+        def found():
+            start = max(0, mark - self._consumed)
+            return next((m for m in self._notifications[start:] if matches(m)), None)
+
         with self._cond:
-            if not self._cond.wait_for(deadline_check, timeout=timeout):
-                return None
-            for message in self._notifications[mark:]:
-                if matches(message):
-                    return message
-        return None
+            self._active_marks.append(mark)
+            try:
+                if not self._cond.wait_for(
+                    lambda: found() is not None or self._stopped, timeout=timeout
+                ):
+                    return None
+                return found()
+            finally:
+                self._active_marks.remove(mark)

@@ -353,3 +353,46 @@ class TestContextManager:
         with server:
             pass
         assert server.fake._closed
+
+
+class TestRobustness:
+    def test_login_completion_arriving_immediately_is_not_missed(self):
+        """The notification can land before wait_for_login is even called."""
+        completed = {
+            "method": "account/login/completed",
+            "params": {"loginId": "l1", "success": True},
+        }
+        server = _server(
+            {"account/login/start": {"authUrl": "https://x", "loginId": "l1"}},
+            notifications_for={"account/login/start": [completed]},
+        )
+        server.start()
+        try:
+            server.login_start()
+            assert server.wait_for_login(timeout=1.0) is True
+        finally:
+            server.close()
+
+    def test_notifications_do_not_grow_without_bound(self):
+        server = _server(notifications_for={"turn/start": [_turn_completed()]})
+        server.start()
+        try:
+            for _ in range(40):
+                server.run_turn("th-1", "text")
+            assert len(server._notifications) < 40
+        finally:
+            server.close()
+
+    def test_a_failed_initialize_does_not_leave_the_child_running(self):
+        proc = FakeProcess({})  # never answers initialize
+        server = CodexAppServer(spawn=lambda: proc)
+        with pytest.raises(CodexError):
+            server.request_timeout = 0.3
+            server.start(init_timeout=0.3)
+        assert proc._closed
+
+    def test_close_is_idempotent(self):
+        server = _server()
+        server.start()
+        server.close()
+        server.close()  # must not raise

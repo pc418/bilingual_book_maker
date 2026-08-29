@@ -89,7 +89,7 @@ class TestSessionHistoryGrows:
         t.get_translation("one")
         t.get_translation("two")
         contents = [m["content"] for m in t.sent[1]["messages"]]
-        assert "one" in contents
+        assert any("one" in c for c in contents)
         assert "一" in contents
 
     def test_history_accumulates_beyond_the_window_limit(self):
@@ -109,6 +109,20 @@ class TestPrefixStability:
             earlier_prefix = json.dumps(_prefix(earlier), ensure_ascii=False)
             later_prefix = json.dumps(_prefix(later), ensure_ascii=False)
             assert later_prefix.startswith(earlier_prefix[:-1])
+
+    def test_each_request_replays_the_previous_one_exactly(self):
+        """The strong form: request N+1 opens with request N's messages verbatim.
+
+        Storing the raw source instead of the text actually sent leaves the
+        newest pair out of the cached prefix, so every request re-reads a
+        paragraph at full input price for the life of the run.
+        """
+        t = _translator(["一", "二", "三"])
+        for text in ("one", "two", "three"):
+            t.get_translation(text)
+        for earlier, later in zip(t.sent, t.sent[1:]):
+            sent_before = earlier["messages"]
+            assert later["messages"][: len(sent_before)] == sent_before
 
     def test_system_message_is_byte_identical_across_requests(self):
         t = _translator(["一", "二"])
@@ -130,19 +144,28 @@ class TestGlossaryPlacement:
         t.get_translation("nothing relevant")
         assert "glossary" not in t.sent[0]["messages"][-1]["content"].lower()
 
-    def test_glossary_never_enters_the_cached_history(self):
-        """A varying block in the prefix would break the cache for every later request."""
+    def test_glossary_never_enters_the_system_message(self):
+        """The system message is the one part that must never vary per unit."""
         t = _translator(["一", "二"], glossary=Glossary.parse("Winston → 温斯顿\n"))
         t.get_translation("Winston went home")
         t.get_translation("plain text")
-        assert all("<glossary>" not in m["content"] for m in _prefix(t.sent[1]))
+        for call in t.sent:
+            assert "<glossary>" not in call["messages"][0]["content"]
 
-    def test_history_stores_the_source_without_the_glossary_block(self):
+    def test_a_units_block_is_frozen_into_history_verbatim(self):
+        """Once sent, the block stops varying, and replaying it keeps the
+        cache intact — dropping it would make that pair a miss."""
         t = _translator(["一"], glossary=Glossary.parse("Winston → 温斯顿\n"))
         t.get_translation("Winston went home")
+        first_tail = t.sent[0]["messages"][-1]
         t.get_translation("next")
-        history = [m["content"] for m in _prefix(t.sent[1])]
-        assert "Winston went home" in history
+        assert first_tail in t.sent[1]["messages"]
+
+    def test_a_unit_with_no_hits_carries_no_block(self):
+        t = _translator(["一"], glossary=Glossary.parse("Winston → 温斯顿\n"))
+        t.get_translation("nothing relevant")
+        t.get_translation("also nothing")
+        assert all("<glossary>" not in m["content"] for m in t.sent[1]["messages"])
 
 
 class TestCompact:
@@ -345,3 +368,53 @@ class TestAsyncPathIsRefused:
 
         t = _translator(context_mode="window")
         assert asyncio.iscoroutinefunction(t.translate_async)
+
+
+class TestCompactResilience:
+    """A compact failure must not throw away the book's accumulated context."""
+
+    def _failing(self, tmp_path, failures, **kw):
+        t = _translator(
+            ["译文"] * 40, context_compact_at=10, handoff_path=tmp_path / "h.md", **kw
+        )
+        real = t.openai_client.chat.completions.create
+        state = {"left": failures}
+
+        def create(**call):
+            is_compact = "handoff" in call["messages"][-1]["content"].lower()
+            if is_compact and state["left"] > 0:
+                state["left"] -= 1
+                raise RuntimeError("boom")
+            return real(**call)
+
+        t.openai_client.chat.completions.create = Mock(side_effect=create)
+        return t
+
+    def test_a_transient_failure_keeps_the_history(self, tmp_path):
+        t = self._failing(tmp_path, failures=1)
+        t.get_translation("a" * 200)
+        assert t.session.messages(), "history was discarded on one failed compact"
+
+    def test_it_retries_the_compact_on_the_next_unit(self, tmp_path):
+        t = self._failing(tmp_path, failures=1)
+        t.get_translation("a" * 200)
+        t.get_translation("b" * 200)
+        assert (tmp_path / "h.md").exists(), "the retry never produced a report"
+
+    def test_it_gives_up_loudly_rather_than_growing_forever(self, tmp_path, capsys):
+        t = self._failing(tmp_path, failures=99)
+        for i in range(6):
+            t.get_translation(f"unit {i} " + "x" * 200)
+        out = capsys.readouterr().out.lower()
+        assert "handoff" in out
+        # Bounded: the window was eventually reset instead of growing without end.
+        assert t.session.estimated_tokens() < 6 * 60
+
+    def test_a_failed_handoff_write_does_not_fail_the_translation(self, tmp_path):
+        # A directory where the handoff file should be: writing it must fail.
+        path = tmp_path / "h.md"
+        path.mkdir()
+        t = _translator(
+            ["译文", "Summary.", "译文"], context_compact_at=10, handoff_path=path
+        )
+        assert t.get_translation("a" * 200) == "译文"

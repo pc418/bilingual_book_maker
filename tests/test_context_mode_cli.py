@@ -62,6 +62,16 @@ class TestCompactBudgetFlag:
         with pytest.raises(SystemExit):
             _parse("--context-compact-at", "lots")
 
+    def test_rejects_zero_and_negative_budgets(self):
+        """0 disables compaction outright; a negative one is meaningless."""
+        for value in ("0", "-1"):
+            with pytest.raises(SystemExit):
+                _parse("--context-compact-at", value)
+
+    def test_rejects_a_budget_too_small_to_hold_a_paragraph(self):
+        with pytest.raises(SystemExit):
+            _parse("--context-compact-at", "50")
+
 
 class TestGlossaryFlags:
     def test_glossary_defaults_to_none(self):
