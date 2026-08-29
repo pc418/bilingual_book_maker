@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from rich import print
 from rich.markup import escape
 
+from book_maker.glossary import Glossary
 from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
@@ -31,6 +32,11 @@ FORMAT_ENV_KEYS = {
 FORMATS_REQUIRING_KEY = ("openai", "anthropic", "caiyun", "deepl")
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal")
+
+# The loaders that actually forward context settings into the translator. The
+# others accept `context_flag` and drop it, so a session budget or a glossary
+# passed with them would silently do nothing.
+CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 
 
 def infer_api_format(api_base, model=""):
@@ -709,6 +715,27 @@ def main():
         api_format, options.key, options.api_base, legacy.env_keys
     )
 
+    glossary = Glossary()
+    if options.glossary:
+        try:
+            glossary = Glossary.from_file(options.glossary)
+        except (OSError, ValueError) as err:
+            raise SystemExit(f"Could not read --glossary: {err}")
+        print(f"[green]Glossary: {len(glossary)} pinned terms loaded[/green]")
+
+    # These only do anything in session mode; saying so beats silently
+    # ignoring a flag the user deliberately passed.
+    if options.context_mode != "session":
+        for flag, value in (
+            ("--context-compact-at", options.context_compact_at),
+            ("--glossary-auto", options.glossary_auto),
+        ):
+            if value:
+                print(
+                    f"[bold yellow]Warning:[/bold yellow] {flag} only applies "
+                    f"to --use_context session; ignoring it."
+                )
+
     book_type = get_book_type(options.book_name)
     support_type_list = list(BOOK_LOADER_DICT.keys())
     if book_type not in support_type_list:
@@ -729,6 +756,21 @@ def main():
     loader_kwargs = {}
     if book_type == "pdf":
         loader_kwargs["pdf_layout"] = options.pdf_layout
+    if book_type in CONTEXT_AWARE_BOOK_TYPES:
+        loader_kwargs.update(
+            context_mode=options.context_mode,
+            context_compact_at=options.context_compact_at,
+            glossary=glossary,
+            glossary_auto=options.glossary_auto,
+        )
+    elif options.glossary or options.context_mode == "session":
+        # txt, srt and pdf never hand context to the model, so a pin or a
+        # session budget would quietly do nothing at all.
+        print(
+            f"[bold yellow]Warning:[/bold yellow] --glossary and "
+            f"--use_context session are not supported for {book_type} books; "
+            f"they will be ignored."
+        )
 
     e = book_loader(
         options.book_name,

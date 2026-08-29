@@ -6,6 +6,7 @@ from os import environ
 from itertools import cycle
 import json
 from functools import lru_cache
+from pathlib import Path
 from threading import Lock
 
 from openai import (
@@ -46,6 +47,14 @@ from ..structured import (
     unwrap_schema_echo,
 )
 from ..config import config
+from ..glossary import Glossary
+from ..session_context import (
+    HandoffReport,
+    SessionHistory,
+    compact_budget_for,
+    handoff_prompt,
+    parse_handoff_glossary,
+)
 
 CHATGPT_CONFIG = config["translator"]["chatgptapi"]
 
@@ -163,6 +172,17 @@ class ChatGPTAPI(Base):
     # probing them would send the capability request to the wrong endpoint.
     SUPPORTS_STRUCTURED_OUTPUTS = True
 
+    # Session-mode state, declared here so the window-mode path is well
+    # defined on any instance — including the subclasses and test fixtures
+    # that build one without running __init__. `session is None` means window
+    # mode everywhere in this class.
+    session = None
+    glossary = None
+    glossary_auto = False
+    handoff_path = None
+    context_compact_at = None
+    context_mode = "window"
+
     def __init__(
         self,
         key,
@@ -173,6 +193,11 @@ class ChatGPTAPI(Base):
         temperature=1.0,
         context_flag=False,
         context_paragraph_limit=0,
+        context_mode="window",
+        context_compact_at=None,
+        glossary=None,
+        glossary_auto=False,
+        handoff_path=None,
         extra_body=None,
         **kwargs,
     ) -> None:
@@ -200,6 +225,21 @@ class ChatGPTAPI(Base):
         self.context_flag = context_flag
         self.context_list = []
         self.context_translated_list = []
+        # Session mode replaces the window entirely; `session is None` is the
+        # single test for "are we in window mode" everywhere below.
+        self.context_mode = context_mode or "window"
+        self.session = (
+            SessionHistory()
+            if context_flag and self.context_mode == "session"
+            else None
+        )
+        self.context_compact_at = context_compact_at
+        self.glossary = glossary or Glossary()
+        self.glossary_auto = glossary_auto
+        self.handoff_path = Path(handoff_path) if handoff_path else None
+        self._session_cache_warned = False
+        self._session_cache_seen = False
+        self._session_requests = 0
         if context_paragraph_limit > 0:
             # not set by user, use default
             self.context_paragraph_limit = context_paragraph_limit
@@ -327,6 +367,14 @@ class ChatGPTAPI(Base):
             text=text, language=self.language, crlf="\n"
         )
 
+        # Pinned terms belong to *this* unit, so they go in the fresh tail
+        # message. In session mode anything above it is the cached prefix: a
+        # block that changes per unit would invalidate the cache on every
+        # request, which costs far more than the few tokens it spends here.
+        glossary_block = self.glossary.prompt_block(text) if self.glossary else ""
+        if glossary_block:
+            content = f"{glossary_block}\n\n{content}"
+
         sys_content = self.system_content or self.prompt_sys_msg.format(crlf="\n")
         messages = [
             {"role": "system", "content": sys_content},
@@ -340,6 +388,11 @@ class ChatGPTAPI(Base):
 
     def create_context_messages(self, context: TranslationContext | None = None):
         messages = []
+        if self.session is not None:
+            # Session mode: the whole append-only history is the prefix. The
+            # per-unit window below does not apply — that is the mode this
+            # one replaces.
+            return self.session.messages()
         if self.context_flag:
             if context is None:
                 source_texts = self.context_list
@@ -504,8 +557,108 @@ class ChatGPTAPI(Base):
 
     def _plain_translation(self, text):
         completion = self.create_chat_completion(text)
+        self._note_cache_usage(completion)
         content = completion.choices[0].message.content
         return content.encode("utf8").decode() if content else ""
+
+    # ---- session mode -----------------------------------------------------
+
+    # How many requests to allow before concluding the endpoint is not billing
+    # cache reads. One miss is normal (nothing is cached yet), and short books
+    # should not be nagged.
+    CACHE_WARN_AFTER = 10
+
+    def _note_cache_usage(self, completion):
+        """Warn once if session mode never gets a cache read billed back.
+
+        Without pass-through caching this mode re-reads the whole history at
+        full input price on every request — strictly worse than the window
+        mode it replaces. That is invisible in the output and only shows up on
+        the bill, so it has to be said out loud.
+        """
+        if self.session is None or self._session_cache_warned:
+            return
+        usage = getattr(completion, "usage", None)
+        details = getattr(usage, "prompt_tokens_details", None)
+        if getattr(details, "cached_tokens", 0):
+            self._session_cache_seen = True
+            return
+        self._session_requests += 1
+        if self._session_cache_seen or self._session_requests < self.CACHE_WARN_AFTER:
+            return
+        self._session_cache_warned = True
+        print(
+            "[bold yellow]Warning:[/bold yellow] this endpoint has not reported "
+            "a single cached prompt token after "
+            f"{self._session_requests} requests. Session mode assumes prompt "
+            "caching is billed through; without it the history is charged at "
+            "full price every request. Consider --use_context (window mode)."
+        )
+
+    def _session_budget(self):
+        return (
+            self.context_compact_at
+            if self.context_compact_at is not None
+            else compact_budget_for(self.model)
+        )
+
+    def _compact_session(self):
+        """Ask for a handoff report, then start the next window seeded with it.
+
+        The report is requested on top of the existing history — that is the
+        one turn where the whole window is worth re-reading, because it is
+        being condensed into what replaces it.
+        """
+        prompt = handoff_prompt(with_glossary=self.glossary_auto)
+        messages = [
+            *self.session.messages(),
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            completion = self._request(
+                lambda sampling: self.openai_client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    extra_body=self.extra_body if self.extra_body else None,
+                    **sampling,
+                )
+            )
+            report_text = completion.choices[0].message.content or ""
+        except Exception as e:
+            # A failed compact must not end a multi-hour run: drop the window
+            # and continue uncontexted rather than losing the book.
+            print(
+                f"[yellow]ℹ handoff report failed ({e}); starting the next "
+                f"context window without a summary[/yellow]"
+            )
+            self.session.reset(seed="")
+            return
+
+        glossary_lines = ""
+        if self.glossary_auto:
+            learned = parse_handoff_glossary(report_text)
+            if learned:
+                merged, conflicts = self.glossary.merge(learned)
+                self.glossary = merged
+                glossary_lines = learned.to_lines()
+                for conflict in conflicts:
+                    print(
+                        f"[yellow]ℹ glossary conflict — {conflict.describe()}[/yellow]"
+                    )
+
+        report = HandoffReport(
+            window=self.session.windows,
+            summary=report_text.strip(),
+            glossary_lines=glossary_lines,
+        )
+        if self.handoff_path:
+            report.append_to(self.handoff_path)
+        self.session.reset(seed=report.seed_text())
+
+    def _save_session_context(self, text, t_text):
+        self.session.append(text, t_text)
+        if self.session.should_compact(self._session_budget()):
+            self._compact_session()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -541,6 +694,9 @@ class ChatGPTAPI(Base):
         return t_text
 
     def save_context(self, text, t_text):
+        if self.session is not None:
+            self._save_session_context(text, t_text)
+            return
         if self.context_paragraph_limit > 0:
             self.context_list.append(text)
             self.context_translated_list.append(t_text)
