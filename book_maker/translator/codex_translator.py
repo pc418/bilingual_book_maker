@@ -249,8 +249,9 @@ class Codex(Base):
             if self._window_tokens >= self._budget():
                 self._compact_window()
 
-        if needprint:
-            print(f"[bold green]{translated}[/bold green]")
+        # `needprint` is accepted for signature compatibility only. The loaders
+        # display the source and its translation themselves, so printing here
+        # showed every paragraph's translation a second time.
         return translated
 
     def _chat_completion(self, prompt, model=None):

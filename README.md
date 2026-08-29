@@ -41,13 +41,17 @@ machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
 `--api_format codex` spends your ChatGPT/Codex plan allowance instead of API
 credits. It needs the [Codex CLI](https://developers.openai.com/codex/cli)
 installed and signed in; bbm drives a `codex app-server` sidecar, which owns
-the OAuth session, so there is no `--openai_key` and `--model` is optional
-(Codex resolves its own default).
+the OAuth session, so there is no `--openai_key` and no `--api_base`.
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub \
-  --api_format codex --model gpt-5.6-sol --language zh-hans
+  --api_format codex --language zh-hans
 ```
+
+`--model` is optional here and defaults to `gpt-5.6-luna`; the sidecar also
+offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`. Naming a
+default matters beyond taste: the compact budget is chosen per model, so an
+unnamed one would fall back to a conservative figure instead of luna's.
 
 Sign in from here with `--codex-login` (or `--codex-login device` on a
 machine with no browser, which prints a code to enter elsewhere). If the
@@ -428,8 +432,10 @@ Notes:
   cache rate — context can then grow to chapter length for less money than
   window mode spends on three paragraphs. When the history reaches the
   compact budget, the model is asked for a translator handoff report
-  (summary, style notes, and with `--glossary-auto` a glossary), which seeds
-  the next window and is appended to `<book>_handoff.md`.
+  (summary, style notes, and with `--glossary-auto` the renderings it has
+  established), which seeds the next window and is appended to
+  `<book>_handoff.md`. That file is plain markdown: readable, hand-editable,
+  and re-read when a run resumes.
 
 - `--context_paragraph_limit`:
 
@@ -453,10 +459,21 @@ Notes:
 
 - `--glossary-auto`:
 
-  Session mode only, off by default. Also asks each handoff report for a JSON
-  glossary of the renderings it established, and carries them into later
-  windows. Pinned terms from `--glossary` always win over learned ones, and
-  disagreements are reported rather than silently resolved.
+  Session mode only, off by default. Also asks each handoff report for the
+  renderings it established — as `term → translation # note` lines inside a
+  `<renderings>` block, the same format `--glossary` files use — and carries
+  them into later windows.
+
+  Two glossaries are kept apart. Terms from your `--glossary` file are
+  *pinned*: they never change, and a model that renders one differently is
+  reported rather than silently overruling you. Everything else is *learned*,
+  and each window's reading replaces the previous one, since by then the model
+  has seen more of the book. Both are injected per paragraph, only where the
+  term actually occurs.
+
+  If the model omits the block, loose `term → translation` lines are recovered
+  instead, and the run says which route it had to take — with this flag on,
+  silently learning nothing looks exactly like a book with no recurring terms.
 
 - `--parallel-workers`:
 

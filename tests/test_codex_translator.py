@@ -140,6 +140,13 @@ class TestTranslation:
         t.translate("Winston went home")
         assert "温斯顿" in t.server.turns[0]["text"]
 
+    def test_translate_does_not_print_the_translation(self, capsys):
+        """The loaders display source and translation; printing here showed
+        every paragraph twice."""
+        t = _codex(["狗叫了。"])
+        t.translate("The dog barked.")
+        assert "狗叫了。" not in capsys.readouterr().out
+
     def test_glossary_misses_inject_nothing(self):
         t = _codex(["一"], glossary=Glossary.parse("Winston → 温斯顿\n"))
         t.translate("nothing relevant")

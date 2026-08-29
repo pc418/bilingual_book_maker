@@ -317,8 +317,13 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 `--api_format codex` 使用你的 ChatGPT/Codex 套餐额度，而不是 API credits。
 需要安装并登录 [Codex CLI](https://developers.openai.com/codex/cli)；bbm 通过
-`codex app-server` 侧车进程驱动，OAuth 会话由它管理，所以不需要
-`--openai_key`，`--model` 也是可选的（Codex 会用自己的默认模型）。
+`codex app-server` 侧车进程驱动，OAuth 会话由它管理，所以既不需要
+`--openai_key`，也不需要 `--api_base`。
+
+`--model` 在这里是可选的，默认 `gpt-5.6-luna`；侧车还提供
+`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.5` 和 `gpt-5.2`。指定默认值不只是
+偏好问题：压缩预算是按模型选取的，不指定就会退回到一个保守值，而不是
+luna 自己的预算。
 
 用 `--codex-login` 在这里登录；没有浏览器的机器上用 `--codex-login device`，
 它会打印一个验证码供你在别处输入。若 Codex CLI 已登录则无需任何操作。
@@ -344,8 +349,9 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
   维护一份只追加的历史记录，支持提示缓存的端点会以缓存价重新读取它，因此
   上下文可以增长到整章的长度，花费反而低于 window 模式发送三个段落。历史
   达到压缩预算时，模型会被要求写一份交接报告（摘要、文体说明，加上
-  `--glossary-auto` 时还有词汇表），用于播种下一个窗口，并追加到
-  `<book>_handoff.md`。
+  `--glossary-auto` 时还有它确定的译法），用于播种下一个窗口，并追加到
+  `<book>_handoff.md`。该文件是纯 markdown：可读、可手工编辑，续跑时会
+  被重新读取。
 
   - `--context_paragraph_limit`:
 
@@ -366,9 +372,18 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
   - `--glossary-auto`:
 
-    仅 session 模式，默认关闭。让每次交接报告额外返回一份 JSON 词汇表，
-    记录它已经确定的译法，并带入后续窗口。`--glossary` 中的固定词条始终
-    优先于学习到的译法，冲突会被报告而不是被静默处理。
+    仅 session 模式，默认关闭。让每次交接报告额外返回它已确定的译法——
+    写成 `<renderings>` 块内的 `term → translation # note` 行，与
+    `--glossary` 文件同一种格式——并带入后续窗口。
+
+    两份词汇表是分开的：来自 `--glossary` 文件的词条是**固定**的，永远
+    不会被改写；模型若给出不同译法，会被报告而不是覆盖你的选择。其余是
+    **学习到的**，后一个窗口的读法会替换前一个，因为那时模型已读过更多
+    正文。两者都按段落选择性注入，只在该词真正出现时才注入。
+
+    若模型漏掉了这个块，会退回到扫描零散的 `term → translation` 行，并
+    明确报告走了哪条路径——开着这个开关时，"什么都没学到"和"这本书没有
+    重复术语"看起来是一样的。
 
 - `--temperature`:
 

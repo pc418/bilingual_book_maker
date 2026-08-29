@@ -36,8 +36,23 @@ DEFAULT_TURN_TIMEOUT = 600.0
 # Everything else is local bookkeeping inside the sidecar.
 DEFAULT_REQUEST_TIMEOUT = 60.0
 
+# What Codex records this client as: it shows up in the app-server's
+# userAgent, and is how a run of ours is told apart from the Codex CLI or the
+# VS Code extension in any usage view.
 CLIENT_NAME = "bilingual-book-maker"
-CLIENT_VERSION = "1.0"
+
+
+def _client_version():
+    """The installed package version, or a placeholder when running from source."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("bbook_maker")
+    except Exception:
+        return "0+unknown"
+
+
+CLIENT_VERSION = _client_version()
 
 
 class CodexError(Exception):
