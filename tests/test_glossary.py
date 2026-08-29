@@ -187,3 +187,27 @@ class TestMixedScriptAndFolding:
         g = Glossary.parse("Stra\u00dfe → 街道\nSTRASSE → 大街\n")
         for entry in g.entries:
             assert g.matches(entry.term), f"stored {entry.term!r} does not match itself"
+
+
+class TestNonLatinBoundaries:
+    """The boundary guard must work for every script, not just latin."""
+
+    def test_cyrillic_term_is_not_matched_inside_a_longer_word(self):
+        g = Glossary.parse("Анна → Anna\n")
+        assert g.matches("Анна пришла")
+        assert not g.matches("Жанна пришла")
+
+    def test_greek_term_respects_boundaries(self):
+        g = Glossary.parse("λόγος → word\n")
+        assert g.matches("ο λόγος ήταν")
+        assert not g.matches("ο λόγοσύνη ήταν")
+
+    def test_latin_boundary_still_holds(self):
+        g = Glossary.parse("Ann → 安\n")
+        assert g.matches("Ann went home")
+        assert not g.matches("Announcement pending")
+
+    def test_mixed_script_still_matches_against_cjk_neighbours(self):
+        g = Glossary.parse("AI模型 → AI model\n")
+        assert g.matches("这个AI模型很好")
+        assert not g.matches("这个XAI模型很好")

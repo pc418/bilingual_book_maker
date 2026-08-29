@@ -373,9 +373,18 @@ class TestAsyncPathIsRefused:
 class TestCompactResilience:
     """A compact failure must not throw away the book's accumulated context."""
 
+    # A realistic budget: each unit below is ~200 estimated tokens, so the
+    # 600-token budget trips after three of them and the window stays well
+    # inside the "give up, it will only keep failing" size guard.
+    BUDGET = 600
+    UNIT = "x" * 800
+
     def _failing(self, tmp_path, failures, **kw):
         t = _translator(
-            ["译文"] * 40, context_compact_at=10, handoff_path=tmp_path / "h.md", **kw
+            ["译文"] * 40,
+            context_compact_at=self.BUDGET,
+            handoff_path=tmp_path / "h.md",
+            **kw,
         )
         real = t.openai_client.chat.completions.create
         state = {"left": failures}
@@ -392,23 +401,23 @@ class TestCompactResilience:
 
     def test_a_transient_failure_keeps_the_history(self, tmp_path):
         t = self._failing(tmp_path, failures=1)
-        t.get_translation("a" * 200)
+        for _ in range(3):
+            t.get_translation(self.UNIT)
         assert t.session.messages(), "history was discarded on one failed compact"
 
     def test_it_retries_the_compact_on_the_next_unit(self, tmp_path):
         t = self._failing(tmp_path, failures=1)
-        t.get_translation("a" * 200)
-        t.get_translation("b" * 200)
+        for _ in range(4):
+            t.get_translation(self.UNIT)
         assert (tmp_path / "h.md").exists(), "the retry never produced a report"
 
     def test_it_gives_up_loudly_rather_than_growing_forever(self, tmp_path, capsys):
         t = self._failing(tmp_path, failures=99)
-        for i in range(6):
-            t.get_translation(f"unit {i} " + "x" * 200)
-        out = capsys.readouterr().out.lower()
-        assert "handoff" in out
-        # Bounded: the window was eventually reset instead of growing without end.
-        assert t.session.estimated_tokens() < 6 * 60
+        for _ in range(10):
+            t.get_translation(self.UNIT)
+        assert "handoff" in capsys.readouterr().out.lower()
+        # Bounded: the window is reset rather than growing without end.
+        assert t.session.estimated_tokens() <= 2 * self.BUDGET
 
     def test_a_failed_handoff_write_does_not_fail_the_translation(self, tmp_path):
         # A directory where the handoff file should be: writing it must fail.

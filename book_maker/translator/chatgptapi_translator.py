@@ -638,6 +638,7 @@ class ChatGPTAPI(Base):
         one turn where the whole window is worth re-reading, because it is
         being condensed into what replaces it.
         """
+        budget = self._session_budget()
         prompt = handoff_prompt(with_glossary=self.glossary_auto)
         messages = [
             *self.session.messages(),
@@ -658,7 +659,14 @@ class ChatGPTAPI(Base):
             # reason to throw away a book's worth of accumulated context — the
             # budget stays exceeded, so the next unit simply tries again.
             self._compact_failures += 1
-            give_up = self._compact_failures >= self.COMPACT_ATTEMPTS
+            # Give up on attempts, or as soon as the window has outgrown its
+            # budget badly enough that retrying is the wrong bet: a compact
+            # that fails because the history is too long will keep failing,
+            # and the translation requests carrying that history fail with it.
+            give_up = (
+                self._compact_failures >= self.COMPACT_ATTEMPTS
+                or self.session.estimated_tokens() > 2 * budget
+            )
             print(
                 f"[yellow]ℹ handoff report failed ({e}); "
                 + (

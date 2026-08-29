@@ -33,10 +33,17 @@ _CJK = re.compile(
 )
 
 
-# What may continue a latin word. Deliberately not `\w`, which in Python
-# includes CJK: guarding "AI模型" with `(?<!\w)` would refuse to match inside
-# "这个AI模型" because 个 counts as a word character.
-_LATIN_WORD = "A-Za-z0-9_\u00c0-\u024f"
+# A term's edge must not sit inside a longer word. `\w` alone is wrong because
+# Python counts CJK as word characters, so it would refuse "AI模型" inside
+# "这个AI模型"; a latin-only class is equally wrong, since it stops guarding
+# Cyrillic and would match "Анна" inside "Жанна". The guard is therefore "not a
+# word character, or a CJK one" — correct for every script.
+_CJK_CLASS = (
+    "\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af"
+    "\U00020000-\U0002ffff\U00030000-\U0003134f"
+)
+_LEFT_GUARD = f"(?:(?<!\\w)|(?<=[{_CJK_CLASS}]))"
+_RIGHT_GUARD = f"(?:(?!\\w)|(?=[{_CJK_CLASS}]))"
 
 
 @dataclass(frozen=True)
@@ -78,8 +85,8 @@ def _matcher(entry: GlossaryEntry) -> re.Pattern:
     # Guard each edge on its own. A term is often mixed script ("AI模型"), and
     # deciding by "contains any CJK" would drop the boundary the latin edge
     # still needs — letting "AI模型" fire inside "XAI模型".
-    left = "" if _is_cjk(entry.term[0]) else rf"(?<![{_LATIN_WORD}])"
-    right = "" if _is_cjk(entry.term[-1]) else rf"(?![{_LATIN_WORD}])"
+    left = "" if _is_cjk(entry.term[0]) else _LEFT_GUARD
+    right = "" if _is_cjk(entry.term[-1]) else _RIGHT_GUARD
     flags = 0 if entry.case_sensitive else re.IGNORECASE
     return re.compile(f"{left}{literal}{right}", flags)
 
