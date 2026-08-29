@@ -6,7 +6,7 @@ from book_maker.glossary import Glossary
 from book_maker.session_context import handoff_prompt
 from book_maker.codex_client import CodexLoginRequired, RateLimits
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
-from book_maker.translator.codex_translator import Codex
+from book_maker.translator.codex_translator import DEFAULT_MODEL, Codex
 
 
 class FakeServer:
@@ -108,6 +108,26 @@ class TestTranslation:
         t = _codex(["一"])
         t.translate("one")
         assert "translat" in t.server.threads[0]["base_instructions"].lower()
+
+    def test_it_defaults_to_a_named_model(self):
+        """Naming one keeps the compact budget lookup meaningful."""
+        t = _codex(["一"])
+        t.translate("one")
+        assert t.server.threads[0]["model"] == DEFAULT_MODEL
+
+    def test_the_default_model_has_its_own_compact_budget(self):
+        from book_maker.session_context import (
+            DEFAULT_COMPACT_BUDGET,
+            compact_budget_for,
+        )
+
+        assert compact_budget_for(DEFAULT_MODEL) != DEFAULT_COMPACT_BUDGET
+
+    def test_an_empty_model_list_falls_back_to_the_default(self):
+        t = _codex(["一"])
+        t.set_model_list([])
+        t.translate("one")
+        assert t.server.threads[0]["model"] == DEFAULT_MODEL
 
     def test_the_model_is_passed_through(self):
         t = _codex(["一"])

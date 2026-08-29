@@ -135,9 +135,14 @@ class TestHandoffPrompt:
         assert "content" in prompt
         assert "not about the translation" in prompt or "never describe" in prompt
 
-    def test_style_is_capped_so_it_stays_short(self):
+    def test_style_is_capped_at_three_lines(self):
         prompt = handoff_prompt(with_glossary=True).lower()
-        assert "at most" in prompt
+        assert "at most 3" in prompt
+
+    def test_the_summary_asks_for_concrete_detail(self):
+        prompt = handoff_prompt(with_glossary=True).lower()
+        assert "concretely" in prompt or "concrete" in prompt
+        assert "people, places, events" in prompt
 
     def test_with_a_glossary_term_pairs_are_kept_out_of_the_style_section(self):
         """Otherwise every rendering is written twice, in two formats."""

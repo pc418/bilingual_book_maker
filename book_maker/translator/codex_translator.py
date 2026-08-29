@@ -47,6 +47,11 @@ BASE_INSTRUCTIONS = (
 # threshold is about the user's 5-hour window, not about tokens.
 QUOTA_WARN_PERCENT = 90
 
+# Used when --model is omitted. Naming one beats letting Codex pick: the
+# compact budget is looked up by model id, so an unknown default would fall
+# back to the conservative 8000 instead of this model's own 17000.
+DEFAULT_MODEL = "gpt-5.6-luna"
+
 
 class Codex(Base):
     """A translator backed by the Codex app-server."""
@@ -74,7 +79,7 @@ class Codex(Base):
         super().__init__(key or "", language)
         self.server = server or CodexAppServer(binary=binary)
         self._started = server is not None
-        self.model = None
+        self.model = DEFAULT_MODEL
         self.model_list = None
         self.context_compact_at = context_compact_at
         self.glossary = glossary or Glossary()
@@ -96,7 +101,7 @@ class Codex(Base):
         # Codex resolves its own default when none is named, unlike the API
         # formats where a missing model has nothing to fall back on.
         self.model_list = names
-        self.model = names[0] if names else None
+        self.model = names[0] if names else DEFAULT_MODEL
 
     def _ensure_server(self):
         if not self._started:

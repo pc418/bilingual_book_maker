@@ -123,20 +123,21 @@ class SessionHistory:
 _SUMMARY_REQUEST = (
     "You are handing this translation over to another translator who has not "
     "seen any of the text above.\n\n"
-    "1. Summary — what the book itself says so far: the narrative or argument, "
-    "who the people are, the places and events, and anything a later passage "
-    "might refer back to. Write about the book's content, not about the "
-    "translation work: never describe which sections or front matter you "
-    "processed, and do not list what you have finished.\n\n"
+    "1. Summary — what the book itself says so far, concretely. Name the "
+    "people, places, events and claims as the text actually presents them, "
+    "and carry anything a later passage may refer back to. Write about the "
+    "book's content, not about the translation work: never describe which "
+    "sections or front matter you processed, and do not list what you have "
+    "finished.\n\n"
 )
 
 # Capped and scoped. Left open, this section grows into a second glossary
 # written as prose ("'e-book' 统一译为 '电子书'"), which duplicates every
 # rendering in a format nothing can parse.
 _STYLE_REQUEST = (
-    "2. Style — at most 6 short lines, on voice and convention only: register "
-    "and formality, how names, titles and quotation marks are handled, and any "
-    "recurring choice about sentence shape."
+    "2. Style — at most 3 short lines, on voice and convention only: "
+    "register and formality, and how names, titles and quotation marks are "
+    "handled."
 )
 
 _STYLE_NO_GLOSSARY_SUFFIX = (
