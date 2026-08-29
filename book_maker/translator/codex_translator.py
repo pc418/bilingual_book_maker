@@ -75,6 +75,9 @@ class Codex(Base):
     # capability probe would ask the wrong server.
     SUPPORTS_STRUCTURED_OUTPUTS = False
 
+    # Set by the CLI from --quiet. Suppresses this class's own echoes.
+    quiet = False
+
     def __init__(
         self,
         key,
@@ -314,14 +317,17 @@ class Codex(Base):
         self._thread_id = None
         self._ensure_thread(seed=report.seed_text() if report_text else "")
 
-    @staticmethod
-    def _show_handoff(report):
+    def _show_handoff(self, report):
         """Print the report the next thread will be seeded with.
 
         `escape` is not optional: rich reads square brackets as markup, and
         these reports genuinely contain things like "[PGA]", which would be
         swallowed or raise on an unclosed tag.
         """
+        if self.quiet:
+            # --quiet suppresses echoes like this one; warnings and errors
+            # still print.
+            return
         print(
             f"[bold cyan]— handoff report, window {report.window} —[/bold cyan]\n"
             + escape(report.render())

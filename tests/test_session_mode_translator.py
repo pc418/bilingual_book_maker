@@ -536,6 +536,47 @@ class TestCompactIsVisible:
         out = self._run(tmp_path, "Based on the [PGA] edition.", capsys)
         assert "[PGA]" in out
 
+    def test_quiet_suppresses_the_report(self, tmp_path, capsys):
+        t = _translator(
+            ["译文", "They walked to the barn.", "译文"],
+            context_compact_at=10,
+            handoff_path=tmp_path / "h.md",
+        )
+        t.quiet = True
+        t.get_translation("a" * 200)
+        assert "They walked to the barn." not in capsys.readouterr().out
+
+    def test_quiet_still_writes_the_file(self, tmp_path, capsys):
+        """Suppressing the echo must not lose the record."""
+        path = tmp_path / "h.md"
+        t = _translator(
+            ["译文", "They walked to the barn.", "译文"],
+            context_compact_at=10,
+            handoff_path=path,
+        )
+        t.quiet = True
+        t.get_translation("a" * 200)
+        assert "They walked to the barn." in path.read_text(encoding="utf-8")
+
+    def test_quiet_does_not_silence_a_failed_compact(self, tmp_path, capsys):
+        """--quiet drops echoes, not warnings."""
+        t = _translator(
+            ["译文"] * 6, context_compact_at=10, handoff_path=tmp_path / "h.md"
+        )
+        t.quiet = True
+        real = t.openai_client.chat.completions.create
+
+        def create(**call):
+            # Fail only the compact turn; the translation itself must succeed
+            # or the run never reaches the compact at all.
+            if HANDOFF_MARKER in call["messages"][-1]["content"]:
+                raise RuntimeError("boom")
+            return real(**call)
+
+        t.openai_client.chat.completions.create = Mock(side_effect=create)
+        t.get_translation("a" * 200)
+        assert "handoff report failed" in capsys.readouterr().out.lower()
+
     def test_an_unclosed_bracket_does_not_raise(self, tmp_path, capsys):
         out = self._run(tmp_path, "A stray [bracket and /close tag", capsys)
         assert "stray" in out

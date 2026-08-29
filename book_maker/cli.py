@@ -932,8 +932,14 @@ def main():
         # made rather than infer it from the absence of one.
         e.plan_classify = classify_mode
         e.plan_classify_model = options.plan_classify_model or None
-    if options.quiet and hasattr(e, "quiet"):
-        e.quiet = True
+    if options.quiet:
+        if hasattr(e, "quiet"):
+            e.quiet = True
+        # The translator does its own echoing in session mode (the handoff
+        # report). Guarded rather than set blindly, so a translator that does
+        # not honor it is not given an attribute it will silently ignore.
+        if hasattr(e.translate_model, "quiet"):
+            e.translate_model.quiet = True
     if options.exclude_filelist:
         e.exclude_filelist = options.exclude_filelist
     if options.only_filelist:
