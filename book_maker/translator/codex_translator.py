@@ -18,6 +18,7 @@ report as its instructions.
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
 
 from rich import print
 
@@ -82,6 +83,7 @@ class Codex(Base):
         self._thread_id = None
         self._window = 1
         self._window_tokens = 0
+        self._turn_lock = Lock()
 
     # ---- lifecycle --------------------------------------------------------
 
@@ -195,20 +197,30 @@ class Codex(Base):
     # ---- translation ------------------------------------------------------
 
     def translate(self, text, needprint=True):
-        thread_id = self._ensure_thread()
+        # Serialized on purpose. Parallel chapters share this instance —
+        # `_clone_translator_for_context` only clones translators carrying
+        # `context_flag`, and a codex thread *is* the context, so there are no
+        # per-worker buffers to hand out. Letting workers overlap would
+        # interleave unrelated chapters into one thread, lose window-token
+        # updates to races, and let a compact swap the thread mid-turn.
+        # `--parallel-workers` therefore buys nothing here, and the CLI says so.
+        with self._turn_lock:
+            thread_id = self._ensure_thread()
 
-        # Pinned terms belong to this unit, so they ride with it rather than
-        # with the thread instructions, which every later turn would re-read.
-        block = self.glossary.prompt_block(text) if self.glossary else ""
-        payload = f"{block}\n\n{text}" if block else text
+            # Pinned terms belong to this unit, so they ride with it rather
+            # than with the thread instructions, which every later turn would
+            # re-read.
+            block = self.glossary.prompt_block(text) if self.glossary else ""
+            payload = f"{block}\n\n{text}" if block else text
 
-        translated = self.server.run_turn(thread_id, payload)
+            translated = self.server.run_turn(thread_id, payload)
+
+            self._window_tokens += estimate_tokens(text) + estimate_tokens(translated)
+            if self._window_tokens >= self._budget():
+                self._compact_window()
+
         if needprint:
             print(f"[bold green]{translated}[/bold green]")
-
-        self._window_tokens += estimate_tokens(text) + estimate_tokens(translated)
-        if self._window_tokens >= self._budget():
-            self._compact_window()
         return translated
 
     def _chat_completion(self, prompt, model=None):

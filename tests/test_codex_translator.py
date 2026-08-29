@@ -171,3 +171,63 @@ class TestKeyHandling:
 
     def test_rotate_key_is_a_no_op(self):
         _codex().rotate_key()  # must not raise: there is no key to rotate
+
+
+class TestConcurrency:
+    """Parallel workers share one Codex instance and therefore one thread.
+
+    `_clone_translator_for_context` only clones translators that carry
+    `context_flag`, which this one does not: a codex thread *is* the context,
+    so there are no per-worker buffers to reset. Turns must therefore
+    serialize, or chapters interleave into one thread and the window
+    accounting races.
+    """
+
+    def test_concurrent_translations_are_serialized(self):
+        import threading
+
+        t = _codex()
+        overlaps = []
+        active = []
+
+        original = t.server.run_turn
+
+        def slow_turn(thread_id, text, output_schema=None, timeout=None):
+            active.append(text)
+            if len(active) > 1:
+                overlaps.append(tuple(active))
+            threading.Event().wait(0.02)
+            active.remove(text)
+            return original(thread_id, text, output_schema, timeout)
+
+        t.server.run_turn = slow_turn
+        threads = [
+            threading.Thread(
+                target=t.translate, args=(f"unit {i}",), kwargs={"needprint": False}
+            )
+            for i in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert overlaps == []
+        assert len(t.server.turns) == 4
+
+    def test_window_accounting_survives_concurrent_calls(self):
+        import threading
+
+        t = _codex(context_compact_at=100_000)
+        threads = [
+            threading.Thread(
+                target=t.translate, args=("a" * 200,), kwargs={"needprint": False}
+            )
+            for _ in range(8)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        # 8 units of ~50 source tokens each, none lost to a lost update.
+        assert t._window_tokens >= 8 * 50

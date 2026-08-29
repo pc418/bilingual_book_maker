@@ -950,6 +950,15 @@ def main():
         # login prompt after ten minutes of work is the wrong time to find out.
         if hasattr(e.translate_model, "preflight"):
             e.translate_model.preflight()
+        if api_format == "codex" and options.parallel_workers > 1:
+            # A codex thread is the context, and turns on it are serialized
+            # so chapters do not interleave into one thread. Saying so beats
+            # letting the flag look like it did something.
+            print(
+                "[bold yellow]Warning:[/bold yellow] the codex format runs one "
+                "thread and serializes turns on it, so --parallel-workers does "
+                "not speed it up."
+            )
     elif model_names:
         # These formats translate through a fixed engine and take no model, so
         # honoring the flag is impossible; saying so beats ignoring it.
