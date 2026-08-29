@@ -63,10 +63,18 @@ also makes it a context window. At `--context-compact-at` it is condensed
 into a handoff report and a fresh thread is seeded with it, exactly like
 `--use_context session`. `--glossary` and `--glossary-auto` work here too.
 
-Two caveats. A long book can exhaust your plan's 5-hour window; the run is
-resumable, and bbm prints how much of the window is already used before
-starting. And turns run through your own Codex hooks (`~/.codex/hooks.json`),
-so per-prompt hooks will fire for every paragraph.
+bbm prints how much of your window remains before starting, and again
+whenever that figure moves. If the window runs out mid-book the run does not
+stop: it says when the window resets, waits until a minute past it, and
+carries on. Ctrl+C still works, and the run is resumable either way.
+
+Waiting only happens where waiting helps. A spent 5-hour window comes back on
+a timer; depleted credits and account usage limits do not, so those fail
+immediately rather than hanging, as does a reset more than six hours out (a
+weekly limit, say) — it tells you when it clears instead.
+
+One caveat: turns run through your own Codex hooks (`~/.codex/hooks.json`),
+so per-prompt hooks fire for every paragraph.
 
 Anything speaking the OpenAI shape works through `openai` — OpenAI itself,
 Groq, xAI, DeepSeek, SiliconFlow, OpenRouter, Together, Alibaba DashScope,

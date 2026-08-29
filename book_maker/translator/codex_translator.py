@@ -17,12 +17,14 @@ report as its instructions.
 
 from __future__ import annotations
 
+import time
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 
 from rich import print
 
-from ..codex_client import CodexAppServer, CodexTurnFailed
+from ..codex_client import CodexAppServer, CodexError, CodexTurnFailed
 from ..glossary import Glossary
 from ..session_context import (
     HandoffReport,
@@ -51,6 +53,18 @@ QUOTA_WARN_PERCENT = 90
 # compact budget is looked up by model id, so an unknown default would fall
 # back to the conservative 8000 instead of this model's own 17000.
 DEFAULT_MODEL = "gpt-5.6-luna"
+
+# A minute past the reset, because the server's clock and ours are not the
+# same and coming back a second early just burns another failed turn.
+RESET_GRACE_SECONDS = 60
+
+# One window is 5 hours; a weekly limit resets far too late to sit out. Past
+# this, say when it clears and stop rather than hang for days.
+MAX_WAIT_SECONDS = 6 * 60 * 60
+
+# Depletion is expected to clear on the first wait. Allowing a couple more
+# covers a reset that lands late; beyond that something else is wrong.
+MAX_WAITS_PER_TURN = 3
 
 
 class Codex(Base):
@@ -95,6 +109,9 @@ class Codex(Base):
         self._window = 1
         self._window_tokens = 0
         self._turn_lock = Lock()
+        self._last_remaining = None
+        self._sleep = kwargs.pop("sleeper", time.sleep)
+        self._now = kwargs.pop("clock", time.time)
 
     # ---- lifecycle --------------------------------------------------------
 
@@ -119,20 +136,90 @@ class Codex(Base):
         limits = self._ensure_server().ensure_logged_in()
         if limits is None:
             return None
+        plan = f" ({limits.plan_type} plan)" if limits.plan_type else ""
+        self._last_remaining = limits.remaining_percent
         if limits.used_percent >= QUOTA_WARN_PERCENT:
-            reset = f", resets at {limits.resets_at}" if limits.resets_at else ""
             print(
-                f"[bold yellow]Warning:[/bold yellow] {limits.used_percent}% of "
-                f"your Codex rate-limit window is already used{reset}. A long "
-                f"book may exhaust it mid-run; the translation is resumable."
+                f"[bold yellow]Warning:[/bold yellow] only "
+                f"{limits.remaining_percent:g}% of your Codex window remains"
+                f"{self._reset_phrase(limits)}. A long book may exhaust it; the "
+                f"run waits for the reset rather than stopping."
             )
         else:
             print(
-                f"[green]Codex: signed in"
-                + (f" ({limits.plan_type} plan)" if limits.plan_type else "")
-                + f", {limits.used_percent}% of the window used[/green]"
+                f"[green]Codex: signed in{plan}, "
+                f"{limits.remaining_percent:g}% of the window remaining[/green]"
             )
         return limits
+
+    @staticmethod
+    def _reset_phrase(limits):
+        reset = limits.blocking_reset
+        if not reset:
+            return ""
+        when = datetime.fromtimestamp(reset).strftime("%H:%M")
+        return f", resetting at {when}"
+
+    def _report_quota(self):
+        """Print the remaining share whenever it moves."""
+        limits = self.server.latest_rate_limits()
+        if limits is None:
+            return
+        remaining = limits.remaining_percent
+        if remaining == self._last_remaining:
+            return
+        self._last_remaining = remaining
+        print(
+            f"[green]Codex: {remaining:g}% of the window remaining"
+            f"{self._reset_phrase(limits)}[/green]"
+        )
+
+    def _wait_out_reset(self, limits):
+        """Sleep until the blocking window clears. Returns False if pointless."""
+        if limits is None or not limits.waitable:
+            return False
+        seconds = limits.blocking_reset - self._now() + RESET_GRACE_SECONDS
+        if seconds <= 0:
+            return True  # already past it; just retry
+        if seconds > MAX_WAIT_SECONDS:
+            return False
+        when = datetime.fromtimestamp(limits.blocking_reset).strftime("%Y-%m-%d %H:%M")
+        print(
+            f"[bold yellow]Codex quota spent.[/bold yellow] Waiting "
+            f"{seconds / 60:.0f} min for the window to reset at {when}, then "
+            f"continuing. Ctrl+C stops; the run is resumable."
+        )
+        self._sleep(seconds)
+        try:
+            self.server.rate_limits()  # refresh the snapshot after the wait
+        except CodexError:
+            pass
+        return True
+
+    def _run_turn(self, thread_id, payload):
+        """One turn, sitting out a spent quota window rather than failing."""
+        for attempt in range(MAX_WAITS_PER_TURN + 1):
+            limits = self.server.latest_rate_limits()
+            # Proactive: a pushed update may already say we are out.
+            if limits is not None and limits.depleted and attempt < MAX_WAITS_PER_TURN:
+                if self._wait_out_reset(limits):
+                    continue
+            try:
+                return self.server.run_turn(thread_id, payload)
+            except CodexTurnFailed:
+                # Only treat this as a quota stop if the quota says so —
+                # a failed turn has many other causes.
+                limits = self.server.latest_rate_limits()
+                if (
+                    attempt >= MAX_WAITS_PER_TURN
+                    or limits is None
+                    or not limits.depleted
+                    or not self._wait_out_reset(limits)
+                ):
+                    raise
+        raise CodexTurnFailed(
+            "the codex quota was still spent after waiting for its reset"
+        )
 
     def close(self):
         if self._started:
@@ -170,7 +257,7 @@ class Codex(Base):
         is being turned into the thing that replaces it.
         """
         try:
-            report_text = self.server.run_turn(
+            report_text = self._run_turn(
                 self._thread_id, handoff_prompt(with_glossary=self.glossary_auto)
             )
         except CodexTurnFailed as e:
@@ -243,7 +330,8 @@ class Codex(Base):
             block = self.glossary.prompt_block(text) if self.glossary else ""
             payload = f"{block}\n\n{text}" if block else text
 
-            translated = self.server.run_turn(thread_id, payload)
+            translated = self._run_turn(thread_id, payload)
+            self._report_quota()
 
             self._window_tokens += estimate_tokens(text) + estimate_tokens(translated)
             if self._window_tokens >= self._budget():

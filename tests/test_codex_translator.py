@@ -4,7 +4,7 @@ import pytest
 
 from book_maker.glossary import Glossary
 from book_maker.session_context import handoff_prompt
-from book_maker.codex_client import CodexLoginRequired, RateLimits
+from book_maker.codex_client import CodexLoginRequired, CodexTurnFailed, RateLimits
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
 from book_maker.translator.codex_translator import DEFAULT_MODEL, Codex
 
@@ -40,6 +40,12 @@ class FakeServer:
 
     def rate_limits(self):
         return self._limits
+
+    def latest_rate_limits(self):
+        return self._limits
+
+    def set_limits(self, limits):
+        self._limits = limits
 
     def start_thread(self, model=None, base_instructions=None, cwd=None):
         self.threads.append({"model": model, "base_instructions": base_instructions})
@@ -84,7 +90,8 @@ class TestPreflight:
             reached_type=None,
         )
         _codex(limits=limits).preflight()
-        assert "95" in capsys.readouterr().out
+        # Reported as what is left, not as what is gone.
+        assert "5% of your Codex window remains" in capsys.readouterr().out
 
     def test_quiet_when_there_is_plenty_left(self, capsys):
         _codex().preflight()
@@ -259,3 +266,140 @@ class TestConcurrency:
             thread.join()
         # 8 units of ~50 source tokens each, none lost to a lost update.
         assert t._window_tokens >= 8 * 50
+
+
+class TestQuotaReporting:
+    """The window is reported as what remains, and only when it moves."""
+
+    def _limits(self, used, **kw):
+        from book_maker.codex_client import RateLimits
+
+        return RateLimits(
+            used_percent=used,
+            window_minutes=300,
+            resets_at=kw.pop("resets_at", 1788055986),
+            plan_type="plus",
+            reached_type=kw.pop("reached_type", None),
+            **kw,
+        )
+
+    def test_remaining_is_printed_when_it_changes(self, capsys):
+        t = _codex(["一", "二"], limits=self._limits(10))
+        t.translate("one", needprint=False)
+        capsys.readouterr()
+        t.server.set_limits(self._limits(25))
+        t.translate("two", needprint=False)
+        assert "75% of the window remaining" in capsys.readouterr().out
+
+    def test_an_unchanged_figure_is_not_reprinted(self, capsys):
+        t = _codex(["一", "二"], limits=self._limits(10))
+        t.translate("one", needprint=False)
+        capsys.readouterr()
+        t.translate("two", needprint=False)
+        assert "remaining" not in capsys.readouterr().out
+
+
+class TestQuotaExhaustion:
+    """Spent quota waits for the reset instead of ending the run."""
+
+    def _limits(self, used=100, reached="rate_limit_reached", resets_at=10_000):
+        from book_maker.codex_client import RateLimits
+
+        return RateLimits(
+            used_percent=used,
+            window_minutes=300,
+            resets_at=resets_at,
+            plan_type="plus",
+            reached_type=reached,
+        )
+
+    def _codex_at(self, now, limits, answers=None, fail_times=0):
+        slept = []
+        t = _codex(
+            answers or ["译文"], limits=limits, sleeper=slept.append, clock=lambda: now
+        )
+        state = {"left": fail_times}
+        real = t.server.run_turn
+
+        def run_turn(thread_id, text, output_schema=None, timeout=None):
+            if state["left"] > 0:
+                state["left"] -= 1
+                raise CodexTurnFailed("rate limit")
+            return real(thread_id, text, output_schema, timeout)
+
+        t.server.run_turn = run_turn
+        t.slept = slept
+        return t
+
+    def test_it_waits_past_the_reset_then_continues(self):
+        """The real sequence: the turn fails and the quota update saying why
+        arrives with it; waiting clears it and the retry goes through."""
+        slept = []
+        t = _codex(
+            ["译文"],
+            limits=self._limits(used=40, reached=None),
+            sleeper=slept.append,
+            clock=lambda: 9_000,
+        )
+        real = t.server.run_turn
+        state = {"failed": False}
+
+        def run_turn(thread_id, text, output_schema=None, timeout=None):
+            if not state["failed"]:
+                state["failed"] = True
+                t.server.set_limits(self._limits())  # the push that explains it
+                raise CodexTurnFailed("rate limit reached")
+            return real(thread_id, text, output_schema, timeout)
+
+        t.server.run_turn = run_turn
+        original = t._wait_out_reset
+
+        def wait(limits):  # a real reset clears the window
+            done = original(limits)
+            t.server.set_limits(self._limits(used=0, reached=None))
+            return done
+
+        t._wait_out_reset = wait
+
+        assert t.translate("text", needprint=False) == "译文"
+        assert slept == [10_000 - 9_000 + 60]
+
+    def test_the_wait_message_says_when_it_resumes(self, capsys):
+        t = self._codex_at(now=9_000, limits=self._limits())
+        t._wait_out_reset(t.server.latest_rate_limits())
+        out = capsys.readouterr().out.lower()
+        assert "waiting" in out and "reset" in out
+
+    def test_credit_depletion_is_not_waited_out(self):
+        """Credits do not come back on a timer; waiting would hang forever."""
+        t = self._codex_at(
+            now=9_000,
+            limits=self._limits(reached="workspace_owner_credits_depleted"),
+            fail_times=1,
+        )
+        with pytest.raises(CodexTurnFailed):
+            t.translate("text", needprint=False)
+        assert t.slept == []
+
+    def test_an_absurdly_distant_reset_is_not_waited_out(self):
+        t = self._codex_at(
+            now=0, limits=self._limits(resets_at=60 * 60 * 24 * 7), fail_times=1
+        )
+        with pytest.raises(CodexTurnFailed):
+            t.translate("text", needprint=False)
+        assert t.slept == []
+
+    def test_a_failure_with_quota_left_is_not_treated_as_exhaustion(self):
+        """A turn fails for many reasons; only the quota says it is the quota."""
+        t = self._codex_at(
+            now=0, limits=self._limits(used=10, reached=None), fail_times=1
+        )
+        with pytest.raises(CodexTurnFailed):
+            t.translate("text", needprint=False)
+        assert t.slept == []
+
+    def test_it_gives_up_rather_than_waiting_forever(self):
+        t = self._codex_at(now=9_000, limits=self._limits(), fail_times=99)
+        with pytest.raises(CodexTurnFailed):
+            t.translate("text", needprint=False)
+        assert len(t.slept) <= 3

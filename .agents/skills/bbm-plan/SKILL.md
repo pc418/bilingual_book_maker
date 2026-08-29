@@ -254,7 +254,10 @@ changed intentionally.
 | | `--single_translate` | user wants a translated-only book, original replaced |
 | speed | *(default)* sequential | small book (< ~30 chapters), or first run with a new endpoint |
 | | `--parallel-workers 4` | large book; plan mode isolates per-chapter state, safe with or without context |
-| consistency | `--use_context` | fiction with recurring names/terms; costs extra tokens; in parallel runs context is chapter-local (until the phase-2 brief exists) |
+| consistency | `--use_context` | fiction with recurring names/terms; costs extra tokens (~6x the book); in parallel runs context is chapter-local |
+| | `--use_context session` | same purpose, cheaper on an endpoint that bills prompt-cache reads: one append-only history, compacted into a handoff report at `--context-compact-at`. Warns if no cached tokens are ever reported |
+| | `--glossary terms.txt` | the user already knows how a name must render; `term → translation # note` lines, injected only into paragraphs where the term occurs. Parallel-safe — no warmup, no ordering |
+| | `+ --glossary-auto` | let each compact record the renderings it established and carry them forward; pinned terms still win |
 | voice/style | `--prompt prompt.json` | user states a register ("literary", "plain modern") — encode it once in the system message |
 | styling | `--translation_style "color:#808080;font-style:italic"` | bilingual output should visually separate the translation |
 | scope | `--only_filelist` / `--exclude_filelist` | user wants specific chapters; exact internal names — a typo fails loud at the coverage gate |
@@ -328,7 +331,14 @@ spot-checking one early and one late chapter.
 
 ## Next phase
 
-`references/next-phase.md` in this skill dir: a book brief (short intro + character-name
-glossary) drafted by the agent at classify time and injected through
-`prompt.json`, making `--parallel-workers` runs terminology-consistent
-without `--use_context`'s sequential warmup. Planned, not yet built.
+`references/next-phase.md` in this skill dir: a book brief (short intro +
+character-name glossary) drafted by the agent at classify time and injected
+through `prompt.json`, making `--parallel-workers` runs terminology-consistent
+without `--use_context`'s sequential warmup.
+
+**Half of this shipped 2026-08-29** as `--glossary` / `--glossary-auto`: a
+pinned-vocabulary file with per-paragraph injection, which is parallel-safe
+and needs no warmup — the glossary half of the brief, reached from the CLI
+instead of through `prompt.json`. What remains unbuilt is the *intro* half
+(the one-paragraph book summary) and having the agent draft either of them at
+classify time. See that file for what changed.

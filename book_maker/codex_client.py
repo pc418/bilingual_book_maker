@@ -71,13 +71,88 @@ class CodexTurnFailed(CodexError):
     """A turn failed, timed out, or produced no assistant message."""
 
 
+# Only this one clears with time. The credit/usage-limit variants are not
+# windowed, so waiting for a reset would hang forever.
+WINDOWED_LIMIT = "rate_limit_reached"
+
+
 @dataclass(frozen=True)
 class RateLimits:
-    used_percent: float
-    window_minutes: int | None
-    resets_at: int | None
-    plan_type: str | None
-    reached_type: str | None
+    """A quota snapshot. Fields are optional because rolling updates are sparse."""
+
+    used_percent: float = 0.0
+    window_minutes: int | None = None
+    resets_at: int | None = None
+    plan_type: str | None = None
+    reached_type: str | None = None
+    secondary_used_percent: float | None = None
+    secondary_resets_at: int | None = None
+
+    @classmethod
+    def from_snapshot(cls, snapshot):
+        primary = snapshot.get("primary") or {}
+        secondary = snapshot.get("secondary") or {}
+        return cls(
+            used_percent=primary.get("usedPercent", 0),
+            window_minutes=primary.get("windowDurationMins"),
+            resets_at=primary.get("resetsAt"),
+            plan_type=snapshot.get("planType"),
+            reached_type=snapshot.get("rateLimitReachedType"),
+            secondary_used_percent=secondary.get("usedPercent"),
+            secondary_resets_at=secondary.get("resetsAt"),
+        )
+
+    def merged_with(self, other: "RateLimits") -> "RateLimits":
+        """Fold a rolling update in.
+
+        The protocol calls these updates sparse and says a null does not clear
+        a previously observed value, so only fields the update actually
+        carries are taken.
+        """
+        if other is None:
+            return self
+        fields = {}
+        for name in self.__dataclass_fields__:
+            new = getattr(other, name)
+            fields[name] = getattr(self, name) if new is None else new
+        # usedPercent is required in an update, so it always wins.
+        fields["used_percent"] = other.used_percent
+        return RateLimits(**fields)
+
+    @property
+    def remaining_percent(self) -> float:
+        return max(0.0, 100.0 - self.used_percent)
+
+    @property
+    def depleted(self) -> bool:
+        return self.reached_type is not None or self.used_percent >= 100
+
+    @property
+    def waitable(self) -> bool:
+        """Whether sitting out the window would actually help.
+
+        Credit depletion and account usage limits are not windowed; only a
+        rate limit is, and even then we need a reset time to wait for.
+        """
+        if self.reached_type not in (None, WINDOWED_LIMIT):
+            return False
+        return self.blocking_reset is not None
+
+    @property
+    def blocking_reset(self) -> int | None:
+        """When the window that is actually blocking clears.
+
+        Both windows must have room, so a spent weekly limit is what matters
+        even when the 5-hour one has already rolled over.
+        """
+        resets = []
+        if self.used_percent >= 100 and self.resets_at:
+            resets.append(self.resets_at)
+        if (self.secondary_used_percent or 0) >= 100 and self.secondary_resets_at:
+            resets.append(self.secondary_resets_at)
+        if not resets:
+            return self.resets_at
+        return max(resets)
 
 
 @dataclass(frozen=True)
@@ -130,6 +205,7 @@ class CodexAppServer:
         self._active_marks: list[int] = []
         self._reader = None
         self._stopped = False
+        self._rate_limits = None
 
     # ---- lifecycle --------------------------------------------------------
 
@@ -221,6 +297,8 @@ class CodexAppServer:
                         # it rather than let the turn block on it.
                         deny_id = message["id"]
                     elif "method" in message:
+                        if message["method"] == "account/rateLimits/updated":
+                            self._merge_rate_limits(message)
                         self._notifications.append(message)
                     self._cond.notify_all()
                 if deny_id is not None:
@@ -238,6 +316,23 @@ class CodexAppServer:
             with self._cond:
                 self._stopped = True
                 self._cond.notify_all()
+
+    def _merge_rate_limits(self, message):
+        """Fold a pushed update into the snapshot. Caller holds `_cond`."""
+        snapshot = (message.get("params") or {}).get("rateLimits")
+        if not snapshot:
+            return
+        update = RateLimits.from_snapshot(snapshot)
+        self._rate_limits = (
+            update
+            if self._rate_limits is None
+            else self._rate_limits.merged_with(update)
+        )
+
+    def latest_rate_limits(self):
+        """The most recent quota snapshot, or None before one has arrived."""
+        with self._cond:
+            return self._rate_limits
 
     def _deny(self, request_id):
         try:
@@ -296,17 +391,14 @@ class CodexAppServer:
     def rate_limits(self):
         """Current quota, or None when the server reports none."""
         result = self.request("account/rateLimits/read")
-        limits = result.get("rateLimits")
-        if not limits:
+        snapshot = result.get("rateLimits")
+        if not snapshot:
             return None
-        primary = limits.get("primary") or {}
-        return RateLimits(
-            used_percent=primary.get("usedPercent", 0),
-            window_minutes=primary.get("windowDurationMins"),
-            resets_at=primary.get("resetsAt"),
-            plan_type=limits.get("planType"),
-            reached_type=limits.get("rateLimitReachedType"),
-        )
+        # A full read replaces the snapshot; rolling updates only merge.
+        limits = RateLimits.from_snapshot(snapshot)
+        with self._cond:
+            self._rate_limits = limits
+        return limits
 
     def ensure_logged_in(self):
         """Confirm a usable session, or say exactly how to get one.
