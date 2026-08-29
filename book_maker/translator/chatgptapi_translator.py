@@ -59,6 +59,7 @@ from ..session_context import (
     compact_budget_for,
     handoff_prompt,
     parse_handoff_glossary,
+    strip_handoff_glossary,
 )
 
 CHATGPT_CONFIG = config["translator"]["chatgptapi"]
@@ -698,7 +699,9 @@ class ChatGPTAPI(Base):
 
         report = HandoffReport(
             window=self.session.windows,
-            summary=report_text.strip(),
+            # The JSON block is parsed into `glossary_lines` below, so it is
+            # stripped from the prose rather than stored and re-seeded twice.
+            summary=strip_handoff_glossary(report_text),
             glossary_lines=glossary_lines,
         )
         if self.handoff_path:

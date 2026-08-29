@@ -30,6 +30,7 @@ from ..session_context import (
     estimate_tokens,
     handoff_prompt,
     parse_handoff_glossary,
+    strip_handoff_glossary,
 )
 from .base_translator import Base
 
@@ -183,7 +184,9 @@ class Codex(Base):
 
         report = HandoffReport(
             window=self._window,
-            summary=report_text.strip(),
+            # Same as the API path: the JSON is parsed into `glossary_lines`,
+            # so keeping it in the prose too would duplicate every term.
+            summary=strip_handoff_glossary(report_text),
             glossary_lines=glossary_lines,
         )
         if self.handoff_path and report_text:

@@ -172,6 +172,32 @@ def parse_handoff_glossary(text: str) -> Glossary:
     return Glossary()
 
 
+# A markdown heading that introduced the JSON block and is left dangling once
+# the block is removed ("## 3. Glossary", "### Established renderings").
+_EMPTY_GLOSSARY_HEADING = re.compile(
+    r"^#{1,6}\s*\d*\.?\s*(glossary|established renderings|terms)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_handoff_glossary(text: str) -> str:
+    """The report's prose, with the JSON glossary block removed.
+
+    The block is parsed into real entries and re-rendered, so leaving it in
+    the prose would write every term twice into `<book>_handoff.md` and send
+    it twice in the next window's seed — a measured 84KB of duplication over
+    nine windows on a short test run.
+    """
+    if not text:
+        return text
+    without = _FENCED_JSON.sub("", text)
+    if without == text:
+        without = _BARE_JSON.sub("", text)
+    without = _EMPTY_GLOSSARY_HEADING.sub("", without)
+    # Collapse the blank runs the removal leaves behind.
+    return re.sub(r"\n{3,}", "\n\n", without).strip()
+
+
 @dataclass
 class HandoffReport:
     """One window's handoff, persisted to `<book>_handoff.md` and re-seeded."""

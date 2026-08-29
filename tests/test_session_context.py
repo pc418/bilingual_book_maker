@@ -11,6 +11,7 @@ import json
 import pytest
 
 from book_maker.session_context import (
+    strip_handoff_glossary,
     DEFAULT_COMPACT_BUDGET,
     GLOSSARY_JSON_SCHEMA,
     HandoffReport,
@@ -183,3 +184,28 @@ class TestGlossarySchema:
         assert GLOSSARY_JSON_SCHEMA["type"] == "array"
         props = GLOSSARY_JSON_SCHEMA["items"]["properties"]
         assert "term" in props and "translation" in props
+
+
+class TestStripHandoffGlossary:
+    """The JSON block is parsed into entries, so leaving it in the prose too
+    would duplicate every term in the file and in the next window's seed."""
+
+    def test_removes_a_fenced_json_block(self):
+        text = 'Summary.\n\n## 3. Glossary\n\n```json\n[{"term": "A", "translation": "B"}]\n```\n'
+        out = strip_handoff_glossary(text)
+        assert "```json" not in out
+        assert '"term"' not in out
+        assert "Summary." in out
+
+    def test_keeps_prose_that_follows_the_block(self):
+        text = 'Before.\n```json\n[{"term": "A", "translation": "B"}]\n```\nAfter.'
+        out = strip_handoff_glossary(text)
+        assert "Before." in out and "After." in out
+
+    def test_drops_an_emptied_glossary_heading(self):
+        text = "Summary.\n\n## 3. Glossary\n\n```json\n[]\n```\n"
+        assert "Glossary" not in strip_handoff_glossary(text)
+
+    def test_text_without_json_is_unchanged(self):
+        text = "Just a summary, no glossary at all."
+        assert strip_handoff_glossary(text) == text
