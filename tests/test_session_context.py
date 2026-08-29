@@ -114,45 +114,40 @@ class TestSessionHistory:
 
 
 class TestHandoffPrompt:
+    """Assert the prompt's *structure*, not its wording.
+
+    The wording is owned by whoever is tuning translation quality and gets
+    rewritten often; pinning phrases here would make every revision look like
+    a broken test. What must not silently change is which sections are asked
+    for, and that JSON is requested only when something consumes it.
+    """
+
     def test_without_auto_glossary_asks_for_prose_only(self):
         prompt = handoff_prompt(with_glossary=False)
         assert "json" not in prompt.lower()
 
-    def test_with_auto_glossary_asks_for_json(self):
-        prompt = handoff_prompt(with_glossary=True)
-        assert "json" in prompt.lower()
-        assert "term" in prompt.lower()
+    def test_with_auto_glossary_asks_for_fenced_json(self):
+        prompt = handoff_prompt(with_glossary=True).lower()
+        assert "json" in prompt
+        assert "term" in prompt and "translation" in prompt
 
-    def test_both_forms_ask_for_summary_and_style(self):
+    def test_both_forms_ask_for_a_summary_and_a_style_section(self):
         for flag in (True, False):
             prompt = handoff_prompt(with_glossary=flag).lower()
-            assert "summary" in prompt
-            assert "style" in prompt or "register" in prompt
+            assert "1." in prompt and "summary" in prompt
+            assert "2." in prompt and "style" in prompt
 
-    def test_the_summary_is_asked_for_content_not_process(self):
-        """Left unsaid, the model reports which sections it processed."""
-        prompt = handoff_prompt(with_glossary=True).lower()
-        assert "content" in prompt
-        assert "not about the translation" in prompt or "never describe" in prompt
+    def test_only_the_glossary_form_has_a_third_section(self):
+        assert "3." in handoff_prompt(with_glossary=True)
+        assert "3." not in handoff_prompt(with_glossary=False)
 
-    def test_style_is_capped_at_three_lines(self):
-        prompt = handoff_prompt(with_glossary=True).lower()
-        assert "at most 3" in prompt
+    def test_the_style_section_is_capped(self):
+        """Uncapped it grew past twenty bullets and became a prose glossary."""
+        assert "3" in handoff_prompt(with_glossary=True).split("2.")[1].split("3.")[0]
 
-    def test_the_summary_asks_for_concrete_detail(self):
-        prompt = handoff_prompt(with_glossary=True).lower()
-        assert "concretely" in prompt or "concrete" in prompt
-        assert "people, places, events" in prompt
-
-    def test_with_a_glossary_term_pairs_are_kept_out_of_the_style_section(self):
-        """Otherwise every rendering is written twice, in two formats."""
-        prompt = handoff_prompt(with_glossary=True).lower()
-        assert "only place" in prompt or "not list term" in prompt
-
-    def test_without_a_glossary_the_style_section_may_carry_key_renderings(self):
-        """There is nowhere else for them to go when the glossary is off."""
-        prompt = handoff_prompt(with_glossary=False).lower()
-        assert "only place" not in prompt
+    def test_the_summary_is_asked_for_before_the_style(self):
+        prompt = handoff_prompt(with_glossary=True)
+        assert prompt.index("1.") < prompt.index("2.") < prompt.index("3.")
 
 
 class TestParseHandoffGlossary:

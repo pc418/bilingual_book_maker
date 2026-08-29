@@ -120,39 +120,36 @@ class SessionHistory:
             self._tokens = estimate_tokens(seed)
 
 
+# The compact request, revised by the user 2026-08-29. Kept deliberately terse:
+# the model is being asked to compress its own context, not to write a report
+# for a reader.
+_PREAMBLE = (
+    "Context is compacting. Summarize content you translated so far in your "
+    "context for brief reference of later translations."
+)
+
 _SUMMARY_REQUEST = (
-    "You are handing this translation over to another translator who has not "
-    "seen any of the text above.\n\n"
-    "1. Summary — what the book itself says so far, concretely. Name the "
-    "people, places, events and claims as the text actually presents them, "
-    "and carry anything a later passage may refer back to. Write about the "
-    "book's content, not about the translation work: never describe which "
-    "sections or front matter you processed, and do not list what you have "
-    "finished.\n\n"
+    "1. Summary - of translated content above. What happened, who was "
+    "involved, when did those happen."
 )
 
-# Capped and scoped. Left open, this section grows into a second glossary
-# written as prose ("'e-book' 统一译为 '电子书'"), which duplicates every
-# rendering in a format nothing can parse.
+# Capped, and scoped to deviations only. Uncapped this section grew past
+# twenty bullets and turned into a second glossary written as prose
+# ("'e-book' 统一译为 '电子书'"), duplicating every rendering unparseably.
 _STYLE_REQUEST = (
-    "2. Style — at most 3 short lines, on voice and convention only: "
-    "register and formality, and how names, titles and quotation marks are "
-    "handled."
+    "2. Style — up to 3 lines of what translation style is used so far. "
+    "Only note down what's different from general translation."
 )
 
-_STYLE_NO_GLOSSARY_SUFFIX = (
-    " If a particular rendering matters for consistency, you may name it here."
-)
-
-_STYLE_WITH_GLOSSARY_SUFFIX = (
-    " Do not put term translations in this section: the glossary below is the "
-    "only place they go."
+# Without a glossary section there is nowhere for term equivalences to go, so
+# the style section is not told to exclude them.
+_STYLE_REQUEST_NO_GLOSSARY = (
+    "2. Style — up to 3 lines of what translation style is used so far."
 )
 
 _GLOSSARY_REQUEST = (
-    "\n\n3. Glossary — every name, place, title and recurring term you have "
-    "already translated, each listed exactly once, as a JSON array inside a "
-    "```json fenced block. Each element is "
+    "3. Glossary — every noun we need to keep unified, each listed exactly "
+    "once, as a JSON array inside a ```json fenced block. Each element is "
     '{"term": <source>, "translation": <your rendering>, "note": <optional>}. '
     "This is the only place term equivalences belong."
 )
@@ -165,14 +162,12 @@ def handoff_prompt(with_glossary: bool) -> str:
     downstream would consume it, and an unused JSON section is output tokens
     billed for nothing.
     """
+    sections = [_PREAMBLE, _SUMMARY_REQUEST]
     if with_glossary:
-        return (
-            _SUMMARY_REQUEST
-            + _STYLE_REQUEST
-            + _STYLE_WITH_GLOSSARY_SUFFIX
-            + _GLOSSARY_REQUEST
-        )
-    return _SUMMARY_REQUEST + _STYLE_REQUEST + _STYLE_NO_GLOSSARY_SUFFIX
+        sections += [_STYLE_REQUEST, _GLOSSARY_REQUEST]
+    else:
+        sections.append(_STYLE_REQUEST_NO_GLOSSARY)
+    return "\n\n".join(sections)
 
 
 _FENCED_JSON = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.DOTALL)
