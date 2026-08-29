@@ -321,9 +321,36 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
   模型提示词将创建三段摘要。如果是翻译的开始，它将总结发送的整个段落（大小取决于`--accumulated_num`）。
   对于后续的段落，它将修改摘要，以包括最近段落的细节，创建一个完整的段落上下文负载，包含整个翻译作品的重要细节。 这提高了整个翻译过程中的流畅性和语气的一致性。 此选项适用于所有ChatGPT兼容型号和Gemini型号。
 
+  `--use_context` 还可以带一个可选的模式值。裸写 `--use_context`（等同
+  `--use_context window`）就是上面描述的行为；`--use_context session` 改为
+  维护一份只追加的历史记录，支持提示缓存的端点会以缓存价重新读取它，因此
+  上下文可以增长到整章的长度，花费反而低于 window 模式发送三个段落。历史
+  达到压缩预算时，模型会被要求写一份交接报告（摘要、文体说明，加上
+  `--glossary-auto` 时还有词汇表），用于播种下一个窗口，并追加到
+  `<book>_handoff.md`。
+
   - `--context_paragraph_limit`:
 
-    使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制。
+    使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制（仅 window 模式）。
+
+  - `--context-compact-at`:
+
+    仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。
+    不设置时，每个模型使用各自的成本平衡预算——大致是 session 模式花费与
+    window 模式相当、但携带数倍上下文的那个点。多数端点上 `2500` 最省钱。
+
+  - `--glossary`:
+
+    固定词汇表文件路径，每行 `term → translation`，可选 `# 注释`。只有当某
+    个词条真的出现在该段原文中时，才会注入到这一段的提示词里，因此只在需要
+    的段落上产生几个 token 的成本。拉丁字母词条按词边界匹配，中日韩词条按
+    子串匹配。
+
+  - `--glossary-auto`:
+
+    仅 session 模式，默认关闭。让每次交接报告额外返回一份 JSON 词汇表，
+    记录它已经确定的译法，并带入后续窗口。`--glossary` 中的固定词条始终
+    优先于学习到的译法，冲突会被报告而不是被静默处理。
 
 - `--temperature`:
 

@@ -215,13 +215,19 @@ def parse_prompt_arg(prompt_arg):
     return prompt
 
 
-def main():
+def resolve_context_mode(options):
+    """`(context_flag, context_mode)` from the parsed `--use_context` value.
+
+    `--use_context` used to be a bare switch and still may be: absent means no
+    context, bare means the window mode it has always meant, and only an
+    explicit `session` selects cached history.
+    """
+    mode = getattr(options, "context_mode", None)
+    return (mode is not None), mode
+
+
+def build_parser():
     translate_format_list = list(FORMAT_DICT.keys())
-    # Old command lines are rewritten into the endpoint surface before the
-    # parser sees them; see book_maker/legacy_cli.py.
-    legacy = translate_legacy_argv(sys.argv[1:])
-    for notice in legacy.notices:
-        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
     # No prefix abbreviation: `--model` must not resolve to `--model_list`.
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument(
@@ -477,16 +483,53 @@ So you are close to reaching the limit. You have to choose your own value, there
     )
     parser.add_argument(
         "--use_context",
-        dest="context_flag",
-        action="store_true",
-        help="adds an additional paragraph for global, updating historical context of the story to the model's input, improving the narrative consistency for the AI model (this uses ~200 more tokens each time)",
+        dest="context_mode",
+        nargs="?",
+        const="window",
+        default=None,
+        choices=("window", "session"),
+        help="carry earlier paragraphs into each request for narrative "
+        "consistency. Bare (or 'window'): re-send the last few "
+        "source/translation pairs, costing ~200 extra tokens per request. "
+        "'session': keep one append-only history instead, so an endpoint "
+        "with prompt caching re-reads it at its cache rate and the context "
+        "can grow to chapter length for less money — compacted into a "
+        "handoff report at --context-compact-at",
     )
     parser.add_argument(
         "--context_paragraph_limit",
         dest="context_paragraph_limit",
         type=int,
         default=0,
-        help="if use --use_context, set context paragraph limit",
+        help="window mode only: how many paragraph pairs to re-send",
+    )
+    parser.add_argument(
+        "--context-compact-at",
+        dest="context_compact_at",
+        type=int,
+        default=None,
+        help="session mode only: estimated-token budget for the history "
+        "before it is compacted into a translator handoff report. Default: "
+        "the model's cost-balanced budget (spends about what window mode "
+        "spends, for several times the context); 2500 is the cheapest "
+        "setting on most endpoints",
+    )
+    parser.add_argument(
+        "--glossary",
+        dest="glossary",
+        type=str,
+        default=None,
+        help="path to a pinned-vocabulary file of 'term → translation' "
+        "lines (optional '# note'). Only the terms that actually occur in a "
+        "paragraph are injected into its prompt",
+    )
+    parser.add_argument(
+        "--glossary-auto",
+        dest="glossary_auto",
+        action="store_true",
+        help="session mode only: also ask each handoff report for a JSON "
+        "glossary of the renderings it established, and carry them into "
+        "later windows. Off by default",
     )
     parser.add_argument(
         "--temperature",
@@ -549,8 +592,22 @@ So you are close to reaching the limit. You have to choose your own value, there
         "(for log files and non-interactive runs; reports and errors still "
         "print). Currently epub only.",
     )
+    return parser
 
-    options = parser.parse_args(legacy.argv)
+
+def parse_args(argv):
+    return build_parser().parse_args(argv)
+
+
+def main():
+    # Old command lines are rewritten into the endpoint surface before the
+    # parser sees them; see book_maker/legacy_cli.py.
+    legacy = translate_legacy_argv(sys.argv[1:])
+    for notice in legacy.notices:
+        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
+
+    options = parse_args(legacy.argv)
+    options.context_flag, options.context_mode = resolve_context_mode(options)
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.

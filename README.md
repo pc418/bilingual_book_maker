@@ -393,9 +393,42 @@ Notes:
   prompts the model to create a three-paragraph summary. If it's the beginning of the translation, it will summarize the entire passage sent (the size depending on `--accumulated_num`).
   For subsequent passages, it will amend the summary to include details from the most recent passage, creating a running one-paragraph context payload of the important details of the entire translated work. This improves consistency of flow and tone throughout the translation. This option is available for all ChatGPT-compatible models and Gemini models.
 
+  `--use_context` also takes an optional mode. Bare `--use_context` (or
+  `--use_context window`) is the behaviour described above. `--use_context
+  session` instead keeps a single append-only history of everything
+  translated so far, so an endpoint with prompt caching re-reads it at its
+  cache rate — context can then grow to chapter length for less money than
+  window mode spends on three paragraphs. When the history reaches the
+  compact budget, the model is asked for a translator handoff report
+  (summary, style notes, and with `--glossary-auto` a glossary), which seeds
+  the next window and is appended to `<book>_handoff.md`.
+
 - `--context_paragraph_limit`:
 
-  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option.
+  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option (window mode only).
+
+- `--context-compact-at`:
+
+  Session mode only. The estimated-token budget the history may reach before
+  it is compacted into a handoff report. Left unset, each model uses its
+  cost-balanced budget — roughly the point where session mode spends what
+  window mode spends while carrying several times the context. `2500` is the
+  cheapest setting on most endpoints.
+
+- `--glossary`:
+
+  Path to a pinned-vocabulary file: `term → translation` lines, with an
+  optional `# note`. A pinned term is injected into a paragraph's prompt only
+  when that term actually occurs in it, so the cost is a few tokens on the
+  paragraphs that need it and nothing elsewhere. Latin-script terms match on
+  word boundaries, CJK terms as substrings.
+
+- `--glossary-auto`:
+
+  Session mode only, off by default. Also asks each handoff report for a JSON
+  glossary of the renderings it established, and carries them into later
+  windows. Pinned terms from `--glossary` always win over learned ones, and
+  disagreements are reported rather than silently resolved.
 
 - `--parallel-workers`:
 
