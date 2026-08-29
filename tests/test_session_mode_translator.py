@@ -326,3 +326,22 @@ class TestParallelIsolation:
     def test_sequential_runs_keep_the_shared_history(self, tmp_path):
         loader = self._loader(tmp_path, workers=1)
         assert loader._clone_translator_for_context() is loader.translate_model
+
+
+class TestAsyncPathIsRefused:
+    def test_session_mode_fails_loud_on_the_async_path(self):
+        """It threads an immutable per-call context, so the session would
+        never be appended to and every request would bill uncached."""
+        import asyncio
+
+        from book_maker.translator.base_translator import AsyncTranslationUnsupported
+
+        t = _translator()
+        with pytest.raises(AsyncTranslationUnsupported):
+            asyncio.run(t.translate_async("text"))
+
+    def test_window_mode_still_works_on_the_async_path(self):
+        import asyncio
+
+        t = _translator(context_mode="window")
+        assert asyncio.iscoroutinefunction(t.translate_async)

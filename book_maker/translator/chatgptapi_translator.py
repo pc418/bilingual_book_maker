@@ -30,7 +30,12 @@ from tenacity import (
     retry_if_not_exception_type,
 )
 
-from .base_translator import Base, TranslationContext, TranslationResult
+from .base_translator import (
+    AsyncTranslationUnsupported,
+    Base,
+    TranslationContext,
+    TranslationResult,
+)
 from .capabilities import (
     ENTRY_RUNG,
     RUNG_REFUSAL_ERRORS,
@@ -432,6 +437,17 @@ class ChatGPTAPI(Base):
     async def translate_async(
         self, text: str, *, context: TranslationContext | None = None
     ) -> TranslationResult:
+        if self.session is not None:
+            # This path threads an immutable per-call TranslationContext,
+            # which is the opposite of one shared append-only history: the
+            # session would never be appended to, and every request would be
+            # billed as an uncached fresh prefix. No loader uses this path
+            # today; failing here keeps that from becoming a silent cost
+            # regression the moment one does.
+            raise AsyncTranslationUnsupported(
+                "session context is not supported on the async path; "
+                "use --use_context (window mode) there"
+            )
         if type(self).create_chat_completion is not ChatGPTAPI.create_chat_completion:
             return await super().translate_async(text, context=context)
 

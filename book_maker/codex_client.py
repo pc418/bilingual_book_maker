@@ -63,10 +63,6 @@ class RateLimits:
     plan_type: str | None
     reached_type: str | None
 
-    @property
-    def nearly_spent(self) -> bool:
-        return self.used_percent >= 90
-
 
 @dataclass(frozen=True)
 class LoginPrompt:

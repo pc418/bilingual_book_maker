@@ -16,7 +16,7 @@ request at full input price.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 # ASCII "->" is accepted because a plain keyboard produces it; the arrow is
