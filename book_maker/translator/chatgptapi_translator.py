@@ -184,6 +184,8 @@ class ChatGPTAPI(Base):
     # mode everywhere in this class.
     session = None
     glossary = None
+    pinned = None
+    learned = None
     glossary_auto = False
     handoff_path = None
     context_compact_at = None
@@ -240,7 +242,12 @@ class ChatGPTAPI(Base):
             else None
         )
         self.context_compact_at = context_compact_at
-        self.glossary = glossary or Glossary()
+        # `pinned` is the author's --glossary file and never changes.
+        # `learned` accumulates what compacts establish. `glossary` is the two
+        # combined, pins on top, and is what gets injected per unit.
+        self.pinned = glossary or Glossary()
+        self.learned = Glossary()
+        self.glossary = self.pinned
         self.glossary_auto = glossary_auto
         self.handoff_path = Path(handoff_path) if handoff_path else None
         self._session_cache_warned = False
@@ -687,11 +694,28 @@ class ChatGPTAPI(Base):
 
         glossary_lines = ""
         if self.glossary_auto:
-            learned = parse_handoff_glossary(report_text)
+            learned, source = parse_handoff_glossary(report_text)
+            if source == "scanned":
+                # The block is what makes this parseable; say so rather than
+                # let a quietly degraded recovery look like a clean one.
+                print(
+                    f"[yellow]ℹ the handoff report left out its <renderings> "
+                    f"block; recovered {len(learned)} terms from loose "
+                    f"lines[/yellow]"
+                )
+            elif source == "missing":
+                print(
+                    "[yellow]ℹ the handoff report established no renderings; "
+                    "this window carries no learned terms[/yellow]"
+                )
             if learned:
-                merged, conflicts = self.glossary.merge(learned)
-                self.glossary = merged
-                glossary_lines = learned.to_lines()
+                # This window's reading wins over earlier ones: the model has
+                # seen more of the book than it had last time. Then the
+                # author's pins are laid over the top, so a term they chose
+                # never drifts, while everything else keeps improving.
+                self.learned, _ = learned.merge(self.learned)
+                self.glossary, conflicts = self.pinned.merge(self.learned)
+                glossary_lines = self.glossary.to_lines()
                 for conflict in conflicts:
                     print(
                         f"[yellow]ℹ glossary conflict — {conflict.describe()}[/yellow]"

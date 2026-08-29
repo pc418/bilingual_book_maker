@@ -24,9 +24,9 @@ session mode spends what window mode spent, while carrying ~5-10x the context.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
+from typing import NamedTuple
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -51,20 +51,6 @@ _COMPACT_BUDGETS = {
 # Unknown models get the 0.2x-tier balanced figure: conservative for a cheap
 # cache, still well above window mode's context.
 DEFAULT_COMPACT_BUDGET = 8000
-
-GLOSSARY_JSON_SCHEMA = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "term": {"type": "string"},
-            "translation": {"type": "string"},
-            "note": {"type": "string"},
-        },
-        "required": ["term", "translation"],
-        "additionalProperties": False,
-    },
-}
 
 
 def estimate_tokens(text: str) -> int:
@@ -148,10 +134,11 @@ _STYLE_REQUEST_NO_GLOSSARY = (
 )
 
 _GLOSSARY_REQUEST = (
-    "3. Glossary — every noun we need to keep unified, each listed exactly "
-    "once, as a JSON array inside a ```json fenced block. Each element is "
-    '{"term": <source>, "translation": <your rendering>, "note": <optional>}. '
-    "This is the only place term equivalences belong."
+    "3. Established renderings — every noun we need to keep unified, each "
+    "listed exactly once, one per line as `term → translation # note` (the "
+    "note is optional). Wrap the whole list in <renderings> and </renderings> "
+    "tags so its start and end are unambiguous. This is the only place term "
+    "equivalences belong."
 )
 
 
@@ -170,28 +157,68 @@ def handoff_prompt(with_glossary: bool) -> str:
     return "\n\n".join(sections)
 
 
-_FENCED_JSON = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.DOTALL)
-_BARE_JSON = re.compile(r"(\[\s*\{.*?\}\s*\])", re.DOTALL)
+# The block the report is asked to emit. Tolerant of a missing closing tag:
+# a truncated answer should still yield the terms it managed to write.
+_RENDERINGS = re.compile(
+    r"<renderings>(.*?)(?:</renderings>|\Z)", re.DOTALL | re.IGNORECASE
+)
+
+# Fallback only. A glossary line is short and is not a sentence, which is what
+# separates it from prose that happens to contain an arrow.
+_MAX_TERM_LEN = 60
+_SENTENCE_END = ("。", ".", "！", "!", "？", "?", "；", ";")
 
 
-def parse_handoff_glossary(text: str) -> Glossary:
-    """Pull the JSON glossary out of a handoff report.
+class HandoffGlossary(NamedTuple):
+    """What a handoff report yielded, and how it had to be recovered.
 
-    Model output, so it is parsed leniently and never raises: a window whose
-    glossary section came back malformed still has a usable prose summary, and
-    losing the run over it would be the wrong trade.
+    `source` is reported so a run can say out loud that the model skipped the
+    block — with --glossary-auto on, silently learning nothing looks identical
+    to a book with no recurring terms.
+    """
+
+    glossary: Glossary
+    source: str  # "tagged" | "scanned" | "missing"
+
+
+def _entries_from_lines(lines, strict):
+    entries = []
+    for raw in lines:
+        line = raw.strip().lstrip("-*•").strip()
+        if not line or line.startswith("#") or line.startswith("<"):
+            continue
+        if not strict:
+            # Outside the tags, only accept things shaped like an entry.
+            head = re.split(r"→|->", line)[0].strip()
+            if len(head) > _MAX_TERM_LEN or line.endswith(_SENTENCE_END):
+                continue
+        try:
+            entries.extend(Glossary.parse(line).entries)
+        except ValueError:
+            continue  # model output; one bad line must not lose the rest
+    return entries
+
+
+def parse_handoff_glossary(text: str) -> HandoffGlossary:
+    """Read the renderings the handoff report established.
+
+    Preferred shape is the tagged block the prompt asks for. Models drop it,
+    so there is a fallback: scan loose `term → translation` lines, guarded so
+    ordinary prose containing an arrow is not mistaken for an entry.
     """
     if not text:
-        return Glossary()
-    for pattern in (_FENCED_JSON, _BARE_JSON):
-        match = pattern.search(text)
-        if not match:
-            continue
-        try:
-            return Glossary.from_json(json.loads(match.group(1)))
-        except (json.JSONDecodeError, ValueError):
-            continue
-    return Glossary()
+        return HandoffGlossary(Glossary(), "missing")
+
+    match = _RENDERINGS.search(text)
+    if match:
+        entries = _entries_from_lines(match.group(1).splitlines(), strict=True)
+        if entries:
+            return HandoffGlossary(Glossary(entries), "tagged")
+
+    entries = _entries_from_lines(text.splitlines(), strict=False)
+    if entries:
+        return HandoffGlossary(Glossary(entries), "scanned")
+    return HandoffGlossary(Glossary(), "missing")
 
 
 # A markdown heading that introduced the JSON block and is left dangling once
@@ -203,24 +230,19 @@ _EMPTY_GLOSSARY_HEADING = re.compile(
 
 
 def strip_handoff_glossary(text: str) -> str:
-    """The report's prose, with the JSON glossary block removed.
+    """The report's prose, with the renderings block removed.
 
-    The block is parsed into real entries and re-rendered, so leaving it in
-    the prose would write every term twice into `<book>_handoff.md` and send
-    it twice in the next window's seed — a measured 84KB of duplication over
-    nine windows on a short test run.
+    The block is parsed into real entries and re-rendered canonically, so
+    leaving it in the prose would write every term twice into
+    `<book>_handoff.md` and send it twice in the next window's seed.
     """
     if not text:
         return text
-    without = _FENCED_JSON.sub("", text)
-    if without == text:
-        without = _BARE_JSON.sub("", text)
+    without = _RENDERINGS.sub("", text)
     without = _EMPTY_GLOSSARY_HEADING.sub("", without)
-    # Collapse the blank runs the removal leaves behind.
     without = re.sub(r"\n{3,}", "\n\n", without).strip()
-    # A heading now left at the very end introduced the block we just removed.
-    # Matched by position rather than by wording, since the model writes it in
-    # the target language ("### 术语表").
+    # A heading now left at the very end introduced the block just removed.
+    # Matched by position, since the model writes it in the target language.
     return re.sub(r"\n#{1,6}[^\n]*$", "", without).strip()
 
 

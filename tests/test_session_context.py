@@ -11,9 +11,9 @@ import json
 import pytest
 
 from book_maker.session_context import (
+    HandoffGlossary,
     strip_handoff_glossary,
     DEFAULT_COMPACT_BUDGET,
-    GLOSSARY_JSON_SCHEMA,
     HandoffReport,
     SessionHistory,
     compact_budget_for,
@@ -122,14 +122,13 @@ class TestHandoffPrompt:
     for, and that JSON is requested only when something consumes it.
     """
 
-    def test_without_auto_glossary_asks_for_prose_only(self):
-        prompt = handoff_prompt(with_glossary=False)
-        assert "json" not in prompt.lower()
+    def test_without_auto_glossary_asks_for_no_renderings(self):
+        assert "<renderings>" not in handoff_prompt(with_glossary=False)
 
-    def test_with_auto_glossary_asks_for_fenced_json(self):
-        prompt = handoff_prompt(with_glossary=True).lower()
-        assert "json" in prompt
-        assert "term" in prompt and "translation" in prompt
+    def test_with_auto_glossary_asks_for_the_tagged_block(self):
+        prompt = handoff_prompt(with_glossary=True)
+        assert "<renderings>" in prompt and "</renderings>" in prompt
+        assert "→" in prompt  # the line format the parser reads
 
     def test_both_forms_ask_for_a_summary_and_a_style_section(self):
         for flag in (True, False):
@@ -141,6 +140,17 @@ class TestHandoffPrompt:
         assert "3." in handoff_prompt(with_glossary=True)
         assert "3." not in handoff_prompt(with_glossary=False)
 
+    def test_the_prompt_and_the_parser_agree_on_the_tag(self):
+        """The one coupling that silently loses every learned term."""
+        from book_maker.session_context import parse_handoff_glossary
+
+        prompt = handoff_prompt(with_glossary=True)
+        assert "<renderings>" in prompt
+        assert (
+            parse_handoff_glossary("<renderings>\nA → B\n</renderings>").source
+            == "tagged"
+        )
+
     def test_the_style_section_is_capped(self):
         """Uncapped it grew past twenty bullets and became a prose glossary."""
         assert "3" in handoff_prompt(with_glossary=True).split("2.")[1].split("3.")[0]
@@ -150,21 +160,100 @@ class TestHandoffPrompt:
         assert prompt.index("1.") < prompt.index("2.") < prompt.index("3.")
 
 
-class TestParseHandoffGlossary:
-    def test_parses_a_fenced_json_block(self):
-        text = 'Summary here.\n```json\n[{"term": "Winston", "translation": "温斯顿"}]\n```\n'
-        g = parse_handoff_glossary(text)
-        assert g.lookup("Winston").translation == "温斯顿"
+def parse_handoff_glossary_g(text):
+    """Just the glossary, for the cases that do not assert provenance."""
+    return parse_handoff_glossary(text).glossary
 
-    def test_parses_a_bare_json_array(self):
-        g = parse_handoff_glossary('[{"term": "Julia", "translation": "茱莉亚"}]')
+
+class TestParseHandoffGlossary:
+    """The report now returns the same `term → translation # note` lines the
+    handoff file is written in, wrapped in tags so the block's start and end
+    are unambiguous. Glossary.parse already reads that format."""
+
+    def test_parses_a_tagged_block(self):
+        text = (
+            "Summary.\n\n<renderings>\n"
+            "Winston → 温斯顿\nJulia → 茱莉亚 # his lover\n"
+            "</renderings>\n"
+        )
+        g = parse_handoff_glossary(text).glossary
+        assert g.lookup("Winston").translation == "温斯顿"
+        assert g.lookup("Julia").note == "his lover"
+
+    def test_ignores_prose_outside_the_tags(self):
+        text = "The arrow → in prose is not a term.\n<renderings>\nA → B\n</renderings>"
+        g = parse_handoff_glossary(text).glossary
         assert len(g) == 1
 
-    def test_no_json_yields_empty_glossary(self):
-        assert len(parse_handoff_glossary("just prose, no json at all")) == 0
+    def test_skips_malformed_lines_instead_of_failing(self):
+        text = "<renderings>\nWinston → 温斯顿\nthis line has no arrow\n\n</renderings>"
+        assert len(parse_handoff_glossary_g(text)) == 1
 
-    def test_malformed_json_yields_empty_glossary_not_an_exception(self):
-        assert len(parse_handoff_glossary("```json\n[{term: broken]\n```")) == 0
+    def test_tolerates_list_bullets(self):
+        text = "<renderings>\n- Winston → 温斯顿\n* Julia → 茱莉亚\n</renderings>"
+        assert len(parse_handoff_glossary_g(text)) == 2
+
+    def test_an_unclosed_tag_still_yields_what_follows(self):
+        text = "<renderings>\nWinston → 温斯顿\n"
+        assert len(parse_handoff_glossary_g(text)) == 1
+
+    def test_no_tags_yields_an_empty_glossary(self):
+        assert len(parse_handoff_glossary_g("just prose, no renderings at all")) == 0
+
+    def test_empty_block_is_empty(self):
+        assert len(parse_handoff_glossary_g("<renderings>\n</renderings>")) == 0
+
+
+class TestGlossaryFallback:
+    """Models drop the block; recovery must work and must be visible."""
+
+    def test_loose_lines_are_recovered_when_the_block_is_missing(self):
+        text = "Summary.\n\nWinston → 温斯顿\nJulia → 茱莉亚\n"
+        result = parse_handoff_glossary(text)
+        assert result.source == "scanned"
+        assert len(result.glossary) == 2
+
+    def test_a_tagged_block_is_reported_as_tagged(self):
+        result = parse_handoff_glossary("<renderings>\nA → B\n</renderings>")
+        assert result.source == "tagged"
+
+    def test_nothing_at_all_is_reported_as_missing(self):
+        result = parse_handoff_glossary("Just prose with no entries.")
+        assert result.source == "missing"
+        assert len(result.glossary) == 0
+
+    def test_the_scan_does_not_mistake_prose_for_an_entry(self):
+        text = "The publisher went from acceptance → rejection after consulting them."
+        assert parse_handoff_glossary(text).source == "missing"
+
+    def test_the_scan_rejects_an_over_long_term_side(self):
+        text = ("x" * 80) + " → short"
+        assert parse_handoff_glossary(text).source == "missing"
+
+
+class TestStripHandoffRenderings:
+    def test_removes_the_tagged_block(self):
+        text = "Summary.\n\n<renderings>\nA → B\n</renderings>\n"
+        out = strip_handoff_glossary(text)
+        assert "<renderings>" not in out and "A → B" not in out
+        assert "Summary." in out
+
+    def test_keeps_prose_after_the_block(self):
+        text = "Before.\n<renderings>\nA → B\n</renderings>\nAfter."
+        out = strip_handoff_glossary(text)
+        assert "Before." in out and "After." in out
+
+    def test_drops_a_heading_left_dangling_in_any_language(self):
+        text = "Summary.\n\n### 术语表\n\n<renderings>\nA → B\n</renderings>\n"
+        assert "术语表" not in strip_handoff_glossary(text)
+
+    def test_removes_an_unclosed_block_to_the_end(self):
+        text = "Summary.\n<renderings>\nA → B\n"
+        assert "A → B" not in strip_handoff_glossary(text)
+
+    def test_text_without_a_block_is_unchanged(self):
+        text = "Just a summary, no renderings at all."
+        assert strip_handoff_glossary(text) == text
 
 
 class TestHandoffReport:
@@ -197,47 +286,3 @@ class TestHandoffReport:
 
     def test_latest_seed_of_missing_file_is_empty(self, tmp_path):
         assert HandoffReport.latest_seed(tmp_path / "nope.md") == ""
-
-
-class TestGlossarySchema:
-    def test_schema_shape_is_an_array_of_term_objects(self):
-        assert GLOSSARY_JSON_SCHEMA["type"] == "array"
-        props = GLOSSARY_JSON_SCHEMA["items"]["properties"]
-        assert "term" in props and "translation" in props
-
-
-class TestStripHandoffGlossary:
-    """The JSON block is parsed into entries, so leaving it in the prose too
-    would duplicate every term in the file and in the next window's seed."""
-
-    def test_removes_a_fenced_json_block(self):
-        text = 'Summary.\n\n## 3. Glossary\n\n```json\n[{"term": "A", "translation": "B"}]\n```\n'
-        out = strip_handoff_glossary(text)
-        assert "```json" not in out
-        assert '"term"' not in out
-        assert "Summary." in out
-
-    def test_keeps_prose_that_follows_the_block(self):
-        text = 'Before.\n```json\n[{"term": "A", "translation": "B"}]\n```\nAfter.'
-        out = strip_handoff_glossary(text)
-        assert "Before." in out and "After." in out
-
-    def test_drops_an_emptied_glossary_heading(self):
-        text = "Summary.\n\n## 3. Glossary\n\n```json\n[]\n```\n"
-        assert "Glossary" not in strip_handoff_glossary(text)
-
-    def test_drops_a_trailing_heading_in_any_language(self):
-        """The model writes the heading in the target language."""
-        text = 'Summary.\n\n### 术语表\n\n```json\n[{"term": "A", "translation": "B"}]\n```\n'
-        out = strip_handoff_glossary(text)
-        assert "术语表" not in out
-        assert "Summary." in out
-
-    def test_a_heading_with_prose_after_it_is_kept(self):
-        text = "Summary.\n\n### Notes\n\nStill relevant.\n\n```json\n[]\n```"
-        out = strip_handoff_glossary(text)
-        assert "### Notes" in out and "Still relevant." in out
-
-    def test_text_without_json_is_unchanged(self):
-        text = "Just a summary, no glossary at all."
-        assert strip_handoff_glossary(text) == text

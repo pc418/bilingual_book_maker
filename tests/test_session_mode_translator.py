@@ -237,7 +237,7 @@ class TestAutoGlossary:
         compact_prompt = t.sent[1]["messages"][-1]["content"].lower()
         assert "json" not in compact_prompt
 
-    def test_on_the_compact_prompt_asks_for_json(self, tmp_path):
+    def test_on_the_compact_prompt_asks_for_the_renderings_block(self, tmp_path):
         t = _translator(
             ["译文", "Summary.", "译文"],
             context_compact_at=10,
@@ -246,10 +246,10 @@ class TestAutoGlossary:
         )
         t.get_translation("a" * 200)
         t.get_translation("b" * 200)
-        assert "json" in t.sent[1]["messages"][-1]["content"].lower()
+        assert "<renderings>" in t.sent[1]["messages"][-1]["content"]
 
     def test_learned_terms_are_injected_into_later_units(self, tmp_path):
-        report = 'Summary.\n```json\n[{"term": "Boxer", "translation": "拳击手"}]\n```'
+        report = "Summary.\n<renderings>\nBoxer → 拳击手\n</renderings>"
         t = _translator(
             ["译文", report, "译文"],
             context_compact_at=10,
@@ -261,7 +261,7 @@ class TestAutoGlossary:
         assert "拳击手" in _tail_containing(t, "Boxer pulled the cart")
 
     def test_pinned_terms_win_over_learned_ones(self, tmp_path):
-        report = 'Summary.\n```json\n[{"term": "Boxer", "translation": "拳击手"}]\n```'
+        report = "Summary.\n<renderings>\nBoxer → 拳击手\n</renderings>"
         t = _translator(
             ["译文", report, "译文"],
             context_compact_at=10,
@@ -433,3 +433,72 @@ class TestCompactResilience:
             ["译文", "Summary.", "译文"], context_compact_at=10, handoff_path=path
         )
         assert t.get_translation("a" * 200) == "译文"
+
+
+class TestGlossaryAuthority:
+    """Pinned terms are the author's; learned ones follow the model's latest
+    preference. A term the author pinned must never drift, but a term only the
+    model established should improve as it sees more of the book."""
+
+    def _report(self, *pairs):
+        lines = "\n".join(f"{a} → {b}" for a, b in pairs)
+        return f"Summary.\n<renderings>\n{lines}\n</renderings>"
+
+    def _t(self, tmp_path, reports, pinned=None):
+        answers = []
+        for r in reports:
+            answers += ["译文", r]
+        return _translator(
+            answers,
+            context_compact_at=10,
+            glossary_auto=True,
+            glossary=Glossary.parse(pinned) if pinned else None,
+            handoff_path=tmp_path / "h.md",
+        )
+
+    def test_a_learned_term_is_adopted(self, tmp_path):
+        t = self._t(tmp_path, [self._report(("Boxer", "拳击手"))])
+        t.get_translation("a" * 200)
+        assert t.glossary.lookup("Boxer").translation == "拳击手"
+
+    def test_a_later_window_updates_an_earlier_learned_term(self, tmp_path):
+        t = self._t(
+            tmp_path,
+            [self._report(("Boxer", "拳击手")), self._report(("Boxer", "鲍克瑟"))],
+        )
+        t.get_translation("a" * 200)
+        t.get_translation("b" * 200)
+        assert t.glossary.lookup("Boxer").translation == "鲍克瑟"
+
+    def test_a_pinned_term_is_never_overridden(self, tmp_path):
+        t = self._t(
+            tmp_path,
+            [self._report(("Boxer", "拳击手")), self._report(("Boxer", "别的"))],
+            pinned="Boxer → 鲍克瑟\n",
+        )
+        t.get_translation("a" * 200)
+        t.get_translation("b" * 200)
+        assert t.glossary.lookup("Boxer").translation == "鲍克瑟"
+
+    def test_the_model_disagreeing_with_a_pin_is_reported(self, tmp_path, capsys):
+        t = self._t(
+            tmp_path, [self._report(("Boxer", "拳击手"))], pinned="Boxer → 鲍克瑟\n"
+        )
+        t.get_translation("a" * 200)
+        assert "conflict" in capsys.readouterr().out.lower()
+
+    def test_unpinned_terms_still_accumulate_alongside_a_pin(self, tmp_path):
+        t = self._t(
+            tmp_path,
+            [self._report(("Boxer", "拳击手"), ("Clover", "苜蓿"))],
+            pinned="Boxer → 鲍克瑟\n",
+        )
+        t.get_translation("a" * 200)
+        assert t.glossary.lookup("Clover").translation == "苜蓿"
+        assert t.glossary.lookup("Boxer").translation == "鲍克瑟"
+
+    def test_a_learned_term_is_injected_into_a_later_unit(self, tmp_path):
+        t = self._t(tmp_path, [self._report(("Boxer", "拳击手"))])
+        t.get_translation("a" * 200)
+        t.get_translation("Boxer pulled the cart")
+        assert "拳击手" in _tail_containing(t, "Boxer pulled the cart")
