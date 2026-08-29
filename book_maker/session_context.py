@@ -120,21 +120,40 @@ class SessionHistory:
             self._tokens = estimate_tokens(seed)
 
 
-_PROSE_REQUEST = (
-    "You are about to hand this translation over to another translator who "
-    "has not seen any of the text above.\n"
-    "Write a handoff report with two sections:\n"
-    "1. Summary: the story so far, in enough detail that the next translator "
-    "understands who is who and what has happened.\n"
-    "2. Style and register: the voice, formality and any conventions you have "
-    "settled on."
+_SUMMARY_REQUEST = (
+    "You are handing this translation over to another translator who has not "
+    "seen any of the text above.\n\n"
+    "1. Summary — what the book itself says so far: the narrative or argument, "
+    "who the people are, the places and events, and anything a later passage "
+    "might refer back to. Write about the book's content, not about the "
+    "translation work: never describe which sections or front matter you "
+    "processed, and do not list what you have finished.\n\n"
+)
+
+# Capped and scoped. Left open, this section grows into a second glossary
+# written as prose ("'e-book' 统一译为 '电子书'"), which duplicates every
+# rendering in a format nothing can parse.
+_STYLE_REQUEST = (
+    "2. Style — at most 6 short lines, on voice and convention only: register "
+    "and formality, how names, titles and quotation marks are handled, and any "
+    "recurring choice about sentence shape."
+)
+
+_STYLE_NO_GLOSSARY_SUFFIX = (
+    " If a particular rendering matters for consistency, you may name it here."
+)
+
+_STYLE_WITH_GLOSSARY_SUFFIX = (
+    " Do not put term translations in this section: the glossary below is the "
+    "only place they go."
 )
 
 _GLOSSARY_REQUEST = (
-    "\n3. Glossary: every name, place and recurring term you have already "
-    "translated, with the rendering you used. Emit this section as a JSON "
-    "array in a ```json fenced block, each element "
-    '{"term": ..., "translation": ..., "note": ...}. The note is optional.'
+    "\n\n3. Glossary — every name, place, title and recurring term you have "
+    "already translated, each listed exactly once, as a JSON array inside a "
+    "```json fenced block. Each element is "
+    '{"term": <source>, "translation": <your rendering>, "note": <optional>}. '
+    "This is the only place term equivalences belong."
 )
 
 
@@ -145,7 +164,14 @@ def handoff_prompt(with_glossary: bool) -> str:
     downstream would consume it, and an unused JSON section is output tokens
     billed for nothing.
     """
-    return _PROSE_REQUEST + (_GLOSSARY_REQUEST if with_glossary else "")
+    if with_glossary:
+        return (
+            _SUMMARY_REQUEST
+            + _STYLE_REQUEST
+            + _STYLE_WITH_GLOSSARY_SUFFIX
+            + _GLOSSARY_REQUEST
+        )
+    return _SUMMARY_REQUEST + _STYLE_REQUEST + _STYLE_NO_GLOSSARY_SUFFIX
 
 
 _FENCED_JSON = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.DOTALL)
@@ -195,7 +221,11 @@ def strip_handoff_glossary(text: str) -> str:
         without = _BARE_JSON.sub("", text)
     without = _EMPTY_GLOSSARY_HEADING.sub("", without)
     # Collapse the blank runs the removal leaves behind.
-    return re.sub(r"\n{3,}", "\n\n", without).strip()
+    without = re.sub(r"\n{3,}", "\n\n", without).strip()
+    # A heading now left at the very end introduced the block we just removed.
+    # Matched by position rather than by wording, since the model writes it in
+    # the target language ("### 术语表").
+    return re.sub(r"\n#{1,6}[^\n]*$", "", without).strip()
 
 
 @dataclass

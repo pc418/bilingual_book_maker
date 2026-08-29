@@ -15,7 +15,12 @@ from unittest.mock import Mock
 import pytest
 
 from book_maker.glossary import Glossary
+from book_maker.session_context import handoff_prompt
 from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+# A phrase unique to the compact turn, taken from the real prompt so the
+# tests cannot drift from it.
+HANDOFF_MARKER = handoff_prompt(with_glossary=False)[:40]
 
 
 def _completion(content, cached_tokens=None):
@@ -390,7 +395,8 @@ class TestCompactResilience:
         state = {"left": failures}
 
         def create(**call):
-            is_compact = "handoff" in call["messages"][-1]["content"].lower()
+            # The compact turn is the one asking for a handoff report.
+            is_compact = HANDOFF_MARKER in call["messages"][-1]["content"]
             if is_compact and state["left"] > 0:
                 state["left"] -= 1
                 raise RuntimeError("boom")
@@ -415,7 +421,7 @@ class TestCompactResilience:
         t = self._failing(tmp_path, failures=99)
         for _ in range(10):
             t.get_translation(self.UNIT)
-        assert "handoff" in capsys.readouterr().out.lower()
+        assert "handoff report failed" in capsys.readouterr().out.lower()
         # Bounded: the window is reset rather than growing without end.
         assert t.session.estimated_tokens() <= 2 * self.BUDGET
 

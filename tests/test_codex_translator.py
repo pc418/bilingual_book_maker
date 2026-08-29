@@ -3,6 +3,7 @@
 import pytest
 
 from book_maker.glossary import Glossary
+from book_maker.session_context import handoff_prompt
 from book_maker.codex_client import CodexLoginRequired, RateLimits
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
 from book_maker.translator.codex_translator import Codex
@@ -149,7 +150,7 @@ class TestWindowing:
         t.translate("b" * 200)
         handoff = t.server.turns[-1]
         assert handoff["thread"] == "th-1"
-        assert "handoff" in handoff["text"].lower()
+        assert handoff["text"].startswith(handoff_prompt(with_glossary=False)[:40])
 
     def test_the_report_is_persisted(self, tmp_path):
         path = tmp_path / "h.md"

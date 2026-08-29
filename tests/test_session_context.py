@@ -129,6 +129,26 @@ class TestHandoffPrompt:
             assert "summary" in prompt
             assert "style" in prompt or "register" in prompt
 
+    def test_the_summary_is_asked_for_content_not_process(self):
+        """Left unsaid, the model reports which sections it processed."""
+        prompt = handoff_prompt(with_glossary=True).lower()
+        assert "content" in prompt
+        assert "not about the translation" in prompt or "never describe" in prompt
+
+    def test_style_is_capped_so_it_stays_short(self):
+        prompt = handoff_prompt(with_glossary=True).lower()
+        assert "at most" in prompt
+
+    def test_with_a_glossary_term_pairs_are_kept_out_of_the_style_section(self):
+        """Otherwise every rendering is written twice, in two formats."""
+        prompt = handoff_prompt(with_glossary=True).lower()
+        assert "only place" in prompt or "not list term" in prompt
+
+    def test_without_a_glossary_the_style_section_may_carry_key_renderings(self):
+        """There is nowhere else for them to go when the glossary is off."""
+        prompt = handoff_prompt(with_glossary=False).lower()
+        assert "only place" not in prompt
+
 
 class TestParseHandoffGlossary:
     def test_parses_a_fenced_json_block(self):
@@ -205,6 +225,18 @@ class TestStripHandoffGlossary:
     def test_drops_an_emptied_glossary_heading(self):
         text = "Summary.\n\n## 3. Glossary\n\n```json\n[]\n```\n"
         assert "Glossary" not in strip_handoff_glossary(text)
+
+    def test_drops_a_trailing_heading_in_any_language(self):
+        """The model writes the heading in the target language."""
+        text = 'Summary.\n\n### 术语表\n\n```json\n[{"term": "A", "translation": "B"}]\n```\n'
+        out = strip_handoff_glossary(text)
+        assert "术语表" not in out
+        assert "Summary." in out
+
+    def test_a_heading_with_prose_after_it_is_kept(self):
+        text = "Summary.\n\n### Notes\n\nStill relevant.\n\n```json\n[]\n```"
+        out = strip_handoff_glossary(text)
+        assert "### Notes" in out and "Still relevant." in out
 
     def test_text_without_json_is_unchanged(self):
         text = "Just a summary, no glossary at all."
