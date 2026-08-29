@@ -313,6 +313,24 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
   达到累计token数开始进行翻译。gpt3.5将total_token限制为4090。
   例如，如果您使用`--accumulation_num 1600`，则可能会输出2200个令牌，另外200个令牌用于系统指令（system_message）和用户指令（user_message），1600+2200+200 = 4000，所以token接近极限。你必须选择一个自己合适的值，我们无法在发送之前判断是否达到限制
 
+### `codex`：用 ChatGPT 订阅额度翻译
+
+`--api_format codex` 使用你的 ChatGPT/Codex 套餐额度，而不是 API credits。
+需要安装并登录 [Codex CLI](https://developers.openai.com/codex/cli)；bbm 通过
+`codex app-server` 侧车进程驱动，OAuth 会话由它管理，所以不需要
+`--openai_key`，`--model` 也是可选的（Codex 会用自己的默认模型）。
+
+用 `--codex-login` 在这里登录；没有浏览器的机器上用 `--codex-login device`，
+它会打印一个验证码供你在别处输入。若 Codex CLI 已登录则无需任何操作。
+
+由于新开一个 Codex thread 在第一段正文之前就要花掉约 17k tokens 的前言，
+整本书只会开一个 thread 并复用——这同时也构成了一个上下文窗口。到达
+`--context-compact-at` 时会压缩成交接报告，并用它播种一个新 thread，与
+`--use_context session` 完全一致。`--glossary` 和 `--glossary-auto` 同样可用。
+
+两点注意：长书可能耗尽套餐的 5 小时窗口（任务可续跑，开始前会打印已用比例）；
+以及每个 turn 都会触发你自己的 Codex hooks（`~/.codex/hooks.json`）。
+
 - `--use_context`:
 
   prompts the model to create a three-paragraph summary. If it's the beginning of the translation, it will summarize the entire passage sent (the size depending on `--accumulated_num`).

@@ -38,6 +38,9 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal
 # passed with them would silently do nothing.
 CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 
+# LLM formats that can resolve a model on their own, so --model is optional.
+MODEL_OPTIONAL_FORMATS = ("codex",)
+
 
 def infer_api_format(api_base, model=""):
     """Which wire format the endpoint speaks, guessed from host then model.
@@ -219,6 +222,33 @@ def parse_prompt_arg(prompt_arg):
 
     print("prompt config:", prompt)
     return prompt
+
+
+def run_codex_login(device_code=False):
+    """Drive a ChatGPT login through the codex sidecar. Returns an exit code."""
+    from book_maker.codex_client import CodexAppServer, CodexError
+
+    try:
+        with CodexAppServer() as server:
+            existing = None
+            try:
+                existing = server.rate_limits()
+            except CodexError:
+                pass
+            if existing is not None:
+                plan = f" ({existing.plan_type} plan)" if existing.plan_type else ""
+                print(f"[green]Already signed in to ChatGPT{plan}.[/green]")
+                return 0
+
+            prompt = server.login_start(device_code=device_code)
+            print(prompt.describe())
+            print("Waiting for the login to complete...")
+            server.wait_for_login()
+            print("[green]Signed in.[/green]")
+            return 0
+    except CodexError as err:
+        print(f"[bold red]{escape(str(err))}[/bold red]")
+        return 1
 
 
 def resolve_context_mode(options):
@@ -530,6 +560,17 @@ So you are close to reaching the limit. You have to choose your own value, there
         "paragraph are injected into its prompt",
     )
     parser.add_argument(
+        "--codex-login",
+        dest="codex_login",
+        nargs="?",
+        const="browser",
+        default=None,
+        choices=("browser", "device"),
+        help="sign in to ChatGPT for the codex format and exit. 'browser' "
+        "(default) opens a login URL; 'device' prints a code to enter on "
+        "another machine, for SSH and CI",
+    )
+    parser.add_argument(
         "--glossary-auto",
         dest="glossary_auto",
         action="store_true",
@@ -614,6 +655,11 @@ def main():
 
     options = parse_args(legacy.argv)
     options.context_flag, options.context_mode = resolve_context_mode(options)
+
+    # Signing in is a whole task on its own — no book is needed, and nothing
+    # else should run afterwards.
+    if options.codex_login:
+        raise SystemExit(run_codex_login(device_code=options.codex_login == "device"))
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
@@ -888,7 +934,9 @@ def main():
     if api_format in LLM_FORMATS:
         # No preset lists any more: the endpoint names its own models, and a
         # run that does not say which one to use has nothing to fall back on.
-        if not model_names:
+        # `codex` is the exception — it resolves the model from its own
+        # config, so naming one is optional there.
+        if not model_names and api_format not in MODEL_OPTIONAL_FORMATS:
             raise SystemExit(
                 f"--model is required for the {api_format} format. Pass the "
                 f"model id the endpoint uses, e.g. --model gpt-5-mini"
@@ -898,6 +946,10 @@ def main():
         except Exception as ex:
             print(f"[red]Error: {ex}[/red]")
             exit(1)
+        # Check the sidecar is up and signed in before parsing a book: a
+        # login prompt after ten minutes of work is the wrong time to find out.
+        if hasattr(e.translate_model, "preflight"):
+            e.translate_model.preflight()
     elif model_names:
         # These formats translate through a fixed engine and take no model, so
         # honoring the flag is impossible; saying so beats ignoring it.

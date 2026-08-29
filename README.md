@@ -32,9 +32,37 @@ the run switches to `openai` by itself.
 `https://host/v1`, a trailing slash, or the whole
 `https://host/v1/chat/completions` all mean the same thing.
 
-`--api_format` values: `openai` (default), `anthropic`, and the fixed
+`--api_format` values: `openai` (default), `anthropic`, `codex`, and the fixed
 machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
 `tencent`, `customapi`.
+
+### `codex`: translate on your ChatGPT subscription
+
+`--api_format codex` spends your ChatGPT/Codex plan allowance instead of API
+credits. It needs the [Codex CLI](https://developers.openai.com/codex/cli)
+installed and signed in; bbm drives a `codex app-server` sidecar, which owns
+the OAuth session, so there is no `--openai_key` and `--model` is optional
+(Codex resolves its own default).
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub \
+  --api_format codex --model gpt-5.6-sol --language zh-hans
+```
+
+Sign in from here with `--codex-login` (or `--codex-login device` on a
+machine with no browser, which prints a code to enter elsewhere). If the
+Codex CLI is already logged in, nothing is needed.
+
+Because a fresh Codex thread costs about 17k tokens of preamble before your
+first paragraph, one thread is opened and reused for the whole book — which
+also makes it a context window. At `--context-compact-at` it is condensed
+into a handoff report and a fresh thread is seeded with it, exactly like
+`--use_context session`. `--glossary` and `--glossary-auto` work here too.
+
+Two caveats. A long book can exhaust your plan's 5-hour window; the run is
+resumable, and bbm prints how much of the window is already used before
+starting. And turns run through your own Codex hooks (`~/.codex/hooks.json`),
+so per-prompt hooks will fire for every paragraph.
 
 Anything speaking the OpenAI shape works through `openai` — OpenAI itself,
 Groq, xAI, DeepSeek, SiliconFlow, OpenRouter, Together, Alibaba DashScope,
