@@ -502,3 +502,40 @@ class TestGlossaryAuthority:
         t.get_translation("a" * 200)
         t.get_translation("Boxer pulled the cart")
         assert "拳击手" in _tail_containing(t, "Boxer pulled the cart")
+
+
+class TestCompactIsVisible:
+    """The handoff report is what the next window inherits, so it is worth
+    seeing as it happens rather than only in the file afterwards."""
+
+    def _run(self, tmp_path, report, capsys):
+        t = _translator(
+            ["译文", report, "译文"],
+            context_compact_at=10,
+            glossary_auto=True,
+            handoff_path=tmp_path / "h.md",
+        )
+        t.get_translation("a" * 200)
+        return capsys.readouterr().out
+
+    def test_the_summary_is_printed(self, tmp_path, capsys):
+        out = self._run(tmp_path, "They walked to the barn.", capsys)
+        assert "They walked to the barn." in out
+
+    def test_the_renderings_are_printed(self, tmp_path, capsys):
+        report = "Summary.\n<renderings>\nBoxer → 鲍克瑟\n</renderings>"
+        out = self._run(tmp_path, report, capsys)
+        assert "鲍克瑟" in out
+
+    def test_the_window_number_is_printed(self, tmp_path, capsys):
+        out = self._run(tmp_path, "Summary.", capsys)
+        assert "window 1" in out.lower()
+
+    def test_square_brackets_survive_rich_markup(self, tmp_path, capsys):
+        """Reports really do contain things like [PGA]; rich would eat them."""
+        out = self._run(tmp_path, "Based on the [PGA] edition.", capsys)
+        assert "[PGA]" in out
+
+    def test_an_unclosed_bracket_does_not_raise(self, tmp_path, capsys):
+        out = self._run(tmp_path, "A stray [bracket and /close tag", capsys)
+        assert "stray" in out

@@ -22,6 +22,7 @@ from openai import (
 )
 from pydantic import ConfigDict, Field, ValidationError, create_model
 from rich import print
+from rich.markup import escape
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -728,6 +729,7 @@ class ChatGPTAPI(Base):
             summary=strip_handoff_glossary(report_text),
             glossary_lines=glossary_lines,
         )
+        self._show_handoff(report)
         if self.handoff_path:
             try:
                 report.append_to(self.handoff_path)
@@ -740,6 +742,19 @@ class ChatGPTAPI(Base):
                     f"the run continues without a saved handoff[/yellow]"
                 )
         self.session.reset(seed=report.seed_text())
+
+    @staticmethod
+    def _show_handoff(report):
+        """Print the report the next window will inherit.
+
+        `escape` is not optional: rich reads square brackets as markup, and
+        these reports genuinely contain things like "[PGA]", which would be
+        swallowed or raise on an unclosed tag.
+        """
+        print(
+            f"[bold cyan]— handoff report, window {report.window} —[/bold cyan]\n"
+            + escape(report.render())
+        )
 
     def _save_session_context(self, text, t_text):
         # Store what was *sent*, not the bare source. The next request replays

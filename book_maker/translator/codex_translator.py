@@ -23,6 +23,7 @@ from pathlib import Path
 from threading import Lock
 
 from rich import print
+from rich.markup import escape
 
 from ..codex_client import CodexAppServer, CodexError, CodexTurnFailed
 from ..glossary import Glossary
@@ -303,6 +304,8 @@ class Codex(Base):
             summary=strip_handoff_glossary(report_text),
             glossary_lines=glossary_lines,
         )
+        if report_text:
+            self._show_handoff(report)
         if self.handoff_path and report_text:
             report.append_to(self.handoff_path)
 
@@ -310,6 +313,19 @@ class Codex(Base):
         self._window_tokens = 0
         self._thread_id = None
         self._ensure_thread(seed=report.seed_text() if report_text else "")
+
+    @staticmethod
+    def _show_handoff(report):
+        """Print the report the next thread will be seeded with.
+
+        `escape` is not optional: rich reads square brackets as markup, and
+        these reports genuinely contain things like "[PGA]", which would be
+        swallowed or raise on an unclosed tag.
+        """
+        print(
+            f"[bold cyan]— handoff report, window {report.window} —[/bold cyan]\n"
+            + escape(report.render())
+        )
 
     # ---- translation ------------------------------------------------------
 

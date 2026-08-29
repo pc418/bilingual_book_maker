@@ -267,15 +267,21 @@ class HandoffReport:
             seed += f"\n\nEstablished renderings:\n{self.glossary_lines}"
         return seed
 
+    def render(self) -> str:
+        """The report body: what is written to the file and shown on screen."""
+        body = self.summary
+        if self.glossary_lines:
+            body += f"\n\n### Established renderings\n\n{self.glossary_lines}"
+        return body
+
     def append_to(self, path) -> None:
         """Append this window's report. Inspectable and hand-editable by design."""
         path = Path(path)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-        block = f"\n{self._MARKER}{self.window} — {stamp}\n\n{self.summary}\n"
-        if self.glossary_lines:
-            block += f"\n### Established renderings\n\n{self.glossary_lines}\n"
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(block)
+            handle.write(
+                f"\n{self._MARKER}{self.window} — {stamp}\n\n{self.render()}\n"
+            )
 
     @classmethod
     def latest_seed(cls, path) -> str:
