@@ -24,7 +24,7 @@ from rich import print
 from rich.markup import escape
 from tqdm import tqdm
 
-from book_maker.session_context import handoff_path
+from book_maker.session_context import SessionHistory, handoff_path
 from book_maker.utils import num_tokens_from_text, prompt_config_to_kwargs
 
 from .base_loader import BaseBookLoader
@@ -2078,6 +2078,12 @@ class EPUBBookLoader(BaseBookLoader):
         clone = copy(self.translate_model)
         clone.context_list = []
         clone.context_translated_list = []
+        if getattr(clone, "session", None) is not None:
+            # Session mode keeps one append-only history, and a shallow copy
+            # would leave every worker appending to the same one: chapters
+            # interleave, and the byte-stable prefix the mode is built on is
+            # gone. Each worker gets its own window instead.
+            clone.session = SessionHistory()
         if hasattr(clone, "create_convo"):
             # gemini keeps context in its chat object, not the lists above —
             # a shallow copy would share one convo across chapters (a thread

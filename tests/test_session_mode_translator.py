@@ -8,6 +8,7 @@ than the mode it replaces.
 """
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -278,3 +279,50 @@ class TestWindowModeUnchanged:
         for text in ("a", "b", "c", "d"):
             t.get_translation(text)
         assert len(_prefix(t.sent[-1])) == 3
+
+
+class TestParallelIsolation:
+    """Each parallel worker needs its own history.
+
+    A shared SessionHistory would be appended to from several threads at
+    once, interleaving chapters into one list and destroying the very
+    prefix stability the mode exists for.
+    """
+
+    def _loader(self, tmp_path, workers):
+        from book_maker.loader.epub_loader import EPUBBookLoader
+
+        book = (
+            Path(__file__).resolve().parent.parent / "test_books" / "animal_farm.epub"
+        )
+        target = tmp_path / book.name
+        target.write_bytes(book.read_bytes())
+        return EPUBBookLoader(
+            str(target),
+            ChatGPTAPI,
+            "k",
+            False,
+            language="Chinese",
+            context_flag=True,
+            context_mode="session",
+            parallel_workers=workers,
+        )
+
+    def test_each_parallel_clone_gets_its_own_history(self, tmp_path):
+        loader = self._loader(tmp_path, workers=2)
+        loader.translate_model.session.append("chapter one", "第一章")
+        first = loader._clone_translator_for_context()
+        second = loader._clone_translator_for_context()
+        assert first.session is not second.session
+        assert first.session is not loader.translate_model.session
+        assert first.session.messages() == []
+
+    def test_a_clone_does_not_write_into_the_shared_history(self, tmp_path):
+        loader = self._loader(tmp_path, workers=2)
+        clone = loader._clone_translator_for_context()
+        clone.session.append("worker text", "译文")
+        assert loader.translate_model.session.messages() == []
+
+    def test_sequential_runs_keep_the_shared_history(self, tmp_path):
+        loader = self._loader(tmp_path, workers=1)
+        assert loader._clone_translator_for_context() is loader.translate_model
