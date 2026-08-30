@@ -112,13 +112,12 @@ class TestTranslation:
         t.translate("one")
         assert t.server.threads[0]["model"] == DEFAULT_MODEL
 
-    def test_the_default_model_has_its_own_compact_budget(self):
-        from book_maker.session_context import (
-            DEFAULT_COMPACT_BUDGET,
-            compact_budget_for,
-        )
+    def test_the_default_model_resolves_a_usable_budget(self):
+        """Naming a default model keeps the budget lookup well defined; the
+        budget itself is uniform now."""
+        from book_maker.session_context import compact_budget_for
 
-        assert compact_budget_for(DEFAULT_MODEL) != DEFAULT_COMPACT_BUDGET
+        assert compact_budget_for(DEFAULT_MODEL) >= 500
 
     def test_an_empty_model_list_falls_back_to_the_default(self):
         t = _codex(["一"])
