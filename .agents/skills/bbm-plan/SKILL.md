@@ -65,8 +65,33 @@ API_BASE_FLAG=()
 [ -n "$BBM_API_BASE" ] && API_BASE_FLAG=(--api_base "$BBM_API_BASE")
 ROUTE=(--key "$KEY" --model "$MODEL")   # ← add --api_format only if step 1b says so
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
-  --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}"
+  --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}" \
+  --use_context session --glossary-auto
 ```
+
+**The defaults above are the defaults on purpose**, and all three hang
+together:
+
+- `--plan-classify agent` — this skill's hard constraint (see the top).
+- `--use_context session` — one append-only history re-read at the
+  endpoint's cache rate, instead of re-sending three paragraphs fresh every
+  request. Compacted into a translator handoff report at
+  `--context-compact-at`, which seeds the next window, so names and register
+  survive a book-length run. **Watch the first ten requests**: if the
+  endpoint never reports cached tokens the run says so, and on that endpoint
+  session mode costs *more* than plain `--use_context` — drop back to it.
+- `--glossary-auto` — each compact also records the renderings it
+  established and carries them forward. Free consistency; it rides a request
+  that happens anyway.
+- **No `--parallel-workers`.** Sequential is the default here and should
+  stay that way: parallel workers each get their own context window with no
+  seeding between them, so exactly the continuity these flags buy is what
+  parallelism gives up. Reach for it only when a book is long enough that
+  wall-clock beats consistency, and say so to the user when you do.
+
+Add `--glossary terms.txt` when the user already knows how a name must
+render. Pinned terms never drift and always beat what the model established;
+a model that disagrees is reported rather than silently overruling them.
 
 (The conditional flag is an array on purpose: `${VAR:+--flag "$VAR"}`
 mis-tokenizes under zsh — macOS's default shell — into a single argv word
@@ -237,11 +262,79 @@ background with output to a log:
 … --quiet --resume > run.log 2>&1
 ```
 
+`--quiet` keeps the per-paragraph echoes and the handoff reports out of the
+log; warnings and errors still print, so a failed compact or a glossary
+conflict is still visible.
+
 (Bash `run_in_background: true`; poll with `tail -5 run.log`.) On any crash,
 rerun the identical command — resume is positional and fingerprint-guarded.
 If the run stops with a fatal translation error, fix the cause (key quota,
 endpoint down) and rerun; do not delete the cache unless the book or plan
 changed intentionally.
+
+## Worked example — a novel, start to finish
+
+Animal Farm into Simplified Chinese, defaults throughout. Real commands in
+the order they are actually run.
+
+```bash
+# 0/1. Credentials and intake
+set -a; source .env; set +a
+BOOK=test_books/animal_farm.epub
+LANG="Simplified Chinese"
+ROUTE=(--key "$KEY" --model "$MODEL")
+BASE=(--book_name "$BOOK" "${ROUTE[@]}" --language "$LANG"
+      --use_context session --glossary-auto)
+
+# 2. Plan — free, no API call. Writes <book>_plan.json, prints the handoff
+#    block and exits without translating.
+python make_book.py "${BASE[@]}" --plan-classify agent
+
+# 3. Classify — you read the plan's rows and decide them yourself, writing
+#    action/decided_by/content_type back into the JSON. Rerunning step 2
+#    now passes the coverage gate instead of handing back.
+
+# 4. Smoke — pennies. Confirms the route, the plan and the voice.
+python make_book.py "${BASE[@]}" --plan-classify agent \
+  --quiet --test --test_num 8 > smoke.log 2>&1
+
+# 5. Full run — background, resumable, identical command on any crash.
+python make_book.py "${BASE[@]}" --plan-classify agent --quiet --resume \
+  > run.log 2>&1
+```
+
+What to expect in the log, and what each line means:
+
+```
+Translation plan: 20 documents, 202560 chars, coverage 99.8%
+skipped: llm-excluded=451, excluded-tag=3
+```
+The plan is in force: 451 characters of apparatus deliberately not
+translated. Coverage below `--plan-min-coverage` would have failed the run
+instead.
+
+```
+— handoff report, window 1 —
+### 摘要 …
+### Established renderings
+Animal Farm → 动物庄园
+Ministry of Information → 新闻部
+```
+A context window filled and was compacted. The summary and those renderings
+seed the next window, and are appended to `<book>_handoff.md` — readable and
+hand-editable if a rendering is wrong.
+
+```
+Warning: this endpoint has not reported a single cached prompt token after
+10 requests.
+```
+Only if it appears: session mode is not paying off on this endpoint. Switch
+to plain `--use_context` and rerun — the checkpoint carries over, so nothing
+already translated is re-paid.
+
+On the `codex` route the command is the same with `--model codex` and no
+`--key`; add `--codex-login` once beforehand if the Codex CLI is not already
+signed in.
 
 ## Flag guide — you choose, per book
 
@@ -252,8 +345,8 @@ changed intentionally.
 | | `+ --api_format openai` | a gateway serving `claude` ids over `/chat/completions`; skips the one-request fallback |
 | output form | *(default)* bilingual | user reads both languages side by side — the usual ask |
 | | `--single_translate` | user wants a translated-only book, original replaced |
-| speed | *(default)* sequential | small book (< ~30 chapters), or first run with a new endpoint |
-| | `--parallel-workers 4` | large book; plan mode isolates per-chapter state, safe with or without context |
+| speed | *(default)* sequential | **the default, and the right one with `--use_context session`**: parallel workers get one context window each with no seeding between them, so the continuity session mode buys is exactly what parallelism spends |
+| | `--parallel-workers 4` | only when a long book makes wall-clock worth losing that continuity — say so to the user. Never on the `codex` route, where turns serialize on one thread anyway and the flag buys nothing |
 | consistency | `--use_context` | fiction with recurring names/terms; costs extra tokens (~6x the book); in parallel runs context is chapter-local |
 | | `--use_context session` | same purpose, cheaper on an endpoint that bills prompt-cache reads: one append-only history, compacted into a handoff report at `--context-compact-at`. Warns if no cached tokens are ever reported |
 | | `--glossary terms.txt` | the user already knows how a name must render; `term → translation # note` lines, injected only into paragraphs where the term occurs. Parallel-safe — no warmup, no ordering |
