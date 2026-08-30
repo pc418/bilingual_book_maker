@@ -520,3 +520,28 @@ class TestQuestionThread:
         t._thread_id = None  # what a compact does to the translation thread
         t._chat_completion("q")
         assert len(t.server.threads) == before
+
+    def test_a_question_sits_out_a_spent_quota(self):
+        """Classification runs before the first paragraph, so a user near
+        their limit would otherwise fail at the very start — and plan mode
+        has no degrade-to-defaults path, so that failure stops the run."""
+        spent = RateLimits(
+            used_percent=100,
+            window_minutes=300,
+            resets_at=10_000,
+            plan_type="plus",
+            reached_type="rate_limit_reached",
+        )
+        slept = []
+        t = _codex(["answer"], limits=spent, sleeper=slept.append, clock=lambda: 9_000)
+
+        # The window rolls over while we wait, as a real reset does.
+        def refresh():
+            t.server.set_limits(
+                RateLimits(used_percent=0, window_minutes=300, plan_type="plus")
+            )
+            return t.server._limits
+
+        t.server.rate_limits = refresh
+        assert t._chat_completion("classify this") == "answer"
+        assert slept, "a spent quota was not waited out"
