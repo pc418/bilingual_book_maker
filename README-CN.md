@@ -334,7 +334,10 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --lan
 任务不会退出，而是等待窗口重置后继续。只在等待有意义时才等待——额度耗尽和账户
 用量上限会立即失败，重置时间超过 6 小时也一样。
 
-每个 turn 都会触发你自己的 Codex hooks（`~/.codex/hooks.json`）。
+在第一段正文送入之前，sidecar 会先被锁定：shell、MCP 服务器、浏览、hooks
+以及其他所有 agent 能力都会被禁用并逐项验证生效，且 turn 运行在一个私有的
+空目录中——书中文字只会被翻译、不会被执行，你的 per-prompt Codex hooks
+也不会被触发。
 
 - `--use_context session`:
 

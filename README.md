@@ -389,8 +389,10 @@ for the window to reset and continues. Waiting only happens where waiting
 helps — depleted credits and account usage limits fail immediately, as does a
 reset more than six hours away.
 
-Turns run through your own Codex hooks (`~/.codex/hooks.json`), so per-prompt
-hooks fire for every paragraph.
+The sidecar is locked down before the first paragraph goes in: shell, MCP
+servers, browsing, hooks and every other agent capability are disabled and
+verified off, and turns run in a private empty directory — book text can only
+be translated, not obeyed, and your per-prompt Codex hooks do not fire.
 
 - `--use_context session`:
 
