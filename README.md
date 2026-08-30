@@ -362,6 +362,36 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
   Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option. This applies to window mode only.
 
+### Codex: translate on your ChatGPT subscription
+
+`--model codex` spends your ChatGPT/Codex plan allowance instead of API
+credits. It needs the [Codex CLI](https://developers.openai.com/codex/cli)
+installed and signed in — run `codex login` once. bilingual_book_maker
+drives a `codex app-server` sidecar, which owns that session, so no key is
+needed.
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+```
+
+`--model_list` is optional here and defaults to `gpt-5.6-luna`; the sidecar
+also offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`.
+
+Because a fresh Codex thread costs about 17k tokens of preamble before your
+first paragraph, one thread is opened and reused for the whole book, which
+also makes it a context window: at `--context-compact-at` it is condensed
+into a handoff report and a fresh thread is seeded with it, exactly like
+`--use_context session`.
+
+How much of your rate-limit window remains is printed before the run and
+whenever it changes. If it runs out mid-book the run does not stop: it waits
+for the window to reset and continues. Waiting only happens where waiting
+helps — depleted credits and account usage limits fail immediately, as does a
+reset more than six hours away.
+
+Turns run through your own Codex hooks (`~/.codex/hooks.json`), so per-prompt
+hooks fire for every paragraph.
+
 - `--use_context session`:
 
   `--use_context` also takes a mode. Bare `--use_context` (or `--use_context window`) is the behaviour described above. `--use_context session` instead keeps a single append-only history of everything translated so far, so a model endpoint that supports prompt caching re-reads it at its cache rate. Context can then grow to chapter length for less money than window mode spends on a few paragraphs. When the history reaches the compact budget, the model is asked for a translator handoff report, which seeds the next window and is appended to `<book>_handoff.md`. If the endpoint never reports cached tokens, a warning is printed, since without caching this mode costs more than window mode.

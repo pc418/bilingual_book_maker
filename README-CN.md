@@ -311,6 +311,31 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
     使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制（仅 window 模式）。
 
+### Codex：用 ChatGPT 订阅额度翻译
+
+`--model codex` 使用你的 ChatGPT/Codex 套餐额度，而不是 API credits。需要安装
+[Codex CLI](https://developers.openai.com/codex/cli) 并执行一次 `codex login`；
+bilingual_book_maker 通过 `codex app-server` 侧车进程驱动，会话由它管理，
+因此不需要 key。
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+```
+
+这里 `--model_list` 是可选的，默认 `gpt-5.6-luna`；侧车还提供 `gpt-5.6-sol`、
+`gpt-5.6-terra`、`gpt-5.5` 和 `gpt-5.2`。
+
+由于新开一个 Codex thread 在第一段正文之前就要花掉约 17k tokens 的前言，整本书
+只会开一个 thread 并复用——这同时也构成了一个上下文窗口：到达
+`--context-compact-at` 时会压缩成交接报告，并用它播种一个新 thread，与
+`--use_context session` 完全一致。
+
+开始前会打印限额窗口的剩余比例，之后每当该数字变化也会再打印一次。若中途耗尽，
+任务不会退出，而是等待窗口重置后继续。只在等待有意义时才等待——额度耗尽和账户
+用量上限会立即失败，重置时间超过 6 小时也一样。
+
+每个 turn 都会触发你自己的 Codex hooks（`~/.codex/hooks.json`）。
+
 - `--use_context session`:
 
   `--use_context` 还可以带一个模式值。裸写 `--use_context`（等同 `--use_context window`）即上面描述的行为；`--use_context session` 改为维护一份只追加的历史记录，支持提示缓存的端点会以缓存价重新读取它，因此上下文可以增长到整章的长度，花费反而低于 window 模式发送几个段落。历史达到压缩预算时，模型会被要求写一份交接报告，用于播种下一个窗口，并追加到 `<book>_handoff.md`。若端点从不返回缓存 token 数，会打印警告——没有缓存时该模式比 window 模式更贵。

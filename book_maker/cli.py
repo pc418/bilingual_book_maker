@@ -942,6 +942,10 @@ So you are close to reaching the limit. You have to choose your own value, there
         if not options.api_base:
             raise ValueError("`api_base` must be provided when using `deployment_id`")
         e.translate_model.set_deployment_id(options.deployment_id)
+    # Check the sidecar is up and signed in before parsing a book: a login
+    # prompt after ten minutes of work is the wrong time to find out.
+    if hasattr(e.translate_model, "preflight"):
+        e.translate_model.preflight()
     if options.model in ("openai", "groq"):
         # Currently only supports `openai` when you also have --model_list set
         if options.model_list:
