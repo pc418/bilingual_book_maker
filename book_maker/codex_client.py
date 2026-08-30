@@ -87,6 +87,13 @@ UNWANTED_FEATURES = (
     "skill_search",
     "js_repl",
     "remote_control",
+    "web_search",
+    "web_search_request",
+    "web_search_cached",
+    "standalone_web_search",
+    "in_app_browser",
+    "in_app_local_automation",
+    "skill_mcp_dependency_install",
 )
 
 # How the sidecar names a --disable flag it does not have, on stderr, before
@@ -212,11 +219,14 @@ class CodexAppServer:
     removal, so nothing here trusts instructions to do a flag's job.
     """
 
-    def __init__(self, binary="codex", spawn=None, cwd=None):
+    def __init__(self, binary="codex", spawn=None):
         # `spawn` takes the extra CLI args for one sidecar spawn.
         self._spawn = spawn or self._spawn_codex
         self.binary = binary
-        self.cwd = cwd
+        # Serializes start(): during the two-phase boot `process` is set
+        # before verification has run, and a concurrent start() must wait for
+        # the verified sidecar rather than return the unverified one.
+        self._start_lock = threading.Lock()
         self._run_dir = None
         self._work_dir = None
         self._stderr_path = None
@@ -258,23 +268,24 @@ class CodexAppServer:
         )
 
     def start(self, init_timeout=DEFAULT_REQUEST_TIMEOUT):
-        if self.process is not None:
+        with self._start_lock:
+            if self.process is not None:
+                return self
+            self._run_dir = tempfile.mkdtemp(prefix="bbm-codex-")
+            try:
+                self._stderr_path = os.path.join(self._run_dir, "stderr.log")
+                # The sidecar's and every thread's cwd. Empty and private on
+                # purpose: `.` ran book turns wherever the user launched bbm,
+                # with that directory's project config — and, before `hooks`
+                # was disabled, its hook droppings.
+                self._work_dir = os.path.join(self._run_dir, "work")
+                os.mkdir(self._work_dir)
+                servers = self._discover_mcp_servers(init_timeout)
+                self._start_hardened(servers, init_timeout)
+            except BaseException:
+                self.close()
+                raise
             return self
-        self._run_dir = tempfile.mkdtemp(prefix="bbm-codex-")
-        self._stderr_path = os.path.join(self._run_dir, "stderr.log")
-        # The sidecar's and every thread's cwd. Empty and private on purpose:
-        # `.` ran book turns wherever the user launched bbm, with that
-        # directory's project config — and, before `hooks` was disabled, its
-        # hook droppings.
-        self._work_dir = os.path.join(self._run_dir, "work")
-        os.mkdir(self._work_dir)
-        try:
-            servers = self._discover_mcp_servers(init_timeout)
-            self._start_hardened(servers, init_timeout)
-        except BaseException:
-            self.close()
-            raise
-        return self
 
     def _boot(self, args, init_timeout):
         """Spawn one sidecar and complete the documented handshake."""
@@ -366,7 +377,7 @@ class CodexAppServer:
                     file=sys.stderr,
                 )
                 disables.remove(unknown)
-        self._verify_hardened(disables)
+        self._verify_hardened(disables, servers)
 
     def _unknown_feature(self):
         try:
@@ -376,16 +387,30 @@ class CodexAppServer:
             return None
         return match.group(1) if match else None
 
-    def _verify_hardened(self, disables):
+    def _verify_hardened(self, disables, servers):
         """Prove the flags took. Loud on any gap, never half-hardened."""
-        features = (self.request("config/read", {}).get("config") or {}).get(
-            "features"
-        ) or {}
+        config = self.request("config/read", {}).get("config") or {}
+        features = config.get("features") or {}
         still_on = [name for name in disables if features.get(name) is not False]
         if still_on:
             raise CodexError(
                 f"codex did not honor --disable for: {', '.join(still_on)}. "
                 f"Refusing to run book text through a sidecar holding tools."
+            )
+        # An empty tools list alone would not prove the override took — a
+        # server that is merely slow to connect also shows none. The config is
+        # the ground truth for `enabled`.
+        declared = config.get("mcp_servers") or {}
+        still_enabled = [
+            name
+            for name in servers
+            if (declared.get(name) or {}).get("enabled") is not False
+        ]
+        if still_enabled:
+            raise CodexError(
+                f"codex did not honor enabled=false for the MCP server(s): "
+                f"{', '.join(still_enabled)}. Refusing to run book text "
+                f"through a sidecar holding tools."
             )
         cursor = None
         while True:
@@ -612,19 +637,20 @@ class CodexAppServer:
 
     # ---- threads and turns ------------------------------------------------
 
-    def start_thread(self, model=None, base_instructions=None, cwd=None):
+    def start_thread(self, model=None, base_instructions=None):
         """A new thread configured to answer, not to act.
 
         `read-only` + `never` is what keeps a turn shaped like a chat
         completion; `ephemeral` keeps translation runs out of the user's
-        Codex thread history; the private work directory keeps turns out of
-        wherever the user launched bbm.
+        Codex thread history. The cwd is not a parameter on purpose: every
+        thread runs in the private work directory, so no caller can point a
+        turn at the user's files or a directory carrying project config.
         """
         params = {
             "sandbox": "read-only",
             "approvalPolicy": "never",
             "ephemeral": True,
-            "cwd": cwd or self.cwd or self._work_dir,
+            "cwd": self._work_dir,
         }
         if model:
             params["model"] = model

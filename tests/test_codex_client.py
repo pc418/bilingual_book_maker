@@ -11,6 +11,7 @@ any of them would look like a hung translation run.
 
 import json
 import os
+import tempfile
 import threading
 
 import pytest
@@ -90,15 +91,16 @@ class FakeProcess:
 
 INIT = {"userAgent": "x", "codexHome": "/tmp"}
 THREAD = {"thread": {"id": "th-1"}}
-# What a hardened build reports: every unwanted feature off, and the servers
-# named in config — one of them dashed, because dashed names are the case that
-# breaks if the override is ever quoted.
+# What a hardened build reports: every unwanted feature off and every
+# configured server disabled — one of them dashed, because dashed names are
+# the case that breaks if the override is ever quoted. (Discovery reads only
+# the names, so serving the same reply to both spawns is fine.)
 CONFIG = {
     "config": {
         "features": {name: False for name in UNWANTED_FEATURES},
         "mcp_servers": {
-            "docs-search": {"url": "https://example.test/mcp", "enabled": True},
-            "node-repl": {"command": "/bin/node-repl", "enabled": True},
+            "docs-search": {"url": "https://example.test/mcp", "enabled": False},
+            "node-repl": {"command": "/bin/node-repl", "enabled": False},
         },
     }
 }
@@ -507,6 +509,20 @@ class TestHardening:
         for proc in server.spawns:
             assert proc._closed
 
+    def test_a_server_override_that_did_not_take_raises(self):
+        """Empty tools alone prove nothing — a slow server also shows none."""
+        config = {
+            "config": {
+                "features": dict(CONFIG["config"]["features"]),
+                "mcp_servers": {"docs-search": {"enabled": True}},
+            }
+        }
+        server = _server({"config/read": config})
+        with pytest.raises(CodexError, match="docs-search"):
+            server.start()
+        for proc in server.spawns:
+            assert proc._closed
+
     def test_a_server_name_that_cannot_be_written_as_an_override_raises(self):
         config = {
             "config": {
@@ -543,3 +559,51 @@ class TestHardening:
         assert os.path.isdir(run_dir)
         server.close()
         assert not os.path.exists(run_dir)
+
+    def test_a_failed_directory_setup_leaves_nothing_behind(self, monkeypatch):
+        made = []
+        real_mkdtemp = tempfile.mkdtemp
+
+        def mkdtemp(*a, **kw):
+            made.append(real_mkdtemp(*a, **kw))
+            return made[-1]
+
+        monkeypatch.setattr("book_maker.codex_client.tempfile.mkdtemp", mkdtemp)
+        real_mkdir = os.mkdir
+
+        def mkdir(path, *args):
+            # Only the client's own work dir; mkdtemp uses os.mkdir too.
+            if os.path.basename(path) == "work":
+                raise OSError("disk full")
+            return real_mkdir(path, *args)
+
+        monkeypatch.setattr("book_maker.codex_client.os.mkdir", mkdir)
+        server = _server()
+        with pytest.raises(OSError):
+            server.start()
+        assert made and not os.path.exists(made[0])
+
+    def test_concurrent_start_waits_for_the_verified_sidecar(self):
+        """A start() racing another must not return an unverified process."""
+        server = _server()
+        release = threading.Event()
+        inner = server._spawn
+
+        def spawn(args):
+            if not args:  # hold the discovery spawn until the race is on
+                release.wait(timeout=5)
+            return inner(args)
+
+        server._spawn = spawn
+        racers = [threading.Thread(target=server.start) for _ in range(2)]
+        for t in racers:
+            t.start()
+        release.set()
+        for t in racers:
+            t.join(timeout=10)
+        try:
+            # Exactly one two-phase boot ran; the loser waited it out.
+            assert len(server.spawns) == 2
+            assert server.process is server.spawns[-1]
+        finally:
+            server.close()
