@@ -114,6 +114,10 @@ class Codex(Base):
         self.prompt_template = prompt_template
         self.style_note = style_note
         self._thread_id = None
+        # The question thread, kept apart from the translation thread and
+        # reused across questions. Keyed by model because --plan-classify-model
+        # can name a different one than the book is translated with.
+        self._question_threads = {}
         self._window = 1
         self._window_tokens = 0
         self._turn_lock = Lock()
@@ -410,12 +414,34 @@ class Codex(Base):
     def _chat_completion(self, prompt, model=None):
         """One arbitrary question, so plan classification works on this path.
 
-        Asked on its own thread: a classification question inside the
-        translation thread would pollute the context the next unit inherits.
+        Asked off the translation thread — a classification question inside it
+        would pollute the context the next unit inherits — but on *one*
+        question thread, reused, not a fresh one per question.
+
+        That reuse is the difference between plan mode being usable here and
+        draining a plan. A fresh thread costs ~16.9k input tokens of Codex's
+        own preamble (see the module docstring), and the classifier is not one
+        request: it pages signatures 12 at a time, `structured_json` retries
+        down its rungs when a reply will not parse, and `_resolve` bisects a
+        page that comes back partly unanswered. A thread each would put the
+        preamble bill for classifying a book above the bill for translating
+        it, on a subscription that meters exactly that.
+
+        The questions do accumulate in the thread. That is far cheaper than
+        re-paying the preamble — accumulated turns are re-read at the cache
+        rate — and for classification it is mildly useful: later pages judge
+        signatures against how earlier ones were judged, which is the
+        consistency the whole plan wants anyway.
         """
         server = self._ensure_server()
-        thread_id = server.start_thread(
-            model=model or self.model,
-            base_instructions="Answer the question directly. Reply with the answer only.",
-        )
+        target = model or self.model
+        thread_id = self._question_threads.get(target)
+        if thread_id is None:
+            thread_id = server.start_thread(
+                model=target,
+                base_instructions=(
+                    "Answer the question directly. Reply with the answer only."
+                ),
+            )
+            self._question_threads[target] = thread_id
         return server.run_turn(thread_id, prompt)

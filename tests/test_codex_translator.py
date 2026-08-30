@@ -505,3 +505,50 @@ class TestModelAlias:
 
         assert infer_api_format(None, "gpt-5-mini") == "openai"
         assert infer_api_format(None, "claude-sonnet-4-6") == "anthropic"
+
+
+class TestQuestionThread:
+    """`_chat_completion` is what plan classification runs on.
+
+    A fresh Codex thread costs ~16.9k input tokens of preamble, and the
+    classifier asks many questions: pages of 12 signatures, rung retries when
+    a reply will not parse, and bisection of a partly-answered page. One
+    thread per question would bill more preamble for classifying a book than
+    for translating it.
+    """
+
+    def test_one_thread_serves_every_question(self):
+        t = _codex(["a", "b", "c"])
+        for _ in range(3):
+            t._chat_completion("classify this")
+        assert len(t.server.threads) == 1
+        assert len({turn["thread"] for turn in t.server.turns}) == 1
+
+    def test_questions_stay_off_the_translation_thread(self):
+        """A classification question in the translation thread would pollute
+        the context every later unit inherits."""
+        t = _codex(["译文", "answer"])
+        t.translate("one", needprint=False)
+        t._chat_completion("classify this")
+        threads = {turn["thread"] for turn in t.server.turns}
+        assert len(threads) == 2
+        assert len(t.server.threads) == 2
+
+    def test_a_second_model_gets_its_own_thread(self):
+        """--plan-classify-model can name a model the book is not translated
+        with; a thread is bound to one model, so it cannot be shared."""
+        t = _codex(["a", "b", "c"])
+        t._chat_completion("q", model="gpt-5.6-sol")
+        t._chat_completion("q", model="gpt-5.6-sol")
+        t._chat_completion("q", model="gpt-5.5")
+        assert [th["model"] for th in t.server.threads] == ["gpt-5.6-sol", "gpt-5.5"]
+
+    def test_a_compact_does_not_discard_the_question_thread(self):
+        """Compacting replaces the translation thread. The question thread is
+        unrelated and re-paying its preamble would be pure waste."""
+        t = _codex(["a"])
+        t._chat_completion("q")
+        before = len(t.server.threads)
+        t._thread_id = None  # what a compact does to the translation thread
+        t._chat_completion("q")
+        assert len(t.server.threads) == before
