@@ -45,8 +45,12 @@ the OAuth session, so there is no `--openai_key` and no `--api_base`.
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub \
-  --api_format codex --language zh-hans
+  --model codex --language zh-hans
 ```
+
+`--model codex` and `--api_format codex` are the same thing: codex is not an
+endpoint, so naming it as the model selects it, the way the other
+non-endpoint engines have always been chosen.
 
 `--model` is optional here and defaults to `gpt-5.6-luna`; the sidecar also
 offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`. Naming a

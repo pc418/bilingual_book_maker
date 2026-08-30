@@ -41,6 +41,10 @@ CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 # LLM formats that can resolve a model on their own, so --model is optional.
 MODEL_OPTIONAL_FORMATS = ("codex",)
 
+# `--model codex` selects the format rather than a model id. The sidecar then
+# picks its own default, exactly as `--api_format codex` with no --model does.
+CODEX_MODEL_ALIASES = ("codex",)
+
 
 def infer_api_format(api_base, model=""):
     """Which wire format the endpoint speaks, guessed from host then model.
@@ -56,10 +60,16 @@ def infer_api_format(api_base, model=""):
     back once (see `Claude._build_openai_fallback`). `--api_format` overrides
     all of this outright.
     """
+    name = (model or "").strip().lower()
+    # `codex` is not an endpoint, so an --api_base cannot imply it and it must
+    # be recognised before the host is consulted. Naming it as the model is
+    # also how upstream spells this, and how the other non-endpoint engines
+    # have always been selected.
+    if name in CODEX_MODEL_ALIASES:
+        return "codex"
     if api_base:
         host = (urlparse(api_base).hostname or "").lower()
         return "anthropic" if host.endswith("anthropic.com") else "openai"
-    name = (model or "").lower()
     if "claude" in name or "anthropic" in name:
         return "anthropic"
     return "openai"

@@ -126,8 +126,16 @@ class Codex(Base):
     def rotate_key(self):
         """No keys here; the sidecar owns the credentials."""
 
+    # `--model codex` names the format, not a model. Treated as "unset" so it
+    # does not reach the sidecar as a model id that does not exist.
+    FORMAT_ALIASES = ("codex",)
+
     def set_model_list(self, model_list):
-        names = [name for name in model_list if name]
+        names = [
+            name
+            for name in model_list
+            if name and name.strip().lower() not in self.FORMAT_ALIASES
+        ]
         # Codex resolves its own default when none is named, unlike the API
         # formats where a missing model has nothing to fall back on.
         self.model_list = names

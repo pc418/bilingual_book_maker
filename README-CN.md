@@ -320,6 +320,9 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 `codex app-server` 侧车进程驱动，OAuth 会话由它管理，所以既不需要
 `--openai_key`，也不需要 `--api_base`。
 
+`--model codex` 与 `--api_format codex` 等价：codex 并不是一个接口地址，
+因此把它写成模型名即可选中它，就像其他固定引擎一直以来的用法。
+
 `--model` 在这里是可选的，默认 `gpt-5.6-luna`；侧车还提供
 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.5` 和 `gpt-5.2`。指定默认值不只是
 偏好问题：压缩预算是按模型选取的，不指定就会退回到一个保守值，而不是

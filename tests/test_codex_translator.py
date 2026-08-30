@@ -473,3 +473,36 @@ class TestFixedStyle:
         t.translate("a" * 200, needprint=False)
         t.translate("b" * 200, needprint=False)
         assert "style" in t.server.turns[-1]["text"].lower()
+
+
+class TestModelAlias:
+    """`--model codex` names the format; upstream spells it this way too."""
+
+    def test_the_alias_selects_the_codex_format(self):
+        from book_maker.cli import infer_api_format
+
+        assert infer_api_format(None, "codex") == "codex"
+
+    def test_the_alias_wins_over_an_api_base(self):
+        """codex is not an endpoint, so a base URL cannot imply otherwise."""
+        from book_maker.cli import infer_api_format
+
+        assert infer_api_format("https://api.openai.com/v1", "codex") == "codex"
+
+    def test_the_alias_is_not_sent_as_a_model_id(self):
+        t = _codex(["一"])
+        t.set_model_list(["codex"])
+        t.translate("one", needprint=False)
+        assert t.server.threads[0]["model"] == DEFAULT_MODEL
+
+    def test_a_real_model_id_still_wins(self):
+        t = _codex(["一"])
+        t.set_model_list(["gpt-5.6-sol"])
+        t.translate("one", needprint=False)
+        assert t.server.threads[0]["model"] == "gpt-5.6-sol"
+
+    def test_other_models_are_unaffected(self):
+        from book_maker.cli import infer_api_format
+
+        assert infer_api_format(None, "gpt-5-mini") == "openai"
+        assert infer_api_format(None, "claude-sonnet-4-6") == "anthropic"
