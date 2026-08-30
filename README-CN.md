@@ -369,7 +369,10 @@ Ctrl+C 仍然有效，任务本身也可续跑。
 不会，因此这两种情况会立即失败而不是空等，重置时间超过 6 小时（例如按周
 的限制）也一样——它会告诉你何时恢复。
 
-一点注意：每个 turn 都会触发你自己的 Codex hooks（`~/.codex/hooks.json`）。
+在第一段正文送入之前，sidecar 会先被锁定：shell、MCP 服务器、浏览、hooks
+以及其他所有 agent 能力都会被禁用并逐项验证生效，且 turn 运行在一个私有的
+空目录中——书中文字只会被翻译、不会被执行，你的 per-prompt Codex hooks
+也不会被触发。
 
 - `--use_context`:
 

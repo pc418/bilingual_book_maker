@@ -72,8 +72,10 @@ a timer; depleted credits and account usage limits do not, so those fail
 immediately rather than hanging, as does a reset more than six hours out (a
 weekly limit, say) — it tells you when it clears instead.
 
-One caveat: turns run through your own Codex hooks (`~/.codex/hooks.json`),
-so per-prompt hooks fire for every paragraph.
+The sidecar is locked down before the first paragraph goes in: shell, MCP
+servers, browsing, hooks and every other agent capability are disabled and
+verified off, and turns run in a private empty directory — book text can only
+be translated, not obeyed, and your per-prompt Codex hooks do not fire.
 
 Anything speaking the OpenAI shape works through `openai` — OpenAI itself,
 Groq, xAI, DeepSeek, SiliconFlow, OpenRouter, OrcaRouter, Together, Alibaba DashScope,
