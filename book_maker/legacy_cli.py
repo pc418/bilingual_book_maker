@@ -48,6 +48,15 @@ _VENDOR_ROUTES = {
     "geminipro": (_GEMINI_BASE, "gemini-pro-latest", "BBM_GOOGLE_GEMINI_KEY"),
     "groq": ("https://api.groq.com/openai/v1", None, "BBM_GROQ_API_KEY"),
     "xai": ("https://api.x.ai/v1", "grok-beta", "BBM_XAI_API_KEY"),
+    # Upstream's named route (#557). `orcarouter/auto` is a smart-routing
+    # alias, not a model id — the endpoint picks per request — so it is the
+    # default here exactly as it was there; any other id it serves works
+    # through --api_base with --model.
+    "orcarouter": (
+        "https://api.orcarouter.ai/v1",
+        "orcarouter/auto",
+        "BBM_ORCAROUTER_API_KEY",
+    ),
     "qwen": (_DASHSCOPE_BASE, "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
     "qwen-mt-turbo": (_DASHSCOPE_BASE, "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
     "qwen-mt-plus": (_DASHSCOPE_BASE, "qwen-mt-plus", "BBM_QWEN_API_KEY"),
@@ -71,6 +80,7 @@ _KEY_FLAGS = (
     "--gemini_key",
     "--groq_key",
     "--xai_key",
+    "--orcarouter_key",
     "--qwen_key",
     "--caiyun_key",
     "--deepl_key",
@@ -83,6 +93,7 @@ _ALIAS_KEY_FLAG = {
     "geminipro": "--gemini_key",
     "groq": "--groq_key",
     "xai": "--xai_key",
+    "orcarouter": "--orcarouter_key",
     "qwen": "--qwen_key",
     "qwen-mt-turbo": "--qwen_key",
     "qwen-mt-plus": "--qwen_key",

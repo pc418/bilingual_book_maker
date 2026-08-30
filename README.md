@@ -76,7 +76,7 @@ One caveat: turns run through your own Codex hooks (`~/.codex/hooks.json`),
 so per-prompt hooks fire for every paragraph.
 
 Anything speaking the OpenAI shape works through `openai` — OpenAI itself,
-Groq, xAI, DeepSeek, SiliconFlow, OpenRouter, Together, Alibaba DashScope,
+Groq, xAI, DeepSeek, SiliconFlow, OpenRouter, OrcaRouter, Together, Alibaba DashScope,
 Gemini's OpenAI-compatible endpoint, vLLM, LM Studio, Ollama. See
 [Models and languages](./docs/model_lang.md) for a per-vendor cookbook.
 
@@ -252,10 +252,11 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 | `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-flash-latest` / `gemini-pro-latest` |
 | `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
 | `--model xai` | `--api_base https://api.x.ai/v1 --model grok-beta` |
+| `--model orcarouter` | `--api_base https://api.orcarouter.ai/v1 --model orcarouter/auto` |
 | `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
 | `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
 | `--custom_api URL` | `--api_format customapi --api_base URL` |
-| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
+| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--orcarouter_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
 | `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
 | `--deployment_id D` | `--model D`, with `--api_base` rewritten to the deployment's `/openai/v1` path |
 | `--provider NAME` | expanded from `bbm_providers.json` into `--api_base` / `--api_format` / `--model` |

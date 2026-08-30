@@ -78,7 +78,7 @@ OpenAI 协议提供 Claude 模型），第一次请求就会发现并自动切�
 `google`、`caiyun`、`deepl`、`deeplfree`、`tencent`、`customapi`。
 
 凡是提供 OpenAI 兼容接口的服务都走 `openai`：OpenAI 本身、Groq、xAI、DeepSeek、
-SiliconFlow、OpenRouter、阿里云百炼、Gemini 的 OpenAI 兼容端点、vLLM、
+SiliconFlow、OpenRouter、OrcaRouter、阿里云百炼、Gemini 的 OpenAI 兼容端点、vLLM、
 LM Studio、Ollama 等。详见[模型与语言](./docs/model_lang.md)。
 
 - `--key` 指定 API key，多个用英文逗号分隔(xxx,xxx,xxx)，可以减少接口调用次数限制带来的错误。
@@ -190,10 +190,11 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 | `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-flash-latest` / `gemini-pro-latest` |
 | `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
 | `--model xai` | `--api_base https://api.x.ai/v1 --model grok-beta` |
+| `--model orcarouter` | `--api_base https://api.orcarouter.ai/v1 --model orcarouter/auto` |
 | `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
 | `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
 | `--custom_api URL` | `--api_format customapi --api_base URL` |
-| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
+| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--orcarouter_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
 | `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
 | `--deployment_id D` | `--model D`，并把 `--api_base` 改写为该部署的 `/openai/v1` 路径 |
 | `--provider NAME` | 从 `bbm_providers.json` 展开为 `--api_base` / `--api_format` / `--model` |
