@@ -14,18 +14,18 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制�
 ## 快速开始
 
 ```shell
-pip install -U bbook_maker
-# 或者从源码目录：pip install -r requirements.txt   （之后用 python3 make_book.py ...）
+pip install -r requirements.txt
 ```
 
-`--book_name` 填你自己的 epub/txt/md/pdf —— 源码目录里也放了一个
-`test_books/animal_farm.epub` 供测试。先选一种付费方式，两种方式的书籍参数完全相同。
+下面的命令翻译的是本仓库自带的 `test_books/animal_farm.epub`，可以直接照抄运行；
+有自己的书时把 `--book_name` 换成你的 epub/txt/md/pdf 即可。先选一种付费方式，
+两种方式的书籍参数完全相同。
 
 **用 ChatGPT 订阅额度。** 需要装好并登录 [Codex CLI](https://developers.openai.com/codex/cli)
 （`--codex-login`）。不需要 key，也不需要 `--api_base`：
 
 ```shell
-bbook_maker --book_name your-book.epub --language zh-hans \
+python3 make_book.py --book_name test_books/animal_farm.epub --language zh-hans \
   --model codex \
   --plan-classify model --use_context session --glossary-auto
 ```
@@ -34,7 +34,7 @@ bbook_maker --book_name your-book.epub --language zh-hans \
 OpenAI、Groq、xAI、OpenRouter、Gemini、vLLM、Ollama 等同理：
 
 ```shell
-bbook_maker --book_name your-book.epub --language ja \
+python3 make_book.py --book_name test_books/animal_farm.epub --language ja \
   --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat \
   --plan-classify model --use_context session --glossary-auto
 ```
@@ -48,7 +48,9 @@ bbook_maker --book_name your-book.epub --language ja \
 - `--glossary-auto` —— 每次压缩都会记录已确定的译名并继续带下去，保证全书统一。
   想固定自己的译法就加 `--glossary terms.txt`，它的优先级最高。
 
-想先试水就加 `--test`，只翻几段。中断后重跑同一条命令即可续译。
+想先试水就加 `--test`，只翻几段。中断后重跑同一条命令即可续译。若是用
+`pip install -U bbook_maker` 装的，把 `python3 make_book.py` 换成 `bbook_maker`
+即可，其余参数完全一致。
 
 ## 翻译服务
 

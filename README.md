@@ -93,19 +93,18 @@ Gemini's OpenAI-compatible endpoint, vLLM, LM Studio, Ollama. See
 ## Quick Start
 
 ```shell
-pip install -U bbook_maker
-# or, from a clone: pip install -r requirements.txt   (then: python3 make_book.py ...)
+pip install -r requirements.txt
 ```
 
-Point `--book_name` at your own epub/txt/md/pdf — a clone also ships
-`test_books/animal_farm.epub` to try. Pick how you pay; the book flags are the
-same either way.
+The commands below translate `test_books/animal_farm.epub`, the sample in this
+repo, so they run as written — point `--book_name` at your own epub/txt/md/pdf
+when you have one. Pick how you pay; the book flags are the same either way.
 
 **On a ChatGPT subscription.** Needs the [Codex CLI](https://developers.openai.com/codex/cli)
 installed and signed in (`--codex-login`). No key, no `--api_base`:
 
 ```shell
-bbook_maker --book_name your-book.epub --language zh-hans \
+python3 make_book.py --book_name test_books/animal_farm.epub --language zh-hans \
   --model codex \
   --plan-classify model --use_context session --glossary-auto
 ```
@@ -115,7 +114,7 @@ shown, but OpenAI, Groq, xAI, OpenRouter, Gemini, vLLM, Ollama and the rest
 work the same way:
 
 ```shell
-bbook_maker --book_name your-book.epub --language ja \
+python3 make_book.py --book_name test_books/animal_farm.epub --language ja \
   --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat \
   --plan-classify model --use_context session --glossary-auto
 ```
@@ -132,7 +131,9 @@ The three shared flags are what make it a book rather than a tag sweep:
   own; those always win.
 
 Add `--test` to try any of it on a few paragraphs first. Runs are resumable —
-rerun the same command after a Ctrl+C.
+rerun the same command after a Ctrl+C. Installed from PyPI instead
+(`pip install -U bbook_maker`)? Every command here works the same with
+`bbook_maker` in place of `python3 make_book.py`.
 
 ## Translate Service
 
