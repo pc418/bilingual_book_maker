@@ -153,6 +153,16 @@ class TestHandoffPrompt:
         assert "<renderings>" in handoff_prompt(with_glossary=True)
         assert "<renderings>" not in handoff_prompt(with_glossary=False)
 
+    def test_the_style_section_is_the_same_on_both_glossary_paths(self):
+        """A variant that dropped the scope cap without a glossary left the
+        *default* path — no glossary — the one asking for style unscoped, so
+        it came back restating defaults the model would follow anyway."""
+        with_glossary = handoff_prompt(with_glossary=True)
+        without = handoff_prompt(with_glossary=False)
+        style = [s for s in with_glossary.split("\n\n") if "Style" in s]
+        assert style, "the glossary path stopped asking for a style section"
+        assert style[0] in without
+
     def test_sections_are_numbered_from_one_without_gaps(self):
         """Numbering follows what is actually asked for, so a fixed style does
         not leave the glossary as section 3 of two."""

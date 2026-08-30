@@ -123,18 +123,19 @@ _SUMMARY_REQUEST = (
     "involved, when did those happen."
 )
 
-# Capped, and scoped to deviations only. Uncapped this section grew past
-# twenty bullets and turned into a second glossary written as prose
-# ("'e-book' 统一译为 '电子书'"), duplicating every rendering unparseably.
+# Capped, and scoped to deviations only. Both clauses earn their place:
+# uncapped, this section grew past twenty bullets; unscoped, it restates
+# defaults the model would follow anyway ("使用简体中文"), which costs a line of
+# the cap and tells the next window nothing. One wording for both paths — a
+# variant that dropped the scope clause without a glossary used to exist, on
+# the reasoning that the glossary section is what keeps term equivalences out
+# of here. But that is what "this is the only place term equivalences belong"
+# does, over in section 3; the clause dropped was the scope cap, which nothing
+# else supplies. The result was that the *default* path, with no glossary, was
+# the one running unscoped.
 _STYLE_REQUEST = (
     "Style — up to 3 lines of what translation style is used so far. "
     "Only note down what's different from general translation."
-)
-
-# Without a glossary section there is nowhere for term equivalences to go, so
-# the style section is not told to exclude them.
-_STYLE_REQUEST_NO_GLOSSARY = (
-    "Style — up to 3 lines of what translation style is used so far."
 )
 
 # Only *new* renderings are requested. The accumulated set is already held on
@@ -164,7 +165,7 @@ def handoff_prompt(with_glossary: bool, with_style: bool = True) -> str:
     """
     sections = [_SUMMARY_REQUEST]
     if with_style:
-        sections.append(_STYLE_REQUEST if with_glossary else _STYLE_REQUEST_NO_GLOSSARY)
+        sections.append(_STYLE_REQUEST)
     if with_glossary:
         sections.append(_GLOSSARY_REQUEST)
     numbered = [f"{n}. {body}" for n, body in enumerate(sections, start=1)]
