@@ -71,7 +71,6 @@ A route is an endpoint, not a model name.
 | `--api_base URL` | The endpoint to translate against. Defaults to the format's official host. A pasted `…/v1/chat/completions` or trailing slash is trimmed. |
 | `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's conventional variable. |
 | `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id; `codex` must be named explicitly. |
-| `--codex-login [browser\|device]` | Sign in to ChatGPT for the `codex` format, then exit. `device` prints a code to enter on another machine. |
 | `--model codex` | Selects the codex format, equivalent to `--api_format codex`; the sidecar then uses its default model. |
 | `--model` with `codex` | Optional — defaults to `gpt-5.6-luna`. Other ids the sidecar offers: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.2`. |
 | `--model_list IDS` | Several model IDs to rotate across, comma-separated. Kept for compatibility and for rotation; a single model belongs in `--model`. Naming a model in both flags is an error. |

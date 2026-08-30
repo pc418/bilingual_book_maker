@@ -202,7 +202,7 @@ class TestRateLimits:
 
 
 class TestLogin:
-    def test_not_logged_in_raises_with_the_auth_url(self):
+    def test_not_logged_in_points_at_the_codex_cli(self):
         server = _server(
             {
                 "account/rateLimits/read": {
@@ -212,45 +212,8 @@ class TestLogin:
         )
         server.start()
         try:
-            with pytest.raises(CodexLoginRequired):
+            with pytest.raises(CodexLoginRequired, match="codex login"):
                 server.ensure_logged_in()
-        finally:
-            server.close()
-
-    def test_login_start_returns_the_url_to_visit(self):
-        server = _server(
-            {
-                "account/login/start": {
-                    "authUrl": "https://chatgpt.com/x",
-                    "loginId": "l1",
-                }
-            }
-        )
-        server.start()
-        try:
-            prompt = server.login_start()
-            assert prompt.auth_url == "https://chatgpt.com/x"
-        finally:
-            server.close()
-
-    def test_device_code_login_returns_the_user_code(self):
-        server = _server(
-            {
-                "account/login/start": {
-                    "verificationUrl": "https://auth.openai.com/codex/device",
-                    "userCode": "ABCD-1234",
-                    "loginId": "l1",
-                }
-            }
-        )
-        server.start()
-        try:
-            prompt = server.login_start(device_code=True)
-            assert prompt.user_code == "ABCD-1234"
-            sent = next(
-                m for m in server.fake.sent if m["method"] == "account/login/start"
-            )
-            assert sent["params"]["type"] == "chatgptDeviceCode"
         finally:
             server.close()
 
@@ -356,23 +319,6 @@ class TestContextManager:
 
 
 class TestRobustness:
-    def test_login_completion_arriving_immediately_is_not_missed(self):
-        """The notification can land before wait_for_login is even called."""
-        completed = {
-            "method": "account/login/completed",
-            "params": {"loginId": "l1", "success": True},
-        }
-        server = _server(
-            {"account/login/start": {"authUrl": "https://x", "loginId": "l1"}},
-            notifications_for={"account/login/start": [completed]},
-        )
-        server.start()
-        try:
-            server.login_start()
-            assert server.wait_for_login(timeout=1.0) is True
-        finally:
-            server.close()
-
     def test_notifications_do_not_grow_without_bound(self):
         server = _server(notifications_for={"turn/start": [_turn_completed()]})
         server.start()

@@ -40,8 +40,9 @@ machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
 
 `--api_format codex` spends your ChatGPT/Codex plan allowance instead of API
 credits. It needs the [Codex CLI](https://developers.openai.com/codex/cli)
-installed and signed in; bbm drives a `codex app-server` sidecar, which owns
-the OAuth session, so there is no `--openai_key` and no `--api_base`.
+installed and signed in (`codex login`); bbm drives a `codex app-server`
+sidecar, which owns that session, so there is no `--openai_key` and no
+`--api_base`.
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub \
@@ -54,10 +55,6 @@ non-endpoint engines have always been chosen.
 
 `--model` is optional here and defaults to `gpt-5.6-luna`; the sidecar also
 offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`.
-
-Sign in from here with `--codex-login` (or `--codex-login device` on a
-machine with no browser, which prints a code to enter elsewhere). If the
-Codex CLI is already logged in, nothing is needed.
 
 Because a fresh Codex thread costs about 17k tokens of preamble before your
 first paragraph, one thread is opened and reused for the whole book — which
@@ -101,7 +98,7 @@ repo, so they run as written — point `--book_name` at your own epub/txt/md/pdf
 when you have one. Pick how you pay; the book flags are the same either way.
 
 **On a ChatGPT subscription.** Needs the [Codex CLI](https://developers.openai.com/codex/cli)
-installed and signed in (`--codex-login`). No key, no `--api_base`:
+installed and signed in — `codex login`, once. No key, no `--api_base`:
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub --language zh-hans \

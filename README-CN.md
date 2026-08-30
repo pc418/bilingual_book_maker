@@ -21,8 +21,8 @@ pip install -r requirements.txt
 有自己的书时把 `--book_name` 换成你的 epub/txt/md/pdf 即可。先选一种付费方式，
 两种方式的书籍参数完全相同。
 
-**用 ChatGPT 订阅额度。** 需要装好并登录 [Codex CLI](https://developers.openai.com/codex/cli)
-（`--codex-login`）。不需要 key，也不需要 `--api_base`：
+**用 ChatGPT 订阅额度。** 需要装好 [Codex CLI](https://developers.openai.com/codex/cli)
+并登录一次（`codex login`）。不需要 key，也不需要 `--api_base`：
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub --language zh-hans \
@@ -345,18 +345,15 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 ### `codex`：用 ChatGPT 订阅额度翻译
 
 `--api_format codex` 使用你的 ChatGPT/Codex 套餐额度，而不是 API credits。
-需要安装并登录 [Codex CLI](https://developers.openai.com/codex/cli)；bbm 通过
-`codex app-server` 侧车进程驱动，OAuth 会话由它管理，所以既不需要
-`--openai_key`，也不需要 `--api_base`。
+需要安装 [Codex CLI](https://developers.openai.com/codex/cli) 并登录一次
+（`codex login`）；bbm 通过 `codex app-server` 侧车进程驱动，会话由它管理，
+所以既不需要 `--openai_key`，也不需要 `--api_base`。
 
 `--model codex` 与 `--api_format codex` 等价：codex 并不是一个接口地址，
 因此把它写成模型名即可选中它，就像其他固定引擎一直以来的用法。
 
 `--model` 在这里是可选的，默认 `gpt-5.6-luna`；侧车还提供
 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.5` 和 `gpt-5.2`。
-
-用 `--codex-login` 在这里登录；没有浏览器的机器上用 `--codex-login device`，
-它会打印一个验证码供你在别处输入。若 Codex CLI 已登录则无需任何操作。
 
 由于新开一个 Codex thread 在第一段正文之前就要花掉约 17k tokens 的前言，
 整本书只会开一个 thread 并复用——这同时也构成了一个上下文窗口。到达

@@ -333,7 +333,7 @@ to plain `--use_context` and rerun — the checkpoint carries over, so nothing
 already translated is re-paid.
 
 On the `codex` route the command is the same with `--model codex` and no
-`--key`; add `--codex-login` once beforehand if the Codex CLI is not already
+`--key`; run `codex login` once beforehand if the Codex CLI is not already
 signed in.
 
 ## Flag guide — you choose, per book

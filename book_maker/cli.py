@@ -236,33 +236,6 @@ def parse_prompt_arg(prompt_arg):
     return prompt
 
 
-def run_codex_login(device_code=False):
-    """Drive a ChatGPT login through the codex sidecar. Returns an exit code."""
-    from book_maker.codex_client import CodexAppServer, CodexError
-
-    try:
-        with CodexAppServer() as server:
-            existing = None
-            try:
-                existing = server.rate_limits()
-            except CodexError:
-                pass
-            if existing is not None:
-                plan = f" ({existing.plan_type} plan)" if existing.plan_type else ""
-                print(f"[green]Already signed in to ChatGPT{plan}.[/green]")
-                return 0
-
-            prompt = server.login_start(device_code=device_code)
-            print(prompt.describe())
-            print("Waiting for the login to complete...")
-            server.wait_for_login()
-            print("[green]Signed in.[/green]")
-            return 0
-    except CodexError as err:
-        print(f"[bold red]{escape(str(err))}[/bold red]")
-        return 1
-
-
 # Below this a window cannot hold even one paragraph with its translation, so
 # every unit would trigger a paid handoff report.
 MIN_COMPACT_BUDGET = 500
@@ -591,17 +564,6 @@ So you are close to reaching the limit. You have to choose your own value, there
         "paragraph are injected into its prompt",
     )
     parser.add_argument(
-        "--codex-login",
-        dest="codex_login",
-        nargs="?",
-        const="browser",
-        default=None,
-        choices=("browser", "device"),
-        help="sign in to ChatGPT for the codex format and exit. 'browser' "
-        "(default) opens a login URL; 'device' prints a code to enter on "
-        "another machine, for SSH and CI",
-    )
-    parser.add_argument(
         "--glossary-auto",
         dest="glossary_auto",
         action="store_true",
@@ -687,11 +649,6 @@ def main():
 
     options = parse_args(legacy.argv)
     options.context_flag, options.context_mode = resolve_context_mode(options)
-
-    # Signing in is a whole task on its own — no book is needed, and nothing
-    # else should run afterwards.
-    if options.codex_login:
-        raise SystemExit(run_codex_login(device_code=options.codex_login == "device"))
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.

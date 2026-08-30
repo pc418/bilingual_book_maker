@@ -155,21 +155,6 @@ class RateLimits:
         return max(resets)
 
 
-@dataclass(frozen=True)
-class LoginPrompt:
-    """What to show a user so they can complete a login we cannot do for them."""
-
-    login_id: str
-    auth_url: str = ""
-    user_code: str = ""
-    verification_url: str = ""
-
-    def describe(self) -> str:
-        if self.user_code:
-            return f"Open {self.verification_url} and enter the code {self.user_code}"
-        return f"Open this URL to sign in to ChatGPT:\n  {self.auth_url}"
-
-
 def _spawn_codex(binary="codex"):
     return subprocess.Popen(
         [binary, "app-server"],
@@ -410,46 +395,9 @@ class CodexAppServer:
             return self.rate_limits()
         except CodexError as e:
             raise CodexLoginRequired(
-                f"codex is not signed in to ChatGPT ({e}). Run `codex login`, "
-                f"or pass --codex-login to sign in from here."
+                f"codex is not signed in to ChatGPT ({e}). Sign in with "
+                f"`codex login`, then run this again."
             ) from e
-
-    def login_start(self, device_code=False):
-        """Begin a login. Returns what the user has to do; codex does the rest."""
-        kind = "chatgptDeviceCode" if device_code else "chatgpt"
-        # Reserved before the request goes out: a login that completes fast
-        # can push `account/login/completed` before we get here, and a mark
-        # taken afterwards would skip past it and wait out the whole timeout.
-        # The reservation also keeps a concurrent prune off it.
-        self._login_reservation = self._reserve_mark()
-        self._login_mark = self._login_reservation.__enter__()
-        result = self.request("account/login/start", {"type": kind})
-        return LoginPrompt(
-            login_id=result.get("loginId", ""),
-            auth_url=result.get("authUrl", ""),
-            user_code=result.get("userCode", ""),
-            verification_url=result.get(
-                "verificationUrl", "https://auth.openai.com/codex/device"
-            ),
-        )
-
-    def wait_for_login(self, timeout=300.0):
-        """Block until codex reports the login finished."""
-        try:
-            note = self._await_notification(
-                lambda m: m.get("method") == "account/login/completed",
-                timeout=timeout,
-                mark=getattr(self, "_login_mark", self._consumed),
-            )
-        finally:
-            reservation = self.__dict__.pop("_login_reservation", None)
-            if reservation is not None:
-                reservation.__exit__(None, None, None)
-        if note is None:
-            raise CodexLoginRequired("timed out waiting for the ChatGPT login")
-        if not note.get("params", {}).get("success"):
-            raise CodexLoginRequired("the ChatGPT login did not complete")
-        return True
 
     # ---- threads and turns ------------------------------------------------
 
