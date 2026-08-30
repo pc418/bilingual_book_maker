@@ -444,4 +444,10 @@ class Codex(Base):
                 ),
             )
             self._question_threads[target] = thread_id
-        return server.run_turn(thread_id, prompt)
+        # `_run_turn`, not `server.run_turn`: a question is billed to the same
+        # subscription window as a translation, so a spent quota should be sat
+        # out here too. Classification runs *before* the first paragraph, so
+        # without this a user near their limit fails at the very start — and
+        # plan mode has no degrade-to-defaults path, so that failure stops the
+        # run rather than translating with a guess.
+        return self._run_turn(thread_id, prompt)
