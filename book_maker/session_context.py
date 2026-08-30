@@ -39,9 +39,6 @@ _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]")
 _LATIN_CHARS_PER_TOKEN = 4.0
 _CJK_CHARS_PER_TOKEN = 1.7
 
-# The cost-balanced budget per model: same spend as window mode, ~5-10x the
-# context. Keys are matched as substrings of the model id so vendor prefixes
-# ("openai/gpt-5.6-luna") and date suffixes resolve.
 # One budget for every model. The per-model table this replaces optimised for
 # cost, and at current prices that is optimising the wrong thing: a novel's
 # whole context bill is cents either way, while a shorter window means more
