@@ -578,9 +578,8 @@ So you are close to reaching the limit. You have to choose your own value, there
         default=None,
         help="session mode only: estimated-token budget for the history "
         "before it is compacted into a translator handoff report. Default: "
-        "the model's cost-balanced budget (spends about what window mode "
-        "spends, for several times the context); 2500 is the cheapest "
-        "setting on most endpoints",
+        "8000, which costs about what window mode costs for several times "
+        "the context; 2500 is the cheapest setting on most endpoints",
     )
     parser.add_argument(
         "--glossary",
@@ -606,9 +605,10 @@ So you are close to reaching the limit. You have to choose your own value, there
         "--glossary-auto",
         dest="glossary_auto",
         action="store_true",
-        help="session mode only: also ask each handoff report for a JSON "
-        "glossary of the renderings it established, and carry them into "
-        "later windows. Off by default",
+        help="session mode only: also ask each handoff report for the "
+        "renderings it established, and carry them into later windows. "
+        "Terms a --glossary file pins win over what is learned. Off by "
+        "default",
     )
     parser.add_argument(
         "--temperature",
