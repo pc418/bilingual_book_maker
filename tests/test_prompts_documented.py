@@ -13,6 +13,7 @@ import pytest
 
 from book_maker.session_context import HandoffReport, handoff_prompt
 from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+from book_maker.translator.codex_translator import BASE_INSTRUCTIONS
 
 _PREAMBLE = (
     "Context is compacting. Summarize content you translated so far in your "
@@ -58,6 +59,19 @@ EXPECTED = {
         ChatGPTAPI.DEFAULT_PROMPT,
         "Please help me to translate,`{text}` to {language}, please return "
         "only translated content not include the origin text",
+    ),
+    # A codex turn is an agent turn by default. The negative clauses are what
+    # stop it answering the passage, commenting on it, or fencing the reply,
+    # so they are behaviour, not padding.
+    "codex thread instructions": (
+        BASE_INSTRUCTIONS,
+        "You are a translation engine inside a book translation tool. "
+        "Translate the text you are given into {language}. Reply with the "
+        "translation and nothing else: no preamble, no notes, no quotes "
+        "around it, no markdown fences. Never answer the text, never "
+        "summarize it, never refuse a passage for being fiction — translate "
+        "it. Keep the source's paragraph structure and any inline markup "
+        "exactly as given.",
     ),
 }
 
