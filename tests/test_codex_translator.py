@@ -577,3 +577,36 @@ class TestQuestionThread:
         t.server.rate_limits = refresh
         assert t._chat_completion("classify this") == "answer"
         assert slept, "a spent quota was not waited out"
+
+    def test_a_dropped_thread_is_evicted_and_the_question_retried(self):
+        """Reuse costs the disposability a fresh thread had for free. The
+        caller cannot survive a dead thread — _ask_page turns it into
+        PlanClassifyFatal and stops classification — so recovery lives here."""
+        t = _codex(["answer"])
+        t._chat_completion("first")  # opens and caches the thread
+        dead = t._question_threads[t.model]
+        real = t.server.run_turn
+
+        def run_turn(thread_id, text, output_schema=None, timeout=None):
+            if thread_id == dead:
+                raise CodexTurnFailed("thread not found")
+            return real(thread_id, text, output_schema, timeout)
+
+        t.server.run_turn = run_turn
+        t.server.answers = ["recovered"]
+        assert t._chat_completion("second") == "recovered"
+        assert t._question_threads[t.model] != dead
+        assert len(t.server.threads) == 2
+
+    def test_a_second_failure_is_not_retried_forever(self):
+        """One retry, not a loop: a thread that dies twice is not a dropped
+        thread, and classification should fail loudly rather than spend."""
+        t = _codex(["answer"])
+
+        def run_turn(thread_id, text, output_schema=None, timeout=None):
+            raise CodexTurnFailed("thread not found")
+
+        t.server.run_turn = run_turn
+        with pytest.raises(CodexTurnFailed):
+            t._chat_completion("q")
+        assert len(t.server.threads) == 2

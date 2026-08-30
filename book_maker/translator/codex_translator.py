@@ -432,7 +432,23 @@ class Codex(Base):
         rate — and for classification it is mildly useful: later pages judge
         signatures against how earlier ones were judged, which is the
         consistency the whole plan wants anyway.
+
+        Reuse costs the disposability the old fresh-thread call had for free:
+        if the sidecar drops the thread, the cached id is dead and the caller
+        cannot survive it — `_ask_page` turns any such error into
+        `PlanClassifyFatal`, which stops classification outright rather than
+        retrying. So a dropped thread is evicted and the question is asked once
+        more on a new one. That pays the preamble only when a thread actually
+        dies, which is what the old code paid on every single question.
         """
+        try:
+            return self._ask(prompt, model)
+        except CodexTurnFailed:
+            self._question_threads.pop(model or self.model, None)
+            return self._ask(prompt, model)
+
+    def _ask(self, prompt, model=None):
+        """One question on the (possibly newly opened) question thread."""
         server = self._ensure_server()
         target = model or self.model
         thread_id = self._question_threads.get(target)
