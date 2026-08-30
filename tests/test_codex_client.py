@@ -10,11 +10,13 @@ any of them would look like a hung translation run.
 """
 
 import json
+import os
 import threading
 
 import pytest
 
 from book_maker.codex_client import (
+    UNWANTED_FEATURES,
     CodexAppServer,
     CodexError,
     CodexLoginRequired,
@@ -88,6 +90,25 @@ class FakeProcess:
 
 INIT = {"userAgent": "x", "codexHome": "/tmp"}
 THREAD = {"thread": {"id": "th-1"}}
+# What a hardened build reports: every unwanted feature off, and the servers
+# named in config — one of them dashed, because dashed names are the case that
+# breaks if the override is ever quoted.
+CONFIG = {
+    "config": {
+        "features": {name: False for name in UNWANTED_FEATURES},
+        "mcp_servers": {
+            "docs-search": {"url": "https://example.test/mcp", "enabled": True},
+            "node-repl": {"command": "/bin/node-repl", "enabled": True},
+        },
+    }
+}
+MCP_STATUS = {
+    "data": [
+        {"name": "docs-search", "tools": {}},
+        {"name": "node-repl", "tools": {}},
+    ],
+    "nextCursor": None,
+}
 
 
 def _turn_completed(status="completed", text="译文", error=None):
@@ -116,20 +137,33 @@ def _turn_completed(status="completed", text="译文", error=None):
 def _server(handlers=None, notifications_for=None):
     handlers = {
         "initialize": INIT,
+        "config/read": CONFIG,
+        "mcpServerStatus/list": MCP_STATUS,
         "thread/start": THREAD,
         "turn/start": {"turn": {"id": "tu-1", "status": "inProgress"}},
         **(handlers or {}),
     }
-    proc = FakeProcess(handlers, notifications_for)
-    server = CodexAppServer(spawn=lambda: proc)
-    # `fake`, not `process`: assigning `process` would make start() a no-op.
-    server.fake = proc
+    server = CodexAppServer()
+    # start() spawns twice (discovery, then hardened), so the spawn callable
+    # hands out a fresh scripted process per call. `server.fake` follows the
+    # live one; `server.spawns` keeps them all for phase assertions. `fake`,
+    # not `process`: assigning `process` would make start() a no-op.
+    server.spawns = []
+
+    def spawn(args):
+        proc = FakeProcess(handlers, notifications_for)
+        proc.args = list(args)
+        server.spawns.append(proc)
+        server.fake = proc
+        return proc
+
+    server._spawn = spawn
     return server
 
 
 class TestStartup:
     def test_missing_binary_is_a_clear_error(self):
-        def spawn():
+        def spawn(args):
             raise FileNotFoundError("codex")
 
         server = CodexAppServer(spawn=spawn)
@@ -152,8 +186,8 @@ class TestStartup:
         server.start()
         try:
             server.request("account/rateLimits/read")
-            ids = [m["id"] for m in server.fake.sent]
-            assert len(ids) == len(set(ids))
+            ids = [m["id"] for m in server.fake.sent if "id" in m]
+            assert ids and len(ids) == len(set(ids))
         finally:
             server.close()
 
@@ -331,9 +365,8 @@ class TestRobustness:
 
     def test_a_failed_initialize_does_not_leave_the_child_running(self):
         proc = FakeProcess({})  # never answers initialize
-        server = CodexAppServer(spawn=lambda: proc)
+        server = CodexAppServer(spawn=lambda args: proc)
         with pytest.raises(CodexError):
-            server.request_timeout = 0.3
             server.start(init_timeout=0.3)
         assert proc._closed
 
@@ -342,3 +375,171 @@ class TestRobustness:
         server.start()
         server.close()
         server.close()  # must not raise
+
+
+def _disabled_features(args):
+    return {args[i + 1] for i, a in enumerate(args) if a == "--disable"}
+
+
+def _config_overrides(args):
+    return {args[i + 1] for i, a in enumerate(args) if a == "-c"}
+
+
+class TestHardening:
+    """Book text is untrusted input to an agent runtime.
+
+    Capability removal is the only mitigation with a hard guarantee (model
+    refusal is not one — measured), so the sidecar is spawned with every
+    agent-facing feature disabled and every configured MCP server off, and
+    both removals are verified before the first turn. Every check here fails
+    loud: a silent half-hardened run is worse than no run.
+    """
+
+    def test_the_handshake_sends_initialized_before_anything_else(self):
+        server = _server()
+        server.start()
+        try:
+            for proc in server.spawns:
+                methods = [m.get("method") for m in proc.sent]
+                assert methods[0] == "initialize"
+                assert methods[1] == "initialized"
+                assert "id" not in proc.sent[1]  # a notification, not a request
+        finally:
+            server.close()
+
+    def test_discovery_spawns_plain_and_is_closed_before_the_hardened_spawn(self):
+        server = _server()
+        server.start()
+        try:
+            assert len(server.spawns) == 2
+            first, live = server.spawns
+            assert first.args == []
+            assert first._closed
+            assert "config/read" in [m.get("method") for m in first.sent]
+            assert live.args != []
+        finally:
+            server.close()
+
+    def test_the_live_spawn_disables_every_unwanted_feature(self):
+        server = _server()
+        server.start()
+        try:
+            assert _disabled_features(server.fake.args) == set(UNWANTED_FEATURES)
+        finally:
+            server.close()
+
+    def test_the_live_spawn_disables_every_configured_mcp_server(self):
+        """Dashed names must go through unquoted — quoting replaces the table."""
+        server = _server()
+        server.start()
+        try:
+            assert _config_overrides(server.fake.args) == {
+                "mcp_servers.docs-search.enabled=false",
+                "mcp_servers.node-repl.enabled=false",
+            }
+        finally:
+            server.close()
+
+    def test_a_flag_this_build_does_not_know_is_dropped_loudly(self, capsys):
+        """An unknown --disable kills the sidecar; only that flag may be dropped."""
+        server = _server()
+        inner = server._spawn
+
+        def spawn(args):
+            if "multi_agent" in args and len(server.spawns) == 1:
+                with open(server._stderr_path, "w") as f:
+                    f.write("Error: Unknown feature flag: multi_agent\n")
+                proc = FakeProcess({})
+                proc.args = list(args)
+                proc.close()  # dies before serving, like the real sidecar
+                server.spawns.append(proc)
+                return proc
+            return inner(args)
+
+        server._spawn = spawn
+        server.start()
+        try:
+            assert len(server.spawns) == 3
+            kept = _disabled_features(server.fake.args)
+            assert kept == set(UNWANTED_FEATURES) - {"multi_agent"}
+            assert "multi_agent" in capsys.readouterr().err
+        finally:
+            server.close()
+
+    def test_a_spawn_death_with_no_known_flag_named_is_fatal(self):
+        server = _server()
+        inner = server._spawn
+
+        def spawn(args):
+            if args:
+                proc = FakeProcess({})
+                proc.args = list(args)
+                proc.close()
+                server.spawns.append(proc)
+                return proc
+            return inner(args)
+
+        server._spawn = spawn
+        with pytest.raises(CodexError):
+            server.start()
+
+    def test_a_server_still_exposing_tools_after_hardening_raises(self):
+        server = _server(
+            {
+                "mcpServerStatus/list": {
+                    "data": [{"name": "node-repl", "tools": {"js": {}}}],
+                    "nextCursor": None,
+                }
+            }
+        )
+        with pytest.raises(CodexError, match="node-repl"):
+            server.start()
+        for proc in server.spawns:  # no orphans, discovery included
+            assert proc._closed
+
+    def test_a_feature_that_did_not_turn_off_raises(self):
+        features = {name: False for name in UNWANTED_FEATURES}
+        features["shell_tool"] = True
+        config = {"config": {**CONFIG["config"], "features": features}}
+        server = _server({"config/read": config})
+        with pytest.raises(CodexError, match="shell_tool"):
+            server.start()
+        for proc in server.spawns:
+            assert proc._closed
+
+    def test_a_server_name_that_cannot_be_written_as_an_override_raises(self):
+        config = {
+            "config": {
+                "features": dict(CONFIG["config"]["features"]),
+                "mcp_servers": {"weird server!": {"enabled": True}},
+            }
+        }
+        server = _server({"config/read": config})
+        with pytest.raises(CodexError, match="weird server!"):
+            server.start()
+        for proc in server.spawns:
+            assert proc._closed
+
+    def test_threads_run_in_a_private_empty_directory(self):
+        """cwd '.' ran book turns where the user launched bbm — with their
+        project config and hook droppings. Threads get an empty dir instead."""
+        server = _server()
+        server.start()
+        try:
+            server.start_thread(model="m")
+            params = next(
+                m for m in server.fake.sent if m.get("method") == "thread/start"
+            )["params"]
+            assert params["cwd"] == server._work_dir
+            assert os.path.isdir(params["cwd"])
+            assert os.listdir(params["cwd"]) == []
+        finally:
+            server.close()
+
+    def test_close_removes_the_private_directory(self):
+        server = _server()
+        server.start()
+        run_dir = server._run_dir
+        assert os.path.isdir(run_dir)
+        server.close()
+        assert not os.path.exists(run_dir)

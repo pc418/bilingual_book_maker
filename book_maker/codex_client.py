@@ -14,19 +14,29 @@ docs/260827-feat-CODEX_TRANSLATOR_PROVIDER.md):
 
 - Requests are newline-delimited JSON with an `id`; replies carry the same
   `id` plus `result` or `error`. Anything with a `method` and no `id` is a
-  notification.
+  notification. Clients must send one `initialize` request and acknowledge
+  with an `initialized` notification before anything else.
 - `turn/start` returns as soon as the turn is accepted. The answer arrives
   later as a `turn/completed` notification carrying `turn.items`; the
   translation is the item with `type: "agentMessage"` and
   `phase: "final_answer"`.
 - With `sandbox: "read-only"` and `approvalPolicy: "never"` a turn behaves
-  like a chat completion rather than an agent session.
+  like a chat completion rather than an agent session — but it still holds
+  every tool the user's codex config grants. Book text is untrusted input,
+  so `start()` removes those capabilities outright; see
+  docs/260830-fix-CODEX_SIDECAR_HARDENING.md for the measurements behind
+  each step.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
 import subprocess
+import sys
+import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -53,6 +63,40 @@ def _client_version():
 
 
 CLIENT_VERSION = _client_version()
+
+# Every feature that would let a turn act instead of answer: run commands,
+# evaluate code, browse, drive plugins or other agents, or fire the user's
+# hooks. A flag this codex build does not know is dropped with a warning
+# rather than passed (an unknown flag kills the sidecar at spawn); everything
+# that survives is verified off via config/read before the first turn.
+UNWANTED_FEATURES = (
+    "shell_tool",
+    "unified_exec",
+    "hooks",
+    "plugins",
+    "apps",
+    "remote_plugin",
+    "code_mode_host",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "computer_use",
+    "image_generation",
+    "view_image",
+    "multi_agent",
+    "skill_search",
+    "js_repl",
+    "remote_control",
+)
+
+# How the sidecar names a --disable flag it does not have, on stderr, before
+# exiting. One flag per death.
+_UNKNOWN_FEATURE = re.compile(r"Unknown feature flag: (\S+)")
+
+# The only server names expressible as an unquoted dotted override
+# (`-c mcp_servers.<name>.enabled=false`). Quoting the key does not help: it
+# replaces the whole table and breaks config loading.
+_OVERRIDABLE_SERVER_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class CodexError(Exception):
@@ -155,24 +199,28 @@ class RateLimits:
         return max(resets)
 
 
-def _spawn_codex(binary="codex"):
-    return subprocess.Popen(
-        [binary, "app-server"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        bufsize=1,
-    )
-
-
 class CodexAppServer:
-    """One sidecar process, driven request/response with a reader thread."""
+    """One sidecar process, driven request/response with a reader thread.
+
+    `start()` spawns twice. The first spawn only asks `config/read` which MCP
+    servers the user's codex config declares, because those are the only
+    names a disabling override may mention (an unconfigured name kills
+    startup). The second is the one that lives: every agent-facing feature
+    `--disable`d, every configured server switched off, cwd pointed at a
+    private empty directory so no thread ever runs where the user launched
+    us. Both removals are then verified — model refusal is not capability
+    removal, so nothing here trusts instructions to do a flag's job.
+    """
 
     def __init__(self, binary="codex", spawn=None, cwd=None):
-        self._spawn = spawn or (lambda: _spawn_codex(binary))
+        # `spawn` takes the extra CLI args for one sidecar spawn.
+        self._spawn = spawn or self._spawn_codex
         self.binary = binary
         self.cwd = cwd
+        self._run_dir = None
+        self._work_dir = None
+        self._stderr_path = None
+        self._stderr_file = None
         self.process = None
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
@@ -194,11 +242,49 @@ class CodexAppServer:
 
     # ---- lifecycle --------------------------------------------------------
 
+    def _spawn_codex(self, args):
+        # stderr goes to a file, not a pipe: nothing drains a pipe here, so a
+        # chatty sidecar would fill it and stall, while a file never
+        # backpressures — and a spawn that dies leaves its reason readable.
+        self._stderr_file = open(self._stderr_path, "w")
+        return subprocess.Popen(
+            [self.binary, "app-server", *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._stderr_file,
+            text=True,
+            bufsize=1,
+            cwd=self._work_dir,
+        )
+
     def start(self, init_timeout=DEFAULT_REQUEST_TIMEOUT):
         if self.process is not None:
             return self
+        self._run_dir = tempfile.mkdtemp(prefix="bbm-codex-")
+        self._stderr_path = os.path.join(self._run_dir, "stderr.log")
+        # The sidecar's and every thread's cwd. Empty and private on purpose:
+        # `.` ran book turns wherever the user launched bbm, with that
+        # directory's project config — and, before `hooks` was disabled, its
+        # hook droppings.
+        self._work_dir = os.path.join(self._run_dir, "work")
+        os.mkdir(self._work_dir)
         try:
-            self.process = self._spawn()
+            servers = self._discover_mcp_servers(init_timeout)
+            self._start_hardened(servers, init_timeout)
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def _boot(self, args, init_timeout):
+        """Spawn one sidecar and complete the documented handshake."""
+        with self._cond:
+            self._stopped = False
+            self._replies.clear()
+            del self._notifications[:]
+            self._consumed = 0
+        try:
+            self.process = self._spawn(list(args))
         except FileNotFoundError as e:
             raise CodexUnavailable(
                 f"could not run the {self.binary!r} binary. Install the Codex "
@@ -210,7 +296,9 @@ class CodexAppServer:
                 f"could not start `{self.binary} app-server`: {e}"
             ) from e
 
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader = threading.Thread(
+            target=self._read_loop, args=(self.process,), daemon=True
+        )
         self._reader.start()
         try:
             self.request(
@@ -218,18 +306,117 @@ class CodexAppServer:
                 {"clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION}},
                 timeout=init_timeout,
             )
+            # Required before any other request; a server may answer earlier
+            # ones with "Not initialized".
+            self.notify("initialized")
         except CodexError:
             # A sidecar that never finished the handshake is useless and must
             # not be left running: a retry loop would spawn one per attempt.
-            self.close()
+            self._shutdown_process()
             raise
-        return self
 
-    def close(self):
+    def _discover_mcp_servers(self, init_timeout):
+        """Ask this codex build which MCP servers its config declares.
+
+        Only names present in the config may appear in a disabling override —
+        naming any other server kills startup — and `config/read` is the only
+        census of them. (Its `features` dict is *not* a census of feature
+        flags: a flag is listed only once explicitly set, so `shell_tool` is
+        absent from a plain spawn's reply. Measured; do not "simplify" this
+        into one spawn.)
+        """
+        self._boot((), init_timeout)
+        try:
+            # `{}`, not None: config/read rejects an absent params field.
+            config = self.request("config/read", {}).get("config") or {}
+        finally:
+            self._shutdown_process()
+        names = sorted(config.get("mcp_servers") or {})
+        for name in names:
+            if not _OVERRIDABLE_SERVER_NAME.match(name):
+                raise CodexError(
+                    f"the configured MCP server {name!r} cannot be disabled: "
+                    f"its name cannot be written as a config override. Rename "
+                    f"or remove it in the codex config, then rerun."
+                )
+        return names
+
+    def _start_hardened(self, servers, init_timeout):
+        disables = list(UNWANTED_FEATURES)
+        overrides = []
+        for name in servers:
+            overrides += ["-c", f"mcp_servers.{name}.enabled=false"]
+        while True:
+            args = [arg for f in disables for arg in ("--disable", f)] + overrides
+            try:
+                self._boot(args, init_timeout)
+                break
+            except CodexUnavailable:
+                raise
+            except CodexError:
+                unknown = self._unknown_feature()
+                if unknown not in disables:
+                    raise
+                # This build has no such flag, which usually means the codex
+                # release renamed or retired it. Degrade that one flag, loudly
+                # — everything else stays disabled and stays verified.
+                print(
+                    f"bilingual-book-maker: this codex build has no feature "
+                    f"flag {unknown!r}; continuing without disabling it",
+                    file=sys.stderr,
+                )
+                disables.remove(unknown)
+        self._verify_hardened(disables)
+
+    def _unknown_feature(self):
+        try:
+            with open(self._stderr_path) as f:
+                match = _UNKNOWN_FEATURE.search(f.read())
+        except OSError:
+            return None
+        return match.group(1) if match else None
+
+    def _verify_hardened(self, disables):
+        """Prove the flags took. Loud on any gap, never half-hardened."""
+        features = (self.request("config/read", {}).get("config") or {}).get(
+            "features"
+        ) or {}
+        still_on = [name for name in disables if features.get(name) is not False]
+        if still_on:
+            raise CodexError(
+                f"codex did not honor --disable for: {', '.join(still_on)}. "
+                f"Refusing to run book text through a sidecar holding tools."
+            )
+        cursor = None
+        while True:
+            result = self.request(
+                "mcpServerStatus/list", {"cursor": cursor} if cursor else {}
+            )
+            for entry in result.get("data") or []:
+                if entry.get("tools"):
+                    raise CodexError(
+                        f"the MCP server {entry.get('name')!r} still exposes "
+                        f"tools after hardening. Refusing to run book text "
+                        f"through a sidecar holding tools."
+                    )
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
+
+    def _shutdown_process(self):
+        """Stop the child and its reader; keep the run directory."""
         self._stopped = True
         process = self.process
         self.process = None
+        stderr_file, self._stderr_file = self._stderr_file, None
+        if stderr_file is not None:
+            try:
+                stderr_file.close()
+            except Exception:
+                pass
         if process is None:
+            with self._cond:
+                self._cond.notify_all()
             return
         try:
             process.terminate()
@@ -250,8 +437,21 @@ class CodexAppServer:
                 pipe.close()
             except Exception:
                 pass
+        # The reader must be gone before a later _boot resets shared state,
+        # or its exit path would mark the fresh spawn stopped.
+        reader, self._reader = self._reader, None
+        if reader is not None and reader is not threading.current_thread():
+            reader.join(timeout=5)
         with self._cond:
             self._cond.notify_all()
+
+    def close(self):
+        self._shutdown_process()
+        run_dir, self._run_dir = self._run_dir, None
+        self._work_dir = None
+        self._stderr_path = None
+        if run_dir:
+            shutil.rmtree(run_dir, ignore_errors=True)
 
     def __enter__(self):
         return self.start()
@@ -262,9 +462,9 @@ class CodexAppServer:
 
     # ---- transport --------------------------------------------------------
 
-    def _read_loop(self):
+    def _read_loop(self, process):
         try:
-            for line in self.process.stdout:
+            for line in process.stdout:
                 line = line.strip()
                 if not line:
                     continue
@@ -299,7 +499,11 @@ class CodexAppServer:
             pass  # process went away; waiters fail on their own timeouts
         finally:
             with self._cond:
-                self._stopped = True
+                # Only for the process this loop was reading. During the
+                # two-phase start a superseded reader may exit after the next
+                # spawn is already up, and must not mark *it* stopped.
+                if self.process is process or self.process is None:
+                    self._stopped = True
                 self._cond.notify_all()
 
     def _merge_rate_limits(self, message):
@@ -347,6 +551,13 @@ class CodexAppServer:
                 process.stdin.flush()
         except (BrokenPipeError, ValueError, OSError) as e:
             raise CodexError(f"lost the connection to codex app-server: {e}") from e
+
+    def notify(self, method, params=None):
+        """Send a notification: a method with no id, expecting no reply."""
+        payload = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            payload["params"] = params
+        self._write(payload)
 
     def request(self, method, params=None, timeout=DEFAULT_REQUEST_TIMEOUT):
         """Send a request and wait for its reply. Raises on an error reply."""
@@ -406,13 +617,14 @@ class CodexAppServer:
 
         `read-only` + `never` is what keeps a turn shaped like a chat
         completion; `ephemeral` keeps translation runs out of the user's
-        Codex thread history.
+        Codex thread history; the private work directory keeps turns out of
+        wherever the user launched bbm.
         """
         params = {
             "sandbox": "read-only",
             "approvalPolicy": "never",
             "ephemeral": True,
-            "cwd": cwd or self.cwd or ".",
+            "cwd": cwd or self.cwd or self._work_dir,
         }
         if model:
             params["model"] = model
