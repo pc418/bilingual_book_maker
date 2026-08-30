@@ -313,6 +313,39 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
   达到累计token数开始进行翻译。gpt3.5将total_token限制为4090。
   例如，如果您使用`--accumulation_num 1600`，则可能会输出2200个令牌，另外200个令牌用于系统指令（system_message）和用户指令（user_message），1600+2200+200 = 4000，所以token接近极限。你必须选择一个自己合适的值，我们无法在发送之前判断是否达到限制
 
+### `codex`：用 ChatGPT 订阅额度翻译
+
+`--api_format codex` 使用你的 ChatGPT/Codex 套餐额度，而不是 API credits。
+需要安装并登录 [Codex CLI](https://developers.openai.com/codex/cli)；bbm 通过
+`codex app-server` 侧车进程驱动，OAuth 会话由它管理，所以既不需要
+`--openai_key`，也不需要 `--api_base`。
+
+`--model codex` 与 `--api_format codex` 等价：codex 并不是一个接口地址，
+因此把它写成模型名即可选中它，就像其他固定引擎一直以来的用法。
+
+`--model` 在这里是可选的，默认 `gpt-5.6-luna`；侧车还提供
+`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.5` 和 `gpt-5.2`。指定默认值不只是
+偏好问题：压缩预算是按模型选取的，不指定就会退回到一个保守值，而不是
+luna 自己的预算。
+
+用 `--codex-login` 在这里登录；没有浏览器的机器上用 `--codex-login device`，
+它会打印一个验证码供你在别处输入。若 Codex CLI 已登录则无需任何操作。
+
+由于新开一个 Codex thread 在第一段正文之前就要花掉约 17k tokens 的前言，
+整本书只会开一个 thread 并复用——这同时也构成了一个上下文窗口。到达
+`--context-compact-at` 时会压缩成交接报告，并用它播种一个新 thread，与
+`--use_context session` 完全一致。`--glossary` 和 `--glossary-auto` 同样可用。
+
+开始前会打印窗口的**剩余**比例，之后每当该数字变化也会再打印一次。若中途
+耗尽窗口，任务不会退出：它会说明窗口何时重置，等到重置后一分钟再继续。
+Ctrl+C 仍然有效，任务本身也可续跑。
+
+只在等待有意义时才等待。5 小时窗口会按时重置；而额度耗尽和账户用量上限
+不会，因此这两种情况会立即失败而不是空等，重置时间超过 6 小时（例如按周
+的限制）也一样——它会告诉你何时恢复。
+
+一点注意：每个 turn 都会触发你自己的 Codex hooks（`~/.codex/hooks.json`）。
+
 - `--use_context`:
 
   prompts the model to create a three-paragraph summary. If it's the beginning of the translation, it will summarize the entire passage sent (the size depending on `--accumulated_num`).
@@ -321,9 +354,46 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
   模型提示词将创建三段摘要。如果是翻译的开始，它将总结发送的整个段落（大小取决于`--accumulated_num`）。
   对于后续的段落，它将修改摘要，以包括最近段落的细节，创建一个完整的段落上下文负载，包含整个翻译作品的重要细节。 这提高了整个翻译过程中的流畅性和语气的一致性。 此选项适用于所有ChatGPT兼容型号和Gemini型号。
 
+  `--use_context` 还可以带一个可选的模式值。裸写 `--use_context`（等同
+  `--use_context window`）就是上面描述的行为；`--use_context session` 改为
+  维护一份只追加的历史记录，支持提示缓存的端点会以缓存价重新读取它，因此
+  上下文可以增长到整章的长度，花费反而低于 window 模式发送三个段落。历史
+  达到压缩预算时，模型会被要求写一份交接报告（摘要、文体说明，加上
+  `--glossary-auto` 时还有它确定的译法），用于播种下一个窗口，并追加到
+  `<book>_handoff.md`。该文件是纯 markdown：可读、可手工编辑，续跑时会
+  被重新读取。
+
   - `--context_paragraph_limit`:
 
-    使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制。
+    使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制（仅 window 模式）。
+
+  - `--context-compact-at`:
+
+    仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。
+    不设置时，每个模型使用各自的成本平衡预算——大致是 session 模式花费与
+    window 模式相当、但携带数倍上下文的那个点。多数端点上 `2500` 最省钱。
+
+  - `--glossary`:
+
+    固定词汇表文件路径，每行 `term → translation`，可选 `# 注释`。只有当某
+    个词条真的出现在该段原文中时，才会注入到这一段的提示词里，因此只在需要
+    的段落上产生几个 token 的成本。拉丁字母词条按词边界匹配，中日韩词条按
+    子串匹配。
+
+  - `--glossary-auto`:
+
+    仅 session 模式，默认关闭。让每次交接报告额外返回它已确定的译法——
+    写成 `<renderings>` 块内的 `term → translation # note` 行，与
+    `--glossary` 文件同一种格式——并带入后续窗口。
+
+    两份词汇表是分开的：来自 `--glossary` 文件的词条是**固定**的，永远
+    不会被改写；模型若给出不同译法，会被报告而不是覆盖你的选择。其余是
+    **学习到的**，后一个窗口的读法会替换前一个，因为那时模型已读过更多
+    正文。两者都按段落选择性注入，只在该词真正出现时才注入。
+
+    若模型漏掉了这个块，会退回到扫描零散的 `term → translation` 行，并
+    明确报告走了哪条路径——开着这个开关时，"什么都没学到"和"这本书没有
+    重复术语"看起来是一样的。
 
 - `--temperature`:
 

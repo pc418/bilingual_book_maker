@@ -11,6 +11,7 @@ from rich import print
 from rich.markup import escape
 from tqdm import tqdm
 
+from book_maker.session_context import SessionHistory, handoff_path
 from book_maker.utils import prompt_config_to_kwargs
 
 from .base_loader import BaseBookLoader
@@ -43,6 +44,10 @@ class MarkdownBookLoader(BaseBookLoader):
         single_translate=False,
         context_flag=False,
         context_paragraph_limit=0,
+        context_mode="window",
+        context_compact_at=None,
+        glossary=None,
+        glossary_auto=False,
         temperature=1.0,
         source_lang="auto",
         parallel_workers=1,
@@ -56,6 +61,11 @@ class MarkdownBookLoader(BaseBookLoader):
             source_lang=source_lang,
             context_flag=context_flag,
             context_paragraph_limit=context_paragraph_limit,
+            context_mode=context_mode,
+            context_compact_at=context_compact_at,
+            glossary=glossary,
+            glossary_auto=glossary_auto,
+            handoff_path=handoff_path(md_name),
             **prompt_config_to_kwargs(prompt_config),
         )
         self.is_test = is_test
@@ -525,6 +535,10 @@ class MarkdownBookLoader(BaseBookLoader):
             clone.context_list = []
         if hasattr(clone, "context_translated_list"):
             clone.context_translated_list = []
+        if getattr(clone, "session", None) is not None:
+            # Same reason as the context lists above: a shared append-only
+            # history would be written by every worker at once.
+            clone.session = SessionHistory()
         return clone
 
     def _assemble_render_items(self, render_items, batches, translated_batches):

@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from rich import print
 from rich.markup import escape
 
+from book_maker.glossary import Glossary
 from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
@@ -32,6 +33,18 @@ FORMATS_REQUIRING_KEY = ("openai", "anthropic", "caiyun", "deepl")
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal")
 
+# The loaders that actually forward context settings into the translator. The
+# others accept `context_flag` and drop it, so a session budget or a glossary
+# passed with them would silently do nothing.
+CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
+
+# LLM formats that can resolve a model on their own, so --model is optional.
+MODEL_OPTIONAL_FORMATS = ("codex",)
+
+# `--model codex` selects the format rather than a model id. The sidecar then
+# picks its own default, exactly as `--api_format codex` with no --model does.
+CODEX_MODEL_ALIASES = ("codex",)
+
 
 def infer_api_format(api_base, model=""):
     """Which wire format the endpoint speaks, guessed from host then model.
@@ -47,10 +60,16 @@ def infer_api_format(api_base, model=""):
     back once (see `Claude._build_openai_fallback`). `--api_format` overrides
     all of this outright.
     """
+    name = (model or "").strip().lower()
+    # `codex` is not an endpoint, so an --api_base cannot imply it and it must
+    # be recognised before the host is consulted. Naming it as the model is
+    # also how upstream spells this, and how the other non-endpoint engines
+    # have always been selected.
+    if name in CODEX_MODEL_ALIASES:
+        return "codex"
     if api_base:
         host = (urlparse(api_base).hostname or "").lower()
         return "anthropic" if host.endswith("anthropic.com") else "openai"
-    name = (model or "").lower()
     if "claude" in name or "anthropic" in name:
         return "anthropic"
     return "openai"
@@ -208,20 +227,75 @@ def parse_prompt_arg(prompt_arg):
     if "user" not in prompt:
         raise ValueError("prompt must contain the key of `user`")
 
-    if (prompt.keys() - {"user", "system"}) != set():
-        raise ValueError("prompt can only contain the keys of `user` and `system`")
+    if (prompt.keys() - {"user", "system", "style"}) != set():
+        raise ValueError(
+            "prompt can only contain the keys of `user`, `system` and `style`"
+        )
 
     print("prompt config:", prompt)
     return prompt
 
 
-def main():
+def run_codex_login(device_code=False):
+    """Drive a ChatGPT login through the codex sidecar. Returns an exit code."""
+    from book_maker.codex_client import CodexAppServer, CodexError
+
+    try:
+        with CodexAppServer() as server:
+            existing = None
+            try:
+                existing = server.rate_limits()
+            except CodexError:
+                pass
+            if existing is not None:
+                plan = f" ({existing.plan_type} plan)" if existing.plan_type else ""
+                print(f"[green]Already signed in to ChatGPT{plan}.[/green]")
+                return 0
+
+            prompt = server.login_start(device_code=device_code)
+            print(prompt.describe())
+            print("Waiting for the login to complete...")
+            server.wait_for_login()
+            print("[green]Signed in.[/green]")
+            return 0
+    except CodexError as err:
+        print(f"[bold red]{escape(str(err))}[/bold red]")
+        return 1
+
+
+# Below this a window cannot hold even one paragraph with its translation, so
+# every unit would trigger a paid handoff report.
+MIN_COMPACT_BUDGET = 500
+
+
+def compact_budget(value):
+    """argparse type for --context-compact-at: a usable positive budget."""
+    try:
+        budget = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}")
+    if budget < MIN_COMPACT_BUDGET:
+        raise argparse.ArgumentTypeError(
+            f"a compact budget of {budget} is too small to be useful; use at "
+            f"least {MIN_COMPACT_BUDGET} estimated tokens (2500 is the "
+            f"cheapest setting on most endpoints)"
+        )
+    return budget
+
+
+def resolve_context_mode(options):
+    """`(context_flag, context_mode)` from the parsed `--use_context` value.
+
+    `--use_context` used to be a bare switch and still may be: absent means no
+    context, bare means the window mode it has always meant, and only an
+    explicit `session` selects cached history.
+    """
+    mode = getattr(options, "context_mode", None)
+    return (mode is not None), mode
+
+
+def build_parser():
     translate_format_list = list(FORMAT_DICT.keys())
-    # Old command lines are rewritten into the endpoint surface before the
-    # parser sees them; see book_maker/legacy_cli.py.
-    legacy = translate_legacy_argv(sys.argv[1:])
-    for notice in legacy.notices:
-        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
     # No prefix abbreviation: `--model` must not resolve to `--model_list`.
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument(
@@ -477,16 +551,64 @@ So you are close to reaching the limit. You have to choose your own value, there
     )
     parser.add_argument(
         "--use_context",
-        dest="context_flag",
-        action="store_true",
-        help="adds an additional paragraph for global, updating historical context of the story to the model's input, improving the narrative consistency for the AI model (this uses ~200 more tokens each time)",
+        dest="context_mode",
+        nargs="?",
+        const="window",
+        default=None,
+        choices=("window", "session"),
+        help="carry earlier paragraphs into each request for narrative "
+        "consistency. Bare (or 'window'): re-send the last few "
+        "source/translation pairs, costing ~200 extra tokens per request. "
+        "'session': keep one append-only history instead, so an endpoint "
+        "with prompt caching re-reads it at its cache rate and the context "
+        "can grow to chapter length for less money — compacted into a "
+        "handoff report at --context-compact-at",
     )
     parser.add_argument(
         "--context_paragraph_limit",
         dest="context_paragraph_limit",
         type=int,
         default=0,
-        help="if use --use_context, set context paragraph limit",
+        help="window mode only: how many paragraph pairs to re-send",
+    )
+    parser.add_argument(
+        "--context-compact-at",
+        dest="context_compact_at",
+        type=compact_budget,
+        default=None,
+        help="session mode only: estimated-token budget for the history "
+        "before it is compacted into a translator handoff report. Default: "
+        "the model's cost-balanced budget (spends about what window mode "
+        "spends, for several times the context); 2500 is the cheapest "
+        "setting on most endpoints",
+    )
+    parser.add_argument(
+        "--glossary",
+        dest="glossary",
+        type=str,
+        default=None,
+        help="path to a pinned-vocabulary file of 'term → translation' "
+        "lines (optional '# note'). Only the terms that actually occur in a "
+        "paragraph are injected into its prompt",
+    )
+    parser.add_argument(
+        "--codex-login",
+        dest="codex_login",
+        nargs="?",
+        const="browser",
+        default=None,
+        choices=("browser", "device"),
+        help="sign in to ChatGPT for the codex format and exit. 'browser' "
+        "(default) opens a login URL; 'device' prints a code to enter on "
+        "another machine, for SSH and CI",
+    )
+    parser.add_argument(
+        "--glossary-auto",
+        dest="glossary_auto",
+        action="store_true",
+        help="session mode only: also ask each handoff report for a JSON "
+        "glossary of the renderings it established, and carry them into "
+        "later windows. Off by default",
     )
     parser.add_argument(
         "--temperature",
@@ -549,8 +671,27 @@ So you are close to reaching the limit. You have to choose your own value, there
         "(for log files and non-interactive runs; reports and errors still "
         "print). Currently epub only.",
     )
+    return parser
 
-    options = parser.parse_args(legacy.argv)
+
+def parse_args(argv):
+    return build_parser().parse_args(argv)
+
+
+def main():
+    # Old command lines are rewritten into the endpoint surface before the
+    # parser sees them; see book_maker/legacy_cli.py.
+    legacy = translate_legacy_argv(sys.argv[1:])
+    for notice in legacy.notices:
+        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
+
+    options = parse_args(legacy.argv)
+    options.context_flag, options.context_mode = resolve_context_mode(options)
+
+    # Signing in is a whole task on its own — no book is needed, and nothing
+    # else should run afterwards.
+    if options.codex_login:
+        raise SystemExit(run_codex_login(device_code=options.codex_login == "device"))
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
@@ -652,6 +793,29 @@ So you are close to reaching the limit. You have to choose your own value, there
         api_format, options.key, options.api_base, legacy.env_keys
     )
 
+    glossary = Glossary()
+    if options.glossary:
+        try:
+            glossary = Glossary.from_file(options.glossary)
+        except (OSError, ValueError) as err:
+            raise SystemExit(f"Could not read --glossary: {err}")
+        print(f"[green]Glossary: {len(glossary)} pinned terms loaded[/green]")
+
+    # These need a context window to act on. Session mode is one; so is the
+    # codex format, where the thread *is* the window and compaction is not
+    # optional — so the warning must not fire there, or it tells the user a
+    # flag was ignored when it was in fact obeyed.
+    if options.context_mode != "session" and api_format != "codex":
+        for flag, value in (
+            ("--context-compact-at", options.context_compact_at),
+            ("--glossary-auto", options.glossary_auto),
+        ):
+            if value:
+                print(
+                    f"[bold yellow]Warning:[/bold yellow] {flag} only applies "
+                    f"to --use_context session; ignoring it."
+                )
+
     book_type = get_book_type(options.book_name)
     support_type_list = list(BOOK_LOADER_DICT.keys())
     if book_type not in support_type_list:
@@ -672,6 +836,21 @@ So you are close to reaching the limit. You have to choose your own value, there
     loader_kwargs = {}
     if book_type == "pdf":
         loader_kwargs["pdf_layout"] = options.pdf_layout
+    if book_type in CONTEXT_AWARE_BOOK_TYPES:
+        loader_kwargs.update(
+            context_mode=options.context_mode,
+            context_compact_at=options.context_compact_at,
+            glossary=glossary,
+            glossary_auto=options.glossary_auto,
+        )
+    elif options.glossary or options.context_mode == "session":
+        # txt, srt and pdf never hand context to the model, so a pin or a
+        # session budget would quietly do nothing at all.
+        print(
+            f"[bold yellow]Warning:[/bold yellow] --glossary and "
+            f"--use_context session are not supported for {book_type} books; "
+            f"they will be ignored."
+        )
 
     e = book_loader(
         options.book_name,
@@ -767,8 +946,14 @@ So you are close to reaching the limit. You have to choose your own value, there
         # made rather than infer it from the absence of one.
         e.plan_classify = classify_mode
         e.plan_classify_model = options.plan_classify_model or None
-    if options.quiet and hasattr(e, "quiet"):
-        e.quiet = True
+    if options.quiet:
+        if hasattr(e, "quiet"):
+            e.quiet = True
+        # The translator does its own echoing in session mode (the handoff
+        # report). Guarded rather than set blindly, so a translator that does
+        # not honor it is not given an attribute it will silently ignore.
+        if hasattr(e.translate_model, "quiet"):
+            e.translate_model.quiet = True
     if options.exclude_filelist:
         e.exclude_filelist = options.exclude_filelist
     if options.only_filelist:
@@ -789,7 +974,9 @@ So you are close to reaching the limit. You have to choose your own value, there
     if api_format in LLM_FORMATS:
         # No preset lists any more: the endpoint names its own models, and a
         # run that does not say which one to use has nothing to fall back on.
-        if not model_names:
+        # `codex` is the exception — it resolves the model from its own
+        # config, so naming one is optional there.
+        if not model_names and api_format not in MODEL_OPTIONAL_FORMATS:
             raise SystemExit(
                 f"--model is required for the {api_format} format. Pass the "
                 f"model id the endpoint uses, e.g. --model gpt-5-mini"
@@ -799,6 +986,19 @@ So you are close to reaching the limit. You have to choose your own value, there
         except Exception as ex:
             print(f"[red]Error: {ex}[/red]")
             exit(1)
+        # Check the sidecar is up and signed in before parsing a book: a
+        # login prompt after ten minutes of work is the wrong time to find out.
+        if hasattr(e.translate_model, "preflight"):
+            e.translate_model.preflight()
+        if api_format == "codex" and options.parallel_workers > 1:
+            # A codex thread is the context, and turns on it are serialized
+            # so chapters do not interleave into one thread. Saying so beats
+            # letting the flag look like it did something.
+            print(
+                "[bold yellow]Warning:[/bold yellow] the codex format runs one "
+                "thread and serializes turns on it, so --parallel-workers does "
+                "not speed it up."
+            )
     elif model_names:
         # These formats translate through a fixed engine and take no model, so
         # honoring the flag is impossible; saying so beats ignoring it.

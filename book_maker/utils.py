@@ -128,6 +128,10 @@ def prompt_config_to_kwargs(prompt_config):
     return dict(
         prompt_template=prompt_config.get("user", None),
         prompt_sys_msg=prompt_config.get("system", None),
+        # A style the user has fixed. When present it replaces what a handoff
+        # report would otherwise observe, and stops that section being asked
+        # for at all.
+        style_note=prompt_config.get("style", None),
     )
 
 

@@ -160,6 +160,8 @@ output/
 # local work records, never committed (see AGENTS.md): dated docs/ notes,
 # the live plan, the prompt log, and personal run scripts
 /docs/[0-9]*.md
+/docs/[0-9]*.svg
+/docs/[0-9]*.py
 /plan.md
 /user-msg-log.md
 /translate*.sh

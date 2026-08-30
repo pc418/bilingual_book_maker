@@ -32,9 +32,53 @@ the run switches to `openai` by itself.
 `https://host/v1`, a trailing slash, or the whole
 `https://host/v1/chat/completions` all mean the same thing.
 
-`--api_format` values: `openai` (default), `anthropic`, and the fixed
+`--api_format` values: `openai` (default), `anthropic`, `codex`, and the fixed
 machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
 `tencent`, `customapi`.
+
+### `codex`: translate on your ChatGPT subscription
+
+`--api_format codex` spends your ChatGPT/Codex plan allowance instead of API
+credits. It needs the [Codex CLI](https://developers.openai.com/codex/cli)
+installed and signed in; bbm drives a `codex app-server` sidecar, which owns
+the OAuth session, so there is no `--openai_key` and no `--api_base`.
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub \
+  --model codex --language zh-hans
+```
+
+`--model codex` and `--api_format codex` are the same thing: codex is not an
+endpoint, so naming it as the model selects it, the way the other
+non-endpoint engines have always been chosen.
+
+`--model` is optional here and defaults to `gpt-5.6-luna`; the sidecar also
+offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`. Naming a
+default matters beyond taste: the compact budget is chosen per model, so an
+unnamed one would fall back to a conservative figure instead of luna's.
+
+Sign in from here with `--codex-login` (or `--codex-login device` on a
+machine with no browser, which prints a code to enter elsewhere). If the
+Codex CLI is already logged in, nothing is needed.
+
+Because a fresh Codex thread costs about 17k tokens of preamble before your
+first paragraph, one thread is opened and reused for the whole book — which
+also makes it a context window. At `--context-compact-at` it is condensed
+into a handoff report and a fresh thread is seeded with it, exactly like
+`--use_context session`. `--glossary` and `--glossary-auto` work here too.
+
+bbm prints how much of your window remains before starting, and again
+whenever that figure moves. If the window runs out mid-book the run does not
+stop: it says when the window resets, waits until a minute past it, and
+carries on. Ctrl+C still works, and the run is resumable either way.
+
+Waiting only happens where waiting helps. A spent 5-hour window comes back on
+a timer; depleted credits and account usage limits do not, so those fail
+immediately rather than hanging, as does a reset more than six hours out (a
+weekly limit, say) — it tells you when it clears instead.
+
+One caveat: turns run through your own Codex hooks (`~/.codex/hooks.json`),
+so per-prompt hooks fire for every paragraph.
 
 Anything speaking the OpenAI shape works through `openai` — OpenAI itself,
 Groq, xAI, DeepSeek, SiliconFlow, OpenRouter, Together, Alibaba DashScope,
@@ -393,9 +437,55 @@ Notes:
   prompts the model to create a three-paragraph summary. If it's the beginning of the translation, it will summarize the entire passage sent (the size depending on `--accumulated_num`).
   For subsequent passages, it will amend the summary to include details from the most recent passage, creating a running one-paragraph context payload of the important details of the entire translated work. This improves consistency of flow and tone throughout the translation. This option is available for all ChatGPT-compatible models and Gemini models.
 
+  `--use_context` also takes an optional mode. Bare `--use_context` (or
+  `--use_context window`) is the behaviour described above. `--use_context
+  session` instead keeps a single append-only history of everything
+  translated so far, so an endpoint with prompt caching re-reads it at its
+  cache rate — context can then grow to chapter length for less money than
+  window mode spends on three paragraphs. When the history reaches the
+  compact budget, the model is asked for a translator handoff report
+  (summary, style notes, and with `--glossary-auto` the renderings it has
+  established), which seeds the next window and is appended to
+  `<book>_handoff.md`. That file is plain markdown: readable, hand-editable,
+  and re-read when a run resumes.
+
 - `--context_paragraph_limit`:
 
-  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option.
+  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option (window mode only).
+
+- `--context-compact-at`:
+
+  Session mode only. The estimated-token budget the history may reach before
+  it is compacted into a handoff report. Left unset, each model uses its
+  cost-balanced budget — roughly the point where session mode spends what
+  window mode spends while carrying several times the context. `2500` is the
+  cheapest setting on most endpoints.
+
+- `--glossary`:
+
+  Path to a pinned-vocabulary file: `term → translation` lines, with an
+  optional `# note`. A pinned term is injected into a paragraph's prompt only
+  when that term actually occurs in it, so the cost is a few tokens on the
+  paragraphs that need it and nothing elsewhere. Latin-script terms match on
+  word boundaries, CJK terms as substrings.
+
+- `--glossary-auto`:
+
+  Session mode only, off by default. Also asks each handoff report for the
+  renderings it established — as `term → translation # note` lines inside a
+  `<renderings>` block, the same format `--glossary` files use — and carries
+  them into later windows.
+
+  Two glossaries are kept apart. Terms from your `--glossary` file are
+  *pinned*: they never change, and a model that renders one differently is
+  reported rather than silently overruling you. Everything else is *learned*,
+  and each window's reading replaces the previous one, since by then the model
+  has seen more of the book. Both are injected per paragraph, only where the
+  term actually occurs.
+
+  If the model omits the block, loose `term → translation` lines are recovered
+  instead, and the run says which route it had to take — with this flag on,
+  silently learning nothing looks exactly like a book with no recurring terms.
 
 - `--parallel-workers`:
 

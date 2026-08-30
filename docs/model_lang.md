@@ -26,9 +26,15 @@ for the full table.
 `--model_list a,b` rotates across several models and is also what older
 commands used; name a model in one flag or the other, not both.
 
-`--api_format` is one of `openai` (default), `anthropic`, or the fixed
-machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
+`--api_format` is one of `openai` (default), `anthropic`, `codex`, or the
+fixed machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
 `tencent`, `customapi`.
+
+`codex` is not an endpoint at all: it drives a local `codex app-server`
+sidecar and bills the run to your ChatGPT plan, so it takes no `--key` and no
+`--api_base`, and `--model` is optional (default `gpt-5.6-luna`). It is never
+inferred — name it explicitly. See the README section "codex: translate on
+your ChatGPT subscription".
 
 Inference goes in this order: an explicit `--api_format` wins; then the
 `--api_base` host (`anthropic.com` means the anthropic shape, anything else
@@ -52,6 +58,10 @@ Everything below is the same route with a different `--api_base`. Structured
 output, `--use_context`, parallel workers, async and the Batch API are
 available on all of them to the extent the endpoint itself supports them —
 support is probed at runtime rather than assumed from the model name.
+
+`--use_context session` additionally needs the endpoint to bill prompt-cache
+reads back; it warns after ten requests that report no cached tokens, since
+without pass-through caching it costs more than window mode.
 
 | Vendor | `--api_base` |
 |---|---|

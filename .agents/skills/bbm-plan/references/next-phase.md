@@ -1,7 +1,27 @@
 # bbm-plan phase 2: book brief + glossary for efficient parallel runs
 
-Status: **planned, not built** (designed 2026-08-05). Phase 1 (SKILL.md) must
-be earning its keep first.
+Status: **partly shipped** (designed 2026-08-05; glossary half delivered
+2026-08-29).
+
+What exists now, and how it differs from this design:
+
+- The **glossary** half shipped as `--glossary <file>` — `term → translation
+  # note` lines the user maintains, matched per paragraph and injected only
+  where a term actually occurs. That is stricter than the design's "inject
+  the whole brief into every request", and cheaper: a paragraph carrying no
+  pinned term pays nothing. It reaches the model through the CLI rather than
+  `prompt.json`, so no prompt file has to be hand-assembled.
+- `--glossary-auto` additionally lets each `--use_context session` compact
+  record the renderings it established and carry them into later windows,
+  with the user's pinned terms always winning. That is the "computed once
+  before translation" idea inverted: computed *as* translation proceeds,
+  which needs no extra pass over the book.
+- Both are parallel-safe by construction, which was this design's whole
+  motivation.
+
+**Still unbuilt**: the *intro* half (a one-paragraph book summary shared by
+every worker), and having the agent draft either part at classify time. The
+sections below are the original design and are kept for that remaining work.
 
 ## The idea
 

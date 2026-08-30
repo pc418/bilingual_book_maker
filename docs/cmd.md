@@ -43,10 +43,13 @@ sections after it provide additional notes for selected workflows.
 | `--test` | Translate only a preview sample. |
 | `--test_num N` | Number of test units; default `10`. |
 | `--resume` | Continue from the loader's saved checkpoint. |
-| `--prompt VALUE_OR_FILE` | User/system prompt template; the user template requires `{text}`. |
+| `--prompt VALUE_OR_FILE` | Prompt config: `user` (requires `{text}`), `system`, and `style`. A `style` is applied to every request and written into each handoff report verbatim, and stops the report asking the model to describe the style itself. On the `codex` format `system` is appended to the built-in instructions rather than replacing them. |
 | `--temperature FLOAT` | Sampling temperature; default `1.0`. |
-| `--use_context` | Send an evolving narrative context with compatible translators. |
-| `--context_paragraph_limit N` | Context history limit used with `--use_context`. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
+| `--use_context [window\|session]` | Send earlier paragraphs as context. Bare or `window`: re-send the last few source/translation pairs (the long-standing behaviour). `session`: one append-only history, re-read at the endpoint's prompt-cache rate. |
+| `--context_paragraph_limit N` | Window mode only: context history limit. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
+| `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Minimum `500`. Default: the model's cost-balanced budget (luna 17k, deepseek-flash 7k, glm-5.3 8k, otherwise 8k); `2500` is cheapest on most endpoints. |
+| `--glossary FILE` | Pinned vocabulary: `term → translation` lines with an optional `# note`. Only terms occurring in a paragraph are injected into its prompt. |
+| `--glossary-auto` | Session mode only: also ask each handoff report for the renderings it established, as `term → translation # note` lines in a `<renderings>` block, and carry them into later windows. Terms pinned by `--glossary` always win; unpinned ones follow the newest window. Off by default. |
 | `--accumulated_num N` | EPUB token/character accumulation and SRT subtitle-block character batching (capped at 512 for SRT); ignored in EPUB plan mode. |
 | `--batch_size N` | Aggregated unit count for loaders that support it. |
 | `--block_size N` | Merge paragraphs into delimiter-translated blocks. |
@@ -67,7 +70,10 @@ A route is an endpoint, not a model name.
 | `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Old alias values are translated with a note. |
 | `--api_base URL` | The endpoint to translate against. Defaults to the format's official host. A pasted `…/v1/chat/completions` or trailing slash is trimmed. |
 | `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's conventional variable. |
-| `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id. |
+| `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id; `codex` must be named explicitly. |
+| `--codex-login [browser\|device]` | Sign in to ChatGPT for the `codex` format, then exit. `device` prints a code to enter on another machine. |
+| `--model codex` | Selects the codex format, equivalent to `--api_format codex`; the sidecar then uses its default model. |
+| `--model` with `codex` | Optional — defaults to `gpt-5.6-luna`. Other ids the sidecar offers: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.2`. |
 | `--model_list IDS` | Several model IDs to rotate across, comma-separated. Kept for compatibility and for rotation; a single model belongs in `--model`. Naming a model in both flags is an error. |
 | `--source_lang LANG` | Source language for endpoints that want it stated; default `auto`. |
 
