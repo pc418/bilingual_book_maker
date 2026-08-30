@@ -18,14 +18,14 @@ pip install -U bbook_maker
 # 或者从源码目录：pip install -r requirements.txt   （之后用 python3 make_book.py ...）
 ```
 
-本地放了一个 `test_books/animal_farm.epub` 给大家测试。先选一种付费方式，
-两种方式的书籍参数完全相同。
+`--book_name` 填你自己的 epub/txt/md/pdf —— 源码目录里也放了一个
+`test_books/animal_farm.epub` 供测试。先选一种付费方式，两种方式的书籍参数完全相同。
 
 **用 ChatGPT 订阅额度。** 需要装好并登录 [Codex CLI](https://developers.openai.com/codex/cli)
 （`--codex-login`）。不需要 key，也不需要 `--api_base`：
 
 ```shell
-bbook_maker --book_name test_books/animal_farm.epub --language zh-hans \
+bbook_maker --book_name your-book.epub --language zh-hans \
   --model codex \
   --plan-classify model --use_context session --glossary-auto
 ```
@@ -34,7 +34,7 @@ bbook_maker --book_name test_books/animal_farm.epub --language zh-hans \
 OpenAI、Groq、xAI、OpenRouter、Gemini、vLLM、Ollama 等同理：
 
 ```shell
-bbook_maker --book_name test_books/animal_farm.epub --language ja \
+bbook_maker --book_name your-book.epub --language ja \
   --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat \
   --plan-classify model --use_context session --glossary-auto
 ```

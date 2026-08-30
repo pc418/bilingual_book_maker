@@ -97,14 +97,15 @@ pip install -U bbook_maker
 # or, from a clone: pip install -r requirements.txt   (then: python3 make_book.py ...)
 ```
 
-A sample book, `test_books/animal_farm.epub`, is included. Pick how you pay —
-the book flags are the same either way.
+Point `--book_name` at your own epub/txt/md/pdf — a clone also ships
+`test_books/animal_farm.epub` to try. Pick how you pay; the book flags are the
+same either way.
 
 **On a ChatGPT subscription.** Needs the [Codex CLI](https://developers.openai.com/codex/cli)
 installed and signed in (`--codex-login`). No key, no `--api_base`:
 
 ```shell
-bbook_maker --book_name test_books/animal_farm.epub --language zh-hans \
+bbook_maker --book_name your-book.epub --language zh-hans \
   --model codex \
   --plan-classify model --use_context session --glossary-auto
 ```
@@ -114,7 +115,7 @@ shown, but OpenAI, Groq, xAI, OpenRouter, Gemini, vLLM, Ollama and the rest
 work the same way:
 
 ```shell
-bbook_maker --book_name test_books/animal_farm.epub --language ja \
+bbook_maker --book_name your-book.epub --language ja \
   --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat \
   --plan-classify model --use_context session --glossary-auto
 ```
