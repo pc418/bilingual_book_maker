@@ -7,6 +7,8 @@ def test_get_book_type_uses_final_suffix_and_lowercases():
 
 import json
 import os
+
+import pytest
 import subprocess
 import sys
 from pathlib import Path
@@ -334,3 +336,32 @@ def test_kobo_mode_does_not_require_book_name(tmp_path, monkeypatch):
     main()
 
     assert (tmp_path / f"{src.stem}_plan.json").exists()
+
+
+def test_prompt_json_accepts_a_style_field():
+    from book_maker.cli import parse_prompt_arg
+
+    prompt = parse_prompt_arg(
+        json.dumps({"user": "translate {text}", "style": "plain modern prose"})
+    )
+    assert prompt["style"] == "plain modern prose"
+
+
+def test_prompt_json_still_rejects_unknown_keys():
+    from book_maker.cli import parse_prompt_arg
+
+    with pytest.raises(ValueError):
+        parse_prompt_arg(json.dumps({"user": "{text}", "nonsense": "x"}))
+
+
+def test_style_reaches_the_translator_kwargs():
+    from book_maker.utils import prompt_config_to_kwargs
+
+    kwargs = prompt_config_to_kwargs({"user": "{text}", "style": "terse"})
+    assert kwargs["style_note"] == "terse"
+
+
+def test_no_style_is_none():
+    from book_maker.utils import prompt_config_to_kwargs
+
+    assert prompt_config_to_kwargs({"user": "{text}"})["style_note"] is None

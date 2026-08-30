@@ -194,6 +194,7 @@ class ChatGPTAPI(Base):
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
     quiet = False
+    style_note = None
 
     def __init__(
         self,
@@ -209,6 +210,7 @@ class ChatGPTAPI(Base):
         context_compact_at=None,
         glossary=None,
         glossary_auto=False,
+        style_note=None,
         handoff_path=None,
         extra_body=None,
         **kwargs,
@@ -253,6 +255,7 @@ class ChatGPTAPI(Base):
         self.learned = Glossary()
         self.glossary = self.pinned
         self.glossary_auto = glossary_auto
+        self.style_note = style_note
         self.handoff_path = Path(handoff_path) if handoff_path else None
         self._session_cache_warned = False
         self._session_cache_seen = False
@@ -651,7 +654,9 @@ class ChatGPTAPI(Base):
         being condensed into what replaces it.
         """
         budget = self._session_budget()
-        prompt = handoff_prompt(with_glossary=self.glossary_auto)
+        prompt = handoff_prompt(
+            with_glossary=self.glossary_auto, with_style=not self.style_note
+        )
         messages = [
             *self.session.messages(),
             {"role": "user", "content": prompt},
@@ -727,6 +732,9 @@ class ChatGPTAPI(Base):
 
         report = HandoffReport(
             window=self.session.windows,
+            # A style the user fixed is handed on verbatim, so it cannot be
+            # eroded window by window by a model re-describing it.
+            style_note=self.style_note,
             # The JSON block is parsed into `glossary_lines` below, so it is
             # stripped from the prose rather than stored and re-seeded twice.
             summary=strip_handoff_glossary(report_text),

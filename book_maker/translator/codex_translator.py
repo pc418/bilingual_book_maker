@@ -77,6 +77,7 @@ class Codex(Base):
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
     quiet = False
+    style_note = None
 
     def __init__(
         self,
@@ -87,6 +88,7 @@ class Codex(Base):
         context_compact_at=None,
         glossary=None,
         glossary_auto=False,
+        style_note=None,
         handoff_path=None,
         prompt_template=None,
         prompt_sys_msg=None,
@@ -109,6 +111,8 @@ class Codex(Base):
         self.glossary_auto = glossary_auto
         self.handoff_path = Path(handoff_path) if handoff_path else None
         self.prompt_sys_msg = prompt_sys_msg
+        self.prompt_template = prompt_template
+        self.style_note = style_note
         self._thread_id = None
         self._window = 1
         self._window_tokens = 0
@@ -233,10 +237,23 @@ class Codex(Base):
     # ---- threads ----------------------------------------------------------
 
     def _instructions(self, seed=""):
-        base = (self.prompt_sys_msg or BASE_INSTRUCTIONS).format(
-            language=self.language, crlf="\n"
-        )
-        return f"{base}\n\n{seed}" if seed else base
+        """Thread instructions: ours, then the user's, then any handoff seed.
+
+        `--prompt`'s system message is *appended* rather than substituted. On
+        this path the base instructions are what keep a turn behaving like a
+        completion instead of an agent turn — replacing them wholesale would
+        let the model answer or summarize the passage instead of translating
+        it. The user's voice comes after, where it wins on anything the two
+        both speak to.
+        """
+        parts = [BASE_INSTRUCTIONS.format(language=self.language, crlf="\n")]
+        if self.prompt_sys_msg:
+            parts.append(self.prompt_sys_msg.format(language=self.language, crlf="\n"))
+        if self.style_note:
+            parts.append(f"Style to follow: {self.style_note}")
+        if seed:
+            parts.append(seed)
+        return "\n\n".join(parts)
 
     def _ensure_thread(self, seed=""):
         if self._thread_id is None:
@@ -262,7 +279,10 @@ class Codex(Base):
         """
         try:
             report_text = self._run_turn(
-                self._thread_id, handoff_prompt(with_glossary=self.glossary_auto)
+                self._thread_id,
+                handoff_prompt(
+                    with_glossary=self.glossary_auto, with_style=not self.style_note
+                ),
             )
         except CodexTurnFailed as e:
             print(
@@ -302,6 +322,7 @@ class Codex(Base):
 
         report = HandoffReport(
             window=self._window,
+            style_note=self.style_note,
             # Same as the API path: the JSON is parsed into `glossary_lines`,
             # so keeping it in the prose too would duplicate every term.
             summary=strip_handoff_glossary(report_text),
@@ -333,6 +354,19 @@ class Codex(Base):
             + escape(report.render())
         )
 
+    def _unit_text(self, text):
+        """What the turn carries.
+
+        Bare source by default — the thread instructions already say to
+        translate whatever arrives, so wrapping every paragraph in "please
+        translate" would repeat an instruction the thread has. A user's
+        `--prompt` template is honored when given, since it may say more than
+        that.
+        """
+        if not self.prompt_template:
+            return text
+        return self.prompt_template.format(text=text, language=self.language, crlf="\n")
+
     # ---- translation ------------------------------------------------------
 
     def translate(self, text, needprint=True):
@@ -350,7 +384,8 @@ class Codex(Base):
             # than with the thread instructions, which every later turn would
             # re-read.
             block = self.glossary.prompt_block(text) if self.glossary else ""
-            payload = f"{block}\n\n{text}" if block else text
+            payload = self._unit_text(text)
+            payload = f"{block}\n\n{payload}" if block else payload
 
             translated = self._run_turn(thread_id, payload)
             self._report_quota()

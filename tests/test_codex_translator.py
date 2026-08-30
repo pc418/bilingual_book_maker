@@ -403,3 +403,73 @@ class TestQuotaExhaustion:
         with pytest.raises(CodexTurnFailed):
             t.translate("text", needprint=False)
         assert len(t.slept) <= 3
+
+
+class TestUserPrompt:
+    """`--prompt` adds to the thread instructions; it does not replace them."""
+
+    def test_the_user_system_message_is_appended_not_substituted(self):
+        t = _codex(["一"], prompt_sys_msg="Render dialogue as spoken British English.")
+        t.translate("one", needprint=False)
+        instructions = t.server.threads[0]["base_instructions"]
+        assert "Render dialogue as spoken British English." in instructions
+        # The base instructions are what keep a turn from acting like an agent.
+        assert "translation engine" in instructions
+
+    def test_the_user_message_comes_after_ours(self):
+        t = _codex(["一"], prompt_sys_msg="MY RULE")
+        t.translate("one", needprint=False)
+        instructions = t.server.threads[0]["base_instructions"]
+        assert instructions.index("translation engine") < instructions.index("MY RULE")
+
+    def test_a_user_template_is_applied_to_the_turn(self):
+        t = _codex(["一"], prompt_template="Translate to {language}: {text}")
+        t.translate("one", needprint=False)
+        assert t.server.turns[0]["text"] == "Translate to Chinese: one"
+
+    def test_without_a_template_the_turn_carries_bare_source(self):
+        """The thread already says to translate; repeating it per paragraph
+        would pay for the same instruction over and over."""
+        t = _codex(["一"])
+        t.translate("one", needprint=False)
+        assert t.server.turns[0]["text"] == "one"
+
+
+class TestFixedStyle:
+    def test_a_fixed_style_reaches_the_thread(self):
+        t = _codex(["一"], style_note="plain modern prose")
+        t.translate("one", needprint=False)
+        assert "plain modern prose" in t.server.threads[0]["base_instructions"]
+
+    def test_a_fixed_style_is_not_asked_for_at_handoff(self, tmp_path):
+        t = _codex(
+            ["一", "二", "Summary."],
+            context_compact_at=100,
+            style_note="plain modern prose",
+            handoff_path=tmp_path / "h.md",
+        )
+        t.translate("a" * 200, needprint=False)
+        t.translate("b" * 200, needprint=False)
+        assert "style" not in t.server.turns[-1]["text"].lower()
+
+    def test_the_fixed_style_is_written_into_the_report(self, tmp_path):
+        path = tmp_path / "h.md"
+        t = _codex(
+            ["一", "二", "Summary."],
+            context_compact_at=100,
+            style_note="plain modern prose",
+            handoff_path=path,
+        )
+        t.translate("a" * 200, needprint=False)
+        t.translate("b" * 200, needprint=False)
+        assert "plain modern prose" in path.read_text(encoding="utf-8")
+
+    def test_without_a_fixed_style_the_handoff_still_asks_for_one(self, tmp_path):
+        t = _codex(
+            ["一", "二", "Summary."],
+            context_compact_at=100,
+            handoff_path=tmp_path / "h.md",
+        )
+        t.translate("a" * 200, needprint=False)
+        t.translate("b" * 200, needprint=False)
+        assert "style" in t.server.turns[-1]["text"].lower()

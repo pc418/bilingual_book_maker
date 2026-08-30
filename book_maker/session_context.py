@@ -115,7 +115,7 @@ _PREAMBLE = (
 )
 
 _SUMMARY_REQUEST = (
-    "1. Summary - of translated content above. What happened, who was "
+    "Summary - of translated content above. What happened, who was "
     "involved, when did those happen."
 )
 
@@ -123,18 +123,18 @@ _SUMMARY_REQUEST = (
 # twenty bullets and turned into a second glossary written as prose
 # ("'e-book' 统一译为 '电子书'"), duplicating every rendering unparseably.
 _STYLE_REQUEST = (
-    "2. Style — up to 3 lines of what translation style is used so far. "
+    "Style — up to 3 lines of what translation style is used so far. "
     "Only note down what's different from general translation."
 )
 
 # Without a glossary section there is nowhere for term equivalences to go, so
 # the style section is not told to exclude them.
 _STYLE_REQUEST_NO_GLOSSARY = (
-    "2. Style — up to 3 lines of what translation style is used so far."
+    "Style — up to 3 lines of what translation style is used so far."
 )
 
 _GLOSSARY_REQUEST = (
-    "3. Established renderings — every noun we need to keep unified, each "
+    "Established renderings — every noun we need to keep unified, each "
     "listed exactly once, one per line as `term → translation # note` (the "
     "note is optional). Wrap the whole list in <renderings> and </renderings> "
     "tags so its start and end are unambiguous. This is the only place term "
@@ -142,19 +142,23 @@ _GLOSSARY_REQUEST = (
 )
 
 
-def handoff_prompt(with_glossary: bool) -> str:
-    """The compact turn's request.
+def handoff_prompt(with_glossary: bool, with_style: bool = True) -> str:
+    """The compact turn's request, built from the sections in play.
 
-    Without `--glossary-auto` the model is not asked for JSON at all: nothing
-    downstream would consume it, and an unused JSON section is output tokens
-    billed for nothing.
+    Each section costs output tokens and invites the model to spend attention
+    on it, so one is only asked for when something downstream consumes it: the
+    glossary only behind `--glossary-auto`, and the style only when the user
+    has not fixed one via `--prompt`'s `style` field. Numbering follows what
+    is actually included, so a fixed style does not leave the glossary
+    labelled "3." in a two-section request.
     """
-    sections = [_PREAMBLE, _SUMMARY_REQUEST]
+    sections = [_SUMMARY_REQUEST]
+    if with_style:
+        sections.append(_STYLE_REQUEST if with_glossary else _STYLE_REQUEST_NO_GLOSSARY)
     if with_glossary:
-        sections += [_STYLE_REQUEST, _GLOSSARY_REQUEST]
-    else:
-        sections.append(_STYLE_REQUEST_NO_GLOSSARY)
-    return "\n\n".join(sections)
+        sections.append(_GLOSSARY_REQUEST)
+    numbered = [f"{n}. {body}" for n, body in enumerate(sections, start=1)]
+    return "\n\n".join([_PREAMBLE, *numbered])
 
 
 # The block the report is asked to emit. Tolerant of a missing closing tag:
@@ -253,6 +257,10 @@ class HandoffReport:
     window: int
     summary: str
     glossary_lines: str = ""
+    # A style the user fixed via --prompt's `style` field. It is not asked of
+    # the model, so it is written in here instead — otherwise the next window
+    # would inherit a report with no style at all.
+    style_note: str = ""
 
     _MARKER = "## Window "
 
@@ -270,6 +278,8 @@ class HandoffReport:
     def render(self) -> str:
         """The report body: what is written to the file and shown on screen."""
         body = self.summary
+        if self.style_note:
+            body += f"\n\n### Style\n\n{self.style_note}"
         if self.glossary_lines:
             body += f"\n\n### Established renderings\n\n{self.glossary_lines}"
         return body

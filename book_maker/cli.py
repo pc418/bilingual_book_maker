@@ -217,8 +217,10 @@ def parse_prompt_arg(prompt_arg):
     if "user" not in prompt:
         raise ValueError("prompt must contain the key of `user`")
 
-    if (prompt.keys() - {"user", "system"}) != set():
-        raise ValueError("prompt can only contain the keys of `user` and `system`")
+    if (prompt.keys() - {"user", "system", "style"}) != set():
+        raise ValueError(
+            "prompt can only contain the keys of `user`, `system` and `style`"
+        )
 
     print("prompt config:", prompt)
     return prompt

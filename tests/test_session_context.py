@@ -116,48 +116,56 @@ class TestSessionHistory:
 class TestHandoffPrompt:
     """Assert the prompt's *structure*, not its wording.
 
-    The wording is owned by whoever is tuning translation quality and gets
-    rewritten often; pinning phrases here would make every revision look like
-    a broken test. What must not silently change is which sections are asked
-    for, and that JSON is requested only when something consumes it.
+    Wording belongs to whoever is tuning translation quality and gets
+    rewritten often; pinning phrases would make every revision look like a
+    broken test. What must not silently change is which sections are asked
+    for — each one costs output tokens and is only worth asking when
+    something downstream consumes it.
     """
 
-    def test_without_auto_glossary_asks_for_no_renderings(self):
+    def test_summary_alone_when_style_is_fixed_and_no_glossary(self):
+        prompt = handoff_prompt(with_glossary=False, with_style=False)
+        assert "1." in prompt and "summary" in prompt.lower()
+        assert "2." not in prompt
+        assert "<renderings>" not in prompt
+
+    def test_style_is_requested_by_default(self):
+        """Only a user-supplied style turns it off."""
+        assert "style" in handoff_prompt(with_glossary=False).lower()
+
+    def test_style_is_asked_for_when_the_user_has_not_fixed_one(self):
+        prompt = handoff_prompt(with_glossary=False, with_style=True)
+        assert "2." in prompt and "style" in prompt.lower()
+
+    def test_a_user_style_is_not_asked_for(self):
+        """It is already known, so asking wastes output tokens and invites
+        the model to drift from it."""
+        prompt = handoff_prompt(with_glossary=False, with_style=False)
+        assert "style" not in prompt.lower()
+
+    def test_renderings_are_asked_for_only_with_the_glossary_flag(self):
+        assert "<renderings>" in handoff_prompt(with_glossary=True)
         assert "<renderings>" not in handoff_prompt(with_glossary=False)
 
-    def test_with_auto_glossary_asks_for_the_tagged_block(self):
-        prompt = handoff_prompt(with_glossary=True)
-        assert "<renderings>" in prompt and "</renderings>" in prompt
-        assert "→" in prompt  # the line format the parser reads
+    def test_sections_are_numbered_from_one_without_gaps(self):
+        """Numbering follows what is actually asked for, so a fixed style does
+        not leave the glossary as section 3 of two."""
+        prompt = handoff_prompt(with_glossary=True, with_style=False)
+        assert "1." in prompt and "2." in prompt
+        assert "3." not in prompt
 
-    def test_both_forms_ask_for_a_summary_and_a_style_section(self):
-        for flag in (True, False):
-            prompt = handoff_prompt(with_glossary=flag).lower()
-            assert "1." in prompt and "summary" in prompt
-            assert "2." in prompt and "style" in prompt
-
-    def test_only_the_glossary_form_has_a_third_section(self):
-        assert "3." in handoff_prompt(with_glossary=True)
-        assert "3." not in handoff_prompt(with_glossary=False)
+    def test_all_three_sections_are_numbered_in_order(self):
+        prompt = handoff_prompt(with_glossary=True, with_style=True)
+        assert prompt.index("1.") < prompt.index("2.") < prompt.index("3.")
 
     def test_the_prompt_and_the_parser_agree_on_the_tag(self):
         """The one coupling that silently loses every learned term."""
-        from book_maker.session_context import parse_handoff_glossary
-
         prompt = handoff_prompt(with_glossary=True)
         assert "<renderings>" in prompt
         assert (
             parse_handoff_glossary("<renderings>\nA → B\n</renderings>").source
             == "tagged"
         )
-
-    def test_the_style_section_is_capped(self):
-        """Uncapped it grew past twenty bullets and became a prose glossary."""
-        assert "3" in handoff_prompt(with_glossary=True).split("2.")[1].split("3.")[0]
-
-    def test_the_summary_is_asked_for_before_the_style(self):
-        prompt = handoff_prompt(with_glossary=True)
-        assert prompt.index("1.") < prompt.index("2.") < prompt.index("3.")
 
 
 def parse_handoff_glossary_g(text):

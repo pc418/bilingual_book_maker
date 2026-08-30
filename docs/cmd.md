@@ -43,7 +43,7 @@ sections after it provide additional notes for selected workflows.
 | `--test` | Translate only a preview sample. |
 | `--test_num N` | Number of test units; default `10`. |
 | `--resume` | Continue from the loader's saved checkpoint. |
-| `--prompt VALUE_OR_FILE` | User/system prompt template; the user template requires `{text}`. |
+| `--prompt VALUE_OR_FILE` | Prompt config: `user` (requires `{text}`), `system`, and `style`. A `style` is applied to every request and written into each handoff report verbatim, and stops the report asking the model to describe the style itself. On the `codex` format `system` is appended to the built-in instructions rather than replacing them. |
 | `--temperature FLOAT` | Sampling temperature; default `1.0`. |
 | `--use_context [window\|session]` | Send earlier paragraphs as context. Bare or `window`: re-send the last few source/translation pairs (the long-standing behaviour). `session`: one append-only history, re-read at the endpoint's prompt-cache rate. |
 | `--context_paragraph_limit N` | Window mode only: context history limit. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
