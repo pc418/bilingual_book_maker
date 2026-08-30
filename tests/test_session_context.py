@@ -42,22 +42,28 @@ class TestEstimateTokens:
 
 
 class TestCompactBudget:
-    def test_known_models_use_their_balanced_point(self):
-        assert compact_budget_for("gpt-5.6-luna") == 17000
-        assert compact_budget_for("deepseek-v4-flash-0731") == 7000
-        assert compact_budget_for("glm-5.3") == 8000
+    """One budget for every model.
 
-    def test_unknown_model_falls_back(self):
+    The per-model table this replaces optimised for cost, which at current
+    prices is the wrong objective: the whole context bill for a novel is
+    cents, while a shorter window means more handoff seams and a seam is
+    where names drift.
+    """
+
+    def test_every_model_gets_the_same_budget(self):
+        for model in ("gpt-5.6-luna", "deepseek-v4-flash-0731", "glm-5.3"):
+            assert compact_budget_for(model) == DEFAULT_COMPACT_BUDGET
+
+    def test_an_unknown_model_gets_it_too(self):
         assert compact_budget_for("some-new-model") == DEFAULT_COMPACT_BUDGET
 
-    def test_none_model_falls_back(self):
+    def test_none_model_gets_it_too(self):
         assert compact_budget_for(None) == DEFAULT_COMPACT_BUDGET
 
-    def test_lookup_is_case_insensitive_and_prefix_tolerant(self):
-        assert compact_budget_for("openai/GPT-5.6-Luna") == 17000
-
-    def test_vendor_prefixed_id_resolves(self):
-        assert compact_budget_for("deepseek/deepseek-v4-flash-0731") == 7000
+    def test_the_budget_can_hold_a_useful_window(self):
+        """Below ~500 a window cannot hold a paragraph and its translation, so
+        every unit would trigger a paid handoff."""
+        assert DEFAULT_COMPACT_BUDGET >= 500
 
 
 class TestSessionHistory:

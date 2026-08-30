@@ -42,14 +42,19 @@ _CJK_CHARS_PER_TOKEN = 1.7
 # The cost-balanced budget per model: same spend as window mode, ~5-10x the
 # context. Keys are matched as substrings of the model id so vendor prefixes
 # ("openai/gpt-5.6-luna") and date suffixes resolve.
-_COMPACT_BUDGETS = {
-    "gpt-5.6-luna": 17000,
-    "deepseek-v4-flash": 7000,
-    "glm-5.3": 8000,
-}
-
-# Unknown models get the 0.2x-tier balanced figure: conservative for a cheap
-# cache, still well above window mode's context.
+# One budget for every model. The per-model table this replaces optimised for
+# cost, and at current prices that is optimising the wrong thing: a novel's
+# whole context bill is cents either way, while a shorter window means more
+# handoff seams, and a seam is where names and register drift.
+#
+# 8000 costs about 0.53x window mode on a cheap-cache endpoint (0.10x) and
+# about 1.10x on a dearer one (0.233x) — so the worst case is roughly what
+# the mode it replaces already cost, for several times the context. Anyone
+# who wants the cheapest setting can pass --context-compact-at 2500, which
+# measures at ~0.4-0.5x on both tiers.
+#
+# Derivation and the measured report sizes behind it:
+# docs/260827-feat-CODEX_TRANSLATOR_PROVIDER.md
 DEFAULT_COMPACT_BUDGET = 8000
 
 
@@ -63,13 +68,12 @@ def estimate_tokens(text: str) -> int:
 
 
 def compact_budget_for(model: str | None) -> int:
-    """The model's balanced compact budget, or the conservative default."""
-    if not model:
-        return DEFAULT_COMPACT_BUDGET
-    name = model.lower()
-    for key, budget in _COMPACT_BUDGETS.items():
-        if key in name:
-            return budget
+    """The compact budget for `model`.
+
+    Uniform today. Kept as a function because the budget is a property of the
+    endpoint's cache pricing, so a model that prices very differently would be
+    special-cased here rather than at every call site.
+    """
     return DEFAULT_COMPACT_BUDGET
 
 
@@ -133,12 +137,18 @@ _STYLE_REQUEST_NO_GLOSSARY = (
     "Style — up to 3 lines of what translation style is used so far."
 )
 
+# Only *new* renderings are requested. The accumulated set is already held on
+# this side and merged, and it is replayed to the model in the seed, so asking
+# for the whole list again is output paid twice — and it compounds: a shorter
+# budget means more compacts, each re-emitting a longer list, so the cost of
+# re-listing grows with the square of the compact count. Asking only for what
+# is new keeps the report flat for the length of the book.
 _GLOSSARY_REQUEST = (
-    "Established renderings — every noun we need to keep unified, each "
-    "listed exactly once, one per line as `term → translation # note` (the "
-    "note is optional). Wrap the whole list in <renderings> and </renderings> "
-    "tags so its start and end are unambiguous. This is the only place term "
-    "equivalences belong."
+    "Established renderings — nouns we need to keep unified that are **not "
+    "already listed above**. If none are new, emit an empty block. One per "
+    "line as `term → translation # note` (the note is optional). Wrap the "
+    "list in <renderings> and </renderings> tags so its start and end are "
+    "unambiguous. This is the only place term equivalences belong."
 )
 
 

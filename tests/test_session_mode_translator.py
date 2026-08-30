@@ -225,6 +225,53 @@ class TestCompact:
         assert len(t.sent) == 2
 
 
+class TestIncrementalRenderings:
+    """The compact asks only for renderings not already established.
+
+    Re-listing everything each time is output paid twice — and it compounds,
+    since a shorter budget means more compacts each emitting a longer list.
+    The accumulated set is held here and merged, so nothing is lost.
+    """
+
+    def test_the_prompt_asks_only_for_new_terms(self, tmp_path):
+        t = _translator(
+            ["译文", "Summary.", "译文"],
+            context_compact_at=10,
+            glossary_auto=True,
+            handoff_path=tmp_path / "h.md",
+        )
+        t.get_translation("a" * 200)
+        assert "not already listed" in t.sent[1]["messages"][-1]["content"]
+
+    def test_earlier_terms_survive_a_report_that_omits_them(self, tmp_path):
+        """A later window reporting only its own new terms must not drop the
+        ones an earlier window established."""
+        first = "Summary.\n<renderings>\nBoxer → 鲍克瑟\n</renderings>"
+        second = "Summary.\n<renderings>\nClover → 苜蓿\n</renderings>"
+        t = _translator(
+            ["译文", first, "译文", second, "译文"],
+            context_compact_at=10,
+            glossary_auto=True,
+            handoff_path=tmp_path / "h.md",
+        )
+        t.get_translation("a" * 200)
+        t.get_translation("b" * 200)
+        assert t.glossary.lookup("Boxer").translation == "鲍克瑟"
+        assert t.glossary.lookup("Clover").translation == "苜蓿"
+
+    def test_an_empty_block_keeps_what_is_already_known(self, tmp_path):
+        first = "Summary.\n<renderings>\nBoxer → 鲍克瑟\n</renderings>"
+        t = _translator(
+            ["译文", first, "译文", "Summary.\n<renderings>\n</renderings>", "译文"],
+            context_compact_at=10,
+            glossary_auto=True,
+            handoff_path=tmp_path / "h.md",
+        )
+        t.get_translation("a" * 200)
+        t.get_translation("b" * 200)
+        assert t.glossary.lookup("Boxer").translation == "鲍克瑟"
+
+
 class TestAutoGlossary:
     def test_off_by_default_the_compact_prompt_has_no_json(self, tmp_path):
         t = _translator(

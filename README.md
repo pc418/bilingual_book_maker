@@ -457,9 +457,9 @@ Notes:
 
   Session mode only. The estimated-token budget the history may reach before
   it is compacted into a handoff report. Left unset, each model uses its
-  cost-balanced budget — roughly the point where session mode spends what
-  window mode spends while carrying several times the context. `2500` is the
-  cheapest setting on most endpoints.
+  default of `8000`, which costs between 0.5x and 1.1x what window mode
+  costs while carrying several times the context. `2500` is the cheapest
+  setting if you want it; the minimum is `500`.
 
 - `--glossary`:
 
