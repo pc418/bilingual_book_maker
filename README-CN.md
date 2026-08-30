@@ -13,15 +13,42 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制�
 
 ## 快速开始
 
-本地放了一个 `test_books/animal_farm.epub` 给大家测试
+```shell
+pip install -U bbook_maker
+# 或者从源码目录：pip install -r requirements.txt   （之后用 python3 make_book.py ...）
+```
+
+本地放了一个 `test_books/animal_farm.epub` 给大家测试。先选一种付费方式，
+两种方式的书籍参数完全相同。
+
+**用 ChatGPT 订阅额度。** 需要装好并登录 [Codex CLI](https://developers.openai.com/codex/cli)
+（`--codex-login`）。不需要 key，也不需要 `--api_base`：
 
 ```shell
-pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
-或
-pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
+bbook_maker --book_name test_books/animal_farm.epub --language zh-hans \
+  --model codex \
+  --plan-classify model --use_context session --glossary-auto
 ```
+
+**用任意 OpenAI 兼容 API。** 自己的地址、模型和 key —— 这里以 DeepSeek 为例，
+OpenAI、Groq、xAI、OpenRouter、Gemini、vLLM、Ollama 等同理：
+
+```shell
+bbook_maker --book_name test_books/animal_farm.epub --language ja \
+  --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat \
+  --plan-classify model --use_context session --glossary-auto
+```
+
+这三个共用参数，是「整本书」和「扫一遍标签」的区别所在：
+
+- `--plan-classify model` —— 先对全书分区，再让模型判断哪些是正文、哪些是版式
+  附属物（书眉、页码），从而不会静默漏译。
+- `--use_context session` —— 单条持续累积的上下文，写满后压缩成交接报告，
+  这样后面的章节仍然记得人物是谁。
+- `--glossary-auto` —— 每次压缩都会记录已确定的译名并继续带下去，保证全书统一。
+  想固定自己的译法就加 `--glossary terms.txt`，它的优先级最高。
+
+想先试水就加 `--test`，只翻几段。中断后重跑同一条命令即可续译。
 
 ## 翻译服务
 
@@ -324,9 +351,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 因此把它写成模型名即可选中它，就像其他固定引擎一直以来的用法。
 
 `--model` 在这里是可选的，默认 `gpt-5.6-luna`；侧车还提供
-`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.5` 和 `gpt-5.2`。指定默认值不只是
-偏好问题：压缩预算是按模型选取的，不指定就会退回到一个保守值，而不是
-luna 自己的预算。
+`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.5` 和 `gpt-5.2`。
 
 用 `--codex-login` 在这里登录；没有浏览器的机器上用 `--codex-login device`，
 它会打印一个验证码供你在别处输入。若 Codex CLI 已登录则无需任何操作。

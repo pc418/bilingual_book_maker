@@ -53,9 +53,7 @@ endpoint, so naming it as the model selects it, the way the other
 non-endpoint engines have always been chosen.
 
 `--model` is optional here and defaults to `gpt-5.6-luna`; the sidecar also
-offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`. Naming a
-default matters beyond taste: the compact budget is chosen per model, so an
-unnamed one would fall back to a conservative figure instead of luna's.
+offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`.
 
 Sign in from here with `--codex-login` (or `--codex-login device` on a
 machine with no browser, which prints a code to enter elsewhere). If the
@@ -94,15 +92,46 @@ Gemini's OpenAI-compatible endpoint, vLLM, LM Studio, Ollama. See
 
 ## Quick Start
 
-A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
+```shell
+pip install -U bbook_maker
+# or, from a clone: pip install -r requirements.txt   (then: python3 make_book.py ...)
+```
+
+A sample book, `test_books/animal_farm.epub`, is included. Pick how you pay —
+the book flags are the same either way.
+
+**On a ChatGPT subscription.** Needs the [Codex CLI](https://developers.openai.com/codex/cli)
+installed and signed in (`--codex-login`). No key, no `--api_base`:
 
 ```shell
-pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
-OR
-pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
+bbook_maker --book_name test_books/animal_farm.epub --language zh-hans \
+  --model codex \
+  --plan-classify model --use_context session --glossary-auto
 ```
+
+**On any OpenAI-compatible API.** Your own endpoint, model and key — DeepSeek
+shown, but OpenAI, Groq, xAI, OpenRouter, Gemini, vLLM, Ollama and the rest
+work the same way:
+
+```shell
+bbook_maker --book_name test_books/animal_farm.epub --language ja \
+  --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat \
+  --plan-classify model --use_context session --glossary-auto
+```
+
+The three shared flags are what make it a book rather than a tag sweep:
+
+- `--plan-classify model` — partitions the whole book, then has the model rule
+  on what is content and what is apparatus (running heads, page numbers), so
+  nothing is silently missed.
+- `--use_context session` — one running history, compacted into a handoff
+  report as it fills, so late chapters still know who the characters are.
+- `--glossary-auto` — each compact records the renderings it established and
+  carries them on, so names stay stable. Add `--glossary terms.txt` to pin your
+  own; those always win.
+
+Add `--test` to try any of it on a few paragraphs first. Runs are resumable —
+rerun the same command after a Ctrl+C.
 
 ## Translate Service
 
@@ -621,6 +650,9 @@ python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags di
 # Plan mode: auto-discover translatable content (poetry, blockquotes, table cells,
 # ...) and batch verse lines in stanza windows; preview the plan with --plan-dry-run
 python3 make_book.py --book_name test_books/animal_farm.epub --plan-dry-run
+# Let the model rule on what is content and what is apparatus (see Quick Start)
+python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify model
+# Or translate the whole partition without classifying anything
 python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify most
 
 # Tweaking the prompt
