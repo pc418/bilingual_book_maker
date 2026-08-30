@@ -85,3 +85,47 @@ class TestGlossaryFlags:
 
     def test_glossary_auto_can_be_enabled(self):
         assert _parse("--glossary-auto").glossary_auto is True
+
+
+class TestSessionOnlyWarnings:
+    """`--context-compact-at` and `--glossary-auto` need a context window.
+
+    Session mode is one. So is the codex format, whose thread *is* the window
+    and which compacts whether or not --use_context was passed — warning there
+    would claim a flag was ignored when it was obeyed.
+    """
+
+    def _warnings(self, capsys, *args, book):
+        """Run the CLI far enough to emit the warning, then let it fail.
+
+        The warning is printed before the book is opened, so a placeholder
+        file is enough — whatever it raises afterwards is not the point.
+        """
+        import sys
+        from unittest.mock import patch
+
+        from book_maker.cli import main
+
+        argv = ["make_book.py", "--book_name", book, *args]
+        with patch.object(sys, "argv", argv):
+            try:
+                main()
+            except BaseException:
+                pass
+        return capsys.readouterr().out
+
+    def test_warns_for_a_plain_openai_run(self, capsys, tmp_path):
+        book = tmp_path / "b.epub"
+        book.write_bytes(b"not really an epub")
+        out = self._warnings(
+            capsys, "--glossary-auto", "--api_format", "google", book=str(book)
+        )
+        assert "only applies" in out
+
+    def test_does_not_warn_for_codex(self, capsys, tmp_path):
+        book = tmp_path / "b.epub"
+        book.write_bytes(b"not really an epub")
+        out = self._warnings(
+            capsys, "--glossary-auto", "--api_format", "codex", book=str(book)
+        )
+        assert "only applies" not in out

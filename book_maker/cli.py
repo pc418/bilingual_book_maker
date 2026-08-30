@@ -789,9 +789,11 @@ def main():
             raise SystemExit(f"Could not read --glossary: {err}")
         print(f"[green]Glossary: {len(glossary)} pinned terms loaded[/green]")
 
-    # These only do anything in session mode; saying so beats silently
-    # ignoring a flag the user deliberately passed.
-    if options.context_mode != "session":
+    # These need a context window to act on. Session mode is one; so is the
+    # codex format, where the thread *is* the window and compaction is not
+    # optional — so the warning must not fire there, or it tells the user a
+    # flag was ignored when it was in fact obeyed.
+    if options.context_mode != "session" and api_format != "codex":
         for flag, value in (
             ("--context-compact-at", options.context_compact_at),
             ("--glossary-auto", options.glossary_auto),
