@@ -617,7 +617,9 @@ def test_orcarouter_uses_orca_endpoint_and_default_model():
 def test_orcarouter_honors_custom_api_base():
     from book_maker.translator.orcarouter_translator import OrcaRouterTranslator
 
-    translator = OrcaRouterTranslator("sk-orca-test", "Chinese", api_base="http://proxy.local/v1")
+    translator = OrcaRouterTranslator(
+        "sk-orca-test", "Chinese", api_base="http://proxy.local/v1"
+    )
     assert translator.api_base == "http://proxy.local/v1"
     assert translator.openai_client.base_url == "http://proxy.local/v1/"
 
