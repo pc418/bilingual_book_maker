@@ -50,6 +50,20 @@ class StructuredOutputUnsupported(Exception):
     """
 
 
+class StructuredRefusal(Exception):
+    """The model declined to answer this particular text.
+
+    Deliberately not a `StructuredOutputUnsupported`: a refusal says nothing
+    about whether the endpoint honors the schema, and counting it as a
+    capability failure would demote structured outputs for the whole run after
+    two paragraphs. Callers retranslate the one paragraph without a schema.
+    """
+
+    def __init__(self, refusal):
+        super().__init__(f"Model refused to translate: {refusal}")
+        self.refusal = refusal
+
+
 class ProbeDeferred(Exception):
     """The probe could not get an answer right now; ask again later."""
 
