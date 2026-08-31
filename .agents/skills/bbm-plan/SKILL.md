@@ -66,10 +66,10 @@ API_BASE_FLAG=()
 ROUTE=(--key "$KEY" --model "$MODEL")   # ← add --api_format only if step 1b says so
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
   --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}" \
-  --use_context session --glossary-auto
+  --use_context session
 ```
 
-**The defaults above are the defaults on purpose**, and all three hang
+**The defaults above are the defaults on purpose**, and they hang
 together:
 
 - `--plan-classify agent` — this skill's hard constraint (see the top).
@@ -80,18 +80,11 @@ together:
   survive a book-length run. **Watch the first ten requests**: if the
   endpoint never reports cached tokens the run says so, and on that endpoint
   session mode costs *more* than plain `--use_context` — drop back to it.
-- `--glossary-auto` — each compact also records the renderings it
-  established and carries them forward. Free consistency; it rides a request
-  that happens anyway.
 - **No `--parallel-workers`.** Sequential is the default here and should
   stay that way: parallel workers each get their own context window with no
   seeding between them, so exactly the continuity these flags buy is what
   parallelism gives up. Reach for it only when a book is long enough that
   wall-clock beats consistency, and say so to the user when you do.
-
-Add `--glossary terms.txt` when the user already knows how a name must
-render. Pinned terms never drift and always beat what the model established;
-a model that disagrees is reported rather than silently overruling them.
 
 (The conditional flag is an array on purpose: `${VAR:+--flag "$VAR"}`
 mis-tokenizes under zsh — macOS's default shell — into a single argv word
@@ -263,8 +256,8 @@ background with output to a log:
 ```
 
 `--quiet` keeps the per-paragraph echoes and the handoff reports out of the
-log; warnings and errors still print, so a failed compact or a glossary
-conflict is still visible.
+log; warnings and errors still print, so a failed compact is still
+visible.
 
 (Bash `run_in_background: true`; poll with `tail -5 run.log`.) On any crash,
 rerun the identical command — resume is positional and fingerprint-guarded.
@@ -284,7 +277,7 @@ BOOK=test_books/animal_farm.epub
 LANG="Simplified Chinese"
 ROUTE=(--key "$KEY" --model "$MODEL")
 BASE=(--book_name "$BOOK" "${ROUTE[@]}" --language "$LANG"
-      --use_context session --glossary-auto)
+      --use_context session)
 
 # 2. Plan — free, no API call. Writes <book>_plan.json, prints the handoff
 #    block and exits without translating.
@@ -316,13 +309,12 @@ instead.
 ```
 — handoff report, window 1 —
 ### 摘要 …
-### Established renderings
-Animal Farm → 动物庄园
-Ministry of Information → 新闻部
+### Style
+…
 ```
-A context window filled and was compacted. The summary and those renderings
-seed the next window, and are appended to `<book>_handoff.md` — readable and
-hand-editable if a rendering is wrong.
+A context window filled and was compacted. The report seeds the next window
+and is appended to `<book>_handoff.md` — readable and hand-editable if it
+got something wrong.
 
 ```
 Warning: this endpoint has not reported a single cached prompt token after
@@ -349,8 +341,6 @@ signed in.
 | | `--parallel-workers 4` | only when a long book makes wall-clock worth losing that continuity — say so to the user. Never on the `codex` route, where turns serialize on one thread anyway and the flag buys nothing |
 | consistency | `--use_context` | fiction with recurring names/terms; costs extra tokens (~6x the book); in parallel runs context is chapter-local |
 | | `--use_context session` | same purpose, cheaper on an endpoint that bills prompt-cache reads: one append-only history, compacted into a handoff report at `--context-compact-at`. Warns if no cached tokens are ever reported |
-| | `--glossary terms.txt` | the user already knows how a name must render; `term → translation # note` lines, injected only into paragraphs where the term occurs. Parallel-safe — no warmup, no ordering |
-| | `+ --glossary-auto` | let each compact record the renderings it established and carry them forward; pinned terms still win |
 | voice/style | `--prompt prompt.json` | user states a register ("literary", "plain modern") — encode it once in the system message |
 | styling | `--translation_style "color:#808080;font-style:italic"` | bilingual output should visually separate the translation |
 | scope | `--only_filelist` / `--exclude_filelist` | user wants specific chapters; exact internal names — a typo fails loud at the coverage gate |
@@ -424,14 +414,7 @@ spot-checking one early and one late chapter.
 
 ## Next phase
 
-`references/next-phase.md` in this skill dir: a book brief (short intro +
-character-name glossary) drafted by the agent at classify time and injected
-through `prompt.json`, making `--parallel-workers` runs terminology-consistent
-without `--use_context`'s sequential warmup.
-
-**Half of this shipped 2026-08-29** as `--glossary` / `--glossary-auto`: a
-pinned-vocabulary file with per-paragraph injection, which is parallel-safe
-and needs no warmup — the glossary half of the brief, reached from the CLI
-instead of through `prompt.json`. What remains unbuilt is the *intro* half
-(the one-paragraph book summary) and having the agent draft either of them at
-classify time. See that file for what changed.
+`references/next-phase.md` in this skill dir: a short book brief drafted by
+the agent at classify time and injected through `prompt.json`, so a
+`--parallel-workers` run gets the orienting context that `--use_context`'s
+sequential warmup would otherwise be needed for. Unbuilt — see that file.

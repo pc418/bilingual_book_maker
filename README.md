@@ -60,7 +60,7 @@ Because a fresh Codex thread costs about 17k tokens of preamble before your
 first paragraph, one thread is opened and reused for the whole book — which
 also makes it a context window. At `--context-compact-at` it is condensed
 into a handoff report and a fresh thread is seeded with it, exactly like
-`--use_context session`. `--glossary` and `--glossary-auto` work here too.
+`--use_context session`.
 
 bbm prints how much of your window remains before starting, and again
 whenever that figure moves. If the window runs out mid-book the run does not
@@ -105,7 +105,7 @@ installed and signed in — `codex login`, once. No key, no `--api_base`:
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub --language zh-hans \
   --model codex \
-  --plan-classify model --use_context session --glossary-auto
+  --plan-classify model --use_context session
 ```
 
 **On any OpenAI-compatible API.** Your own endpoint, model and key — DeepSeek
@@ -115,19 +115,16 @@ work the same way:
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub --language ja \
   --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat \
-  --plan-classify model --use_context session --glossary-auto
+  --plan-classify model --use_context session
 ```
 
-The three shared flags are what make it a book rather than a tag sweep:
+The two shared flags are what make it a book rather than a tag sweep:
 
 - `--plan-classify model` — partitions the whole book, then has the model rule
   on what is content and what is apparatus (running heads, page numbers), so
   nothing is silently missed.
 - `--use_context session` — one running history, compacted into a handoff
   report as it fills, so late chapters still know who the characters are.
-- `--glossary-auto` — each compact records the renderings it established and
-  carries them on, so names stay stable. Add `--glossary terms.txt` to pin your
-  own; those always win.
 
 Add `--test` to try any of it on a few paragraphs first. Runs are resumable —
 rerun the same command after a Ctrl+C. Installed from PyPI instead
@@ -474,8 +471,8 @@ Notes:
   cache rate — context can then grow to chapter length for less money than
   window mode spends on three paragraphs. When the history reaches the
   compact budget, the model is asked for a translator handoff report
-  (summary, style notes, and with `--glossary-auto` the renderings it has
-  established), which seeds the next window and is appended to
+  (a summary, and style notes unless you fixed a style through `--prompt`),
+  which seeds the next window and is appended to
   `<book>_handoff.md`. That file is plain markdown: readable, hand-editable,
   and re-read when a run resumes.
 
@@ -490,32 +487,6 @@ Notes:
   default of `8000`, which costs between 0.5x and 1.1x what window mode
   costs while carrying several times the context. `2500` is the cheapest
   setting if you want it; the minimum is `500`.
-
-- `--glossary`:
-
-  Path to a pinned-vocabulary file: `term → translation` lines, with an
-  optional `# note`. A pinned term is injected into a paragraph's prompt only
-  when that term actually occurs in it, so the cost is a few tokens on the
-  paragraphs that need it and nothing elsewhere. Latin-script terms match on
-  word boundaries, CJK terms as substrings.
-
-- `--glossary-auto`:
-
-  Session mode only, off by default. Also asks each handoff report for the
-  renderings it established — as `term → translation # note` lines inside a
-  `<renderings>` block, the same format `--glossary` files use — and carries
-  them into later windows.
-
-  Two glossaries are kept apart. Terms from your `--glossary` file are
-  *pinned*: they never change, and a model that renders one differently is
-  reported rather than silently overruling you. Everything else is *learned*,
-  and each window's reading replaces the previous one, since by then the model
-  has seen more of the book. Both are injected per paragraph, only where the
-  term actually occurs.
-
-  If the model omits the block, loose `term → translation` lines are recovered
-  instead, and the run says which route it had to take — with this flag on,
-  silently learning nothing looks exactly like a book with no recurring terms.
 
 - `--parallel-workers`:
 

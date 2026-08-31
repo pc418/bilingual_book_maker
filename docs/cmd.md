@@ -48,8 +48,6 @@ sections after it provide additional notes for selected workflows.
 | `--use_context [window\|session]` | Send earlier paragraphs as context. Bare or `window`: re-send the last few source/translation pairs (the long-standing behaviour). `session`: one append-only history, re-read at the endpoint's prompt-cache rate. |
 | `--context_paragraph_limit N` | Window mode only: context history limit. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
 | `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`. `2500` is the cheapest setting; `8000` costs 0.5-1.1x what window mode costs and carries several times the context. |
-| `--glossary FILE` | Pinned vocabulary: `term → translation` lines with an optional `# note`. Only terms occurring in a paragraph are injected into its prompt. |
-| `--glossary-auto` | Session mode only: also ask each handoff report for the renderings it established, as `term → translation # note` lines in a `<renderings>` block, and carry them into later windows. Terms pinned by `--glossary` always win; unpinned ones follow the newest window. Off by default. |
 | `--accumulated_num N` | EPUB token/character accumulation and SRT subtitle-block character batching (capped at 512 for SRT); ignored in EPUB plan mode. |
 | `--batch_size N` | Aggregated unit count for loaders that support it. |
 | `--block_size N` | Merge paragraphs into delimiter-translated blocks. |
