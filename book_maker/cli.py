@@ -802,11 +802,21 @@ def main():
         )
     elif options.glossary or options.context_mode == "session":
         # txt, srt and pdf never hand context to the model, so a pin or a
-        # session budget would quietly do nothing at all.
+        # session budget would quietly do nothing at all. Name only the flags
+        # actually passed: naming one the user did not use is how an
+        # unadvertised flag ends up advertised anyway.
+        ignored = [
+            flag
+            for flag, given in (
+                ("--glossary", options.glossary),
+                ("--use_context session", options.context_mode == "session"),
+            )
+            if given
+        ]
         print(
-            f"[bold yellow]Warning:[/bold yellow] --glossary and "
-            f"--use_context session are not supported for {book_type} books; "
-            f"they will be ignored."
+            f"[bold yellow]Warning:[/bold yellow] {' and '.join(ignored)} "
+            f"{'is' if len(ignored) == 1 else 'are'} not supported for "
+            f"{book_type} books; ignoring."
         )
 
     e = book_loader(
