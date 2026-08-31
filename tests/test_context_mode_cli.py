@@ -129,3 +129,51 @@ class TestSessionOnlyWarnings:
             capsys, "--glossary-auto", "--api_format", "codex", book=str(book)
         )
         assert "only applies" not in out
+
+
+class TestUnsupportedLoaderWarning:
+    """txt, srt and pdf never hand context to the model, so the flags that
+    need one are reported as ignored rather than silently dropped.
+
+    The warning must name only what was actually passed. `--glossary` is
+    deliberately absent from `--help` and the READMEs, so naming it to
+    someone who never used it would advertise it right back.
+    """
+
+    def _warn(self, capsys, tmp_path, *args):
+        import sys
+        from unittest.mock import patch
+
+        from book_maker.cli import main
+
+        book = tmp_path / "b.txt"
+        book.write_text("hello world\n", encoding="utf-8")
+        argv = [
+            "make_book.py",
+            "--book_name",
+            str(book),
+            "--key",
+            "x",
+            "--model",
+            "gpt-4o-mini",
+            *args,
+        ]
+        with patch.object(sys, "argv", argv):
+            try:
+                main()
+            except BaseException:
+                pass
+        return capsys.readouterr().out
+
+    def test_session_alone_does_not_name_the_glossary(self, capsys, tmp_path):
+        out = self._warn(capsys, tmp_path, "--use_context", "session")
+        assert "--use_context session is not supported" in out
+        assert "glossary" not in out.lower()
+
+    def test_a_passed_glossary_is_named(self, capsys, tmp_path):
+        terms = tmp_path / "terms.txt"
+        terms.write_text("Winston -> 温斯顿\n", encoding="utf-8")
+        out = self._warn(
+            capsys, tmp_path, "--use_context", "session", "--glossary", str(terms)
+        )
+        assert "--glossary and --use_context session are not supported" in out
