@@ -1,10 +1,24 @@
-"""Keep the user-facing CLI references in sync with argparse."""
+"""Keep the user-facing CLI references in sync with argparse.
+
+An option carrying `help=argparse.SUPPRESS` is deliberately unadvertised and
+is skipped here — it is absent from `--help` too, so requiring a README row
+for it would be requiring the opposite of what it asks for.
+"""
 
 import ast
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _is_suppressed(node: ast.Call) -> bool:
+    for keyword in node.keywords:
+        if keyword.arg != "help":
+            continue
+        value = keyword.value
+        return isinstance(value, ast.Attribute) and value.attr == "SUPPRESS"
+    return False
 
 
 def _long_cli_options() -> set[str]:
@@ -16,6 +30,8 @@ def _long_cli_options() -> set[str]:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "add_argument"
         ):
+            continue
+        if _is_suppressed(node):
             continue
         options.update(
             arg.value

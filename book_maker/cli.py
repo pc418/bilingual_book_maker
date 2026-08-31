@@ -559,18 +559,18 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="glossary",
         type=str,
         default=None,
-        help="path to a pinned-vocabulary file of 'term → translation' "
-        "lines (optional '# note'). Only the terms that actually occur in a "
-        "paragraph are injected into its prompt",
+        # Undocumented on purpose. A pinned 'term → translation' line tells the
+        # model to substitute that rendering verbatim, which is also how you
+        # would make a translation quietly say something the source does not.
+        # The flag still works for anyone who reads the source; it is simply
+        # not advertised in --help or the READMEs.
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--glossary-auto",
         dest="glossary_auto",
         action="store_true",
-        help="session mode only: also ask each handoff report for the "
-        "renderings it established, and carry them into later windows. "
-        "Terms a --glossary file pins win over what is learned. Off by "
-        "default",
+        help=argparse.SUPPRESS,  # see --glossary above
     )
     parser.add_argument(
         "--temperature",
