@@ -15,6 +15,8 @@ class FakeServer:
         self.turns = []
         self.threads = []
         self.closed = False
+        self.model_context_window = None
+        self.thread_windows = {}
         self._limits = (
             limits
             if limits is not None
@@ -41,6 +43,11 @@ class FakeServer:
 
     def latest_rate_limits(self):
         return self._limits
+
+    def latest_model_context_window(self, thread_id=None):
+        if thread_id is not None and thread_id in self.thread_windows:
+            return self.thread_windows[thread_id]
+        return self.model_context_window
 
     def set_limits(self, limits):
         self._limits = limits
@@ -578,3 +585,72 @@ class TestQuestionThread:
         with pytest.raises(CodexTurnFailed):
             t._chat_completion("q")
         assert len(t.server.threads) == 2
+
+
+class TestCompactionDisabled:
+    """`--no-context-compact`: open a fresh thread, never buy a report."""
+
+    def test_it_starts_a_new_thread_without_a_handoff_turn(self, tmp_path):
+        t = _codex(
+            ["译文"] * 40,
+            context_compact_at=100,
+            no_context_compact=True,
+            handoff_path=tmp_path / "h.md",
+        )
+        for _ in range(4):
+            t.translate("x" * 400)
+        assert len(t.server.threads) > 1, "the thread was never rolled over"
+        assert not any(
+            turn["text"].startswith(handoff_prompt()[:40]) for turn in t.server.turns
+        ), "a handoff report was requested with compaction disabled"
+        assert not (tmp_path / "h.md").exists()
+
+    def test_the_next_thread_is_seeded_with_nothing(self):
+        t = _codex(["译文"] * 40, context_compact_at=100, no_context_compact=True)
+        for _ in range(4):
+            t.translate("x" * 400)
+        assert all(
+            not (thread["base_instructions"] or "").count("handoff")
+            for thread in t.server.threads
+        )
+
+
+class TestAutoCompactBudget:
+    """`--context-compact-at 0`: 0.9x the window the sidecar reports."""
+
+    def test_it_takes_nine_tenths_of_the_reported_window(self, capsys):
+        t = _codex(["译文"], context_compact_at=0)
+        t.server.model_context_window = 10_000
+        assert t._budget() == 9_000
+        assert "10000" in capsys.readouterr().out
+
+    def test_it_says_so_and_falls_back_when_the_sidecar_reports_none(self, capsys):
+        from book_maker.session_context import DEFAULT_COMPACT_BUDGET
+
+        t = _codex(["译文"], context_compact_at=0)
+        t.server.model_context_window = None
+        assert t._budget() == DEFAULT_COMPACT_BUDGET
+        assert "context window" in capsys.readouterr().out
+
+    def test_a_given_budget_is_left_alone(self):
+        t = _codex(["译文"], context_compact_at=4321)
+        assert t._budget() == 4321
+
+    def test_another_thread_s_window_is_not_borrowed(self):
+        """Plan classification runs on its own thread, maybe another model."""
+        t = _codex(["译文"], context_compact_at=0)
+        t.translate("x" * 200)
+        t.server.thread_windows = {"th-classifier": 8_000}
+        t.server.model_context_window = None
+        from book_maker.session_context import DEFAULT_COMPACT_BUDGET
+
+        assert t._budget() == DEFAULT_COMPACT_BUDGET
+
+    def test_a_window_reported_late_is_still_picked_up(self):
+        t = _codex(["译文"] * 4, context_compact_at=0)
+        from book_maker.session_context import DEFAULT_COMPACT_BUDGET
+
+        assert t._budget() == DEFAULT_COMPACT_BUDGET
+        t.translate("x" * 200)
+        t.server.thread_windows = {t._thread_id: 10_000}
+        assert t._budget() == 9_000

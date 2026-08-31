@@ -249,6 +249,7 @@ class CodexAppServer:
         self._reader = None
         self._stopped = False
         self._rate_limits = None
+        self._model_context_windows = {}
 
     # ---- lifecycle --------------------------------------------------------
 
@@ -509,6 +510,8 @@ class CodexAppServer:
                     elif "method" in message:
                         if message["method"] == "account/rateLimits/updated":
                             self._merge_rate_limits(message)
+                        elif message["method"] == "thread/tokenUsage/updated":
+                            self._record_context_window(message)
                         self._notifications.append(message)
                     self._cond.notify_all()
                 if deny_id is not None:
@@ -547,6 +550,35 @@ class CodexAppServer:
         """The most recent quota snapshot, or None before one has arrived."""
         with self._cond:
             return self._rate_limits
+
+    def _record_context_window(self, message):
+        """Keep a thread's context window off a usage push. Caller holds `_cond`.
+
+        Per thread, not per server: one sidecar serves the book thread and the
+        question thread plan classification runs on, and those can be
+        different models with different windows. `modelContextWindow` is
+        nullable in the protocol and absent on older sidecars, so a push
+        without one leaves what is known alone rather than unsetting it.
+        """
+        params = message.get("params") or {}
+        thread_id = params.get("threadId")
+        window = (params.get("tokenUsage") or {}).get("modelContextWindow")
+        if thread_id and isinstance(window, int) and window > 0:
+            self._model_context_windows[thread_id] = window
+
+    def latest_model_context_window(self, thread_id=None):
+        """The context window the sidecar last reported for `thread_id`.
+
+        None until that thread has run a turn: the window rides on
+        `thread/tokenUsage/updated`, which the sidecar only sends once it has
+        spent tokens. Without a thread id, the most recent one reported for
+        any thread — useful for a log line, never for sizing a budget.
+        """
+        with self._cond:
+            if thread_id is not None:
+                return self._model_context_windows.get(thread_id)
+            windows = list(self._model_context_windows.values())
+            return windows[-1] if windows else None
 
     def _deny(self, request_id):
         try:

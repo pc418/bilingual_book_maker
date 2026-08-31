@@ -136,6 +136,21 @@ def _turn_completed(status="completed", text="译文", error=None):
     return build
 
 
+def _token_usage(window=400_000, total=1234, thread_id="th-1"):
+    return {
+        "method": "thread/tokenUsage/updated",
+        "params": {
+            "threadId": thread_id,
+            "turnId": "tu-1",
+            "tokenUsage": {
+                "last": {"inputTokens": total, "outputTokens": 0},
+                "total": {"inputTokens": total, "outputTokens": 0},
+                "modelContextWindow": window,
+            },
+        },
+    }
+
+
 def _server(handlers=None, notifications_for=None):
     handlers = {
         "initialize": INIT,
@@ -607,3 +622,49 @@ class TestHardening:
             assert server.process is server.spawns[-1]
         finally:
             server.close()
+
+
+class TestModelContextWindow:
+    """The sidecar reports the model's window; --context-compact-at 0 wants it."""
+
+    def test_it_is_unknown_before_a_turn_runs(self):
+        server = _server()
+        with server.start():
+            assert server.latest_model_context_window() is None
+
+    def test_a_token_usage_notification_records_the_window(self):
+        server = _server(
+            notifications_for={"turn/start": [_token_usage(), _turn_completed()]}
+        )
+        with server.start():
+            thread_id = server.start_thread(model="gpt-5.6-luna")
+            server.run_turn(thread_id, "text")
+            assert server.latest_model_context_window() == 400_000
+
+    def test_a_null_window_leaves_it_unknown(self):
+        server = _server(
+            notifications_for={
+                "turn/start": [_token_usage(window=None), _turn_completed()]
+            }
+        )
+        with server.start():
+            thread_id = server.start_thread(model="gpt-5.6-luna")
+            server.run_turn(thread_id, "text")
+            assert server.latest_model_context_window() is None
+
+    def test_a_window_is_kept_per_thread(self):
+        """A question thread can run a different model than the book does."""
+        server = _server(
+            notifications_for={
+                "turn/start": [
+                    _token_usage(window=8_000, thread_id="th-classifier"),
+                    _token_usage(window=400_000, thread_id="th-1"),
+                    _turn_completed(),
+                ]
+            }
+        )
+        with server.start():
+            thread_id = server.start_thread(model="gpt-5.6-luna")
+            server.run_turn(thread_id, "text")
+            assert server.latest_model_context_window("th-1") == 400_000
+            assert server.latest_model_context_window("th-classifier") == 8_000
