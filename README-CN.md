@@ -121,6 +121,18 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   python3 make_book.py --book_name test_books/animal_farm.epub --groq_key [your_key] --model groq --model_list llama3-8b-8192
   ```
 
+* [Codex](https://developers.openai.com/codex/cli)
+
+  使用 ChatGPT/Codex 套餐额度翻译，而不是 API credits。需要安装
+  [Codex CLI](https://developers.openai.com/codex/cli) 并执行一次 `codex login`——会话由
+  `codex app-server` 侧车进程管理，因此不需要 key。`--model_list` 可选，默认
+  `gpt-5.6-luna`。整本书只开一个 thread 并复用，到达 `--context-compact-at` 时压缩；
+  侧车运行在沙箱中，shell、MCP 服务器、浏览和 hooks 全部关闭。
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+  ```
+
 * 自定义 API Provider
 
   内置模型不满足需求时，可以通过 JSON 配置文件自定义 provider。不需要改代码，就能使用任何 OpenAI 兼容的 API（DeepSeek、SiliconFlow、本地代理等）。
@@ -191,6 +203,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   | `o1mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-mini |
   | `o3mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o3-mini |
   | `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | **必须配合 `--model_list`**，可使用任意 OpenAI 兼容模型 |
+  | `codex` | 无需 key —— `codex login`（Codex CLI） | 走本地 `codex app-server` 侧车，消耗 ChatGPT/Codex 套餐额度 |
   | `claude` 及已列出的 `claude-*` ID | `--claude_key` / `BBM_CLAUDE_API_KEY` | 只接受 `--help` 展示的精确内置值；未列出的 ID 需使用 `--provider` 或 `openai` 路由 |
   | `gemini` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Flash，支持 `--model_list` 自定义 |
   | `geminipro` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Pro |
@@ -310,34 +323,6 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   - `--context_paragraph_limit`:
 
     使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制（仅 window 模式）。
-
-### Codex：用 ChatGPT 订阅额度翻译
-
-`--model codex` 使用你的 ChatGPT/Codex 套餐额度，而不是 API credits。需要安装
-[Codex CLI](https://developers.openai.com/codex/cli) 并执行一次 `codex login`；
-bilingual_book_maker 通过 `codex app-server` 侧车进程驱动，会话由它管理，
-因此不需要 key。
-
-```shell
-python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
-```
-
-这里 `--model_list` 是可选的，默认 `gpt-5.6-luna`；侧车还提供 `gpt-5.6-sol`、
-`gpt-5.6-terra`、`gpt-5.5` 和 `gpt-5.2`。
-
-由于新开一个 Codex thread 在第一段正文之前就要花掉约 17k tokens 的前言，整本书
-只会开一个 thread 并复用——这同时也构成了一个上下文窗口：到达
-`--context-compact-at` 时会压缩成交接报告，并用它播种一个新 thread，与
-`--use_context session` 完全一致。
-
-开始前会打印限额窗口的剩余比例，之后每当该数字变化也会再打印一次。若中途耗尽，
-任务不会退出，而是等待窗口重置后继续。只在等待有意义时才等待——额度耗尽和账户
-用量上限会立即失败，重置时间超过 6 小时也一样。
-
-在第一段正文送入之前，sidecar 会先被锁定：shell、MCP 服务器、浏览、hooks
-以及其他所有 agent 能力都会被禁用并逐项验证生效，且 turn 运行在一个私有的
-空目录中——书中文字只会被翻译、不会被执行，你的 per-prompt Codex hooks
-也不会被触发。
 
 - `--use_context session`:
 

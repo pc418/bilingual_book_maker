@@ -10,7 +10,8 @@ The bilingual_book_maker is an AI translation tool that uses ChatGPT to assist u
 ## Supported models
 
 Built-in routes include OpenAI presets and arbitrary OpenAI-compatible model IDs, current
-Claude choices, Gemini, Qwen-MT, Groq, xAI, OrcaRouter, DeepL, Google, Caiyun, and Tencent TranSmart.
+Claude choices, Gemini, Codex, Qwen-MT, Groq, xAI, OrcaRouter, DeepL, Google, Caiyun, and
+Tencent TranSmart.
 The exact `--model` choices come from the installed version, so use
 `python3 make_book.py --help`. Unlisted gateways and native-provider model IDs can be
 configured with `--provider`; see [Models and languages](./docs/model_lang.md).
@@ -138,6 +139,19 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   python3 make_book.py --book_name test_books/animal_farm.epub --groq_key [your_key] --model groq --model_list llama3-8b-8192
   ```
 
+* [Codex](https://developers.openai.com/codex/cli)
+
+  Translate on your ChatGPT/Codex plan allowance instead of API credits. Install the
+  [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login` once — a
+  `codex app-server` sidecar owns that session, so no key is needed. `--model_list` is
+  optional and defaults to `gpt-5.6-luna`. One thread is reused for the whole book and
+  compacted at `--context-compact-at`; the sidecar runs sandboxed, with shell, MCP
+  servers, browsing and hooks off.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+  ```
+
 * Custom API Provider
 
   If the built-in models don't cover your needs, you can define custom providers via a JSON config file. This lets you use any OpenAI-compatible API (DeepSeek, SiliconFlow, local proxies, etc.) without modifying source code.
@@ -208,6 +222,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   | `o1mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-mini |
   | `o3mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o3-mini |
   | `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | **Requires `--model_list`**. Use any OpenAI-compatible model |
+  | `codex` | No key — `codex login` (Codex CLI) | Your ChatGPT/Codex plan allowance, through a local `codex app-server` sidecar |
   | `claude` and listed `claude-*` IDs | `--claude_key` / `BBM_CLAUDE_API_KEY` | Exact built-in choices shown by `--help`; arbitrary unlisted IDs require `--provider` or the `openai` route |
   | `gemini` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Flash. Supports `--model_list` |
   | `geminipro` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Pro |
@@ -361,38 +376,6 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 - `--context_paragraph_limit`:
 
   Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option. This applies to window mode only.
-
-### Codex: translate on your ChatGPT subscription
-
-`--model codex` spends your ChatGPT/Codex plan allowance instead of API
-credits. It needs the [Codex CLI](https://developers.openai.com/codex/cli)
-installed and signed in — run `codex login` once. bilingual_book_maker
-drives a `codex app-server` sidecar, which owns that session, so no key is
-needed.
-
-```shell
-python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
-```
-
-`--model_list` is optional here and defaults to `gpt-5.6-luna`; the sidecar
-also offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`.
-
-Because a fresh Codex thread costs about 17k tokens of preamble before your
-first paragraph, one thread is opened and reused for the whole book, which
-also makes it a context window: at `--context-compact-at` it is condensed
-into a handoff report and a fresh thread is seeded with it, exactly like
-`--use_context session`.
-
-How much of your rate-limit window remains is printed before the run and
-whenever it changes. If it runs out mid-book the run does not stop: it waits
-for the window to reset and continues. Waiting only happens where waiting
-helps — depleted credits and account usage limits fail immediately, as does a
-reset more than six hours away.
-
-The sidecar is locked down before the first paragraph goes in: shell, MCP
-servers, browsing, hooks and every other agent capability are disabled and
-verified off, and turns run in a private empty directory — book text can only
-be translated, not obeyed, and your per-prompt Codex hooks do not fire.
 
 - `--use_context session`:
 
