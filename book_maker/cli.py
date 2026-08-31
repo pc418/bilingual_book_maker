@@ -111,6 +111,43 @@ def parse_prompt_arg(prompt_arg):
     return prompt
 
 
+# Below this a window cannot hold even one paragraph with its translation, so
+# every unit would trigger a paid handoff report.
+MIN_COMPACT_BUDGET = 500
+
+
+def compact_budget(value):
+    """argparse type for --context-compact-at: a usable positive budget."""
+    try:
+        budget = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}")
+    if budget < MIN_COMPACT_BUDGET:
+        raise argparse.ArgumentTypeError(
+            f"a compact budget of {budget} is too small to be useful; use at "
+            f"least {MIN_COMPACT_BUDGET} estimated tokens (2500 is the "
+            f"cheapest setting on most endpoints)"
+        )
+    return budget
+
+
+def resolve_context_mode(options):
+    """`(context_flag, context_mode)` from the parsed `--use_context` value.
+
+    `--use_context` used to be a bare switch and still may be: absent means no
+    context, bare means the window mode it has always meant, and only an
+    explicit `session` selects cached history.
+    """
+    mode = getattr(options, "context_mode", None)
+    return (mode is not None), mode
+
+
+# The loaders that actually forward context settings into the translator. The
+# others accept `context_flag` and drop it, so a session budget passed with
+# them would silently do nothing.
+CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
+
+
 def main():
     translate_model_list = list(MODEL_DICT.keys())
     parser = argparse.ArgumentParser()
@@ -430,9 +467,28 @@ So you are close to reaching the limit. You have to choose your own value, there
     )
     parser.add_argument(
         "--use_context",
-        dest="context_flag",
-        action="store_true",
-        help="adds an additional paragraph for global, updating historical context of the story to the model's input, improving the narrative consistency for the AI model (this uses ~200 more tokens each time)",
+        dest="context_mode",
+        nargs="?",
+        const="window",
+        default=None,
+        choices=("window", "session"),
+        help="carry earlier paragraphs into each request for narrative "
+        "consistency. Bare (or 'window'): re-send the last few "
+        "source/translation pairs, costing ~200 extra tokens per request. "
+        "'session': keep one append-only history instead, so an endpoint "
+        "with prompt caching re-reads it at its cache rate and the context "
+        "can grow to chapter length for less money -- compacted into a "
+        "handoff report at --context-compact-at",
+    )
+    parser.add_argument(
+        "--context-compact-at",
+        dest="context_compact_at",
+        type=compact_budget,
+        default=None,
+        help="session mode only: estimated-token budget for the history "
+        "before it is compacted into a translator handoff report. Default: "
+        "8000, which costs about what window mode costs for several times "
+        "the context; 2500 is the cheapest setting on most endpoints",
     )
     parser.add_argument(
         "--context_paragraph_limit",
@@ -520,6 +576,7 @@ So you are close to reaching the limit. You have to choose your own value, there
     )
 
     options = parser.parse_args()
+    options.context_flag, options.context_mode = resolve_context_mode(options)
 
     if options.provider and options.model:
         parser.error("--provider and --model are mutually exclusive")
@@ -701,6 +758,18 @@ So you are close to reaching the limit. You have to choose your own value, there
         model_api_base = provider_cfg.get("base_url")
 
     loader_kwargs = {}
+    if book_type in CONTEXT_AWARE_BOOK_TYPES:
+        loader_kwargs.update(
+            context_mode=options.context_mode,
+            context_compact_at=options.context_compact_at,
+        )
+    elif options.context_mode == "session":
+        # txt, srt and pdf never hand context to the model, so a session
+        # budget would quietly do nothing at all.
+        print(
+            f"[bold yellow]Warning:[/bold yellow] --use_context session is "
+            f"not supported for {book_type} books; it will be ignored."
+        )
     if book_type == "pdf":
         loader_kwargs["pdf_layout"] = options.pdf_layout
 

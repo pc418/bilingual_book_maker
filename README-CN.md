@@ -309,7 +309,17 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
   - `--context_paragraph_limit`:
 
-    使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制。
+    使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制（仅 window 模式）。
+
+- `--use_context session`:
+
+  `--use_context` 还可以带一个模式值。裸写 `--use_context`（等同 `--use_context window`）即上面描述的行为；`--use_context session` 改为维护一份只追加的历史记录，支持提示缓存的端点会以缓存价重新读取它，因此上下文可以增长到整章的长度，花费反而低于 window 模式发送几个段落。历史达到压缩预算时，模型会被要求写一份交接报告，用于播种下一个窗口，并追加到 `<book>_handoff.md`。若端点从不返回缓存 token 数，会打印警告——没有缓存时该模式比 window 模式更贵。
+
+- `--context-compact-at`:
+
+  仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。默认 `8000`，最小值 `500`。
+
+  在 `8000` 下，整体花费约为 window 模式的 0.5–1.1 倍，但携带数倍的上下文——具体比例取决于端点对缓存输入的计价。若更在意成本，`--context-compact-at 2500` 最省钱（约 0.4–0.5 倍）。
 
 - `--temperature`:
 

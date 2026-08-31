@@ -45,7 +45,8 @@ sections after it provide additional notes for selected workflows.
 | `--resume` | Continue from the loader's saved checkpoint. |
 | `--prompt VALUE_OR_FILE` | User/system prompt template; the user template requires `{text}`. |
 | `--temperature FLOAT` | Sampling temperature; default `1.0`. |
-| `--use_context` | Send an evolving narrative context with compatible translators. |
+| `--use_context [window\|session]` | Send earlier paragraphs as context. Bare or `window`: re-send the last few source/translation pairs (the long-standing behaviour). `session`: one append-only history, re-read at the endpoint's prompt-cache rate and compacted into a handoff report. |
+| `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`. `2500` is the cheapest setting. |
 | `--context_paragraph_limit N` | Context history limit used with `--use_context`. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
 | `--accumulated_num N` | EPUB token/character accumulation and SRT subtitle-block character batching (capped at 512 for SRT); ignored in EPUB plan mode. |
 | `--batch_size N` | Aggregated unit count for loaders that support it. |

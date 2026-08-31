@@ -360,7 +360,17 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--context_paragraph_limit`:
 
-  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option.
+  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option. This applies to window mode only.
+
+- `--use_context session`:
+
+  `--use_context` also takes a mode. Bare `--use_context` (or `--use_context window`) is the behaviour described above. `--use_context session` instead keeps a single append-only history of everything translated so far, so a model endpoint that supports prompt caching re-reads it at its cache rate. Context can then grow to chapter length for less money than window mode spends on a few paragraphs. When the history reaches the compact budget, the model is asked for a translator handoff report, which seeds the next window and is appended to `<book>_handoff.md`. If the endpoint never reports cached tokens, a warning is printed, since without caching this mode costs more than window mode.
+
+- `--context-compact-at`:
+
+  Session mode only. The estimated-token budget the history may reach before it is compacted into a handoff report. Default `8000`, minimum `500`.
+
+  At `8000` a run costs between roughly 0.5x and 1.1x what window mode costs, while carrying several times the context — the exact ratio depends on how cheaply your endpoint prices cached input. `--context-compact-at 2500` is the cheapest setting (about 0.4-0.5x) if you would rather have that than the longer context.
 
 - `--parallel-workers`:
 
