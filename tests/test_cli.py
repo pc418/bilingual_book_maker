@@ -250,3 +250,21 @@ def test_groq_model_list_does_not_use_openai_validation(monkeypatch):
 
     assert client.model == "llama-3.3-70b-versatile"
     assert next(client.model_list) == "llama-3.3-70b-versatile"
+
+
+def test_compact_budget_takes_zero_as_auto():
+    """0 is the auto sentinel: size the budget from the model's own window."""
+    from book_maker.cli import compact_budget
+
+    assert compact_budget("0") == 0
+
+
+def test_compact_budget_still_rejects_a_budget_too_small_to_use():
+    import argparse
+
+    import pytest
+
+    from book_maker.cli import compact_budget
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        compact_budget("499")

@@ -317,9 +317,15 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--context-compact-at`:
 
-  仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。默认 `8000`，最小值 `500`。
+  仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。默认 `8000`，最小值 `500`；传 `0` 表示按模型自身的上下文窗口自动取值。
+
+  `--context-compact-at 0` 会向端点查询该模型的上下文窗口，并在其 90% 处压缩。端点之间并不一致——OpenRouter 这类网关会给出窗口大小，OpenAI 的 `/models` 不会——查不到时会打印说明并回退到默认值。
 
   在 `8000` 下，整体花费约为 window 模式的 0.5–1.1 倍，但携带数倍的上下文——具体比例取决于端点对缓存输入的计价。若更在意成本，`--context-compact-at 2500` 最省钱（约 0.4–0.5 倍）。
+
+- `--no-context-compact`:
+
+  仅 session 模式。完全不生成交接报告：历史达到预算后直接丢弃，下一个窗口从空开始，相当于 Codex 的 `/new`——比压缩更省，代价是接缝处的上下文连续性。
 
 - `--temperature`:
 

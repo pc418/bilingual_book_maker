@@ -368,9 +368,15 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--context-compact-at`:
 
-  Session mode only. The estimated-token budget the history may reach before it is compacted into a handoff report. Default `8000`, minimum `500`.
+  Session mode only. The estimated-token budget the history may reach before it is compacted into a handoff report. Default `8000`, minimum `500`, or `0` to size it from the model.
+
+  `--context-compact-at 0` asks the endpoint for the model's context window and compacts at 90% of it. Endpoints differ on whether they report one — OpenRouter-style gateways do, OpenAI's `/models` does not — and when none is reported the run says so and falls back to the default.
 
   At `8000` a run costs between roughly 0.5x and 1.1x what window mode costs, while carrying several times the context — the exact ratio depends on how cheaply your endpoint prices cached input. `--context-compact-at 2500` is the cheapest setting (about 0.4-0.5x) if you would rather have that than the longer context.
+
+- `--no-context-compact`:
+
+  Session mode only. Never ask for a handoff report. When the history reaches the budget it is dropped and the next window starts empty, like Codex's `/new` — cheaper than a compact, at the cost of continuity across the seam.
 
 - `--parallel-workers`:
 

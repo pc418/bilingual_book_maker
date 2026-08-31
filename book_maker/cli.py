@@ -117,16 +117,22 @@ MIN_COMPACT_BUDGET = 500
 
 
 def compact_budget(value):
-    """argparse type for --context-compact-at: a usable positive budget."""
+    """argparse type for --context-compact-at: a usable budget, or 0 for auto.
+
+    `0` means "size it from the model": the translator asks the endpoint for
+    the model's context window and compacts at 90% of it, falling back to the
+    default when nothing is reported.
+    """
     try:
         budget = int(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}")
-    if budget < MIN_COMPACT_BUDGET:
+    if budget and budget < MIN_COMPACT_BUDGET:
         raise argparse.ArgumentTypeError(
             f"a compact budget of {budget} is too small to be useful; use at "
             f"least {MIN_COMPACT_BUDGET} estimated tokens (2500 is the "
-            f"cheapest setting on most endpoints)"
+            f"cheapest setting on most endpoints), or 0 to size the budget "
+            f"from the model's own context window"
         )
     return budget
 
@@ -488,7 +494,17 @@ So you are close to reaching the limit. You have to choose your own value, there
         help="session mode only: estimated-token budget for the history "
         "before it is compacted into a translator handoff report. Default: "
         "8000, which costs about what window mode costs for several times "
-        "the context; 2500 is the cheapest setting on most endpoints",
+        "the context; 2500 is the cheapest setting on most endpoints. 0 "
+        "sizes the budget from the model's own context window (90% of it), "
+        "and says so and uses the default when the endpoint reports none",
+    )
+    parser.add_argument(
+        "--no-context-compact",
+        dest="no_context_compact",
+        action="store_true",
+        help="session mode only: never ask for a handoff report. The window "
+        "still rolls over when it reaches the budget, but the next one starts "
+        "empty instead of inheriting a summary",
     )
     parser.add_argument(
         "--context_paragraph_limit",
@@ -762,6 +778,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         loader_kwargs.update(
             context_mode=options.context_mode,
             context_compact_at=options.context_compact_at,
+            no_context_compact=options.no_context_compact,
         )
     elif options.context_mode == "session":
         # txt, srt and pdf never hand context to the model, so a session
@@ -887,6 +904,10 @@ So you are close to reaching the limit. You have to choose your own value, there
         e.plan_classify_model = options.plan_classify_model or None
     if options.quiet and hasattr(e, "quiet"):
         e.quiet = True
+        # The translator prints echoes of its own — handoff reports, window
+        # rollovers — and cannot see the loader's flag.
+        if hasattr(getattr(e, "translate_model", None), "quiet"):
+            e.translate_model.quiet = True
     if options.exclude_filelist:
         e.exclude_filelist = options.exclude_filelist
     if options.only_filelist:

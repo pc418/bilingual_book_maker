@@ -56,6 +56,28 @@ from ..session_context import (
     handoff_prompt,
 )
 
+# --context-compact-at 0 compacts at 90% of the model's window, leaving room
+# for the tail the history does not cover: the fresh paragraph, its
+# translation, and the handoff report the compact turn asks for.
+#
+# What a context window is called across OpenAI-compatible endpoints.
+CONTEXT_WINDOW_FIELDS = (
+    "context_length",
+    "context_window",
+    "max_context_length",
+    "max_input_tokens",
+)
+
+# Bounds on a number that arrives over the wire and decides how much context a
+# whole book carries. Below the floor a window cannot hold one paragraph and
+# its translation, so 90% of it would compact on every unit; above the ceiling
+# it is a malformed answer, not a model.
+MIN_USABLE_CONTEXT_WINDOW = 1_000
+MAX_USABLE_CONTEXT_WINDOW = 10_000_000
+
+# A lookup that keeps erroring is an endpoint that will not answer this run.
+CONTEXT_WINDOW_LOOKUP_ATTEMPTS = 3
+
 CHATGPT_CONFIG = config["translator"]["chatgptapi"]
 
 PROMPT_ENV_MAP = {
@@ -295,6 +317,9 @@ class ChatGPTAPI(Base):
     session = None
     handoff_path = None
     context_compact_at = None
+    no_context_compact = False
+    # Every model --model_list rotates through, not just the current one.
+    _model_names = ()
     context_mode = "window"
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
@@ -313,6 +338,7 @@ class ChatGPTAPI(Base):
         context_paragraph_limit=0,
         context_mode="window",
         context_compact_at=None,
+        no_context_compact=False,
         style_note=None,
         handoff_path=None,
         extra_body=None,
@@ -352,6 +378,10 @@ class ChatGPTAPI(Base):
             else None
         )
         self.context_compact_at = context_compact_at
+        self.no_context_compact = no_context_compact
+        self._model_windows = {}
+        self._window_misses = set()
+        self._window_lookup_failures = 0
         self.style_note = style_note
         self.handoff_path = Path(handoff_path) if handoff_path else None
         self._session_cache_warned = False
@@ -620,6 +650,17 @@ class ChatGPTAPI(Base):
     def rotate_key(self):
         with self._api_lock:
             self.openai_client.api_key = next(self.keys)
+
+    def _use_models(self, names):
+        """Rotate through `names`, and remember them.
+
+        `model_list` is a `cycle`, which cannot be read back — but the auto
+        compact budget has to size the shared history for the smallest window
+        among *all* of them, not just whichever is current.
+        """
+        names = list(names)
+        self._model_names = names
+        self.model_list = cycle(names)
 
     def rotate_model(self):
         with self._api_lock:
@@ -916,11 +957,98 @@ class ChatGPTAPI(Base):
         )
 
     def _session_budget(self):
-        return (
-            self.context_compact_at
-            if self.context_compact_at is not None
-            else compact_budget_for(self.model)
+        """How large a window may grow before it rolls over.
+
+        `--context-compact-at 0` asks for the model's own size instead of a
+        number the user had to guess.
+        """
+        if self.context_compact_at is None:
+            return compact_budget_for(self.model)
+        if self.context_compact_at == 0:
+            return self._model_sized_budget()
+        return self.context_compact_at
+
+    def _model_sized_budget(self):
+        """0.9 x the smallest context window among the models in play.
+
+        `--model_list` rotates a model per request and the history is shared
+        across all of them, so the budget has to be one the smallest window
+        survives. Every configured model is measured here, before the history
+        is big enough for the smallest to choke on — learning a model's window
+        from the request that failed on it would be learning it too late.
+        """
+        models = list(self._model_names) or [self.model]
+        for model in models:
+            self._learn_context_window(model)
+        known = [self._model_windows[m] for m in models if m in self._model_windows]
+        default = compact_budget_for(self.model)
+        if not known:
+            return default
+        budget = min(known) * 9 // 10
+        if len(known) < len(models):
+            # A model nobody could measure may be the smallest of them. Sizing
+            # the shared history past what the default already assumed safe
+            # would be betting on the one number we do not have.
+            return min(budget, default)
+        return budget
+
+    def _learn_context_window(self, model):
+        """Ask the endpoint about `model` once, and remember what it said."""
+        if model in self._model_windows or model in self._window_misses:
+            return
+        if self._window_lookup_failures >= CONTEXT_WINDOW_LOOKUP_ATTEMPTS:
+            return
+        try:
+            reported = self._detect_context_window(model)
+        except NotFoundError:
+            # A definitive answer: this endpoint has no such record. Asking
+            # again would get the same 404 for every paragraph of the book.
+            reported = None
+        except Exception as e:
+            # Not an answer at all — a timeout, a refreshed token, a 5xx. The
+            # budget falls back for now and the next unit asks again, since a
+            # transient blip should not silently cost the whole run its
+            # auto-sizing. Bounded, so a dead route is not asked forever.
+            self._window_lookup_failures += 1
+            if self._window_lookup_failures >= CONTEXT_WINDOW_LOOKUP_ATTEMPTS:
+                print(
+                    f"[yellow]ℹ could not ask this endpoint for {model}'s "
+                    f"context window ({e}); compacting at the default "
+                    f"{compact_budget_for(model)} instead[/yellow]"
+                )
+            return
+        if reported:
+            self._model_windows[model] = reported
+            print(
+                f"[cyan]ℹ {model} reports a {reported}-token context window; "
+                f"compacting at {reported * 9 // 10}[/cyan]"
+            )
+            return
+        self._window_misses.add(model)
+        print(
+            f"[yellow]ℹ this endpoint does not report a context window for "
+            f"{model}; compacting at the default {compact_budget_for(model)} "
+            f"instead[/yellow]"
         )
+
+    def _detect_context_window(self, model):
+        """The model's context window, if the endpoint volunteers a usable one.
+
+        OpenAI's own `/models` does not carry it; OpenRouter-style gateways
+        do, under one of a few names. `True` is an `int` in Python and would
+        yield a budget of 0 — no rollover at all — so the type check is
+        stricter than it looks.
+        """
+        record = self.openai_client.models.retrieve(model)
+        for field in CONTEXT_WINDOW_FIELDS:
+            value = getattr(record, field, None)
+            if value is None and isinstance(record, dict):
+                value = record.get(field)
+            if isinstance(value, bool) or not isinstance(value, int):
+                continue
+            if MIN_USABLE_CONTEXT_WINDOW <= value <= MAX_USABLE_CONTEXT_WINDOW:
+                return value
+        return None
 
     def _compact_session(self):
         """Ask for a handoff report, then start the next window seeded with it.
@@ -1018,8 +1146,27 @@ class ChatGPTAPI(Base):
         # would make the newest pair a cache miss, and the run would re-read a
         # paragraph at full input price every request.
         self.session.append(self._user_content(text), t_text)
-        if self.session.should_compact(self._session_budget()):
+        if not self.session.should_compact(self._session_budget()):
+            return
+        if self.no_context_compact:
+            self._start_empty_window()
+        else:
             self._compact_session()
+
+    def _start_empty_window(self):
+        """Roll over with no handoff report, because the user asked for none.
+
+        Continuity across the seam is what the report buys, and
+        `--no-context-compact` declines to buy it — so this is a plain reset,
+        not a cheaper summary.
+        """
+        self.session.reset(seed="")
+        if self.quiet:
+            return
+        print(
+            f"[bold cyan]— context window {self.session.windows}, started "
+            f"empty (--no-context-compact) —[/bold cyan]"
+        )
 
     @retry(
         stop=stop_after_attempt(3),
@@ -1419,7 +1566,7 @@ class ChatGPTAPI(Base):
         """
         # For Azure deployments, use the default model directly
         if self.deployment_id:
-            self.model_list = cycle([default_azure_model])
+            self._use_models([default_azure_model])
             self.model = default_azure_model
             return
 
@@ -1461,7 +1608,7 @@ class ChatGPTAPI(Base):
                     f"No {model_family_name} models available. Available models: {my_model_list}"
                 )
         print(f"Using model list {model_list}")
-        self.model_list = cycle(model_list)
+        self._use_models(model_list)
         self.model = model_list[0]
 
     def _validate_model_with_test(self, model_name: str, model_family_name: str):
@@ -1493,7 +1640,7 @@ class ChatGPTAPI(Base):
 
     def set_gpt35_models(self, ollama_model=""):
         if ollama_model:
-            self.model_list = cycle([ollama_model])
+            self._use_models([ollama_model])
             self.model = ollama_model
             return
         self._set_models("GPT-3.5", "gpt-35-turbo", set(GPT35_MODEL_LIST))
@@ -1545,7 +1692,7 @@ class ChatGPTAPI(Base):
                 model_list = validation_result["available_models"]
 
         print(f"Using model list {model_list}")
-        self.model_list = cycle(model_list)
+        self._use_models(model_list)
         self.model = model_list[
             0
         ]  # Set initial model so it's available before rotate_model() is called

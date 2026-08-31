@@ -16,7 +16,7 @@ import pytest
 
 from openai import LengthFinishReasonError
 
-from book_maker.session_context import handoff_prompt
+from book_maker.session_context import DEFAULT_COMPACT_BUDGET, handoff_prompt
 from book_maker.translator.chatgptapi_translator import (
     ChatGPTAPI,
     batch_field_name,
@@ -511,3 +511,222 @@ class TestCompactIsVisible:
     def test_an_unclosed_bracket_does_not_raise(self, tmp_path, capsys):
         out = self._run(tmp_path, "A stray [bracket and /close tag", capsys)
         assert "stray" in out
+
+
+class TestCompactionDisabled:
+    """`--no-context-compact`: roll the window over, never pay for a report.
+
+    The seam still happens where the budget puts it — what the flag removes is
+    the handoff turn and everything it carries forward, so the next window
+    starts empty, like Codex's `/new`.
+    """
+
+    UNIT = "x" * 800  # ~200 estimated tokens
+
+    def _disabled(self, **kw):
+        return _translator(
+            ["译文"] * 40, no_context_compact=True, context_compact_at=600, **kw
+        )
+
+    def test_it_rolls_the_window_over_without_a_handoff_turn(self):
+        t = self._disabled()
+        for _ in range(4):
+            t.get_translation(self.UNIT)
+        assert t.session.windows > 1, "the window never rolled over"
+        assert not any(
+            HANDOFF_MARKER in call["messages"][-1]["content"] for call in t.sent
+        ), "a handoff report was requested with compaction disabled"
+
+    def test_the_next_window_starts_empty(self):
+        t = self._disabled()
+        for _ in range(4):
+            t.get_translation(self.UNIT)
+        # Only what was appended after the reset, and no seed message before it.
+        assert t.session.estimated_tokens() < 600
+
+    def test_it_writes_no_handoff_file(self, tmp_path):
+        path = tmp_path / "h.md"
+        t = self._disabled(handoff_path=path)
+        for _ in range(4):
+            t.get_translation(self.UNIT)
+        assert not path.exists(), "a handoff file was written with compaction off"
+
+    def test_without_the_flag_a_budget_still_compacts(self):
+        t = _translator(["译文"] * 40, context_compact_at=600)
+        for _ in range(4):
+            t.get_translation(self.UNIT)
+        assert any(
+            HANDOFF_MARKER in call["messages"][-1]["content"] for call in t.sent
+        ), "a positive budget must still ask for the handoff report"
+
+
+class TestAutoCompactBudget:
+    """`--context-compact-at 0`: size the budget from the model's own window."""
+
+    def _with_model(self, model_object, **kw):
+        t = _translator(["译文"] * 40, context_compact_at=0, **kw)
+        t.openai_client.models = SimpleNamespace(
+            retrieve=Mock(
+                side_effect=(
+                    model_object
+                    if callable(model_object)
+                    else lambda *a, **k: model_object
+                )
+            )
+        )
+        return t
+
+    def test_it_takes_nine_tenths_of_the_reported_window(self, capsys):
+        t = self._with_model(SimpleNamespace(id="test-model", context_length=10_000))
+        assert t._session_budget() == 9_000
+        assert "10000" in capsys.readouterr().out
+
+    def test_it_says_so_and_falls_back_when_nothing_is_reported(self, capsys):
+        t = self._with_model(SimpleNamespace(id="test-model"))
+        assert t._session_budget() == DEFAULT_COMPACT_BUDGET
+        out = capsys.readouterr().out
+        assert "context window" in out and "8000" in out
+
+    def test_an_endpoint_that_refuses_the_lookup_is_not_fatal(self, capsys):
+        def boom(*a, **k):
+            raise RuntimeError("404 no such endpoint")
+
+        t = self._with_model(boom)
+        assert t._session_budget() == DEFAULT_COMPACT_BUDGET
+
+    def test_the_window_is_looked_up_once(self):
+        t = self._with_model(SimpleNamespace(id="test-model", context_length=10_000))
+        for _ in range(3):
+            t._session_budget()
+        assert t.openai_client.models.retrieve.call_count == 1
+
+
+class TestAutoBudgetAcrossModels:
+    """`--model_list` rotates models; the budget has to survive the smallest."""
+
+    def _with_windows(self, windows):
+        """`windows`: model name -> what `models.retrieve` answers with."""
+        t = _translator(["译文"] * 40, context_compact_at=0)
+
+        def retrieve(model):
+            answer = windows[model]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        t.openai_client.models = SimpleNamespace(retrieve=Mock(side_effect=retrieve))
+        return t
+
+    def test_it_takes_the_smallest_window_in_play(self):
+        t = self._with_windows(
+            {
+                "big": SimpleNamespace(id="big", context_length=100_000),
+                "small": SimpleNamespace(id="small", context_length=10_000),
+            }
+        )
+        t.model = "big"
+        assert t._session_budget() == 90_000
+        t.model = "small"
+        assert t._session_budget() == 9_000, "a smaller model must shrink the budget"
+
+    def test_every_configured_model_is_measured_before_the_seam(self):
+        """A smaller model must not first be discovered by failing on it."""
+        t = self._with_windows(
+            {
+                "big": SimpleNamespace(id="big", context_length=100_000),
+                "small": SimpleNamespace(id="small", context_length=10_000),
+            }
+        )
+        t._model_names = ["big", "small"]
+        t.model = "big"
+        assert t._session_budget() == 9_000, "the smaller model was not measured"
+
+    def test_an_unmeasurable_model_holds_the_budget_at_the_default(self):
+        from openai import NotFoundError
+
+        missing = NotFoundError(
+            "no such model", response=Mock(status_code=404, headers={}), body=None
+        )
+        t = self._with_windows(
+            {
+                "big": SimpleNamespace(id="big", context_length=100_000),
+                "mystery": missing,
+            }
+        )
+        t._model_names = ["big", "mystery"]
+        t.model = "big"
+        # The unknown model may be smaller than anything measured, so the
+        # shared history must not grow past what the default already assumed.
+        assert t._session_budget() == DEFAULT_COMPACT_BUDGET
+
+    def test_each_model_is_looked_up_once(self):
+        t = self._with_windows(
+            {"a": SimpleNamespace(id="a", context_length=10_000)},
+        )
+        t.model = "a"
+        for _ in range(3):
+            t._session_budget()
+        assert t.openai_client.models.retrieve.call_count == 1
+
+    def test_a_transient_failure_does_not_settle_the_budget_forever(self):
+        answers = {"a": RuntimeError("connection reset")}
+        t = self._with_windows(answers)
+        t.model = "a"
+        assert t._session_budget() == DEFAULT_COMPACT_BUDGET
+        answers["a"] = SimpleNamespace(id="a", context_length=10_000)
+        assert t._session_budget() == 9_000, "the retry never happened"
+
+    def test_it_stops_retrying_a_hopeless_endpoint(self):
+        t = self._with_windows({"a": RuntimeError("connection reset")})
+        t.model = "a"
+        for _ in range(10):
+            t._session_budget()
+        assert t.openai_client.models.retrieve.call_count <= 3
+
+    def test_a_missing_model_is_settled_not_retried(self):
+        from openai import NotFoundError
+
+        error = NotFoundError(
+            "no such model", response=Mock(status_code=404, headers={}), body=None
+        )
+        t = self._with_windows({"a": error})
+        t.model = "a"
+        for _ in range(3):
+            assert t._session_budget() == DEFAULT_COMPACT_BUDGET
+        assert t.openai_client.models.retrieve.call_count == 1
+
+
+class TestReportedWindowIsChecked:
+    """A number off the wire decides how much context a run carries."""
+
+    def _budget_for(self, model_object):
+        t = _translator(["译文"], context_compact_at=0)
+        t.openai_client.models = SimpleNamespace(
+            retrieve=Mock(return_value=model_object)
+        )
+        return t._session_budget()
+
+    def test_a_boolean_is_not_a_window(self):
+        # `True` is an int in Python, and 0.9 * True is 0 — no rollover at all.
+        assert (
+            self._budget_for(SimpleNamespace(id="m", context_length=True))
+            == DEFAULT_COMPACT_BUDGET
+        )
+
+    def test_a_window_too_small_to_hold_a_paragraph_is_refused(self):
+        assert (
+            self._budget_for(SimpleNamespace(id="m", context_length=100))
+            == DEFAULT_COMPACT_BUDGET
+        )
+
+    def test_an_absurd_window_is_refused(self):
+        assert (
+            self._budget_for(SimpleNamespace(id="m", context_length=10**30))
+            == DEFAULT_COMPACT_BUDGET
+        )
+
+    def test_a_string_is_refused(self):
+        assert (
+            self._budget_for(SimpleNamespace(id="m", context_length="128000"))
+            == DEFAULT_COMPACT_BUDGET
+        )
