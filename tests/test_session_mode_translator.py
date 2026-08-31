@@ -16,49 +16,86 @@ import pytest
 
 from book_maker.glossary import Glossary
 from book_maker.session_context import handoff_prompt
-from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+from book_maker.translator.chatgptapi_translator import ChatGPTAPI, single_field_name
+
+SINGLE_FIELD = single_field_name("Chinese")
 
 # A phrase unique to the compact turn, taken from the real prompt so the
 # tests cannot drift from it.
 HANDOFF_MARKER = handoff_prompt(with_glossary=False)[:40]
 
 
+def _usage(cached_tokens):
+    if cached_tokens is None:
+        return None
+    return SimpleNamespace(
+        prompt_tokens=100,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=cached_tokens),
+    )
+
+
 def _completion(content, cached_tokens=None):
-    usage = None
-    if cached_tokens is not None:
-        usage = SimpleNamespace(
-            prompt_tokens=100,
-            prompt_tokens_details=SimpleNamespace(cached_tokens=cached_tokens),
-        )
     return SimpleNamespace(
         choices=[
             SimpleNamespace(message=SimpleNamespace(content=content, refusal=None))
         ],
-        usage=usage,
+        usage=_usage(cached_tokens),
     )
 
 
-def _translator(replies=None, **kwargs):
-    """A ChatGPTAPI wired to a scripted client. No network, real __init__."""
+def _parsed_completion(content, cached_tokens=None):
+    """`.parse` style completion — what a "strict" endpoint answers with."""
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    parsed=SimpleNamespace(**{SINGLE_FIELD: content}),
+                    refusal=None,
+                    content=None,
+                ),
+                finish_reason="stop",
+            )
+        ],
+        usage=_usage(cached_tokens),
+    )
+
+
+def _translator(replies=None, verdict="unsupported", cached_tokens=None, **kwargs):
+    """A ChatGPTAPI wired to a scripted client. No network, real __init__.
+
+    `verdict` picks the path under test: the default sends every translation
+    down the plain path, `"strict"` sends it through Structured Outputs — the
+    path session mode actually uses.
+    """
     kwargs.setdefault("context_flag", True)
     kwargs.setdefault("context_mode", "session")
     t = ChatGPTAPI(key="k", language="Chinese", **kwargs)
     t.model = "test-model"
-    t.capabilities.record("test-model", "unsupported")
+    t.capabilities.record("test-model", verdict)
 
     sent = []
     answers = iter(replies or [])
 
+    def _reply():
+        try:
+            return next(answers)
+        except StopIteration:
+            return "译文"
+
     def create(**call):
         sent.append(call)
-        try:
-            return _completion(next(answers))
-        except StopIteration:
-            return _completion("译文")
+        return _completion(_reply(), cached_tokens)
+
+    def parse(**call):
+        sent.append(call)
+        return _parsed_completion(_reply(), cached_tokens)
 
     t.openai_client = SimpleNamespace(
         chat=SimpleNamespace(
-            completions=SimpleNamespace(create=Mock(side_effect=create))
+            completions=SimpleNamespace(
+                create=Mock(side_effect=create),
+                parse=Mock(side_effect=parse),
+            )
         )
     )
     t.sent = sent
@@ -338,6 +375,22 @@ class TestCacheGuardrail:
         for i in range(12):
             t.get_translation(f"unit {i}")
         assert "not passing through cache" not in capsys.readouterr().out.lower()
+
+    # The guardrail has to hold on the structured path too: every "strict"
+    # endpoint translates through `.parse`, and that is exactly where session
+    # mode is used, so a reading taken only on the plain path is never taken.
+    def test_warns_on_the_structured_path_too(self, capsys):
+        t = _translator(["一"] * 12, verdict="strict")
+        for i in range(12):
+            t.get_translation(f"unit {i}")
+        assert t.openai_client.chat.completions.parse.call_count == 12
+        assert "cache" in capsys.readouterr().out.lower()
+
+    def test_structured_path_silent_when_cache_reads_are_reported(self, capsys):
+        t = _translator(["一"] * 12, verdict="strict", cached_tokens=64)
+        for i in range(12):
+            t.get_translation(f"unit {i}")
+        assert "cache" not in capsys.readouterr().out.lower()
 
 
 class TestWindowModeUnchanged:

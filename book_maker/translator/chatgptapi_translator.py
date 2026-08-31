@@ -587,6 +587,10 @@ class ChatGPTAPI(Base):
             # Answered with something that is not the schema.
             raise StructuredOutputUnsupported(str(e)) from e
 
+        # Take the cache reading before ruling on the message: session mode
+        # runs on this path, and the bill is the same whatever the answer says.
+        self._note_cache_usage(completion)
+
         message = completion.choices[0].message
         if getattr(message, "refusal", None):
             raise StructuredRefusal(message.refusal)
