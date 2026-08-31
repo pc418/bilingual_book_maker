@@ -26,6 +26,7 @@ from openai import (
 )
 from pydantic import ConfigDict, Field, ValidationError, create_model
 from rich import print
+from rich.markup import escape
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -57,6 +58,20 @@ class StructuredOutputUnsupported(Exception):
     Raised only for capability answers, never for model or transport errors, so
     callers can demote to the delimiter method instead of retrying.
     """
+
+
+class StructuredRefusal(Exception):
+    """The model declined to answer this particular text.
+
+    Deliberately not a `StructuredOutputUnsupported`: a refusal says nothing
+    about whether the endpoint honors the schema, and counting it as a
+    capability failure would demote structured outputs for the whole run after
+    two paragraphs. Callers retranslate the one paragraph without a schema.
+    """
+
+    def __init__(self, refusal):
+        super().__init__(f"Model refused to translate: {refusal}")
+        self.refusal = refusal
 
 
 # The schema is the last thing the model reads before it decodes, and a bare
@@ -767,7 +782,8 @@ class ChatGPTAPI(Base):
 
         Raises `StructuredOutputUnsupported` when the endpoint turns out not to
         honor the schema, `LengthFinishReasonError` when the answer was cut off
-        (never returns the truncated JSON fragment), and `ValueError` on refusal.
+        (never returns the truncated JSON fragment), and `StructuredRefusal`
+        when the model declined this text.
         """
         messages = self.create_messages(text, self.create_context_messages())
         field = single_field_name(self.language)
@@ -792,7 +808,7 @@ class ChatGPTAPI(Base):
 
         message = completion.choices[0].message
         if getattr(message, "refusal", None):
-            raise ValueError(f"Model refused to translate: {message.refusal}")
+            raise StructuredRefusal(message.refusal)
         if message.parsed is None:
             raise StructuredOutputUnsupported("no parsed content in response")
 
@@ -827,6 +843,16 @@ class ChatGPTAPI(Base):
                 print(
                     "[yellow]ℹ structured answer was truncated; retranslating "
                     "this paragraph without a schema[/yellow]"
+                )
+                t_text = self._plain_translation(text)
+            except StructuredRefusal as e:
+                # Seen live with the refusal field holding a complete, correct
+                # translation. Whatever the reason, one paragraph the schema
+                # path will not answer must not end the run.
+                print(
+                    "[yellow]ℹ the model refused this paragraph under the "
+                    f"schema ({escape(str(e.refusal))}); retranslating it "
+                    "without one[/yellow]"
                 )
                 t_text = self._plain_translation(text)
         else:
@@ -1009,7 +1035,9 @@ class ChatGPTAPI(Base):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=60),
-        retry=retry_if_not_exception_type(StructuredOutputUnsupported),
+        retry=retry_if_not_exception_type(
+            (StructuredOutputUnsupported, StructuredRefusal)
+        ),
         reraise=True,
     )
     def _execute_structured_batch_translate(self, text_list, plist_len):
@@ -1045,7 +1073,7 @@ class ChatGPTAPI(Base):
 
         message = completion.choices[0].message
         if getattr(message, "refusal", None):
-            raise ValueError(f"Model refused to translate: {message.refusal}")
+            raise StructuredRefusal(message.refusal)
         if message.parsed is None:
             raise StructuredOutputUnsupported("no parsed content in response")
 
