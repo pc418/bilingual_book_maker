@@ -116,7 +116,6 @@ class TestVendorRoutes:
                 "gemini-pro-latest",
             ),
             ("xai", "https://api.x.ai/v1", "grok-beta"),
-            ("orcarouter", "https://api.orcarouter.ai/v1", "orcarouter/auto"),
             (
                 "qwen",
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -170,7 +169,6 @@ class TestKeys:
             "--gemini_key",
             "--groq_key",
             "--xai_key",
-            "--orcarouter_key",
             "--qwen_key",
             "--caiyun_key",
             "--deepl_key",

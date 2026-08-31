@@ -73,7 +73,6 @@ without pass-through caching it costs more than window mode.
 | Alibaba Qwen (DashScope) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | SiliconFlow | `https://api.siliconflow.cn/v1` |
 | OpenRouter | `https://openrouter.ai/api/v1` |
-| OrcaRouter | `https://api.orcarouter.ai/v1`; `--model orcarouter/auto` routes per request |
 | Azure OpenAI | the deployment's OpenAI-compatible URL; `--model` names the deployment |
 | Ollama | `http://localhost:11434/v1` |
 | vLLM / LM Studio / llama.cpp | whatever host they serve |
