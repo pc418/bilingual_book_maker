@@ -16,9 +16,16 @@ import pytest
 
 from book_maker.glossary import Glossary
 from book_maker.session_context import handoff_prompt
-from book_maker.translator.chatgptapi_translator import ChatGPTAPI, single_field_name
+from openai import LengthFinishReasonError
+
+from book_maker.translator.chatgptapi_translator import (
+    ChatGPTAPI,
+    batch_field_name,
+    single_field_name,
+)
 
 SINGLE_FIELD = single_field_name("Chinese")
+BATCH_FIELD = batch_field_name("Chinese")
 
 # A phrase unique to the compact turn, taken from the real prompt so the
 # tests cannot drift from it.
@@ -391,6 +398,52 @@ class TestCacheGuardrail:
         for i in range(12):
             t.get_translation(f"unit {i}")
         assert "cache" not in capsys.readouterr().out.lower()
+
+    def test_structured_batch_requests_are_counted_too(self, capsys):
+        """`--accumulated_num` sends whole batches through `.parse`. Those are
+        the requests being billed, so they are the ones to read."""
+        t = _translator(verdict="strict")
+        t.openai_client.chat.completions.parse = Mock(
+            side_effect=lambda **c: SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            parsed=SimpleNamespace(**{BATCH_FIELD: ["一", "二"]}),
+                            refusal=None,
+                            content=None,
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            )
+        )
+        for i in range(12):
+            assert t.translate_list([f"a {i}", f"b {i}"]) == ["一", "二"]
+        assert "cache" in capsys.readouterr().out.lower()
+
+    def test_a_truncated_structured_answer_still_counts_its_request(self):
+        """The truncated request was billed before it was thrown away; not
+        counting it delays the warning by one request per truncation."""
+        error = LengthFinishReasonError(
+            completion=SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content='{"x":"半'),
+                        finish_reason="length",
+                    )
+                ],
+            )
+        )
+        t = _translator(verdict="strict")
+        t.openai_client.chat.completions.parse = Mock(side_effect=error)
+
+        t.get_translation("one")
+
+        # Two billed requests went out for this paragraph: the truncated
+        # structured one and the plain retranslation.
+        assert t._session_requests == 2
 
 
 class TestWindowModeUnchanged:

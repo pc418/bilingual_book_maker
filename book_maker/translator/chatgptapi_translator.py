@@ -801,10 +801,12 @@ class ChatGPTAPI(Base):
             except StructuredOutputUnsupported as e:
                 self._demote_structured_outputs(e)
                 t_text = self._plain_translation(text)
-            except LengthFinishReasonError:
+            except LengthFinishReasonError as e:
                 # The answer was cut off mid-JSON. Nothing partial may be used,
                 # but the plain path has no JSON to truncate — retranslate there
                 # rather than ending a multi-hour run over one paragraph.
+                # The truncated request was still billed, so it still counts.
+                self._note_cache_usage(getattr(e, "completion", None))
                 print(
                     "[yellow]ℹ structured answer was truncated; retranslating "
                     "this paragraph without a schema[/yellow]"
@@ -1038,6 +1040,8 @@ class ChatGPTAPI(Base):
             raise StructuredOutputUnsupported(str(e)) from e
         except (ValidationError, json.JSONDecodeError) as e:
             raise StructuredOutputUnsupported(str(e)) from e
+
+        self._note_cache_usage(completion)
 
         message = completion.choices[0].message
         if getattr(message, "refusal", None):
