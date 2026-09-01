@@ -30,7 +30,7 @@ sections after it provide additional notes for selected workflows.
 
 | Option | Purpose |
 |---|---|
-| `--plan-dry-run` | Build/report a free EPUB plan and exit. |
+| `--plan-dry-run` | Build and print the EPUB plan, write `<book>_plan.json` with every `action` still `null`, and exit before classification. Needs no credentials. |
 | `--plan-classify {none,most,model,agent}` | Select no plan, greedy plan, model triage, or coding-agent triage. |
 | `--plan-classify-model MODEL` | Classification model; implies model mode and conflicts with `most`/`agent`. |
 | `--plan-min-coverage FRACTION` | Fail if selected planned text is below this fraction; default `0.5`. |
@@ -71,6 +71,7 @@ A route is an endpoint, not a model name.
 | `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id; `codex` must be named explicitly. |
 | `--model codex` | Selects the codex format, equivalent to `--api_format codex`; the sidecar then uses its default model. |
 | `--model` with `codex` | Optional — defaults to `gpt-5.6-luna`. Other ids the sidecar offers: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.2`. |
+| `--model orcarouter` | Routes to the OrcaRouter gateway and asks for its smart-routing model; `--model orcarouter/<id>` pins one model there. Neither needs `--api_base`, and one you pass wins. The key comes from `BBM_ORCAROUTER_API_KEY` first. Not a legacy alias — no substitution notice is printed. |
 | `--model_list IDS` | Several model IDs to rotate across, comma-separated. Kept for compatibility and for rotation; a single model belongs in `--model`. Naming a model in both flags is an error. |
 | `--source_lang LANG` | Source language for endpoints that want it stated; default `auto`. |
 | `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name. Its `base_url`, `api_style` (`openai`, `claude`, `gemini`, `qwen`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Anything passed explicitly wins. |

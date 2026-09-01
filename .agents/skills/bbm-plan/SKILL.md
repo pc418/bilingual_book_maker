@@ -33,7 +33,9 @@ Copy `assets/env.example` (this skill dir) to `.env` at the repo root and
 have the user fill it. Two fields matter: `MODEL`, the exact model id, and
 one API key for wherever that model lives. `MODEL` and `BBM_API_BASE` are
 skill-level fields — make_book.py does not read them from env, you translate
-them into flags.
+them into flags. If the user's gateway already has an entry in
+`bbm_providers.json` (repo root) or `~/.bbm/providers.json`, `--provider
+NAME` carries the endpoint instead and only the key has to be exported.
 
 Source `.env` in the same Bash call as the run:
 `set -a; source .env; set +a; …`. Never echo values; check presence with
@@ -48,14 +50,14 @@ plan hands off. Prefer the environment (`$BBM_API_KEY`, `$OPENAI_API_KEY`,
 `$ANTHROPIC_API_KEY` are read when `--key` is absent), and if a key does get
 echoed, say so and tell the user to rotate it.
 
-**Prefer the environment over a key flag, and never guess a key flag's
-name.** A wrong flag name is not a harmless error: argparse answers
-`unrecognized arguments:` by printing the whole command line back, so a
-mistyped key flag prints the key itself into the terminal, the log and the
-transcript. Read the flag name out of `book_maker/cli.py` before the first
-run, or pass no key flag at all and let the run read the environment
-variable. If a key ever does reach the terminal, say so at once and tell the
-user to rotate it.
+**There is one key flag, `--key`, whatever the route is.** The old
+per-vendor flags (`--openai_key`, `--claude_key`, …) and `--api_key` still
+parse — they are rewritten to `--key` and the substitution is printed — so
+nothing needs guessing. Prefer the environment anyway: argparse answers a
+mistyped flag with `unrecognized arguments:` and the whole command line, so a
+key on the line reaches the terminal, the log and the transcript either way.
+If a key ever does reach the terminal, say so at once and tell the user to
+rotate it.
 
 ## 1. Intake — what to ask for
 
@@ -96,6 +98,15 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
 mis-tokenizes under zsh — macOS's default shell — into a single argv word
 that argparse rejects. The array form works in bash and zsh alike.)
 
+**A named gateway replaces the route flags.** When the endpoint has an entry
+in `bbm_providers.json` (repo root) or `~/.bbm/providers.json`, use
+`ROUTE=(--provider NAME)`: the entry's `base_url`, `api_style`,
+`default_models` and `env_key` stand in for `--api_base`, `--api_format`,
+`--model`/`--model_list` and the key variable. Anything you pass explicitly
+wins, so `--provider NAME --model "$MODEL"` is a legal route and is how you
+keep the user's model on their gateway. Step 1b still applies — probe the
+entry's `base_url`, not a guess.
+
 ## 1b. Endpoint probe — infer the route, then verify it (sub-cent)
 
 Never assume a route from the key alone. Infer it from the **model name**,
@@ -111,7 +122,7 @@ which also carries the per-shape defaults:
 
 ```bash
 set -a; source .env; set +a
-route_env openai        # or: anthropic | gemini — sets KEY, ROOT, or exits
+route_env openai        # or: anthropic — sets KEY, ROOT, or exits
 ```
 
 **1. Does this model id exist here?** On any OpenAI-shaped base the model
@@ -160,9 +171,14 @@ python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
 - **A spent 5-hour window is waited out**, not failed. A weekly limit is
   reported instead, because its reset is too far off to sit through; rerun
   later, the run is resumable either way.
-- **The user's `~/.codex/hooks.json` fires on every turn**, so book text
-  passes through whatever those hooks do. Say so before the first run on a
-  machine that has them.
+- **The sidecar is stripped before any book text reaches it.** Startup
+  disables shell and exec, hooks, plugins and apps, browser and computer
+  use, web search, and every MCP server the user's codex config declares —
+  then reads the config back and refuses to run if any of them survived. The
+  turn itself is `sandbox: read-only` with approvals off, in an empty
+  private working directory that is deleted when the run ends, so the user's
+  project config and hooks are not in play. The user's own codex setup is
+  untouched; only this sidecar is.
 - Tell the user which allowance this spends: plan quota, not the API key in
   `.env`.
 
@@ -285,10 +301,12 @@ so you can honour a request without guessing at legal values.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--model` | any model id the endpoint uses, verbatim; or `codex` | `$MODEL` from `.env` | the user names a different model, or wants their ChatGPT plan spent (`codex`, §1c) |
+| `--model` | any model id the endpoint uses, verbatim; or `codex`; or `orcarouter` / `orcarouter/<id>` | `$MODEL` from `.env`; unset on the openai format means `gpt-5.6-luna` | the user names a different model, wants their ChatGPT plan spent (`codex`, §1c), or wants the OrcaRouter gateway — `--model orcarouter` routes there and needs no `--api_base` |
+| `--model_list` | several ids, comma-separated | *unset* — say one model in `--model` | rate limits force rotation. Naming a model in both flags is an error, and each id keeps its own prompt cache, so rotating re-pays the `--use_context session` history at full price on every switch |
 | `--key` | one key, or several comma-separated to rotate past rate limits | `$KEY` from `.env`; falls back to `$BBM_API_KEY`, then `$OPENAI_API_KEY` / `$ANTHROPIC_API_KEY` | omit entirely on the `codex` route |
 | `--api_format` | `openai`, `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi` | *unset* — inferred from `--api_base`, then the model id | step 1b proved the guess wrong; the machine-translation formats cannot answer questions, so they are translation-only |
 | `--api_base` | endpoint URL | *unset* (the format's official host), or `$BBM_API_BASE` | a gateway, proxy or local server. OpenAI shape wants `…/v1`; anthropic shape wants the bare host |
+| `--provider` | a name from `bbm_providers.json` (repo root) or `~/.bbm/providers.json` | *unset* | the endpoint is already an entry there — it supplies `--api_base`, `--api_format`, the model(s) and the key variable in one word. Explicit flags still win, so `--model` may ride along. An unknown name is an error naming both files |
 | `--proxy` | `http://127.0.0.1:7890`-style | *unset* | the user is behind one |
 
 ### Plan mode
@@ -308,7 +326,7 @@ so you can honour a request without guessing at legal values.
 | `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window before compaction (raise it). **openai and codex only** — the anthropic route drops it, and drops it silently when session mode is asked for |
 | `--context_paragraph_limit` | integer | *unset* (openai substitutes 3) | window mode only. **Required on the anthropic route** for `--use_context` to carry anything at all — its default of 0 keeps zero pairs |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
-| `--temperature` | float | *unset* (the API default is not sent) | output is erratic; lower it and re-smoke. Ignored on codex; openai retries without it if the model rejects it |
+| `--temperature` | float | *unset* | output is erratic; lower it and re-smoke. **On the openai format only** is an unset value left out of the request; the anthropic route sends `1.0` on every call whether you asked for it or not. Ignored on codex; openai retries once without it if the model rejects an explicit one |
 
 ### Output form
 
@@ -328,18 +346,21 @@ so you can honour a request without guessing at legal values.
 | `--test` / `--test_num` | flag + integer | **`--test --test_num 8`** at the smoke step only | poetry-heavy books: ~20, once you have confirmed the first N units are body text |
 | `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
 | `--resume` | on/off | **on for the full run, once a cache exists** | never off after a crash — replay is positional and fingerprint-guarded. On a first run with no `.<book>.temp.bin` it raises an uncaught traceback, so do not add it to the smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
-| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user and drop `--use_context session` for that run: workers hold separate histories, so the pairing is untested and self-defeating. Pointless on `codex` |
+| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user: with `--use_context` each worker is handed its own fresh history, so continuity stops at every chapter boundary and session mode buys nothing. **Pointless on `codex`** — one thread is the context, so turns are serialized to stop chapters interleaving into it, and the run prints that the flag does not speed it up |
 | `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
 
 ### Never pass in plan mode
 
-`--translate-tags` (the plan overrides it), `--plan-dry-run` (it writes a
-plan with every action already decided, which suppresses the null questions
-and the agent handoff), `--accumulated_num` and `--allow_navigable_strings`
-(both explicitly ignored; a non-1 `accumulated_num` also disables the
-interrupt-save path), `--batch` / `--batch-use` (untested with plan mode),
-`--block_size` / `--sentence_mode` / `--batch_size` (they re-cut text the
-plan has already partitioned).
+`--translate-tags` (the plan overrides it), `--plan-dry-run` (it returns
+before classification: the plan it writes has every `action` still `null`,
+and there is no agent handoff block to work from — use the base command,
+which writes the same plan *and* hands off), `--accumulated_num` and
+`--allow_navigable_strings` (both explicitly ignored; a non-1
+`accumulated_num` also disables the interrupt-save path), `--batch` /
+`--batch-use` and `--retranslate` (**refused** in plan mode — the run prints
+which flag and exits 1), `--sentence_mode` (refused the same way),
+`--block_size` / `--batch_size` (they re-cut text the plan has already
+partitioned).
 
 ## Halt / resume — safe by construction
 
