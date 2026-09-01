@@ -51,9 +51,11 @@ QUOTA_WARN_PERCENT = 90
 # for the tail the thread still has to carry: the fresh paragraph, its
 # translation, and the handoff turn itself.
 
-# Used when --model is omitted. Naming one beats letting Codex pick: the
-# compact budget is looked up by model id, so an unknown default would fall
-# back to the conservative 8000 instead of this model's own 17000.
+# The model a codex run translates with when --model_list names none. Naming
+# one keeps that choice here rather than leaving it to whatever the user's
+# codex config happens to default to, and it is the name the window and
+# compaction notices report. It does not decide the compact budget:
+# compact_budget_for() returns the same figure for every model.
 DEFAULT_MODEL = "gpt-5.6-luna"
 
 # A minute past the reset, because the server's clock and ours are not the
