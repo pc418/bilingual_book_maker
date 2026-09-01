@@ -336,3 +336,27 @@ class TestNotices:
         # --model names an actual model now; only the old aliases translate,
         # and an id this fork has never heard of is the normal case
         assert rewrite("--model", "gpt3") == ["--model", "gpt3"]
+
+
+class TestOrcaRouter:
+    """`--model orcarouter` is a live route; only its key flag is old."""
+
+    def test_the_old_key_flag_becomes_key(self):
+        assert flags("--model", "orcarouter", "--orcarouter_key", "K") == {
+            "--key": "K",
+            "--model": "orcarouter",
+        }
+        assert "--orcarouter_key" in notices("--model", "orcarouter", "--orcarouter_key", "K")
+
+    def test_the_model_is_passed_through_untranslated(self):
+        # a rewrite here would print a deprecation notice for a supported
+        # shortcut; the CLI resolves the route itself
+        assert rewrite("--model", "orcarouter/anthropic/claude-sonnet-4-6") == [
+            "--model",
+            "orcarouter/anthropic/claude-sonnet-4-6",
+        ]
+
+    def test_the_key_is_never_echoed(self):
+        assert "K-secret" not in notices(
+            "--model", "orcarouter", "--orcarouter_key", "K-secret"
+        )

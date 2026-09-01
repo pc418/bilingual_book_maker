@@ -15,6 +15,7 @@ from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
 from book_maker.provider_loader import resolve_provider
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
+from book_maker.translator import orcarouter_translator as orcarouter
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
 # Where each format looks for a key when --key is absent. $BBM_API_KEY is the
@@ -785,6 +786,16 @@ def main():
         if name.strip()
     ]
 
+    # OrcaRouter is one gateway at one address, so its model id is enough to
+    # say where the request goes. Consulted before the format is inferred,
+    # because that inference reads the endpoint this fills in.
+    orcarouter_env_keys = ()
+    if model_names:
+        route = orcarouter.resolve(model_names[0], options.api_base)
+        if route:
+            model_names[0], options.api_base = route
+            orcarouter_env_keys = (orcarouter.ENV_KEY,)
+
     api_format = options.api_format or infer_api_format(
         options.api_base, model_names[0] if model_names else ""
     )
@@ -794,7 +805,10 @@ def main():
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
     API_KEY = resolve_api_key(
-        api_format, options.key, options.api_base, provider_env_keys + legacy.env_keys
+        api_format,
+        options.key,
+        options.api_base,
+        orcarouter_env_keys + provider_env_keys + legacy.env_keys,
     )
 
     glossary = Glossary()

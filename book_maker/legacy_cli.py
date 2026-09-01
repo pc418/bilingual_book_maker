@@ -71,6 +71,7 @@ _KEY_FLAGS = (
     "--qwen_key",
     "--caiyun_key",
     "--deepl_key",
+    "--orcarouter_key",
     "--api_key",
 )
 
@@ -85,6 +86,11 @@ _ALIAS_KEY_FLAG = {
     "qwen-mt-plus": "--qwen_key",
     "caiyun": "--caiyun_key",
     "deepl": "--deepl_key",
+    # not a legacy alias — `--model orcarouter` is a live route (see
+    # translator/orcarouter_translator.py) — but the key flag it was
+    # documented with is old, and must not reach argparse unrecognized:
+    # that error echoes the key.
+    "orcarouter": "--orcarouter_key",
 }
 
 

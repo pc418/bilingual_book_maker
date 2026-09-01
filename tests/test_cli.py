@@ -34,6 +34,7 @@ KEY_ENV_VARS = (
     "BBM_CLAUDE_API_KEY",
     "BBM_CAIYUN_API_KEY",
     "BBM_DEEPL_API_KEY",
+    "BBM_ORCAROUTER_API_KEY",
 )
 
 
@@ -475,3 +476,44 @@ def test_an_unknown_provider_names_both_config_files(tmp_path):
     assert "ghost" in output
     assert "bbm_providers.json" in output
     assert ".bbm/providers.json" in output
+
+
+def test_orcarouter_needs_no_endpoint_and_reads_its_own_key(tmp_path):
+    # upstream's documented command, unchanged: the gateway's model id says
+    # where the request goes, and BBM_ORCAROUTER_API_KEY carries the key
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli_in(
+        tmp_path,
+        "--book_name",
+        str(src),
+        "--model",
+        "orcarouter",
+        "--test",
+        "--test_num",
+        "1",
+        BBM_ORCAROUTER_API_KEY="sk-orca",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['orcarouter/auto']" in proc.stdout
+    # a supported shortcut, not a legacy alias: nothing is deprecated here
+    assert "deprecated" not in proc.stdout
+
+
+def test_an_orcarouter_model_id_is_kept_as_named(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli_in(
+        tmp_path,
+        "--book_name",
+        str(src),
+        "--model",
+        "orcarouter/openai/gpt-5-mini",
+        "--orcarouter_key",
+        "sk-orca",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['orcarouter/openai/gpt-5-mini']" in proc.stdout
