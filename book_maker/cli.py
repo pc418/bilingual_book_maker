@@ -497,7 +497,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         "before it is compacted into a translator handoff report. Default: "
         "8000, which costs about what window mode costs for several times "
         "the context; 2500 is the cheapest setting on most endpoints. 0 "
-        "sizes the budget from the model's own context window (90% of it), "
+        "sizes the budget from the model's own context window (90%% of it), "
         "and says so and uses the default when the endpoint reports none",
     )
     parser.add_argument(
