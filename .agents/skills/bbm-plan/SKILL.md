@@ -66,8 +66,33 @@ API_BASE_FLAG=()
 [ -n "$BBM_API_BASE" ] && API_BASE_FLAG=(--api_base "$BBM_API_BASE")
 ROUTE=(--model openai --model_list "$MODEL")   # ← from step 1b
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
-  --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}"
+  --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}" \
+  --use_context session
 ```
+
+**The defaults above are the defaults on purpose**, and they hang together:
+
+- `--plan-classify agent` — this skill's hard constraint (see the top).
+- `--use_context session` — one append-only history the endpoint re-reads at
+  its cache rate, instead of re-sending three paragraphs fresh every
+  request. At the compact budget it is condensed into a translator handoff
+  report that seeds the next window and is appended to `<book>_handoff.md`,
+  so names and register survive a book-length run. **Watch the first ten
+  requests**: if the endpoint never reports a cached prompt token the run
+  says so, and there session mode costs *more* than plain `--use_context` —
+  drop back to it.
+- **Default compacting: pass no `--context-compact-at`.** The default budget
+  (8000 estimated tokens) is the one this workflow is run on. `0` sizes the
+  budget from the model's own context window instead, and `2500` is the
+  cheapest setting — knobs for a user who asks, not defaults to improvise.
+  `--no-context-compact` drops the report entirely: the window still rolls
+  over, but the next one starts empty, which is the opposite of what this
+  workflow wants.
+- **No `--parallel-workers` with session mode.** Workers each hold their own
+  history and seed nothing to each other, so the continuity session mode
+  buys is exactly what parallelism spends — and the pairing is untested.
+  Sequential is the tested default; if wall-clock has to win on a long book,
+  say so to the user and use plain `--use_context` for that run.
 
 (The conditional flag is an array on purpose: `${VAR:+--flag "$VAR"}`
 mis-tokenizes under zsh — macOS's default shell — into a single argv word
@@ -140,6 +165,38 @@ itself is rejected by its own provider.
 
 Structured-output capability is **not** tested here — the run's own probe
 does that at first paid use, and its verdict is not a pass/fail.
+
+## 1c. The codex route — a subscription, not an endpoint
+
+`--model codex` is not a model id and not a host: it drives a local
+`codex app-server` sidecar and spends the user's ChatGPT/Codex plan
+allowance instead of API credits. **Step 1b does not apply** — there is
+nothing to curl, and no key to resolve.
+
+```bash
+python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
+  --plan-classify agent --use_context session
+```
+
+- **No key, no `--api_base`.** The sidecar carries the login. Run
+  `codex login` once beforehand; the run's preflight checks the sidecar is
+  up and signed in *before* the book is parsed, and reports how much of the
+  5-hour window is left. A login prompt ten minutes into a book is what that
+  check exists to prevent.
+- **The thread is the context window.** Turns accumulate on one thread and
+  it is condensed into a handoff report at the compact budget, so this route
+  is session-shaped whether or not you ask for it.
+- **`--parallel-workers` buys nothing here**: turns serialize on the one
+  thread, because chapters must not interleave into it.
+- **A spent 5-hour window is waited out** rather than failed; a weekly limit
+  is reported instead, since its reset is too far off to sit through. Either
+  way the run is resumable — rerun the identical command.
+- **The user's `~/.codex/hooks.json` fires on every turn**, so book text
+  passes through whatever those hooks do. Say so before the first run on a
+  machine that has them.
+
+Tell the user which allowance a codex run spends: plan quota, not the API
+key in `.env`. Plan, classify, smoke and full run are otherwise identical.
 
 ## 2. Plan (free — agent mode makes no API call)
 
@@ -216,10 +273,12 @@ running, check which documents the first N units come from. A large nav or
 title page can absorb the whole budget (a 458 KB nav once ate all 20 units
 of a poetry smoke, so the smoke translated zero verse); when that happens,
 point the smoke at a body chapter with `--only_filelist <content doc>`
-instead of raising `--test_num`. Verify by unzipping the partial
-`<book>_bilingual.epub`: right target language? formatting intact
-(translation carries the same tag/class as its original)? Check
-`smoke.log` for error lines. The cache is plan-fingerprint-guarded and
+instead of raising `--test_num`. **Verify from the epub itself, always** — the smoke is not passed by a zero
+exit code or a clean log. Unzip the partial `<book>_bilingual.epub` and read
+the markup around a translated unit: right target language? translation
+carries the same tag and class as its original, next to it rather than
+replacing it (unless `--single_translate`)? ids and internal links intact?
+Then check `smoke.log` for error lines. The cache is plan-fingerprint-guarded and
 carries into the full run — nothing paid here is re-paid.
 
 A wrong-language reply and broken formatting surface **here**, not three
@@ -253,9 +312,12 @@ changed intentionally.
 | | `--provider <name> --model_list "$MODEL"` | a non-OpenAI shape *and* a custom model id — the only combination the other two cannot express (`references/providers.md`) |
 | output form | *(default)* bilingual | user reads both languages side by side — the usual ask |
 | | `--single_translate` | user wants a translated-only book, original replaced |
-| speed | *(default)* sequential | small book (< ~30 chapters), or first run with a new endpoint |
-| | `--parallel-workers 4` | large book; plan mode isolates per-chapter state, safe with or without context |
-| consistency | `--use_context` | fiction with recurring names/terms; costs extra tokens; in parallel runs context is chapter-local (until the phase-2 brief exists) |
+| | `--model codex` | the user wants their ChatGPT/Codex plan allowance spent instead of API credits — no key, no probe, see §1c |
+| speed | *(default)* sequential | **the default, and the only tested pairing with `--use_context session`**: workers hold separate histories and seed nothing to each other |
+| | `--parallel-workers 4` | large book where wall-clock has to win — say so to the user, and drop to plain `--use_context` for that run |
+| consistency | `--use_context session` | **the default here.** One append-only history re-read at the endpoint's cache rate, compacted into a handoff report that seeds the next window. Warns if no cached token is ever reported |
+| | `--use_context` (bare) | the fallback when session mode is not paying off on this endpoint, or when a run has to go parallel; re-sends the last few pairs |
+| compact budget | *(default — pass nothing)* | 8000 estimated tokens, the setting this workflow is run on. `0` sizes it from the model's context window; `2500` is the cheapest; `--no-context-compact` drops the report and is not what this workflow wants |
 | voice/style | `--prompt prompt.json` | user states a register ("literary", "plain modern") — encode it once in the system message |
 | styling | `--translation_style "color:#808080;font-style:italic"` | bilingual output should visually separate the translation |
 | scope | `--only_filelist` / `--exclude_filelist` | user wants specific chapters; exact internal names — a typo fails loud at the coverage gate |
@@ -308,7 +370,9 @@ spot-checking one early and one late chapter.
   applies to any command that translates, whichever step it appears in.
 - Everything the next step needs is on disk; nothing critical lives only in
   conversation.
-- **Compaction threshold:** for a small book (smoke + full run expected to
+- **Compaction threshold** — *your* context, not the run's
+  (`--context-compact-at` is the translator's, and is left at its default):
+  for a small book (smoke + full run expected to
   finish within the session comfortably), do not compact at all. Only
   compact when context is genuinely pressured (≳70% used), at most once,
   and at the natural boundary: after plan editing, before the full run.
@@ -326,6 +390,9 @@ spot-checking one early and one late chapter.
 | `invalid action` on plan load | typo in a hand-edited `action` — fix the JSON, rerun |
 | coverage-gate error / empty plan | `--only_filelist` misspelled, or the plan skips nearly everything — re-check the plan |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
+| codex: `... codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
+| codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself; a weekly limit is reported instead, and there you rerun later |
+| `handoff report failed (…); starting the next window` | one compact produced no report. Informational: the next window starts unseeded, translation continues |
 
 ## Next phase
 
