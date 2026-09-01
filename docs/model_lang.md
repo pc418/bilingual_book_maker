@@ -14,14 +14,15 @@ Old `--model` commands still work — they are rewritten into these flags and
 the substitution is printed. See "Migrating from the old flags" in the README
 for the full table.
 
-## The three flags
+## The route flags
 
 | Flag | Meaning |
 |---|---|
-| `--model` | Model id, exactly as the endpoint names it. |
+| `--model` | Model id, exactly as the endpoint names it. On the `openai` format it may be left out: it defaults to `gpt-5.6-luna`. |
 | `--api_base` | Endpoint URL. Defaults to the format's official host; `…/v1`, `…/v1/` and `…/v1/chat/completions` all work. |
 | `--key` | API key. Comma-separate several to rotate them and spread rate limits. |
 | `--api_format` | Wire format. Inferred; pass it only when the guess is wrong. |
+| `--provider` | A named endpoint from a provider file, standing in for the four above. |
 
 `--model_list a,b` rotates across several models and is also what older
 commands used; name a model in one flag or the other, not both.
@@ -51,6 +52,48 @@ A rejected key never triggers it.
 Credentials come from `--key`, then `BBM_API_KEY`, then the format's
 conventional variable — see [Environment settings](./env_settings.md). An
 endpoint on localhost needs no key.
+
+## Named endpoints: `--provider`
+
+An endpoint used more than once can be written down instead of retyped.
+`bbm_providers.json` in the working directory is read first, then
+`~/.bbm/providers.json`; a project entry wins on a shared name.
+
+```json
+{
+  "nvidia": {
+    "api_style": "openai",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "default_models": ["moonshotai/kimi-k2-thinking"],
+    "env_key": "NVIDIA_API_KEY"
+  }
+}
+```
+
+```sh
+bbook_maker --book_name book.epub --provider nvidia --language ja
+```
+
+`api_style` is `openai`, `claude` (the anthropic format), `gemini` or `qwen`
+— the last two are the openai format at their compatibility bases, so
+`base_url` is optional for them. `default_models` supplies `--model` when it
+holds one id and `--model_list` when it holds several, and `env_key` names
+the variable to read the key from; no secret goes in the file. Anything
+passed explicitly wins, so `--provider nvidia --model <id>` keeps that
+model. An unknown name is an error naming both files.
+
+## OrcaRouter
+
+```sh
+bbook_maker --book_name book.epub --model orcarouter --language ja
+```
+
+`--model orcarouter` sends the run to the OrcaRouter gateway and asks for
+its smart-routing model; `--model orcarouter/<id>` pins one model there.
+Neither needs `--api_base` — one you pass yourself wins — and the key is
+read from `BBM_ORCAROUTER_API_KEY` before the usual fallbacks. It is a
+shortcut for the address, not a legacy alias, so nothing is printed about
+it.
 
 ## OpenAI-compatible endpoints
 

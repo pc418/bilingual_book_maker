@@ -23,15 +23,26 @@ export for that vendor:
 `google`, `deeplfree`, `tencent` and `customapi` need no key, and neither
 does an endpoint on localhost.
 
-The old per-vendor variables — `BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`,
-`BBM_XAI_API_KEY`, `BBM_QWEN_API_KEY`, and a provider file's `env_key` — are
-still read when an old-style command implies that route (see "Migrating from
-the old flags" in the README). They are not consulted for a command written
-in the new flags, where `--api_base` decides the endpoint and the key must
-match it.
-
 The CLI does not read `.env` files. Export the variables first, or source a
 git-ignored file before running: `set -a; source .env; set +a; bbook_maker ...`
+
+## A provider's own variable
+
+`--provider NAME` reads the endpoint from `bbm_providers.json` in the working
+directory, else `~/.bbm/providers.json`. When that entry has an `env_key`,
+the named variable is consulted for the key ahead of `BBM_API_KEY` and the
+fallbacks above — it names the endpoint being called, so its own key is the
+right one. The file holds the address and the variable name, never a secret.
+See [Endpoints, models and languages](./model_lang.md#named-endpoints---provider).
+`--model orcarouter` reads `BBM_ORCAROUTER_API_KEY` the same way.
+
+## Old per-vendor variables
+
+`BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, `BBM_XAI_API_KEY` and
+`BBM_QWEN_API_KEY` are still read when an old-style command implies that
+route (see "Migrating from the old flags" in the README). They are not
+consulted for a command written in the new flags, where `--api_base` decides
+the endpoint and the key must match it.
 
 ## Prompt overrides
 
