@@ -13,6 +13,7 @@ from book_maker.glossary import Glossary
 from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
+from book_maker.provider_loader import resolve_provider
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
@@ -140,6 +141,31 @@ def resolve_api_key(api_format, explicit_key, api_base, extra_env_keys=()):
             f"one of: {', '.join(env_names)}."
         )
     return ""
+
+
+def apply_provider(options):
+    """Fill in the endpoint flags `--provider` covers, and name its key variable.
+
+    Only what the command left out: a provider is a shorthand for flags, so
+    every flag actually typed outranks it. Returns the variables to consult
+    for the key, ahead of the format's conventional ones — the entry names
+    the endpoint being called, so its own variable is the right one.
+    """
+    if not options.provider:
+        return ()
+    try:
+        route = resolve_provider(options.provider)
+    except ValueError as err:
+        raise SystemExit(str(err))
+    options.api_format = options.api_format or route.api_format
+    options.api_base = options.api_base or route.api_base
+    if route.models and not options.model and not options.model_list:
+        # One model belongs in --model; several rotate, first one first.
+        if len(route.models) == 1:
+            options.model = route.models[0]
+        else:
+            options.model_list = ",".join(route.models)
+    return (route.env_key,) if route.env_key else ()
 
 
 def get_book_type(book_name):
@@ -376,6 +402,16 @@ def build_parser():
         help="endpoint to translate against, e.g. https://api.openai.com/v1, "
         "https://api.anthropic.com, a gateway, or http://localhost:11434/v1 "
         "for ollama. Defaults to the format's official host",
+    )
+    parser.add_argument(
+        "--provider",
+        dest="provider",
+        type=str,
+        default="",
+        help="named endpoint from bbm_providers.json (this directory) or "
+        "~/.bbm/providers.json: its base_url, api_style, default_models and "
+        "env_key stand in for --api_base, --api_format, --model and the key. "
+        "Anything you pass explicitly wins",
     )
     parser.add_argument(
         "--exclude_filelist",
@@ -730,6 +766,8 @@ def main():
         os.environ["http_proxy"] = PROXY
         os.environ["https_proxy"] = PROXY
 
+    provider_env_keys = apply_provider(options)
+
     # A model may be named once, in either flag. Accepting both would leave
     # two answers to "which model is this run using".
     if options.model and options.model_list:
@@ -756,7 +794,7 @@ def main():
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
     API_KEY = resolve_api_key(
-        api_format, options.key, options.api_base, legacy.env_keys
+        api_format, options.key, options.api_base, provider_env_keys + legacy.env_keys
     )
 
     glossary = Glossary()

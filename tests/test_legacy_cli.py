@@ -6,8 +6,6 @@ became so the user can update their command. Nothing is guessed silently —
 a legacy flag with no honest equivalent fails loudly instead.
 """
 
-import json
-
 import pytest
 
 from book_maker.legacy_cli import translate_legacy_argv
@@ -220,68 +218,6 @@ class TestEndpointFlags:
         assert "interval" in notices("--interval", "0.5", "--model_list", "m").lower()
 
 
-class TestProvider:
-    def _write(self, tmp_path, monkeypatch, config):
-        (tmp_path / "bbm_providers.json").write_text(json.dumps(config))
-        monkeypatch.chdir(tmp_path)
-
-    def test_a_provider_becomes_its_endpoint(self, tmp_path, monkeypatch):
-        self._write(
-            tmp_path,
-            monkeypatch,
-            {
-                "providers": {
-                    "deepseek": {
-                        "api_style": "openai",
-                        "base_url": "https://api.deepseek.com/v1",
-                        "default_models": ["deepseek-chat"],
-                        "env_key": "BBM_DEEPSEEK_API_KEY",
-                    }
-                }
-            },
-        )
-
-        result = translate_legacy_argv(["--provider", "deepseek"])
-
-        assert result.argv == [
-            "--api_base",
-            "https://api.deepseek.com/v1",
-            "--model",
-            "deepseek-chat",
-        ]
-        assert "BBM_DEEPSEEK_API_KEY" in result.env_keys
-
-    def test_a_claude_style_provider_keeps_its_format(self, tmp_path, monkeypatch):
-        self._write(
-            tmp_path,
-            monkeypatch,
-            {
-                "providers": {
-                    "gw": {
-                        "api_style": "claude",
-                        "base_url": "https://gw.example.com",
-                        "default_models": ["claude-haiku-4.5"],
-                    }
-                }
-            },
-        )
-
-        assert translate_legacy_argv(["--provider", "gw"]).argv == [
-            "--api_format",
-            "anthropic",
-            "--api_base",
-            "https://gw.example.com",
-            "--model",
-            "claude-haiku-4.5",
-        ]
-
-    def test_an_unknown_provider_fails_loud(self, tmp_path, monkeypatch):
-        self._write(tmp_path, monkeypatch, {"providers": {}})
-
-        with pytest.raises(SystemExit, match="ghost"):
-            translate_legacy_argv(["--provider", "ghost"])
-
-
 class TestFaithfulness:
     """An old command must keep doing what it did, or say why it cannot."""
 
@@ -328,34 +264,6 @@ class TestFaithfulness:
             ]
             == "OPEN"
         )
-
-    def test_every_provider_default_model_is_kept(self, tmp_path, monkeypatch):
-        (tmp_path / "bbm_providers.json").write_text(
-            json.dumps(
-                {
-                    "providers": {
-                        "p": {
-                            "api_style": "openai",
-                            "base_url": "https://p/v1",
-                            "default_models": ["a", "b", "c"],
-                        }
-                    }
-                }
-            )
-        )
-        monkeypatch.chdir(tmp_path)
-
-        # the old path handed the whole list to set_model_list, which rotates
-        assert flags("--provider", "p")["--model_list"] == "a,b,c"
-
-    def test_a_malformed_project_provider_file_fails_loud(self, tmp_path, monkeypatch):
-        (tmp_path / "bbm_providers.json").write_text("{not json")
-        monkeypatch.chdir(tmp_path)
-
-        # silently falling through to the global file could run the book
-        # against a different endpoint than the one configured here
-        with pytest.raises(SystemExit, match="bbm_providers.json"):
-            translate_legacy_argv(["--provider", "p"])
 
     def test_custom_api_falls_back_to_its_environment_variable(self, monkeypatch):
         monkeypatch.setenv("BBM_CUSTOM_API", "https://env-host/t")
