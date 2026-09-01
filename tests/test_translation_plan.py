@@ -26,6 +26,7 @@ from rich.markup import escape
 
 from book_maker.loader.plan import (
     DisplayResolver,
+    TranslationPlan,
     build_plan,
     classify_skip,
     parse_css_display,
@@ -632,10 +633,37 @@ class TestPlanArtifact:
         data = json.loads(out.read_text())
         assert data["coverage"] == pytest.approx(plan.coverage)
         assert data["book_sha256"]
+        assert data["planning_settings"] == {
+            "exclude_tags": ["code", "sup"],
+            "poetry_group_size": 8,
+            "only_files": [],
+            "exclude_files": [],
+        }
         rows = {s["key"]: s for s in data["signatures"]}
         # every row is a question until someone answers it
         assert rows["block:blockquote.calibre_17"]["action"] is None
         assert rows["block:blockquote.calibre_17"]["samples"]
+
+    def test_same_key_with_changed_occurrence_evidence_reopens_its_decision(self):
+        first = bs("<body><p>Front matter.</p></body>", "html.parser")
+        old_plan = TranslationPlan(
+            [partition_soup(first, DisplayResolver([]), "front.xhtml")], (), 8
+        )
+        old_ledger = old_plan.build_ledger()
+        old_ledger.decide("block:p", "skip", "agent", "front matter")
+
+        second = bs(
+            "<body><p>Main prose that happens to use the same tag.</p></body>",
+            "html.parser",
+        )
+        new_plan = TranslationPlan(
+            [partition_soup(second, DisplayResolver([]), "chapter.xhtml")], (), 8
+        )
+        row = new_plan.build_ledger(decisions=old_ledger).rows["block:p"]
+
+        assert row["action"] is None
+        assert row["decided_by"] is None
+        assert row["content_type"] is None
 
     def test_signature_override_skip(self, tmp_path):
         book = epub.read_epub(str(ANIMAL_FARM))
@@ -965,7 +993,7 @@ class TestLoaderPlanMode:
         assert len(guarded) == 2, "the re-partitioned plan was never guarded"
         assert guarded[1] is not guarded[0]
 
-    def test_a_signature_a_settings_change_introduces_reaches_the_plan(self, tmp_path):
+    def test_a_settings_change_reopens_every_carried_decision(self, tmp_path):
         # A decided plan plus a widened file filter: the new document's
         # signatures are new questions. Listing them in the prompt while the
         # JSON has no row to edit makes the instruction impossible to follow
@@ -985,13 +1013,62 @@ class TestLoaderPlanMode:
         rows = json.loads(plan_path.read_text())["signatures"]
         keys = {r["key"] for r in rows}
         assert keys - before, "the widened filter added no signature to work with"
-        # the new rows are askable, and the answered ones were left alone
-        assert {r["key"] for r in rows if r["action"] is None} == keys - before
-        assert all(
-            r["action"] == "translate" and r["decided_by"] == "agent"
-            for r in rows
-            if r["key"] in before
-        )
+        # The filter is part of the evidence boundary. A shared signature can
+        # now describe occurrences from another chapter, so a matching key is
+        # not enough to keep its old verdict.
+        assert all(r["action"] is None for r in rows)
+        assert all(r["decided_by"] is None for r in rows)
+
+    def test_a_settings_change_refreshes_an_already_open_plan(self, tmp_path):
+        loader, src = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit):
+            loader.make_bilingual_book()
+        plan_path = src.parent / (src.stem + "_plan.json")
+
+        # The exclude list is semantically shadowed by the only list, so the
+        # row keys and evidence stay identical. The settings record must still
+        # advance or any answers added now would be reopened on every rerun.
+        loader2, _ = _make_loader(tmp_path, FakeModel)
+        loader2.only_filelist = "index_split_004.html"
+        loader2.exclude_filelist = "index_split_003.html"
+        loader2.plan_classify = "agent"
+        with pytest.raises(SystemExit):
+            loader2.make_bilingual_book()
+
+        data = json.loads(plan_path.read_text())
+        assert data["planning_settings"]["exclude_files"] == ["index_split_003.html"]
+        assert all(row["action"] is None for row in data["signatures"])
+
+    def test_an_inline_skip_does_not_reopen_the_answers_around_it(self, tmp_path):
+        # An inline verdict removes its text *before* segments are formed, so
+        # the enclosing block runs partition differently on the next run. That
+        # is the plan doing what it was told, not evidence going stale: if it
+        # reopened the surrounding rows, a fully answered plan would come back
+        # unanswered every time it was run, and the agent handoff would never
+        # terminate.
+        loader, src = _make_loader(tmp_path, FakeModel)
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit):
+            loader.make_bilingual_book()
+        plan_path = src.parent / (src.stem + "_plan.json")
+
+        data = json.loads(plan_path.read_text())
+        assert any(r["scope"] == "inline" for r in data["signatures"])
+        for row in data["signatures"]:
+            row["action"] = "skip" if row["scope"] == "inline" else "translate"
+            row["decided_by"] = "agent"
+            row["content_type"] = "x"
+        plan_path.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+        answered = plan_path.read_text()
+
+        loader2, _ = _make_loader(tmp_path, FakeModel)
+        loader2.plan_classify = "agent"
+        loader2.make_bilingual_book()  # must not raise SystemExit
+
+        assert plan_path.read_text() == answered, "answered plan was overwritten"
+        assert loader2.translate_model.list_calls, "nothing was translated"
 
     def test_parallel_resume_cache_is_document_ordered(self, tmp_path):
         # Finding #1: cache slots must follow document order, not thread

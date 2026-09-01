@@ -53,6 +53,7 @@ from .plan import (
     is_simple_owner,
     load_plan_overrides,
     partition_file,
+    planning_settings,
 )
 from .classify import (
     PlanClassifyError,
@@ -482,7 +483,19 @@ class EPUBBookLoader(BaseBookLoader):
         overrides = None
         saved_ledger = None
         if plan_existed:
-            saved_ledger, overrides = load_plan_overrides(plan_path, self.epub_name)
+            only = {f for f in self.only_filelist.split(",") if f}
+            exclude = {f for f in self.exclude_filelist.split(",") if f}
+            expected_settings = planning_settings(
+                self._exclude_tags_tuple(),
+                self.poetry_group_size,
+                only,
+                exclude,
+            )
+            saved_ledger, overrides = load_plan_overrides(
+                plan_path,
+                self.epub_name,
+                expected_settings=expected_settings,
+            )
             if overrides:
                 print(
                     f"Applying {len(overrides)} signature override(s) from {plan_path}"
@@ -516,7 +529,7 @@ class EPUBBookLoader(BaseBookLoader):
 
         # The ledger carries every question this book asks, plus whatever a
         # previous run already answered.
-        ledger = plan.build_ledger(decisions=saved_ledger)
+        ledger = plan.build_ledger(decisions=saved_ledger, overrides=overrides)
         plan_written = False
         # A plan answers the questions the book asked when it was written.
         # Change the file filters or the excluded tags and the book asks
@@ -526,6 +539,7 @@ class EPUBBookLoader(BaseBookLoader):
         if saved_ledger is not None:
             added = set(ledger.rows) - set(saved_ledger.rows)
             dropped = set(saved_ledger.rows) - set(ledger.rows)
+        reopened = set(ledger.reopened_keys)
         if policy.name == "most":
             # "most" answers every question the same way, on purpose and out
             # loud — see classify/most.py for why that is not a default.
@@ -632,15 +646,29 @@ class EPUBBookLoader(BaseBookLoader):
                 f"plan written to {plan_path} with {len(undecided)} "
                 f"undecided signature(s) (null actions must be resolved)"
             )
-        elif added:
-            # The rewrite carries every existing decision forward (they were
-            # merged into this ledger before anything was applied), so the
-            # only rows it changes are the ones that had nowhere to live.
+        elif added or reopened or ledger.settings_changed:
+            # `dropped` alone is deliberately not a trigger: a row can vanish
+            # without the settings moving only because *this run's own* skip
+            # overrides re-shaped the partition, and rewriting then deletes
+            # decisions the user would need again the moment the skip is
+            # reverted. A settings change that drops rows still rewrites,
+            # through `settings_changed`.
             plan.save_json(plan_path, book_path=self.epub_name, ledger=ledger)
-            print(
-                f"{plan_path} updated: {len(added)} signature(s) this run's "
-                f"settings introduced now have rows to decide"
-            )
+            changes = []
+            if added:
+                changes.append(f"{len(added)} added")
+            if dropped:
+                changes.append(f"{len(dropped)} dropped")
+            if reopened:
+                reason = (
+                    "planning settings changed"
+                    if ledger.settings_changed
+                    else "occurrence evidence changed"
+                )
+                changes.append(f"{len(reopened)} decision(s) reopened ({reason})")
+            elif ledger.settings_changed:
+                changes.append("planning settings refreshed")
+            print(f"{plan_path} updated: {', '.join(changes)}")
             if dropped:
                 print(
                     f"[bold yellow]{len(dropped)} decided signature(s) no "
@@ -650,6 +678,16 @@ class EPUBBookLoader(BaseBookLoader):
                     f"[/bold yellow]"
                 )
         else:
+            if dropped:
+                # kept in the file, not dropped from it: the rows are still
+                # there with their verdicts, and reverting the skip that
+                # re-shaped the partition brings their signatures back.
+                print(
+                    f"[bold yellow]{len(dropped)} decided signature(s) do not "
+                    f"occur in this run's partition and were left untouched in "
+                    f"{plan_path}: {', '.join(sorted(dropped)[:5])}."
+                    f"[/bold yellow]"
+                )
             # never overwrite for its own sake: the file may carry
             # user-edited decisions (and load_plan_overrides already verified
             # its hash)
@@ -746,7 +784,11 @@ class EPUBBookLoader(BaseBookLoader):
                 continue
             files.append(self._plan_partition(item)[1])
         return TranslationPlan(
-            files, self._exclude_tags_tuple(), self.poetry_group_size
+            files,
+            self._exclude_tags_tuple(),
+            self.poetry_group_size,
+            only_files=only,
+            exclude_files=exclude,
         )
 
     def _classify_plan(self, ledger, plan, plan_path):
