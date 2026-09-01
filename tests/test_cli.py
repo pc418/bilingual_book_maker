@@ -1,4 +1,5 @@
 from book_maker.cli import get_book_type, main
+from book_maker.loader.classify import PLAN_HANDOFF_EXIT_CODE
 
 
 def test_get_book_type_uses_final_suffix_and_lowercases():
@@ -51,7 +52,8 @@ def test_plan_classify_implies_plan_mode(tmp_path):
     # any classification choice is a choice to have a plan; no second flag
     # is needed to enter plan mode
     proc, plan = _run(tmp_path, "--plan-classify", "agent")
-    assert proc.returncode == 0
+    # the handoff is not a finished translation, and says so
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE
     assert plan.exists()
     assert "Paste the block below" in proc.stdout
 
@@ -91,7 +93,7 @@ def test_most_mode_ignores_an_existing_plan(tmp_path):
 
 def test_explicit_tag_list_loses_to_the_classify_flag(tmp_path):
     proc, plan = _run(tmp_path, "--plan-classify", "agent", "--translate-tags", "div,p")
-    assert proc.returncode == 0
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE
     assert plan.exists()
     # rich wraps long lines at terminal width, so compare wrap-insensitively
     assert "ignoring --translate-tags div,p" in " ".join(proc.stdout.split())
@@ -110,7 +112,7 @@ def test_translate_tags_auto_is_an_ordinary_tag(tmp_path):
 def test_default_tags_are_overridden_quietly(tmp_path):
     # the untouched default "p" is not a selection worth a warning
     proc, plan = _run(tmp_path, "--plan-classify", "agent")
-    assert proc.returncode == 0
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE
     assert plan.exists()
     assert "ignoring --translate-tags" not in proc.stdout
 
