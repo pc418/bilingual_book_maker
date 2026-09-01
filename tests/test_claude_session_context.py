@@ -294,6 +294,177 @@ class TestCompactResilience:
         assert t.translate("a" * 200) == "译文"
 
 
+class _Refused(Exception):
+    """An endpoint turning a request down outright, the way a 400 does."""
+
+    status_code = 400
+
+
+class _RateLimited(Exception):
+    """The failure the compact retry was built for: it clears on its own."""
+
+    status_code = 429
+
+
+class TestEmptyHandoffReport:
+    """A 200 carrying no text is a failed compact, not a successful one.
+
+    Nothing raises, so this used to reset the window and seed it with the
+    empty string — the accumulated context discarded, and nothing handed on
+    in its place. An empty or tool-only content list from a gateway is all it
+    takes.
+    """
+
+    BUDGET = 300
+    UNIT = "x" * 800
+
+    def _mute(self, tmp_path, path=None):
+        """A translator whose compact turn answers with no text blocks."""
+        t = _translator(
+            ["译文"] * 40,
+            context_compact_at=self.BUDGET,
+            handoff_path=path or (tmp_path / "h.md"),
+        )
+        real = t.client.messages.create
+
+        def create(**call):
+            if HANDOFF_MARKER in call["messages"][-1]["content"]:
+                return SimpleNamespace(content=[])
+            return real(**call)
+
+        t.client.messages.create = Mock(side_effect=create)
+        return t
+
+    def test_it_keeps_the_window(self, tmp_path):
+        # Not merely "the history is non-empty": the discarded window was
+        # reseeded with the report's own boilerplate, which is non-empty and
+        # carries nothing of the book. The units themselves have to be there.
+        t = self._mute(tmp_path)
+        t.translate(self.UNIT)
+        t.translate(self.UNIT)
+        kept = [m["content"] for m in t.session.messages()]
+        assert sum(self.UNIT in c for c in kept) == 2
+
+    def test_it_counts_as_a_failure(self, tmp_path):
+        t = self._mute(tmp_path)
+        t.translate(self.UNIT)
+        t.translate(self.UNIT)
+        assert t._compact_failures == 1
+
+    def test_it_says_so(self, tmp_path, capsys):
+        t = self._mute(tmp_path)
+        t.translate(self.UNIT)
+        t.translate(self.UNIT)
+        assert "handoff report failed" in capsys.readouterr().out.lower()
+
+    def test_it_is_not_printed_as_a_report(self, tmp_path, capsys):
+        t = self._mute(tmp_path)
+        t.translate(self.UNIT)
+        t.translate(self.UNIT)
+        assert "handoff report, window" not in capsys.readouterr().out
+
+    def test_it_writes_no_handoff_file(self, tmp_path):
+        path = tmp_path / "h.md"
+        t = self._mute(tmp_path, path=path)
+        t.translate(self.UNIT)
+        t.translate(self.UNIT)
+        assert not path.exists()
+
+    def test_a_whitespace_only_report_is_no_better(self, tmp_path):
+        t = _translator(
+            ["译文"] * 40,
+            context_compact_at=self.BUDGET,
+            handoff_path=tmp_path / "h.md",
+        )
+        real = t.client.messages.create
+
+        def create(**call):
+            if HANDOFF_MARKER in call["messages"][-1]["content"]:
+                return _message("   \n  ")
+            return real(**call)
+
+        t.client.messages.create = Mock(side_effect=create)
+        t.translate(self.UNIT)
+        t.translate(self.UNIT)
+        kept = [m["content"] for m in t.session.messages()]
+        assert sum(self.UNIT in c for c in kept) == 2
+
+    def test_it_still_gives_up_rather_than_growing_forever(self, tmp_path):
+        t = self._mute(tmp_path)
+        for _ in range(8):
+            t.translate(self.UNIT)
+        assert t.session.estimated_tokens() <= 2 * self.BUDGET
+
+
+class TestOversizedHistoryDoesNotWedge:
+    """A compact refused for its size must not be retried — it wedges the run.
+
+    The retry is deferred to the next paragraph, and that paragraph's request
+    carries the same history plus the paragraph, so on an endpoint whose limit
+    the history has already passed it is refused first. COMPACT_ATTEMPTS was
+    never reached, the `2 * budget` guard never tripped, and the run could not
+    advance at all.
+    """
+
+    BUDGET = 300
+    UNIT = "x" * 800
+    # Characters this endpoint accepts in one request. Wide enough for two
+    # units and their history, too narrow for that history plus the compact
+    # turn's own prompt.
+    LIMIT = 2000
+
+    def _endpoint(self, tmp_path, error):
+        t = _translator(
+            ["译文"] * 40,
+            context_compact_at=self.BUDGET,
+            handoff_path=tmp_path / "h.md",
+        )
+        real = t.client.messages.create
+
+        def create(**call):
+            if sum(len(m["content"]) for m in call["messages"]) > self.LIMIT:
+                raise error
+            return real(**call)
+
+        t.client.messages.create = Mock(side_effect=create)
+        return t
+
+    def test_a_refused_compact_starts_the_next_window(self, tmp_path):
+        t = self._endpoint(tmp_path, _Refused("prompt is too long"))
+        t.translate(self.UNIT)
+        t.translate(self.UNIT)
+        assert t.session.messages() == []
+
+    def test_the_run_still_advances(self, tmp_path):
+        t = self._endpoint(tmp_path, _Refused("prompt is too long"))
+        assert [t.translate(self.UNIT) for _ in range(6)] == ["译文"] * 6
+
+    def test_the_message_alone_is_enough_to_recognise_it(self, tmp_path):
+        """A gateway need not raise the SDK's error type to be understood."""
+        boom = RuntimeError("prompt is too long: 210000 tokens > 200000 maximum")
+        t = self._endpoint(tmp_path, boom)
+        assert [t.translate(self.UNIT) for _ in range(6)] == ["译文"] * 6
+
+    def test_a_rate_limited_compact_still_keeps_its_history(self, tmp_path):
+        """The retry is for the weather, and a 429 is weather."""
+        t = _translator(
+            ["译文"] * 40,
+            context_compact_at=self.BUDGET,
+            handoff_path=tmp_path / "h.md",
+        )
+        real = t.client.messages.create
+
+        def create(**call):
+            if HANDOFF_MARKER in call["messages"][-1]["content"]:
+                raise _RateLimited("rate limited")
+            return real(**call)
+
+        t.client.messages.create = Mock(side_effect=create)
+        t.translate(self.UNIT)
+        t.translate(self.UNIT)
+        assert t.session.messages(), "a rate limit cost the accumulated context"
+
+
 class TestCompactionDisabled:
     """`--no-context-compact` rolls the window over with no summary at all."""
 

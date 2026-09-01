@@ -27,6 +27,35 @@ DEFAULT_CONTEXT_PARAGRAPH_LIMIT = config["translator"]["chatgptapi"][
     "context_paragraph_limit"
 ]
 
+# What an endpoint says when the history itself is what it refused. Matched on
+# the text as well as the status, because the gateways that serve this shape do
+# not all raise the SDK's own error types.
+_TOO_LONG = re.compile(
+    r"prompt is too long|context[ _-]?length|context window|"
+    r"too many tokens|maximum context|request too large",
+    re.IGNORECASE,
+)
+
+
+def _history_too_long(reason) -> bool:
+    """Whether a failed compact is plausibly this window's size, not the weather.
+
+    That distinction is what decides whether the failure is worth retrying. A
+    rate limit, a dropped connection or a 5xx clears on its own, and throwing
+    away a book's accumulated context over one is precisely what the retry
+    exists to prevent. A history that does not fit clears never, and it takes
+    the whole run with it: the retry only happens on the next paragraph, and
+    that paragraph's request carries this same history plus the paragraph, so
+    it is refused first and the retry is never reached. Anything else the
+    endpoint refuses outright is read the same way, because the next request
+    is this one with more in it.
+    """
+    status = getattr(reason, "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        # 408 and 429 are the two 4xx that mean "later", not "no".
+        return 400 <= status < 500 and status not in (408, 429)
+    return bool(_TOO_LONG.search(str(reason)))
+
 
 def _sdk_base_url(api_base):
     """Trim a trailing `/v1` the SDK is going to add back.
@@ -362,32 +391,17 @@ class Claude(Base):
                 if getattr(block, "type", "") == "text"
             )
         except Exception as e:
-            # Keep the window. One rate-limited or dropped request is not a
-            # reason to throw away a book's worth of accumulated context — the
-            # budget stays exceeded, so the next unit simply tries again.
-            self._compact_failures += 1
-            # Give up on attempts, or as soon as the window has outgrown its
-            # budget badly enough that retrying is the wrong bet: a compact
-            # that fails because the history is too long will keep failing,
-            # and the translation requests carrying that history fail with it.
-            give_up = (
-                self._compact_failures >= self.COMPACT_ATTEMPTS
-                or self.session.estimated_tokens() > 2 * budget
-            )
-            print(
-                f"[yellow]ℹ handoff report failed ({e}); "
-                + (
-                    "starting the next context window without a summary"
-                    if give_up
-                    else "keeping the current context and retrying on the next paragraph"
-                )
-                + "[/yellow]"
-            )
-            if give_up:
-                # Bounded: without this the history would grow past the
-                # budget forever on a persistently failing endpoint.
-                self._compact_failures = 0
-                self.session.reset(seed="")
+            self._compact_failed(e, budget)
+            return
+        if not report_text.strip():
+            # A 200 carrying no text at all — an empty or tool-only content
+            # list, which a gateway can answer with. Nothing was raised, so
+            # this used to count as a successful compaction: the window was
+            # reset and seeded with the empty string, throwing away the whole
+            # accumulated context and buying nothing for it. It is a compact
+            # that produced no report, so it takes the failure path, and it is
+            # not a report, so it is not printed as one.
+            self._compact_failed("the endpoint returned an empty report", budget)
             return
         self._compact_failures = 0
 
@@ -410,6 +424,40 @@ class Claude(Base):
                     f"the run continues without a saved handoff[/yellow]"
                 )
         self.session.reset(seed=report.seed_text())
+
+    def _compact_failed(self, reason, budget):
+        """A compact that came back with no usable report: retry, or start clean.
+
+        Keeping the window is the default, and the reason the retry exists:
+        one rate-limited or dropped request is not grounds for throwing away a
+        book's worth of accumulated context, and the budget stays exceeded, so
+        the next unit simply tries again.
+        """
+        self._compact_failures += 1
+        # Give up on attempts, once the window has outgrown its budget badly
+        # enough that retrying is the wrong bet, or as soon as the endpoint
+        # says the history is what it refused — that last one cannot be
+        # retried at all, because the retry is deferred to a paragraph whose
+        # request carries this same history and is refused before it.
+        give_up = (
+            _history_too_long(reason)
+            or self._compact_failures >= self.COMPACT_ATTEMPTS
+            or self.session.estimated_tokens() > 2 * budget
+        )
+        print(
+            f"[yellow]ℹ handoff report failed ({reason}); "
+            + (
+                "starting the next context window without a summary"
+                if give_up
+                else "keeping the current context and retrying on the next paragraph"
+            )
+            + "[/yellow]"
+        )
+        if give_up:
+            # Bounded: without this the history would grow past the budget
+            # forever on a persistently failing endpoint.
+            self._compact_failures = 0
+            self.session.reset(seed="")
 
     def _start_empty_window(self):
         """Roll over with no handoff report, because the user asked for none.
