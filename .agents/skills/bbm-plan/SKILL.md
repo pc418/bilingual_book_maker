@@ -75,16 +75,27 @@ together:
 - `--plan-classify agent` — this skill's hard constraint (see the top).
 - `--use_context session` — one append-only history re-read at the
   endpoint's cache rate, instead of re-sending three paragraphs fresh every
-  request. Compacted into a translator handoff report at
-  `--context-compact-at`, which seeds the next window, so names and register
-  survive a book-length run. **Watch the first ten requests**: if the
-  endpoint never reports cached tokens the run says so, and on that endpoint
-  session mode costs *more* than plain `--use_context` — drop back to it.
-- **No `--parallel-workers`.** Sequential is the default here and should
-  stay that way: parallel workers each get their own context window with no
-  seeding between them, so exactly the continuity these flags buy is what
-  parallelism gives up. Reach for it only when a book is long enough that
-  wall-clock beats consistency, and say so to the user when you do.
+  request. Compacted into a translator handoff report that seeds the next
+  window, so names and register survive a book-length run. The report is
+  appended to `<book>_handoff.md` and re-read on resume.
+  **Watch the first ten requests**: if the endpoint never reports cached
+  tokens the run says so, and on that endpoint session mode costs *more*
+  than plain `--use_context` — drop back to it.
+- **Default compacting: do not pass `--context-compact-at`.** The default
+  budget (8000 estimated tokens) is the one this workflow has actually been
+  run on; it costs about what window mode costs while carrying several times
+  the context. `2500` is cheaper per request and compacts more often — a
+  knob for a user who asks for it, not a default to improvise. Naming the
+  flag on a non-session run only earns a warning that it was ignored.
+- **No `--parallel-workers` with session mode.** Each worker does get its
+  own session history — that bug was found and fixed — but **the
+  combination has not been tested**, and the untested path is not where a
+  paid book-length run belongs. The tested default is sequential, and it is
+  also the coherent one: workers seed nothing to each other, so the
+  continuity session mode buys is exactly what parallelism spends. If a book
+  is long enough that wall-clock has to win, say so to the user, and drop to
+  plain `--use_context` for that run rather than pairing parallel with
+  session.
 
 (The conditional flag is an array on purpose: `${VAR:+--flag "$VAR"}`
 mis-tokenizes under zsh — macOS's default shell — into a single argv word
@@ -157,6 +168,43 @@ itself is rejected by its own provider.
 
 Structured-output capability is **not** tested here — the run's own probe
 does that at first paid use, and its verdict is not a pass/fail.
+
+## 1c. The codex route — a subscription, not an endpoint
+
+`--model codex` and `--api_format codex` are the same thing: codex is not a
+model id and not an endpoint, so **step 1b does not apply** — there is
+nothing to curl. It drives a local `codex app-server` sidecar and spends the
+user's ChatGPT/Codex plan allowance instead of API credits.
+
+```bash
+python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
+  --plan-classify agent --use_context session
+```
+
+- **No `--key`, no `--api_base`.** The sidecar carries the login. Run
+  `codex login` once beforehand; the run's preflight checks the sidecar is up
+  and signed in *before* parsing the book, and prints how much of the 5-hour
+  window is left. A login prompt ten minutes into a book is what that check
+  exists to prevent.
+- **The thread is the context window.** Session mode is the shape of this
+  route whether or not you ask for it: turns accumulate on one thread and it
+  is condensed into a handoff report at the compact budget. `--use_context
+  session` is still the right thing to pass — it is what makes the loader
+  keep and re-read `<book>_handoff.md` — but do not expect the flag to be
+  what turns context on here.
+- **`--parallel-workers` buys nothing** and says so: turns serialize on the
+  one thread, because chapters must not interleave into it.
+- **A spent window is waited out, not failed.** Only windowed (5-hour)
+  limits are slept through; a weekly reset is reported rather than waited
+  for, since it is hours or days away. Either way the run is resumable —
+  rerun the identical command.
+- **The user's `~/.codex/hooks.json` fires on every turn.** Book text passes
+  through whatever those hooks do. Say so before the first paid run on a
+  machine that has them.
+
+Tell the user which allowance a codex run spends: plan quota, not the API
+key in `.env`. The rest of this workflow — plan, classify, smoke, full run —
+is identical.
 
 ## 2. Plan (free — agent mode makes no API call)
 
@@ -233,10 +281,12 @@ running, check which documents the first N units come from. A large nav or
 title page can absorb the whole budget (a 458 KB nav once ate all 20 units
 of a poetry smoke, so the smoke translated zero verse); when that happens,
 point the smoke at a body chapter with `--only_filelist <content doc>`
-instead of raising `--test_num`. Verify by unzipping the partial
-`<book>_bilingual.epub`: right target language? formatting intact
-(translation carries the same tag/class as its original)? Check
-`smoke.log` for error lines. The cache is plan-fingerprint-guarded and
+instead of raising `--test_num`. **Verify from the epub itself, always** — the smoke is not passed by a zero
+exit code or a clean log. Unzip the partial `<book>_bilingual.epub` and read
+the markup around a translated unit: right target language? translation
+carries the same tag and class as its original, next to it rather than
+replacing it (unless `--single_translate`)? ids and internal links intact?
+Then check `smoke.log` for error lines. The cache is plan-fingerprint-guarded and
 carries into the full run — nothing paid here is re-paid.
 
 A wrong-language reply and broken formatting surface **here**, not three
@@ -325,8 +375,8 @@ to plain `--use_context` and rerun — the checkpoint carries over, so nothing
 already translated is re-paid.
 
 On the `codex` route the command is the same with `--model codex` and no
-`--key`; run `codex login` once beforehand if the Codex CLI is not already
-signed in.
+`--key` — see §1c, which also covers what a codex run does *not* need
+(step 1b) and what it cannot use (`--parallel-workers`).
 
 ## Flag guide — you choose, per book
 
@@ -335,12 +385,15 @@ signed in.
 | route | `--model "$MODEL"` | the usual case — the format is inferred from `--api_base`, or from a `claude`/`anthropic` id |
 | | `+ --api_format anthropic` | an anthropic-shaped gateway on its own domain, where the host cannot say so |
 | | `+ --api_format openai` | a gateway serving `claude` ids over `/chat/completions`; skips the one-request fallback |
+| | `--model codex` | the user wants their ChatGPT/Codex plan allowance spent instead of API credits — no key, no probe, see §1c |
 | output form | *(default)* bilingual | user reads both languages side by side — the usual ask |
 | | `--single_translate` | user wants a translated-only book, original replaced |
-| speed | *(default)* sequential | **the default, and the right one with `--use_context session`**: parallel workers get one context window each with no seeding between them, so the continuity session mode buys is exactly what parallelism spends |
-| | `--parallel-workers 4` | only when a long book makes wall-clock worth losing that continuity — say so to the user. Never on the `codex` route, where turns serialize on one thread anyway and the flag buys nothing |
-| consistency | `--use_context` | fiction with recurring names/terms; costs extra tokens (~6x the book); in parallel runs context is chapter-local |
-| | `--use_context session` | same purpose, cheaper on an endpoint that bills prompt-cache reads: one append-only history, compacted into a handoff report at `--context-compact-at`. Warns if no cached tokens are ever reported |
+| speed | *(default)* sequential | **the default, and the only tested pairing with `--use_context session`**: workers each hold their own history with no seeding between them, so the continuity session mode buys is what parallelism spends |
+| | `--parallel-workers 4` | only when a long book makes wall-clock worth losing that continuity — say so to the user, and drop to plain `--use_context` for that run: session + parallel is wired but untested. Never on the `codex` route, where turns serialize on one thread anyway and the flag buys nothing |
+| consistency | `--use_context session` | **the default here.** One append-only history the endpoint re-reads at its cache rate, compacted into a handoff report that seeds the next window. Warns if no cached tokens are ever reported |
+| | `--use_context` (bare) | the fallback when session mode is not paying off on this endpoint, or when a run has to go parallel; re-sends the last few pairs, ~200 extra tokens per request |
+| compact budget | *(default — pass nothing)* | 8000 estimated tokens, the setting this workflow is run on |
+| | `--context-compact-at 2500` | only when the user asks for the cheapest session setting; compacts more often, so more handoff reports and more re-seeding |
 | voice/style | `--prompt prompt.json` | user states a register ("literary", "plain modern") — encode it once in the system message |
 | styling | `--translation_style "color:#808080;font-style:italic"` | bilingual output should visually separate the translation |
 | scope | `--only_filelist` / `--exclude_filelist` | user wants specific chapters; exact internal names — a typo fails loud at the coverage gate |
@@ -393,7 +446,9 @@ spot-checking one early and one late chapter.
   applies to any command that translates, whichever step it appears in.
 - Everything the next step needs is on disk; nothing critical lives only in
   conversation.
-- **Compaction threshold:** for a small book (smoke + full run expected to
+- **Compaction threshold** — *your* context, not the run's
+  (`--context-compact-at` is the translator's, and is left at its default):
+  for a small book (smoke + full run expected to
   finish within the session comfortably), do not compact at all. Only
   compact when context is genuinely pressured (≳70% used), at most once,
   and at the natural boundary: after plan editing, before the full run.
@@ -411,6 +466,9 @@ spot-checking one early and one late chapter.
 | `invalid action` on plan load | typo in a hand-edited `action` — fix the JSON, rerun |
 | coverage-gate error / empty plan | `--only_filelist` misspelled, or the plan skips nearly everything — re-check the plan |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
+| codex: `... codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
+| codex: waiting *N* min for the window to reset | the 5-hour plan window is spent. Expected on a long book — the run sleeps and continues by itself; a weekly limit is reported instead, and there you rerun later |
+| `handoff report failed (…); starting the next window` | one compact did not produce a report. Informational: the next window starts unseeded, translation continues |
 
 ## Next phase
 

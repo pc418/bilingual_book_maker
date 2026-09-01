@@ -23,6 +23,11 @@ endpoint; nothing needs to be registered first.
 | the OpenAI shape | `--api_base "$ROOT/v1" --model "$MODEL"` |
 | the anthropic shape, on an anthropic.com host | `--api_base "$ROOT" --model "$MODEL"` |
 | the anthropic shape, on a gateway domain | the same plus `--api_format anthropic` |
+| nothing — a local Codex sidecar on the user's plan | `--model codex`, no key, no base (SKILL.md §1c) |
+
+`codex` is the one route with no endpoint to probe: it is not a model id and
+not a host, so none of the probes below apply to it. `--model codex` and
+`--api_format codex` select the same thing.
 
 A wrong anthropic guess costs one request: the endpoint answers 404/405 and
 the run switches to `openai` for good, saying so. `--api_format openai` skips
@@ -139,6 +144,7 @@ shape question outright; read it instead of guessing.
 |---|---|---|
 | `openai` (any host) | schema when the probe says `strict`, else delimiter | yes |
 | `anthropic` | delimiter (no structured-output work was done for it) | yes, via the prompt rung |
+| `codex` | delimiter, on a thread that is itself the context window | yes |
 | `google`, `deepl`, `deeplfree`, `caiyun`, `tencent`, `customapi` | translation only | **no** |
 
 Classification capability does not gate *this* skill — `--plan-classify
