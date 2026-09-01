@@ -66,7 +66,7 @@ Each entry is the route spelled out:
 `qwen` (both the openai format at their compatibility bases, so `base_url`
 is optional for them). `default_models` becomes `--model` when it holds one
 id and `--model_list` when it holds several; `env_key` is consulted for the
-key ahead of the format's conventional variables. **Anything passed
+key ahead of `BBM_API_KEY` and the format's conventional variables. **Anything passed
 explicitly wins**, so `--provider nvidia --model <id>` keeps the user's
 model. An unknown name is an error that names both files.
 
