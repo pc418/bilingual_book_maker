@@ -599,6 +599,29 @@ So you are close to reaching the limit. You have to choose your own value, there
     if options.provider and options.model:
         parser.error("--provider and --model are mutually exclusive")
 
+    # Two pairings of --parallel-workers have never been shown to work, and a
+    # paid book-length run is the wrong place to discover that. Refused here,
+    # before a key is read or a sidecar is started.
+    if options.parallel_workers > 1:
+        if options.model == "codex":
+            print(
+                "[bold red]Error:[/bold red] --parallel-workers is not "
+                "supported with --model codex. Codex serializes every turn "
+                "onto one thread, so there is no speed-up to win, and the run "
+                "fails partway through instead of translating. Drop "
+                "--parallel-workers."
+            )
+            exit(1)
+        if options.context_mode == "session":
+            print(
+                "[bold red]Error:[/bold red] --parallel-workers is not "
+                "supported with --use_context session. Each worker would "
+                "carry a session history of its own, and what that does to a "
+                "translation has never been tested. Drop --parallel-workers, "
+                "or drop --use_context session for this run."
+            )
+            exit(1)
+
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
     if options.book_from == "kobo":

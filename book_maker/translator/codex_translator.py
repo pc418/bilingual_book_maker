@@ -399,7 +399,8 @@ class Codex(Base):
         # per-worker buffers to hand out. Letting workers overlap would
         # interleave unrelated chapters into one thread, lose window-token
         # updates to races, and let a compact swap the thread mid-turn.
-        # `--parallel-workers` therefore buys nothing here, and the CLI says so.
+        # `--parallel-workers` therefore buys nothing here, which is why the
+        # CLI refuses the pairing rather than letting a run discover it.
         with self._turn_lock:
             thread_id = self._ensure_thread()
 
