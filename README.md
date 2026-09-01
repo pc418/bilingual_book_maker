@@ -10,7 +10,8 @@ The bilingual_book_maker is an AI translation tool that uses ChatGPT to assist u
 ## Supported models
 
 Built-in routes include OpenAI presets and arbitrary OpenAI-compatible model IDs, current
-Claude choices, Gemini, Qwen-MT, Groq, xAI, OrcaRouter, DeepL, Google, Caiyun, and Tencent TranSmart.
+Claude choices, Gemini, Codex, Qwen-MT, Groq, xAI, OrcaRouter, DeepL, Google, Caiyun, and
+Tencent TranSmart.
 The exact `--model` choices come from the installed version, so use
 `python3 make_book.py --help`. Unlisted gateways and native-provider model IDs can be
 configured with `--provider`; see [Models and languages](./docs/model_lang.md).
@@ -138,6 +139,19 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   python3 make_book.py --book_name test_books/animal_farm.epub --groq_key [your_key] --model groq --model_list llama3-8b-8192
   ```
 
+* [Codex](https://developers.openai.com/codex/cli)
+
+  Translate on your ChatGPT/Codex plan allowance instead of API credits. Install the
+  [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login` once — a
+  `codex app-server` sidecar owns that session, so no key is needed. `--model_list` is
+  optional and defaults to `gpt-5.6-luna`. One thread is reused for the whole book and
+  compacted at `--context-compact-at`; the sidecar runs sandboxed, with shell, MCP
+  servers, browsing and hooks off.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+  ```
+
 * Custom API Provider
 
   If the built-in models don't cover your needs, you can define custom providers via a JSON config file. This lets you use any OpenAI-compatible API (DeepSeek, SiliconFlow, local proxies, etc.) without modifying source code.
@@ -208,6 +222,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   | `o1mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-mini |
   | `o3mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o3-mini |
   | `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | **Requires `--model_list`**. Use any OpenAI-compatible model |
+  | `codex` | No key — `codex login` (Codex CLI) | Your ChatGPT/Codex plan allowance, through a local `codex app-server` sidecar |
   | `claude` and listed `claude-*` IDs | `--claude_key` / `BBM_CLAUDE_API_KEY` | Exact built-in choices shown by `--help`; arbitrary unlisted IDs require `--provider` or the `openai` route |
   | `gemini` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Flash. Supports `--model_list` |
   | `geminipro` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Pro |
@@ -375,7 +390,23 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--context_paragraph_limit`:
 
-  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option.
+  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option. This applies to window mode only.
+
+- `--use_context session`:
+
+  `--use_context` also takes a mode. Bare `--use_context` (or `--use_context window`) is the behaviour described above. `--use_context session` instead keeps a single append-only history of everything translated so far, so a model endpoint that supports prompt caching re-reads it at its cache rate. Context can then grow to chapter length for less money than window mode spends on a few paragraphs. When the history reaches the compact budget, the model is asked for a translator handoff report, which seeds the next window and is appended to `<book>_handoff.md`. If the endpoint never reports cached tokens, a warning is printed, since without caching this mode costs more than window mode.
+
+- `--context-compact-at`:
+
+  Session mode only. The estimated-token budget the history may reach before it is compacted into a handoff report. Default `8000`, minimum `500`, or `0` to size it from the model.
+
+  `--context-compact-at 0` asks the endpoint for the model's context window and compacts at 90% of it. Endpoints differ on whether they report one — OpenRouter-style gateways do, OpenAI's `/models` does not — and when none is reported the run says so and falls back to the default.
+
+  At `8000` a run costs between roughly 0.5x and 1.1x what window mode costs, while carrying several times the context — the exact ratio depends on how cheaply your endpoint prices cached input. `--context-compact-at 2500` is the cheapest setting (about 0.4-0.5x) if you would rather have that than the longer context.
+
+- `--no-context-compact`:
+
+  Session mode only. Never ask for a handoff report. When the history reaches the budget it is dropped and the next window starts empty, like Codex's `/new` — cheaper than a compact, at the cost of continuity across the seam.
 
 - `--parallel-workers`:
 

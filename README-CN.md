@@ -121,6 +121,18 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   python3 make_book.py --book_name test_books/animal_farm.epub --groq_key [your_key] --model groq --model_list llama3-8b-8192
   ```
 
+* [Codex](https://developers.openai.com/codex/cli)
+
+  使用 ChatGPT/Codex 套餐额度翻译，而不是 API credits。需要安装
+  [Codex CLI](https://developers.openai.com/codex/cli) 并执行一次 `codex login`——会话由
+  `codex app-server` 侧车进程管理，因此不需要 key。`--model_list` 可选，默认
+  `gpt-5.6-luna`。整本书只开一个 thread 并复用，到达 `--context-compact-at` 时压缩；
+  侧车运行在沙箱中，shell、MCP 服务器、浏览和 hooks 全部关闭。
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+  ```
+
 * 自定义 API Provider
 
   内置模型不满足需求时，可以通过 JSON 配置文件自定义 provider。不需要改代码，就能使用任何 OpenAI 兼容的 API（DeepSeek、SiliconFlow、本地代理等）。
@@ -191,6 +203,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   | `o1mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-mini |
   | `o3mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o3-mini |
   | `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | **必须配合 `--model_list`**，可使用任意 OpenAI 兼容模型 |
+  | `codex` | 无需 key —— `codex login`（Codex CLI） | 走本地 `codex app-server` 侧车，消耗 ChatGPT/Codex 套餐额度 |
   | `claude` 及已列出的 `claude-*` ID | `--claude_key` / `BBM_CLAUDE_API_KEY` | 只接受 `--help` 展示的精确内置值；未列出的 ID 需使用 `--provider` 或 `openai` 路由 |
   | `gemini` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Flash，支持 `--model_list` 自定义 |
   | `geminipro` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Pro |
@@ -313,7 +326,23 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
   - `--context_paragraph_limit`:
 
-    使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制。
+    使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制（仅 window 模式）。
+
+- `--use_context session`:
+
+  `--use_context` 还可以带一个模式值。裸写 `--use_context`（等同 `--use_context window`）即上面描述的行为；`--use_context session` 改为维护一份只追加的历史记录，支持提示缓存的端点会以缓存价重新读取它，因此上下文可以增长到整章的长度，花费反而低于 window 模式发送几个段落。历史达到压缩预算时，模型会被要求写一份交接报告，用于播种下一个窗口，并追加到 `<book>_handoff.md`。若端点从不返回缓存 token 数，会打印警告——没有缓存时该模式比 window 模式更贵。
+
+- `--context-compact-at`:
+
+  仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。默认 `8000`，最小值 `500`；传 `0` 表示按模型自身的上下文窗口自动取值。
+
+  `--context-compact-at 0` 会向端点查询该模型的上下文窗口，并在其 90% 处压缩。端点之间并不一致——OpenRouter 这类网关会给出窗口大小，OpenAI 的 `/models` 不会——查不到时会打印说明并回退到默认值。
+
+  在 `8000` 下，整体花费约为 window 模式的 0.5–1.1 倍，但携带数倍的上下文——具体比例取决于端点对缓存输入的计价。若更在意成本，`--context-compact-at 2500` 最省钱（约 0.4–0.5 倍）。
+
+- `--no-context-compact`:
+
+  仅 session 模式。完全不生成交接报告：历史达到预算后直接丢弃，下一个窗口从空开始，相当于 Codex 的 `/new`——比压缩更省，代价是接缝处的上下文连续性。
 
 - `--temperature`:
 

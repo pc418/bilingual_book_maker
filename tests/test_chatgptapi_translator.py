@@ -21,6 +21,7 @@ from book_maker.structured import StructuredJSONFailed
 from book_maker.translator.chatgptapi_translator import (
     ChatGPTAPI,
     StructuredOutputUnsupported,
+    StructuredRefusal,
     batch_field_name,
     batch_translation_model,
     single_field_name,
@@ -455,14 +456,52 @@ def test_truncation_retranslates_plainly_instead_of_ending_the_run():
     assert translator._structured_support["test-model"] == "strict"
 
 
-def test_refusal_raises_loudly():
+def test_refusal_raises_its_own_exception():
+    """A refusal is its own answer — neither a capability verdict nor a
+    transport error, so it gets an exception the caller can act on."""
     translator = _translator(
         parse=Mock(return_value=_parsed_completion(refusal="nope"))
     )
     translator._structured_support["test-model"] = "strict"
 
-    with pytest.raises(ValueError, match="refused"):
+    with pytest.raises(StructuredRefusal, match="nope"):
         translator._structured_single_translation("hello")
+
+
+def test_refusal_retranslates_plainly_instead_of_ending_the_run():
+    """Observed live: the refusal field held a complete, correct translation
+    while tenacity retried three times and then killed the book. One paragraph
+    the schema path would not answer goes through the plain path instead."""
+    create = Mock(return_value=_completion("完整的翻譯"))
+    translator = _translator(
+        create=create,
+        parse=Mock(return_value=_parsed_completion(refusal="I cannot help")),
+    )
+    translator._structured_support["test-model"] = "strict"
+
+    assert translator.get_translation("hello") == "完整的翻譯"
+    assert create.call_count == 1
+    # A refusal says nothing about schema support: demoting on it would cost
+    # the rest of the book its structured mode after two paragraphs.
+    assert translator._structured_support["test-model"] == "strict"
+
+
+def test_batch_refusal_is_not_retried_before_falling_back():
+    """The batch caller already degrades to one-by-one; retrying a refusal
+    three times first only buys three more refusals."""
+    parse = Mock(return_value=_parsed_completion(refusal="nope"))
+    create = Mock(return_value=_completion("plain"))
+    translator = _translator(create=create, parse=parse)
+    translator._structured_support["test-model"] = "strict"
+
+    assert translator._do_structured_batch_translate(["a", "b"]) == ["plain"] * 2
+
+    batch_model = batch_translation_model(LANGUAGE)
+    batch_calls = [
+        c for c in parse.call_args_list if c.kwargs["response_format"] is batch_model
+    ]
+    assert len(batch_calls) == 1
+    assert translator._structured_support["test-model"] == "strict"
 
 
 # --------------------------------------------------------------------------

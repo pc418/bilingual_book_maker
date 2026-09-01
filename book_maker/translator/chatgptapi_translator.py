@@ -6,6 +6,7 @@ from os import environ
 from itertools import cycle
 import json
 from functools import lru_cache
+from pathlib import Path
 from threading import Lock, RLock
 
 from openai import (
@@ -26,6 +27,7 @@ from openai import (
 )
 from pydantic import ConfigDict, Field, ValidationError, create_model
 from rich import print
+from rich.markup import escape
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -34,7 +36,12 @@ from tenacity import (
     retry_if_not_exception_type,
 )
 
-from .base_translator import Base, TranslationContext, TranslationResult
+from .base_translator import (
+    AsyncTranslationUnsupported,
+    Base,
+    TranslationContext,
+    TranslationResult,
+)
 from ..structured import (
     RungRejected,
     extract_json_object,
@@ -42,6 +49,34 @@ from ..structured import (
     unwrap_schema_echo,
 )
 from ..config import config
+from ..session_context import (
+    HandoffReport,
+    SessionHistory,
+    compact_budget_for,
+    handoff_prompt,
+)
+
+# --context-compact-at 0 compacts at 90% of the model's window, leaving room
+# for the tail the history does not cover: the fresh paragraph, its
+# translation, and the handoff report the compact turn asks for.
+#
+# What a context window is called across OpenAI-compatible endpoints.
+CONTEXT_WINDOW_FIELDS = (
+    "context_length",
+    "context_window",
+    "max_context_length",
+    "max_input_tokens",
+)
+
+# Bounds on a number that arrives over the wire and decides how much context a
+# whole book carries. Below the floor a window cannot hold one paragraph and
+# its translation, so 90% of it would compact on every unit; above the ceiling
+# it is a malformed answer, not a model.
+MIN_USABLE_CONTEXT_WINDOW = 1_000
+MAX_USABLE_CONTEXT_WINDOW = 10_000_000
+
+# A lookup that keeps erroring is an endpoint that will not answer this run.
+CONTEXT_WINDOW_LOOKUP_ATTEMPTS = 3
 
 CHATGPT_CONFIG = config["translator"]["chatgptapi"]
 
@@ -57,6 +92,20 @@ class StructuredOutputUnsupported(Exception):
     Raised only for capability answers, never for model or transport errors, so
     callers can demote to the delimiter method instead of retrying.
     """
+
+
+class StructuredRefusal(Exception):
+    """The model declined to answer this particular text.
+
+    Deliberately not a `StructuredOutputUnsupported`: a refusal says nothing
+    about whether the endpoint honors the schema, and counting it as a
+    capability failure would demote structured outputs for the whole run after
+    two paragraphs. Callers retranslate the one paragraph without a schema.
+    """
+
+    def __init__(self, refusal):
+        super().__init__(f"Model refused to translate: {refusal}")
+        self.refusal = refusal
 
 
 # The schema is the last thing the model reads before it decodes, and a bare
@@ -275,6 +324,22 @@ class ChatGPTAPI(Base):
     # probing them would send the capability request to the wrong endpoint.
     SUPPORTS_STRUCTURED_OUTPUTS = True
 
+    # Session-mode state, declared here so the window-mode path is well
+    # defined on any instance — including the subclasses and test fixtures
+    # that build one without running __init__. `session is None` means window
+    # mode everywhere in this class.
+    session = None
+    handoff_path = None
+    context_compact_at = None
+    no_context_compact = False
+    # Every model --model_list rotates through, not just the current one.
+    _model_names = ()
+    context_mode = "window"
+
+    # Set by the CLI from --quiet. Suppresses this class's own echoes.
+    quiet = False
+    style_note = None
+
     def __init__(
         self,
         key,
@@ -285,6 +350,11 @@ class ChatGPTAPI(Base):
         temperature=1.0,
         context_flag=False,
         context_paragraph_limit=0,
+        context_mode="window",
+        context_compact_at=None,
+        no_context_compact=False,
+        style_note=None,
+        handoff_path=None,
         extra_body=None,
         **kwargs,
     ) -> None:
@@ -313,6 +383,25 @@ class ChatGPTAPI(Base):
         self.context_flag = context_flag
         self.context_list = []
         self.context_translated_list = []
+        # Session mode replaces the window entirely; `session is None` is the
+        # single test for "are we in window mode" everywhere below.
+        self.context_mode = context_mode or "window"
+        self.session = (
+            SessionHistory()
+            if context_flag and self.context_mode == "session"
+            else None
+        )
+        self.context_compact_at = context_compact_at
+        self.no_context_compact = no_context_compact
+        self._model_windows = {}
+        self._window_misses = set()
+        self._window_lookup_failures = 0
+        self.style_note = style_note
+        self.handoff_path = Path(handoff_path) if handoff_path else None
+        self._session_cache_warned = False
+        self._session_cache_seen = False
+        self._session_requests = 0
+        self._compact_failures = 0
         if context_paragraph_limit > 0:
             # not set by user, use default
             self.context_paragraph_limit = context_paragraph_limit
@@ -576,15 +665,32 @@ class ChatGPTAPI(Base):
         with self._api_lock:
             self.openai_client.api_key = next(self.keys)
 
+    def _use_models(self, names):
+        """Rotate through `names`, and remember them.
+
+        `model_list` is a `cycle`, which cannot be read back — but the auto
+        compact budget has to size the shared history for the smallest window
+        among *all* of them, not just whichever is current.
+        """
+        names = list(names)
+        self._model_names = names
+        self.model_list = cycle(names)
+
     def rotate_model(self):
         with self._api_lock:
             if self.model_list:
                 self.model = next(self.model_list)
 
+    def _user_content(self, text):
+        """The user message for one unit.
+
+        Deterministic for a given text, which is what lets session mode store
+        exactly what it sent without threading the string around.
+        """
+        return self.prompt_template.format(text=text, language=self.language, crlf="\n")
+
     def create_messages(self, text, intermediate_messages=None):
-        content = self.prompt_template.format(
-            text=text, language=self.language, crlf="\n"
-        )
+        content = self._user_content(text)
 
         sys_content = self.system_content or self.prompt_sys_msg.format(crlf="\n")
         messages = [
@@ -599,6 +705,11 @@ class ChatGPTAPI(Base):
 
     def create_context_messages(self, context: TranslationContext | None = None):
         messages = []
+        if self.session is not None:
+            # Session mode: the whole append-only history is the prefix. The
+            # per-unit window below does not apply — that is the mode this
+            # one replaces.
+            return self.session.messages()
         if self.context_flag:
             if context is None:
                 source_texts = self.context_list
@@ -645,6 +756,17 @@ class ChatGPTAPI(Base):
     async def translate_async(
         self, text: str, *, context: TranslationContext | None = None
     ) -> TranslationResult:
+        if self.session is not None:
+            # This path threads an immutable per-call TranslationContext,
+            # which is the opposite of one shared append-only history: the
+            # session would never be appended to, and every request would be
+            # billed as an uncached fresh prefix. No loader uses this path
+            # today; failing here keeps that from becoming a silent cost
+            # regression the moment one does.
+            raise AsyncTranslationUnsupported(
+                "session context is not supported on the async path; "
+                "use --use_context (window mode) there"
+            )
         if type(self).create_chat_completion is not ChatGPTAPI.create_chat_completion:
             return await super().translate_async(text, context=context)
 
@@ -767,7 +889,8 @@ class ChatGPTAPI(Base):
 
         Raises `StructuredOutputUnsupported` when the endpoint turns out not to
         honor the schema, `LengthFinishReasonError` when the answer was cut off
-        (never returns the truncated JSON fragment), and `ValueError` on refusal.
+        (never returns the truncated JSON fragment), and `StructuredRefusal`
+        when the model declined this text.
         """
         messages = self.create_messages(text, self.create_context_messages())
         field = single_field_name(self.language)
@@ -790,9 +913,13 @@ class ChatGPTAPI(Base):
             # Answered with something that is not the schema.
             raise StructuredOutputUnsupported(str(e)) from e
 
+        # Take the cache reading before ruling on the message: session mode
+        # runs on this path, and the bill is the same whatever the answer says.
+        self._note_cache_usage(completion)
+
         message = completion.choices[0].message
         if getattr(message, "refusal", None):
-            raise ValueError(f"Model refused to translate: {message.refusal}")
+            raise StructuredRefusal(message.refusal)
         if message.parsed is None:
             raise StructuredOutputUnsupported("no parsed content in response")
 
@@ -801,8 +928,260 @@ class ChatGPTAPI(Base):
 
     def _plain_translation(self, text):
         completion = self.create_chat_completion(text)
+        self._note_cache_usage(completion)
         content = completion.choices[0].message.content
         return content.encode("utf8").decode() if content else ""
+
+    # ---- session mode -----------------------------------------------------
+
+    # How many requests to allow before concluding the endpoint is not billing
+    # cache reads. One miss is normal (nothing is cached yet), and short books
+    # should not be nagged.
+    CACHE_WARN_AFTER = 10
+
+    # Compact attempts before giving up on a summary and starting clean. More
+    # than one so a transient error does not cost the accumulated context;
+    # bounded so a broken endpoint cannot grow the history forever.
+    COMPACT_ATTEMPTS = 3
+
+    def _note_cache_usage(self, completion):
+        """Warn once if session mode never gets a cache read billed back.
+
+        Without pass-through caching this mode re-reads the whole history at
+        full input price on every request — strictly worse than the window
+        mode it replaces. That is invisible in the output and only shows up on
+        the bill, so it has to be said out loud.
+        """
+        if self.session is None or self._session_cache_warned:
+            return
+        usage = getattr(completion, "usage", None)
+        details = getattr(usage, "prompt_tokens_details", None)
+        if getattr(details, "cached_tokens", 0):
+            self._session_cache_seen = True
+            return
+        self._session_requests += 1
+        if self._session_cache_seen or self._session_requests < self.CACHE_WARN_AFTER:
+            return
+        self._session_cache_warned = True
+        print(
+            "[bold yellow]Warning:[/bold yellow] this endpoint has not reported "
+            "a single cached prompt token after "
+            f"{self._session_requests} requests. Session mode assumes prompt "
+            "caching is billed through; without it the history is charged at "
+            "full price every request. Consider --use_context (window mode)."
+        )
+
+    def _session_budget(self):
+        """How large a window may grow before it rolls over.
+
+        `--context-compact-at 0` asks for the model's own size instead of a
+        number the user had to guess.
+        """
+        if self.context_compact_at is None:
+            return compact_budget_for(self.model)
+        if self.context_compact_at == 0:
+            return self._model_sized_budget()
+        return self.context_compact_at
+
+    def _model_sized_budget(self):
+        """0.9 x the smallest context window among the models in play.
+
+        `--model_list` rotates a model per request and the history is shared
+        across all of them, so the budget has to be one the smallest window
+        survives. Every configured model is measured here, before the history
+        is big enough for the smallest to choke on — learning a model's window
+        from the request that failed on it would be learning it too late.
+        """
+        models = list(self._model_names) or [self.model]
+        for model in models:
+            self._learn_context_window(model)
+        known = [self._model_windows[m] for m in models if m in self._model_windows]
+        default = compact_budget_for(self.model)
+        if not known:
+            return default
+        budget = min(known) * 9 // 10
+        if len(known) < len(models):
+            # A model nobody could measure may be the smallest of them. Sizing
+            # the shared history past what the default already assumed safe
+            # would be betting on the one number we do not have.
+            return min(budget, default)
+        return budget
+
+    def _learn_context_window(self, model):
+        """Ask the endpoint about `model` once, and remember what it said."""
+        if model in self._model_windows or model in self._window_misses:
+            return
+        if self._window_lookup_failures >= CONTEXT_WINDOW_LOOKUP_ATTEMPTS:
+            return
+        try:
+            reported = self._detect_context_window(model)
+        except NotFoundError:
+            # A definitive answer: this endpoint has no such record. Asking
+            # again would get the same 404 for every paragraph of the book.
+            reported = None
+        except Exception as e:
+            # Not an answer at all — a timeout, a refreshed token, a 5xx. The
+            # budget falls back for now and the next unit asks again, since a
+            # transient blip should not silently cost the whole run its
+            # auto-sizing. Bounded, so a dead route is not asked forever.
+            self._window_lookup_failures += 1
+            if self._window_lookup_failures >= CONTEXT_WINDOW_LOOKUP_ATTEMPTS:
+                print(
+                    f"[yellow]ℹ could not ask this endpoint for {model}'s "
+                    f"context window ({e}); compacting at the default "
+                    f"{compact_budget_for(model)} instead[/yellow]"
+                )
+            return
+        if reported:
+            self._model_windows[model] = reported
+            print(
+                f"[cyan]ℹ {model} reports a {reported}-token context window; "
+                f"compacting at {reported * 9 // 10}[/cyan]"
+            )
+            return
+        self._window_misses.add(model)
+        print(
+            f"[yellow]ℹ this endpoint does not report a context window for "
+            f"{model}; compacting at the default {compact_budget_for(model)} "
+            f"instead[/yellow]"
+        )
+
+    def _detect_context_window(self, model):
+        """The model's context window, if the endpoint volunteers a usable one.
+
+        OpenAI's own `/models` does not carry it; OpenRouter-style gateways
+        do, under one of a few names. `True` is an `int` in Python and would
+        yield a budget of 0 — no rollover at all — so the type check is
+        stricter than it looks.
+        """
+        record = self.openai_client.models.retrieve(model)
+        for field in CONTEXT_WINDOW_FIELDS:
+            value = getattr(record, field, None)
+            if value is None and isinstance(record, dict):
+                value = record.get(field)
+            if isinstance(value, bool) or not isinstance(value, int):
+                continue
+            if MIN_USABLE_CONTEXT_WINDOW <= value <= MAX_USABLE_CONTEXT_WINDOW:
+                return value
+        return None
+
+    def _compact_session(self):
+        """Ask for a handoff report, then start the next window seeded with it.
+
+        The report is requested on top of the existing history — that is the
+        one turn where the whole window is worth re-reading, because it is
+        being condensed into what replaces it.
+        """
+        budget = self._session_budget()
+        prompt = handoff_prompt(with_style=not self.style_note)
+        messages = [
+            *self.session.messages(),
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            completion = self._request(
+                lambda sampling: self.openai_client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    extra_body=self.extra_body if self.extra_body else None,
+                    **sampling,
+                )
+            )
+            report_text = completion.choices[0].message.content or ""
+        except Exception as e:
+            # Keep the window. One rate-limited or dropped request is not a
+            # reason to throw away a book's worth of accumulated context — the
+            # budget stays exceeded, so the next unit simply tries again.
+            self._compact_failures += 1
+            # Give up on attempts, or as soon as the window has outgrown its
+            # budget badly enough that retrying is the wrong bet: a compact
+            # that fails because the history is too long will keep failing,
+            # and the translation requests carrying that history fail with it.
+            give_up = (
+                self._compact_failures >= self.COMPACT_ATTEMPTS
+                or self.session.estimated_tokens() > 2 * budget
+            )
+            print(
+                f"[yellow]ℹ handoff report failed ({e}); "
+                + (
+                    "starting the next context window without a summary"
+                    if give_up
+                    else "keeping the current context and retrying on the next paragraph"
+                )
+                + "[/yellow]"
+            )
+            if give_up:
+                # Bounded: without this the history would grow past the
+                # budget forever on a persistently failing endpoint.
+                self._compact_failures = 0
+                self.session.reset(seed="")
+            return
+        self._compact_failures = 0
+
+        report = HandoffReport(
+            window=self.session.windows,
+            # A style the user fixed is handed on verbatim, so it cannot be
+            # eroded window by window by a model re-describing it.
+            style_note=self.style_note,
+            summary=report_text.strip(),
+        )
+        self._show_handoff(report)
+        if self.handoff_path:
+            try:
+                report.append_to(self.handoff_path)
+            except OSError as e:
+                # The paragraph is already translated and billed. Failing here
+                # would send get_translation's retry policy round again and
+                # pay for the same paragraph up to three more times.
+                print(
+                    f"[yellow]ℹ could not write {self.handoff_path} ({e}); "
+                    f"the run continues without a saved handoff[/yellow]"
+                )
+        self.session.reset(seed=report.seed_text())
+
+    def _show_handoff(self, report):
+        """Print the report the next window will inherit.
+
+        `escape` is not optional: rich reads square brackets as markup, and
+        these reports genuinely contain things like "[PGA]", which would be
+        swallowed or raise on an unclosed tag.
+        """
+        if self.quiet:
+            # --quiet suppresses echoes like this one; warnings and errors
+            # still print.
+            return
+        print(
+            f"[bold cyan]— handoff report, window {report.window} —[/bold cyan]\n"
+            + escape(report.render())
+        )
+
+    def _save_session_context(self, text, t_text):
+        # Store what was *sent*, not the bare source. The next request replays
+        # this message verbatim, so any difference — the prompt template, say —
+        # would make the newest pair a cache miss, and the run would re-read a
+        # paragraph at full input price every request.
+        self.session.append(self._user_content(text), t_text)
+        if not self.session.should_compact(self._session_budget()):
+            return
+        if self.no_context_compact:
+            self._start_empty_window()
+        else:
+            self._compact_session()
+
+    def _start_empty_window(self):
+        """Roll over with no handoff report, because the user asked for none.
+
+        Continuity across the seam is what the report buys, and
+        `--no-context-compact` declines to buy it — so this is a plain reset,
+        not a cheaper summary.
+        """
+        self.session.reset(seed="")
+        if self.quiet:
+            return
+        print(
+            f"[bold cyan]— context window {self.session.windows}, started "
+            f"empty (--no-context-compact) —[/bold cyan]"
+        )
 
     @retry(
         stop=stop_after_attempt(3),
@@ -820,13 +1199,25 @@ class ChatGPTAPI(Base):
             except StructuredOutputUnsupported as e:
                 self._demote_structured_outputs(e)
                 t_text = self._plain_translation(text)
-            except LengthFinishReasonError:
+            except LengthFinishReasonError as e:
                 # The answer was cut off mid-JSON. Nothing partial may be used,
                 # but the plain path has no JSON to truncate — retranslate there
                 # rather than ending a multi-hour run over one paragraph.
+                # The truncated request was still billed, so it still counts.
+                self._note_cache_usage(getattr(e, "completion", None))
                 print(
                     "[yellow]ℹ structured answer was truncated; retranslating "
                     "this paragraph without a schema[/yellow]"
+                )
+                t_text = self._plain_translation(text)
+            except StructuredRefusal as e:
+                # Seen live with the refusal field holding a complete, correct
+                # translation. Whatever the reason, one paragraph the schema
+                # path will not answer must not end the run.
+                print(
+                    "[yellow]ℹ the model refused this paragraph under the "
+                    f"schema ({escape(str(e.refusal))}); retranslating it "
+                    "without one[/yellow]"
                 )
                 t_text = self._plain_translation(text)
         else:
@@ -838,6 +1229,9 @@ class ChatGPTAPI(Base):
         return t_text
 
     def save_context(self, text, t_text):
+        if self.session is not None:
+            self._save_session_context(text, t_text)
+            return
         if self.context_paragraph_limit > 0:
             self.context_list.append(text)
             self.context_translated_list.append(t_text)
@@ -1009,7 +1403,9 @@ class ChatGPTAPI(Base):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=60),
-        retry=retry_if_not_exception_type(StructuredOutputUnsupported),
+        retry=retry_if_not_exception_type(
+            (StructuredOutputUnsupported, StructuredRefusal)
+        ),
         reraise=True,
     )
     def _execute_structured_batch_translate(self, text_list, plist_len):
@@ -1043,9 +1439,11 @@ class ChatGPTAPI(Base):
         except (ValidationError, json.JSONDecodeError) as e:
             raise StructuredOutputUnsupported(str(e)) from e
 
+        self._note_cache_usage(completion)
+
         message = completion.choices[0].message
         if getattr(message, "refusal", None):
-            raise ValueError(f"Model refused to translate: {message.refusal}")
+            raise StructuredRefusal(message.refusal)
         if message.parsed is None:
             raise StructuredOutputUnsupported("no parsed content in response")
 
@@ -1212,7 +1610,7 @@ class ChatGPTAPI(Base):
         """
         # For Azure deployments, use the default model directly
         if self.deployment_id:
-            self.model_list = cycle([default_azure_model])
+            self._use_models([default_azure_model])
             self.model = default_azure_model
             return
 
@@ -1254,7 +1652,7 @@ class ChatGPTAPI(Base):
                     f"No {model_family_name} models available. Available models: {my_model_list}"
                 )
         print(f"Using model list {model_list}")
-        self.model_list = cycle(model_list)
+        self._use_models(model_list)
         self.model = model_list[0]
 
     def _validate_model_with_test(self, model_name: str, model_family_name: str):
@@ -1286,7 +1684,7 @@ class ChatGPTAPI(Base):
 
     def set_gpt35_models(self, ollama_model=""):
         if ollama_model:
-            self.model_list = cycle([ollama_model])
+            self._use_models([ollama_model])
             self.model = ollama_model
             return
         self._set_models("GPT-3.5", "gpt-35-turbo", set(GPT35_MODEL_LIST))
@@ -1338,7 +1736,7 @@ class ChatGPTAPI(Base):
                 model_list = validation_result["available_models"]
 
         print(f"Using model list {model_list}")
-        self.model_list = cycle(model_list)
+        self._use_models(model_list)
         self.model = model_list[
             0
         ]  # Set initial model so it's available before rotate_model() is called
