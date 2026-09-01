@@ -88,6 +88,28 @@ KEY_FLAG_ENV = {
 }
 
 
+def _key_flag_env(flag):
+    """The env var standing in for `flag`'s value, or None if it carries no key.
+
+    Exact spellings are not enough: argparse accepts any unambiguous
+    abbreviation of a long option, so `--openai_k sk-...` is a perfectly valid
+    invocation that an exact lookup would print back verbatim. Anything that
+    prefixes a key flag is therefore treated as that flag. A prefix matching
+    several of them is ambiguous and argparse would have rejected the command,
+    but it is still redacted — a secret must not reach the terminal on the
+    strength of an argument the parser refused.
+    """
+    env_name = KEY_FLAG_ENV.get(flag)
+    if env_name is not None:
+        return env_name
+    if not flag.startswith("--") or len(flag) < 3:
+        return None
+    matches = {env for f, env in KEY_FLAG_ENV.items() if f.startswith(flag)}
+    if len(matches) == 1:
+        return matches.pop()
+    return "BBM_API_KEY" if matches else None
+
+
 # Inline elements that mean something without holding text: a link target,
 # an image, a line break. Emptying a wrapper is a reason to delete it; these
 # were never wrappers.
@@ -798,7 +820,7 @@ class EPUBBookLoader(BaseBookLoader):
                 pending_env = None
                 continue
             flag, joined, _value = arg.partition("=")
-            env_name = KEY_FLAG_ENV.get(flag)
+            env_name = _key_flag_env(flag)
             if env_name is None:
                 parts.append(shlex.quote(arg))
             elif joined:

@@ -2790,6 +2790,26 @@ class TestRerunCommandRedaction:
         with mock.patch("sys.argv", argv):
             return EPUBBookLoader._rerun_command()
 
+    def test_an_abbreviated_key_flag_is_redacted(self):
+        # argparse accepts any unambiguous abbreviation, so `--openai_k` is a
+        # working spelling of `--openai_key` — and an exact-name lookup would
+        # print the key it carries straight back at the user.
+        line = self._rerun(
+            ["make_book.py", "--book_name", "b.epub", "--openai_k", "sk-live-secret"]
+        )
+        assert "sk-live-secret" not in line
+        assert '--openai_k "$BBM_OPENAI_API_KEY"' in line
+
+    def test_an_abbreviated_joined_key_flag_is_redacted(self):
+        line = self._rerun(["make_book.py", "--claude_ke=sk-live-secret"])
+        assert "sk-live-secret" not in line
+        assert '--claude_ke="$BBM_CLAUDE_API_KEY"' in line
+
+    def test_a_flag_that_merely_starts_alike_is_left_alone(self):
+        # --api_base is not a prefix of --api_key, and its value is not secret.
+        line = self._rerun(["make_book.py", "--api_base", "https://host/v1"])
+        assert "https://host/v1" in line
+
     def test_a_separated_key_becomes_its_variable(self):
         command = self._rerun(
             ["make_book.py", "--book_name", "b.epub", "--openai_key", "sk-secret"]
