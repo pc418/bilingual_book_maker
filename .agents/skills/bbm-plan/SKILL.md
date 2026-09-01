@@ -5,113 +5,80 @@ description: Translate a whole EPUB into a bilingual book with bilingual_book_ma
 
 # bbm-plan: plan-mode EPUB translation
 
-**Hard constraint: this skill uses `--plan-classify agent`, and only
-that.** No other `--plan-classify` value exists as far as this skill is
-concerned. The point of the skill is that *you*, the coding agent, own the
-classification step against the real samples — the plan arrives with its
-uncertain signatures set to `"action": null`, and the translate run
-refuses to start while any null remains. There is no shortcut around
-answering them. The planner role is judgment work expected of an advanced
-agent: do it in the main agent with the full session context, never
-delegate plan editing to a subagent or a small/fast model.
+**Hard constraint: this skill uses `--plan-classify agent`, and only that.**
+The plan arrives with its uncertain signatures set to `"action": null` and
+the translate run refuses to start while any null remains, so *you*, the
+coding agent, own the classification step against the real samples. Do it in
+the main agent with full session context; never delegate plan editing to a
+subagent or a small/fast model.
 
 Repo: the repository this skill ships in (`make_book.py` at its root). Run
 every command from the repo root. Plan mode is **epub-only**.
 
-You are the trained CLI operator here: you pick every flag from the guide
-below and state the choice with a one-line reason. The user is never asked
-to experiment with flags, halt semantics, or resume mechanics — they hand
-over a book and credentials, approve the plan and the cost, and get a
-bilingual epub back.
+You are the trained CLI operator. You pick every flag from the **flag menu**
+below and state each choice with a one-line reason; the menu's defaults are
+the recommendation, and you follow them unless the user asks for something
+else or the book argues otherwise. The user hands over a book, credentials
+and (if they have one) a prompt file, approves the plan and the cost, and
+gets a bilingual epub back — they are never asked to experiment with flags,
+halt semantics or resume mechanics.
 
-The workflow is one curl plus three runs of one command with small flag
-changes (plan → smoke → full). All state
-lives on disk (`.env`, `<book>_plan.json`, the resume cache, `run.log`) — any
-step can be redone after a crash or a new session.
+Three runs of one command with small flag changes: **plan → smoke → full**.
+All state lives on disk (`.env`, `<book>_plan.json`, the resume cache,
+`run.log`), so any step can be redone after a crash or in a new session.
 
 ## 0. Credentials
 
 Copy `assets/env.example` (this skill dir) to `.env` at the repo root and
-have the user fill it. Two things matter: `MODEL` — the exact model id —
-and one API key for wherever that model lives. `MODEL` and `BBM_API_BASE`
-are skill-level fields; make_book.py does not read them from env, you
-translate them into flags.
-
-**The model name picks the route; the key only proves you may use it.** An
-id the repo has never heard of cannot go in `--model` at all (argparse
-limits it to `MODEL_DICT` keys) — it travels in `--model_list`, and which
-`--model` carries it depends on the endpoint shape, which step 1b
-establishes by probing. Route table, probe recipes, and the `--provider`
-mechanism for non-OpenAI gateways: **`references/providers.md`**, to read
-before the first command whenever `MODEL` is not a plain `gpt-*` id.
+have the user fill it. Two fields matter: `MODEL`, the exact model id, and
+one API key for wherever that model lives. `MODEL` and `BBM_API_BASE` are
+skill-level fields — make_book.py does not read them from env, you translate
+them into flags.
 
 Source `.env` in the same Bash call as the run:
-`set -a; source .env; set +a; …`. Never echo values; verify presence with
-`[ -n "$MODEL" ]`-style checks. If `.env` is unfilled, stop and ask — do not
-accept a pasted key as an argument (it leaks into shell history and prompt
-logs).
+`set -a; source .env; set +a; …`. Never echo values; check presence with
+`[ -n "$MODEL" ]`. If `.env` is unfilled, stop and ask — never accept a
+pasted key as a command-line argument, it leaks into shell history and
+prompt logs.
 
-## 1. Intake
+## 1. Intake — what to ask for
 
-Ask for: book path and target `--language` (e.g. `zh-hans`, `ja`). The
-model comes from `.env`. Optional: `--single_translate` (replace instead
-of bilingual), `--translation_style`.
+1. **Book path** and **target language** (`--language`, e.g. `zh-hans`,
+   `ja`, `Simplified Chinese`).
+2. **Their prompt file, if they have one.** Ask outright: *"Do you have a
+   prompt or style file you want this translation to use?"* A user's own
+   prompt is how register, honorifics and terminology get fixed for the
+   whole book, and it costs nothing to ask. If they hand one over, lint it
+   before the first paid run — contract and commands in
+   **`references/prompt-files.md`**. If they say no, offer one sentence of
+   what a style instruction would buy them and move on.
+   Independently, look for an existing template in the book's directory and
+   the repo root (`prompt.json`, `prompt.txt`, `prompt*.md`,
+   `prompt_template*`). **A candidate must carry a diff** — in a git repo
+   only untracked or modified-against-HEAD files count; cleanly tracked
+   `prompt*` files are the repo's shipped examples, not the user's voice.
+   Found one? **Ask before doing anything with it** — never adopt or ignore
+   it silently.
+3. Anything they want to change from the flag menu's defaults: bilingual vs
+   replaced text, a visual style for the translation, specific chapters
+   only.
 
-Base command used by every step below, with the route flags step 1b
-settled (OpenAI shape shown — the common case):
+Base command, with the route flags settled by step 1b (OpenAI shape shown —
+the common case):
 
 ```bash
 set -a; source .env; set +a
 API_BASE_FLAG=()
 [ -n "$BBM_API_BASE" ] && API_BASE_FLAG=(--api_base "$BBM_API_BASE")
-ROUTE=(--model openai --model_list "$MODEL")   # ← from step 1b
+ROUTE=(--model openai --model_list "$MODEL" --openai_key "$KEY")   # ← from step 1b
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
   --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}" \
   --use_context session
 ```
 
-**The defaults above are the defaults on purpose**, and they hang together:
-
-- `--plan-classify agent` — this skill's hard constraint (see the top).
-- `--use_context session` — one append-only history the endpoint re-reads at
-  its cache rate, instead of re-sending three paragraphs fresh every
-  request. At the compact budget it is condensed into a translator handoff
-  report that seeds the next window and is appended to `<book>_handoff.md`,
-  so names and register survive a book-length run. **Watch the first ten
-  requests**: if the endpoint never reports a cached prompt token the run
-  says so, and there session mode costs *more* than plain `--use_context` —
-  drop back to it.
-- **Default compacting: pass no `--context-compact-at`.** The default budget
-  (8000 estimated tokens) is the one this workflow is run on. `0` sizes the
-  budget from the model's own context window instead, and `2500` is the
-  cheapest setting — knobs for a user who asks, not defaults to improvise.
-  `--no-context-compact` drops the report entirely: the window still rolls
-  over, but the next one starts empty, which is the opposite of what this
-  workflow wants.
-- **No `--parallel-workers` with session mode.** Workers each hold their own
-  history and seed nothing to each other, so the continuity session mode
-  buys is exactly what parallelism spends — and the pairing is untested.
-  Sequential is the tested default; if wall-clock has to win on a long book,
-  say so to the user and use plain `--use_context` for that run.
-
 (The conditional flag is an array on purpose: `${VAR:+--flag "$VAR"}`
 mis-tokenizes under zsh — macOS's default shell — into a single argv word
 that argparse rejects. The array form works in bash and zsh alike.)
-
-### Prompt-file probe
-
-Look for an existing prompt template in two places: the book's own
-directory, and the repo root you run make_book.py from — `prompt.json`,
-`prompt.txt`, `prompt*.md`, `prompt_template*`.
-**A candidate must carry a diff**: in a git repo, only files that are
-untracked (new) or modified against HEAD count
-(`git status --short -- 'prompt*'`) — cleanly tracked `prompt*` files are
-the repo's shipped examples, not the user's voice, and are never offered.
-The moment any such new or diff'd file is found, **ask the user first** —
-before linting it, before building any command around it, and never
-silently adopting or ignoring it. Only once the user says yes, lint it and
-keep it out of git: contract and commands in
-`references/prompt-files.md`.
 
 ## 1b. Endpoint probe — infer the route, then verify it (sub-cent)
 
@@ -140,20 +107,14 @@ curl -sS "$ROOT/v1/models" -H "Authorization: Bearer $KEY" |
 ```
 
 If `$MODEL` is absent, stop and show the near matches — a typo'd id and an
-unsupported path both return 404 later, and only this tells them apart.
-Some gateways also return `supported_endpoint_types` per row; when present
-that *is* the answer to question 2, so read it instead of guessing. A
-non-OpenAI-shaped endpoint has no such listing: skip to question 2 there
-and let the probe itself judge the id.
+unsupported path both return 404 later, and only this tells them apart. A
+non-OpenAI-shaped endpoint has no such listing: skip to question 2 and let
+the probe judge the id.
 
-**2. Which shape does it speak?** Take the first candidate from the model
-name — `gpt-*` and unknown ids → OpenAI; `claude-*`/`gemini-*` → OpenAI
-first when `BBM_API_BASE` names a gateway, native when it is the vendor's
-own endpoint — send that shape's smallest request, fall through on failure.
-Use the reference's three recipes **verbatim**, token-cap rule included: no
-cap on the OpenAI shape (a cap of 1 is rejected by gateway floors and by
-o-series/gpt-5, which reads as a dead endpoint when nothing is wrong),
-`max_tokens` mandatory on the anthropic one.
+**2. Which shape does it speak?** Use the reference's three recipes
+**verbatim**, token-cap rule included. `gpt-*` and unknown ids → OpenAI;
+`claude-*`/`gemini-*` → OpenAI first when `BBM_API_BASE` names a gateway,
+native when it is the vendor's own endpoint.
 
 **3. Which flags does that make?** Record them once as the `ROUTE` array
 every later step uses, and state the choice in one line with its reason.
@@ -163,12 +124,9 @@ added or removed; on an auth rejection try that shape's native scheme.
 Whatever passes is what `--api_base` gets. Stop and ask only when the key
 itself is rejected by its own provider.
 
-Structured-output capability is **not** tested here — the run's own probe
-does that at first paid use, and its verdict is not a pass/fail.
-
 ## 1c. The codex route — a subscription, not an endpoint
 
-`--model codex` is not a model id and not a host: it drives a local
+`--model codex` is neither a model id nor a host: the run drives a local
 `codex app-server` sidecar and spends the user's ChatGPT/Codex plan
 allowance instead of API credits. **Step 1b does not apply** — there is
 nothing to curl, and no key to resolve.
@@ -178,225 +136,247 @@ python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
   --plan-classify agent --use_context session
 ```
 
-- **No key, no `--api_base`.** The sidecar carries the login. Run
-  `codex login` once beforehand; the run's preflight checks the sidecar is
-  up and signed in *before* the book is parsed, and reports how much of the
-  5-hour window is left. A login prompt ten minutes into a book is what that
-  check exists to prevent.
-- **The thread is the context window.** Turns accumulate on one thread and
-  it is condensed into a handoff report at the compact budget, so this route
-  is session-shaped whether or not you ask for it.
-- **`--parallel-workers` buys nothing here**: turns serialize on the one
-  thread, because chapters must not interleave into it.
-- **A spent 5-hour window is waited out** rather than failed; a weekly limit
-  is reported instead, since its reset is too far off to sit through. Either
-  way the run is resumable — rerun the identical command.
+- **No key flag, no `--api_base`.** Run `codex login` once beforehand; the
+  run checks the sidecar is up and signed in before parsing the book and
+  reports how much of the 5-hour window is left.
+- **`--parallel-workers` buys nothing here** — turns serialize on one
+  thread so chapters cannot interleave into it.
+- **A spent 5-hour window is waited out**, not failed. A weekly limit is
+  reported instead, because its reset is too far off to sit through; rerun
+  later, the run is resumable either way.
 - **The user's `~/.codex/hooks.json` fires on every turn**, so book text
   passes through whatever those hooks do. Say so before the first run on a
   machine that has them.
+- Tell the user which allowance this spends: plan quota, not the API key in
+  `.env`.
 
-Tell the user which allowance a codex run spends: plan quota, not the API
-key in `.env`. Plan, classify, smoke and full run are otherwise identical.
+Plan, classify, smoke and full run are otherwise identical.
 
 ## 2. Plan (free — agent mode makes no API call)
 
 Run the base command once. It partitions the whole book, writes
 `<book>_plan.json`, prints a handoff block, and exits without translating.
 
-### How the partition works (read this before judging its report)
+What the report gives you, and what each part is for:
 
-```
-partition → group → plan JSON → your edits → coverage gate → translate
-```
-
-1. **Partition is greedy and coverage-complete**: every text node in each
-   rendered `<body>` becomes exactly one of — a translation unit, or a skip
-   with a *structural* reason (whitespace, link, symbol, hidden, ruby,
-   pagebreak, non-content, excluded tag). No content heuristics; the run
-   prints and checks the invariant
-   `total_chars == translated + sum(skip reasons)`. Nothing is silently
-   dropped — anything questionable surfaces as a signature for you to judge.
-2. **Grouping (poetry only)**: sibling runs whose line median is short
-   are stanza-shaped; they are windowed (`--poetry-group-size`, default 8
-   lines/request) so verse gets translated with its neighbors as context.
-   Everything else is one request per unit — short apparatus is judged by
-   classification, not batched away.
-3. **Plan JSON**: one row per tag signature (`p.calibre_13` …) with unit
-   count, char total, up to 5 real samples, and an `action`.
-4. **Your edits**, then at translate time: fail-closed validation plus a
-   coverage gate — if the edited plan would translate less than
-   `--plan-min-coverage` (default 0.5) of the book's text, hard stop.
+- **A signature per row** (`p.calibre_13`, `span.page-no` …) with unit
+  count, char total, share of the book, and up to 5 real samples — this is
+  the evidence you classify from in step 3.
+- **Coverage**, checked against `--plan-min-coverage`. Every text node is
+  either a translation unit or a skip with a stated structural reason, and
+  the run proves the accounting adds up, so a low number means the book
+  really is mostly apparatus — not that something was quietly dropped.
+- **Poetry windows.** Stanza-shaped runs are batched `--poetry-group-size`
+  lines per request so verse is translated with its neighbours.
 
 Symptom → knob, when reading the report:
 
 | symptom in report | knob |
 |---|---|
 | verse split awkwardly across requests | raise `--poetry-group-size` |
-| legit low coverage (dictionary, critical edition, apparatus-heavy) | lower `--plan-min-coverage` deliberately, say so in the plan summary |
-| visible text under a `hidden` skip reason, or vice versa | inspect the epub's CSS before overriding; the resolver follows stylesheet source order |
+| legit low coverage (dictionary, critical edition, apparatus-heavy) | lower `--plan-min-coverage` deliberately, and say so in the plan summary |
+| visible text under a `hidden` skip reason, or vice versa | inspect the epub's CSS before overriding |
 
 ## 3. Classify (you are the classifier)
 
 Read `<book>_plan.json`. Rows with `"action": null` are the plan's open
 questions — every one must become `"translate"` or `"skip"`, and the
-translate run refuses to start while any null remains. For each: **name
-what the text is first** (prose, verse, dialogue, heading, caption,
-running head, page/line number, sigla, cross-reference label,
-boilerplate, decorative marker), *then* rule — naming before ruling is
-the same discipline the schema forces on LLM classifiers, and it prevents
-rationalizing a snap verdict. Judge from `samples`, `units`, `chars`,
-`pct`, `mean_chars`; when the samples do not settle it, choose `"translate"` —
-over-translating is cheap, losing content is not. Want more evidence?
-`unzip -p <book> <file>` and read the markup around the signature.
+translate run refuses to start while any null remains. For each: **name what
+the text is first** (prose, verse, dialogue, heading, caption, running head,
+page/line number, sigla, cross-reference label, boilerplate, decorative
+marker), *then* rule — naming before ruling prevents rationalizing a snap
+verdict. Judge from `samples`, `units`, `chars`, `pct`, `mean_chars`; when
+the samples do not settle it, choose `"translate"` — over-translating is
+cheap, losing content is not. Want more evidence? `unzip -p <book> <file>`
+and read the markup around the signature.
 
 Non-null rows (prose spine, headings, poetry) may also be changed if their
 samples convince you, but the nulls are the required work. Hold a non-null
 override to the same name-then-rule discipline, and **record every one in
-the step-6 report** (signature, what you named it, why you overrode) — the
-user should see where you disagreed with the plan's defaults, not discover
-it in the output. Edit **only** `action` fields. Validation is fail-closed
-— a typo'd action, missing hash, or edited book is a hard error on the
-next run, not a silent default.
+the step-6 report** — the user should see where you disagreed with the
+plan's defaults, not discover it in the output. Edit **only** the `action`,
+`decided_by` and `content_type` fields. Validation is fail-closed: a typo'd
+action, missing hash or edited book is a hard error on the next run, never a
+silent default.
 
 ## 4. Smoke test (pennies)
 
-Base command + `--quiet --test --test_num 8 > smoke.log 2>&1`. `--quiet`
-turns off the progress bars and the per-unit source/target echoes (without
-it, a `--test` run prints the full text of every translated unit); the
-redirect catches what remains. You check results **after** the run, from
-files — never from live output.
+Base command + `--quiet --test --test_num 8 > smoke.log 2>&1`. You check
+results **after** the run, from files — never from live output.
 
-The run probes the endpoint's structured-output support, translates the
-first 8 units of the *real* plan (sequentially — `--test` forces it), and
-writes the resume cache. Units are consumed in **spine order** — before
-running, check which documents the first N units come from. A large nav or
-title page can absorb the whole budget (a 458 KB nav once ate all 20 units
-of a poetry smoke, so the smoke translated zero verse); when that happens,
-point the smoke at a body chapter with `--only_filelist <content doc>`
-instead of raising `--test_num`. **Verify from the epub itself, always** — the smoke is not passed by a zero
-exit code or a clean log. Unzip the partial `<book>_bilingual.epub` and read
-the markup around a translated unit: right target language? translation
-carries the same tag and class as its original, next to it rather than
-replacing it (unless `--single_translate`)? ids and internal links intact?
-Then check `smoke.log` for error lines. The cache is plan-fingerprint-guarded and
-carries into the full run — nothing paid here is re-paid.
+Units are consumed in **spine order**, so before running, check which
+documents the first 8 units come from. A large nav or title page can absorb
+the whole budget (a 458 KB nav once ate all 20 units of a poetry smoke, so
+the smoke translated zero verse); when that happens, point the smoke at a
+body chapter with `--only_filelist <content doc>` rather than raising
+`--test_num`.
 
-A wrong-language reply and broken formatting surface **here**, not three
-chapters into the paid run. (Key, model id and route were proven at step
-1b.) What is *not* a failure at this step: the probe grading the endpoint
-below `strict` and announcing the delimiter method — that is the expected
-line on claude, on most proxies, and on anything not natively OpenAI. The
-output is what you judge, not the probe verdict.
+**Verify from the epub itself, always** — a zero exit code and a clean log
+do not pass the smoke. Unzip the partial `<book>_bilingual.epub` and read
+the markup around a translated unit:
+
+- is it actually in the target language?
+- does the translation sit **next to** its original, carrying the same tag
+  and class (unless `--single_translate`)?
+- are `id` attributes and internal fragment links intact?
+- did the plan's `skip` decisions actually hold?
+
+Then check `smoke.log` for error lines. The cache carries into the full run,
+so nothing paid here is re-paid.
+
+Not a failure at this step: the endpoint being graded below `strict` and the
+run announcing the delimiter method. That is the expected line on claude, on
+most proxies, and on anything not natively OpenAI.
 
 ## 5. Full run
 
-Base command + `--quiet --resume`, minus `--test`. Always in the
-background with output to a log:
+Base command + `--quiet --resume`, minus `--test`. Always in the background
+with output to a log:
 
 ```bash
 … --quiet --resume > run.log 2>&1
 ```
 
 (Bash `run_in_background: true`; poll with `tail -5 run.log`.) On any crash,
-rerun the identical command — resume is positional and fingerprint-guarded.
-If the run stops with a fatal translation error, fix the cause (key quota,
-endpoint down) and rerun; do not delete the cache unless the book or plan
-changed intentionally.
+rerun the identical command. If the run stops with a fatal translation error,
+fix the cause (key quota, endpoint down) and rerun; do not delete the cache
+unless the book or plan changed intentionally.
 
-## Flag guide — you choose, per book
+## Flag menu — every choice, with the recommended default
 
-| decision | flag | choose it when |
-|---|---|---|
-| route | `--model openai --model_list "$MODEL"` | the endpoint took the OpenAI shape at step 1b — the default for gateways, and the only route that accepts an arbitrary model id without a provider file |
-| | `--model <MODEL_DICT key>` | `$MODEL` is literally one of those keys and you want its native client (`claude-…`, `gemini`, `groq`, `qwen`) |
-| | `--provider <name> --model_list "$MODEL"` | a non-OpenAI shape *and* a custom model id — the only combination the other two cannot express (`references/providers.md`) |
-| output form | *(default)* bilingual | user reads both languages side by side — the usual ask |
-| | `--single_translate` | user wants a translated-only book, original replaced |
-| | `--model codex` | the user wants their ChatGPT/Codex plan allowance spent instead of API credits — no key, no probe, see §1c |
-| speed | *(default)* sequential | **the default, and the only tested pairing with `--use_context session`**: workers hold separate histories and seed nothing to each other |
-| | `--parallel-workers 4` | large book where wall-clock has to win — say so to the user, and drop to plain `--use_context` for that run |
-| consistency | `--use_context session` | **the default here.** One append-only history re-read at the endpoint's cache rate, compacted into a handoff report that seeds the next window. Warns if no cached token is ever reported |
-| | `--use_context` (bare) | the fallback when session mode is not paying off on this endpoint, or when a run has to go parallel; re-sends the last few pairs |
-| compact budget | *(default — pass nothing)* | 8000 estimated tokens, the setting this workflow is run on. `0` sizes it from the model's context window; `2500` is the cheapest; `--no-context-compact` drops the report and is not what this workflow wants |
-| voice/style | `--prompt prompt.json` | user states a register ("literary", "plain modern") — encode it once in the system message |
-| styling | `--translation_style "color:#808080;font-style:italic"` | bilingual output should visually separate the translation |
-| scope | `--only_filelist` / `--exclude_filelist` | user wants specific chapters; exact internal names — a typo fails loud at the coverage gate |
-| sampling | `--temperature` | leave the default unless output is erratic; then lower it and re-smoke |
-| smoke size | `--test_num 8` (default here) | raise to ~20 on poetry-heavy books so the smoke spans a full stanza window or two — but only after confirming the first N units are body text, not nav/front matter (spine order); otherwise scope the smoke with `--only_filelist` |
-| log noise | `--quiet` (always, on smoke and full run) | bars and per-unit echoes off; reports and errors still print — logs stay readable, context stays clean |
+**Defaults below are the recommendation.** Pick them unless the user asks
+for something else or the book argues otherwise; the alternatives are listed
+so you can honour a request without guessing at legal values.
 
-Do **not** pass in plan mode: `--accumulated_num` and
-`--allow_navigable_strings` (both explicitly ignored — plan mode batches for
-itself and accounts every node already; a non-1 `accumulated_num` also
-disables the interrupt-save path), `--batch` (OpenAI batch API, untested
-with plan mode), `--translate-tags` (plan mode overrides it), `--interval`
-(Gemini route only, and only when it rate-limits), `--plan-dry-run` (it writes a plan with
-every action already decided, which suppresses the null questions and the
-agent handoff — the plan run of this workflow is already free).
+### Route
+
+**`--model` is a whitelist here.** It takes a registered name — `openai`,
+`claude`, `gemini`, `groq`, `qwen`, `google`, `deepl`, `caiyun`, `codex`, … —
+not an arbitrary model id. The id the endpoint actually uses travels in
+`--model_list`. Passing an unknown id to `--model` is rejected by argparse
+before anything runs.
+
+| flag | values | default / recommended | choose otherwise when |
+|---|---|---|---|
+| `--model` | a registered name; `openai` for any OpenAI-shaped endpoint, `codex` for the subscription route | **`openai`** | the endpoint is one of the fixed engines (`google`, `deepl`, …), or the user wants their ChatGPT plan spent (`codex`, §1c) |
+| `--model_list` | comma-separated model ids, rotated across | `$MODEL` from `.env` | the user wants several ids rotated to spread rate limits |
+| `--openai_key` | one key, or several comma-separated to rotate | `$KEY` from `.env`; `$OPENAI_API_KEY` / `$BBM_OPENAI_API_KEY` are read when the flag is absent | another engine: `--claude_key`, `--gemini_key`, `--groq_key`, `--qwen_key`, `--xai_key`, `--deepl_key`, `--caiyun_key`; with `--provider`, `--api_key`. None at all on `codex` |
+| `--api_base` | endpoint URL | *unset* (the vendor's own host), or `$BBM_API_BASE` | a gateway, proxy or local server — OpenAI-shaped bases want the `…/v1` form |
+| `--provider` | a name in `bbm_providers.json` / `~/.bbm/providers.json` | *unset* | a non-OpenAI-shaped gateway that needs its own entry (see `references/providers.md`) |
+| `--proxy` | `http://127.0.0.1:7890`-style | *unset* | the user is behind one |
+
+### Plan mode
+
+| flag | values | default / recommended | choose otherwise when |
+|---|---|---|---|
+| `--plan-classify` | `none`, `most`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
+| `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
+| `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it) |
+| `--exclude-translate-tags` | comma-separated tags | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
+| `--plan-classify-model` | a model id | *unset* | never here — it only applies to `--plan-classify model` |
+
+### Context and consistency
+
+| flag | values | default / recommended | choose otherwise when |
+|---|---|---|---|
+| `--use_context` | bare/`window`, `session` | **`session`** | the run warns that the endpoint never reported a cached prompt token — session mode costs more there, so drop to bare `--use_context`. Also use bare window mode if a run must go parallel |
+| `--context-compact-at` | an estimated-token budget, or `0` to size it from the model's own context window | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often), a longer window (raise it), or wants the budget derived from the model (`0`) |
+| `--no-context-compact` | on/off | **off** | the user explicitly wants no handoff report — the window still rolls over, but the next one starts empty, losing exactly the continuity this workflow is for |
+| `--context_paragraph_limit` | integer | *unset* | window mode only; the user wants more or fewer re-sent pairs |
+| `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
+| `--temperature` | float | *unset* (the API default is not sent) | output is erratic; lower it and re-smoke |
+
+### Output form
+
+| flag | values | default / recommended | choose otherwise when |
+|---|---|---|---|
+| *(bilingual)* | — | **bilingual: translation added beside the original** | — |
+| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced |
+| `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"` |
+| `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS |
+
+### Scope and run control
+
+| flag | values | default / recommended | choose otherwise when |
+|---|---|---|---|
+| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. Exact names — a typo fails loud at the coverage gate |
+| `--test` / `--test_num` | flag + integer | **`--test --test_num 8`** at the smoke step only | poetry-heavy books: ~20, once you have confirmed the first N units are body text |
+| `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
+| `--resume` | on/off | **on for the full run** | never off after a crash — replay is positional and fingerprint-guarded |
+| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user and drop `--use_context session` for that run: workers hold separate histories, so the pairing is untested and self-defeating. Pointless on `codex` |
+| `--source_lang` | language | *unset* (auto-detect) | an endpoint that wants the source stated |
+| `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
+
+### Never pass in plan mode
+
+`--translate-tags` (the plan overrides it), `--plan-dry-run` (it writes a
+plan with every action already decided, which suppresses the null questions
+and the agent handoff), `--accumulated_num` and `--allow_navigable_strings`
+(both explicitly ignored; a non-1 `accumulated_num` also disables the
+interrupt-save path), `--batch` / `--batch-use` (untested with plan mode),
+`--block_size` / `--sentence_mode` / `--batch_size` (they re-cut text the
+plan has already partitioned), `--interval` (Gemini only, and only when it
+rate-limits).
 
 ## Halt / resume — safe by construction
 
 - **Progress saves after every chapter** and on interrupt or crash. To halt
-  a background run: `kill -INT <pid>` (SIGINT fires the save handler; even
-  SIGKILL loses at most the current chapter).
-- **SIGINT does not halt a `--parallel-workers` run promptly.** Every
-  chapter is dispatched up front and the pool drains before the handler
-  runs, so the process exits only after all of them finish — measured
-  260807: a signal at 20/70 chapters done still exited having translated
-  70/70. Checkpoints stay correct and resume cleanly; it is the *stopping*
-  that does not work. Tell the user this before starting a big parallel run,
+  a background run: `kill -INT <pid>`; even SIGKILL loses at most the
+  current chapter.
+- **SIGINT does not halt a `--parallel-workers` run promptly** — every
+  chapter is dispatched up front, so the process exits only after all of
+  them finish (measured 260807: a signal at 20/70 chapters done still
+  exited having translated 70/70). Checkpoints stay correct; it is the
+  *stopping* that does not work. Tell the user before a big parallel run,
   and use SIGKILL when a run must actually stop now.
-- **Resume = rerun the identical command with `--resume`.** Replay is
-  positional and fingerprint-guarded: same book, same plan, continues where
-  it stopped. This is also why the smoke test is never wasted money.
+- **Resume = rerun the identical command with `--resume`.** Same book, same
+  plan, continues where it stopped. This is also why the smoke test is never
+  wasted money.
 - **Do not edit the plan or swap the book between halt and resume** — the
-  fingerprint refusal is deliberate, protecting against translations landing
-  on the wrong paragraphs. Changed your mind about a signature mid-book?
-  Finish the run, or delete `.<book>.temp.bin` and restart cleanly. Never
-  work around the refusal by deleting the cache *without* telling the user
-  what gets re-paid.
+  fingerprint refusal protects against translations landing on the wrong
+  paragraphs. Changed your mind mid-book? Finish the run, or delete
+  `.<book>.temp.bin` and restart cleanly. Never work around the refusal
+  without telling the user what gets re-paid.
 
 ## 6. Deliver
 
-Report the end-of-run coverage/skip stats, every classification decision
-you made (the resolved nulls and any non-null overrides, with the
-name-then-rule reasoning), and hand over `<book>_bilingual.epub`. Suggest
-spot-checking one early and one late chapter.
+Report the end-of-run coverage/skip stats, every classification decision you
+made (resolved nulls and any non-null overrides, with the name-then-rule
+reasoning), and hand over `<book>_bilingual.epub`. Suggest spot-checking one
+early and one late chapter.
 
 ## Context hygiene
 
-- **Never** let a translation run stream into the conversation — every
-  paid run (smoke and full) gets `--quiet` *and* a log-file redirect. This
-  applies to any command that translates, whichever step it appears in.
+- **Never** let a translation run stream into the conversation — every paid
+  run gets `--quiet` *and* a log-file redirect.
 - Everything the next step needs is on disk; nothing critical lives only in
   conversation.
-- **Compaction threshold** — *your* context, not the run's
-  (`--context-compact-at` is the translator's, and is left at its default):
-  for a small book (smoke + full run expected to
-  finish within the session comfortably), do not compact at all. Only
-  compact when context is genuinely pressured (≳70% used), at most once,
-  and at the natural boundary: after plan editing, before the full run.
-  Compacting more often than that costs more than it saves — each compact
-  forces re-reading plan/log state that was already in context.
+- **Compaction threshold** — *your* context, not the run's: for a small book
+  do not compact at all. Only compact when context is genuinely pressured
+  (≳70% used), at most once, at the natural boundary — after plan editing,
+  before the full run.
 
 ## Failure modes (all fail loud by design)
 
 | symptom | meaning |
 |---|---|
-| `doesn't apply JSON schema … using delimiter method`, `honors JSON schema shape but not value constraints`, `no strict structured-output support` | **not a failure.** The endpoint does not do strict schema decoding, so translation uses the delimiter method instead. Every route except a `strict` OpenAI-shaped one prints one of these, including claude and most proxies. Note it in the report; do not switch models over it |
+| `doesn't apply JSON schema … using delimiter method`, `honors JSON schema shape but not value constraints`, `no strict structured-output support` | **not a failure.** The endpoint does not do strict schema decoding, so translation uses the delimiter method. Expected on claude and most proxies; note it, do not switch models over it |
 | `refused the … request shape; using a simpler one` | classification's ladder descended a rung. Informational |
-| fingerprint refusal on `--resume` | book file or plan changed since the cache was written; delete cache only if that was intentional |
-| `undecided signature(s)` on plan load | null actions remain — answer every open question in the plan JSON, then rerun |
+| fingerprint refusal on `--resume` | book file or plan changed since the cache was written; delete the cache only if that was intentional |
+| `undecided signature(s)` on plan load | null actions remain — answer every open question, then rerun |
 | `invalid action` on plan load | typo in a hand-edited `action` — fix the JSON, rerun |
 | coverage-gate error / empty plan | `--only_filelist` misspelled, or the plan skips nearly everything — re-check the plan |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
-| codex: `... codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
-| codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself; a weekly limit is reported instead, and there you rerun later |
-| `handoff report failed (…); starting the next window` | one compact produced no report. Informational: the next window starts unseeded, translation continues |
+| codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
+| codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
+| `handoff report failed (…); starting the next window` | one compact produced no report. Informational; translation continues |
 
-## Next phase
+## Reference files
 
-`references/next-phase.md` in this skill dir: a book brief (short intro + character-name
-glossary) drafted by the agent at classify time and injected through
-`prompt.json`, making `--parallel-workers` runs terminology-consistent
-without `--use_context`'s sequential warmup. Planned, not yet built.
+- **`references/providers.md`** — route table, probe recipes, per-format
+  capability caveats. Read before the first command whenever the endpoint is
+  not a plain OpenAI-shaped host.
+- **`references/prompt-files.md`** — the `--prompt` file contract, linting,
+  and keeping a user's prompt out of git.
+- **`references/next-phase.md`** — an unbuilt design note (a per-book brief
+  for parallel runs). Not part of this workflow.

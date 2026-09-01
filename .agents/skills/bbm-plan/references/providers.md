@@ -17,6 +17,7 @@ string:
 | is a MODEL_DICT key (`claude-haiku-4-5-20251001`, `gemini`, `groq`, `qwen`) | `--model <that key>` |
 | is not, and the endpoint speaks the OpenAI shape | `--model openai --model_list "$MODEL"` |
 | is not, and the endpoint speaks anthropic/gemini/qwen natively | `--provider <name>` + `--model_list "$MODEL"` (below) |
+| there is no endpoint — the user's ChatGPT/Codex plan | `--model codex`, no key, no base, nothing to probe (SKILL.md §1c) |
 
 **Never `--model chatgptapi` for an arbitrary id**: that preset runs a
 hardcoded GPT-3.5-family discovery and ignores `--model_list`
@@ -168,6 +169,7 @@ path works.
 | claude | delimiter (no structured-output work was done for it) | yes, via the prompt rung |
 | gemini | native schema | yes |
 | groq, litellm | delimiter | yes |
+| codex | delimiter, on a thread that is itself the context window | yes |
 | qwen-mt-*, customapi | translation only | **no** |
 | google, deepl, deeplfree, caiyun, tencentransmart | translation only | **no** |
 
