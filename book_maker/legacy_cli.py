@@ -19,10 +19,10 @@ job is to preserve what the command used to do. Some of those models are
 retired by now, and the endpoint's own model check reports that clearly.
 """
 
-import json
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
+
+from book_maker.provider_loader import DASHSCOPE_BASE, GEMINI_BASE
 
 # Legacy `--model` value -> what it becomes. `fmt` is an --api_format,
 # `base` an --api_base, `model` the head of that alias's old preset list.
@@ -38,19 +38,16 @@ _OPENAI_PRESETS = {
     "o3mini": "o3-mini",
 }
 
-_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
-_DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
 # Vendors whose native wrapper was removed because they serve an
 # OpenAI-compatible endpoint. Reaching them is now a base URL.
 _VENDOR_ROUTES = {
-    "gemini": (_GEMINI_BASE, "gemini-flash-latest", "BBM_GOOGLE_GEMINI_KEY"),
-    "geminipro": (_GEMINI_BASE, "gemini-pro-latest", "BBM_GOOGLE_GEMINI_KEY"),
+    "gemini": (GEMINI_BASE, "gemini-flash-latest", "BBM_GOOGLE_GEMINI_KEY"),
+    "geminipro": (GEMINI_BASE, "gemini-pro-latest", "BBM_GOOGLE_GEMINI_KEY"),
     "groq": ("https://api.groq.com/openai/v1", None, "BBM_GROQ_API_KEY"),
     "xai": ("https://api.x.ai/v1", "grok-beta", "BBM_XAI_API_KEY"),
-    "qwen": (_DASHSCOPE_BASE, "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
-    "qwen-mt-turbo": (_DASHSCOPE_BASE, "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
-    "qwen-mt-plus": (_DASHSCOPE_BASE, "qwen-mt-plus", "BBM_QWEN_API_KEY"),
+    "qwen": (DASHSCOPE_BASE, "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
+    "qwen-mt-turbo": (DASHSCOPE_BASE, "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
+    "qwen-mt-plus": (DASHSCOPE_BASE, "qwen-mt-plus", "BBM_QWEN_API_KEY"),
 }
 
 # Aliases that were always a fixed engine rather than a model.
@@ -74,6 +71,7 @@ _KEY_FLAGS = (
     "--qwen_key",
     "--caiyun_key",
     "--deepl_key",
+    "--orcarouter_key",
     "--api_key",
 )
 
@@ -88,17 +86,12 @@ _ALIAS_KEY_FLAG = {
     "qwen-mt-plus": "--qwen_key",
     "caiyun": "--caiyun_key",
     "deepl": "--deepl_key",
+    # not a legacy alias — `--model orcarouter` is a live route (see
+    # translator/orcarouter_translator.py) — but the key flag it was
+    # documented with is old, and must not reach argparse unrecognized:
+    # that error echoes the key.
+    "orcarouter": "--orcarouter_key",
 }
-
-# Where each provider file's api_style lands on the new surface.
-_API_STYLE_ROUTES = {
-    "openai": (None, None),
-    "claude": ("anthropic", None),
-    "gemini": (None, _GEMINI_BASE),
-    "qwen": (None, _DASHSCOPE_BASE),
-}
-
-_PROVIDER_FILES = (Path("bbm_providers.json"), Path.home() / ".bbm" / "providers.json")
 
 
 @dataclass
@@ -114,27 +107,6 @@ class LegacyTranslation:
 
 def _fail(message):
     raise SystemExit(message)
-
-
-def _load_provider(name):
-    """The provider entry `name`, from the same files the old CLI read."""
-    for path in _PROVIDER_FILES:
-        if not path.exists():
-            continue
-        try:
-            config = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError) as e:
-            # Falling through to the global file would silently run the book
-            # against a different endpoint than this directory configures.
-            _fail(f"{path} could not be read: {e}")
-        provider = config.get("providers", {}).get(name)
-        if provider:
-            return provider
-    _fail(
-        f"--provider {name} was removed, and no entry for it was found in "
-        f"bbm_providers.json or ~/.bbm/providers.json. Pass the endpoint "
-        f"directly instead: --api_base <url> --key <key> --model_list <model>."
-    )
 
 
 def _value_of(argv, flag):
@@ -179,7 +151,6 @@ def _split(argv):
         "--ollama_model",
         "--custom_api",
         "--deployment_id",
-        "--provider",
         "--interval",
     }
     while i < len(argv):
@@ -242,21 +213,6 @@ def translate_legacy_argv(argv):
             "gemini route and has no effect now"
         )
 
-    if "--provider" in legacy:
-        name = legacy["--provider"]
-        provider = _load_provider(name)
-        style = provider.get("api_style", "openai")
-        if style not in _API_STYLE_ROUTES:
-            _fail(f"--provider {name} uses unknown api_style {style!r}")
-        api_format, style_base = _API_STYLE_ROUTES[style]
-        api_base = provider.get("base_url") or style_base
-        defaults = provider.get("default_models") or []
-        # The old path handed the whole list to set_model_list, which rotates.
-        model = ",".join(defaults) if defaults else None
-        if provider.get("env_key"):
-            env_keys.append(provider["env_key"])
-        route_source = f"--provider {name}"
-
     if "--model" in legacy:
         alias = legacy["--model"]
         if alias in _OPENAI_PRESETS:
@@ -317,22 +273,10 @@ def translate_legacy_argv(argv):
             )
 
     # The old parser defaulted to --model chatgptapi, so a command with only
-    # a key named no model at all. Without this it now dies on
-    # "--model_list is required" -- a working command turned into an error.
-    # A format the user named outright decides whether a model applies at
-    # all: the fixed engines have none, so supplying one turns a request to
-    # drop a deprecated flag into an error.
-    named_format = _value_of(rest, "--api_format")
-    if (
-        model is None
-        and passthrough_model is None
-        and not has_models
-        and api_format in (None, "openai")
-        and named_format in (None, "openai")
-        and "--model" not in legacy
-    ):
-        model = _OPENAI_PRESETS["chatgptapi"]
-        notices.append(f"no --model was given; the old default is --model_list {model}")
+    # a key named no model at all. Nothing is injected for it here: the
+    # openai format now has its own default (cli.DEFAULT_MODELS), so such a
+    # command still runs, and naming a model here would only override the
+    # format's default with a retired one.
 
     if passthrough_model is not None:
         rest = ["--model", passthrough_model] + rest

@@ -34,6 +34,7 @@ KEY_ENV_VARS = (
     "BBM_CLAUDE_API_KEY",
     "BBM_CAIYUN_API_KEY",
     "BBM_DEEPL_API_KEY",
+    "BBM_ORCAROUTER_API_KEY",
 )
 
 
@@ -242,14 +243,42 @@ def test_naming_a_model_twice_fails_loud(tmp_path):
     assert "once" in output
 
 
-def test_llm_format_without_a_model_fails_loud(tmp_path):
-    # nothing is preset any more: a run that never names a model has nothing
-    # to fall back on, and must say so before it spends a key
+def test_the_openai_format_defaults_to_a_model(tmp_path):
+    # a command with only a key used to die on "--model is required"; the
+    # openai format has one obvious cheapest current model, so it just runs
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
-    proc = _cli("--book_name", str(src), "--key", "sk-test")
+    proc = _cli(
+        "--book_name", str(src), "--key", "sk-test", "--test", "--test_num", "1"
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['gpt-5.6-luna']" in proc.stdout
+
+
+def test_an_old_key_flag_alone_lands_on_the_default_model(tmp_path):
+    # the old parser defaulted to chatgptapi, so `--openai_key sk-...` named
+    # no model; it now gets the format's default rather than a retired preset
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name", str(src), "--openai_key", "sk-test", "--test", "--test_num", "1"
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['gpt-5.6-luna']" in proc.stdout
+    assert "gpt-3.5-turbo" not in proc.stdout
+
+
+def test_the_anthropic_format_still_asks_for_a_model(tmp_path):
+    # no id there is the obvious cheapest one, and guessing would bill a
+    # whole book to a model nobody chose
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name", str(src), "--key", "sk-test", "--api_format", "anthropic"
+    )
+    output = proc.stdout + proc.stderr
     assert proc.returncode != 0
-    assert "--model" in proc.stdout + proc.stderr
+    assert "--model is required for the anthropic format" in " ".join(output.split())
 
 
 def test_missing_key_names_where_it_looked(tmp_path):
@@ -365,3 +394,130 @@ def test_no_style_is_none():
     from book_maker.utils import prompt_config_to_kwargs
 
     assert prompt_config_to_kwargs({"user": "{text}"})["style_note"] is None
+
+
+def _cli_in(cwd, *args, **extra_env):
+    """The CLI run from `cwd`, so a project bbm_providers.json is in scope."""
+    env = _env()
+    env["PYTHONPATH"] = os.pathsep.join([str(HERMETIC), str(REPO), env["PYTHONPATH"]])
+    env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, str(REPO / "make_book.py"), *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _provider_book(tmp_path, **entry):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    (tmp_path / "bbm_providers.json").write_text(
+        json.dumps({"providers": {"p": entry}}), encoding="utf-8"
+    )
+    return src
+
+
+def test_a_provider_supplies_the_models_and_its_key_variable(tmp_path):
+    # the entry's env_key is consulted for the key, and its default_models
+    # rotate in order — no --api_base, --key or --model on the command
+    src = _provider_book(
+        tmp_path,
+        api_style="openai",
+        base_url="https://api.deepseek.example/v1",
+        default_models=["model-one", "model-two"],
+        env_key="BBM_TEST_PROVIDER_KEY",
+    )
+    proc = _cli_in(
+        tmp_path,
+        "--book_name",
+        str(src),
+        "--provider",
+        "p",
+        "--test",
+        "--test_num",
+        "1",
+        BBM_TEST_PROVIDER_KEY="sk-provider",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['model-one', 'model-two']" in proc.stdout
+
+
+def test_a_provider_and_a_model_are_not_mutually_exclusive(tmp_path):
+    # naming the gateway and the model at it is the ordinary case; the
+    # command's own model wins over the entry's default_models
+    src = _provider_book(
+        tmp_path,
+        api_style="openai",
+        base_url="https://api.deepseek.example/v1",
+        default_models=["model-one"],
+    )
+    proc = _cli_in(
+        tmp_path,
+        "--book_name",
+        str(src),
+        "--provider",
+        "p",
+        "--model",
+        "my-model",
+        "--key",
+        "sk-test",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['my-model']" in proc.stdout
+
+
+def test_an_unknown_provider_names_both_config_files(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli_in(tmp_path, "--book_name", str(src), "--provider", "ghost")
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "ghost" in output
+    assert "bbm_providers.json" in output
+    assert ".bbm/providers.json" in output
+
+
+def test_orcarouter_needs_no_endpoint_and_reads_its_own_key(tmp_path):
+    # upstream's documented command, unchanged: the gateway's model id says
+    # where the request goes, and BBM_ORCAROUTER_API_KEY carries the key
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli_in(
+        tmp_path,
+        "--book_name",
+        str(src),
+        "--model",
+        "orcarouter",
+        "--test",
+        "--test_num",
+        "1",
+        BBM_ORCAROUTER_API_KEY="sk-orca",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['orcarouter/auto']" in proc.stdout
+    # a supported shortcut, not a legacy alias: nothing is deprecated here
+    assert "deprecated" not in proc.stdout
+
+
+def test_an_orcarouter_model_id_is_kept_as_named(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli_in(
+        tmp_path,
+        "--book_name",
+        str(src),
+        "--model",
+        "orcarouter/openai/gpt-5-mini",
+        "--orcarouter_key",
+        "sk-orca",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['orcarouter/openai/gpt-5-mini']" in proc.stdout

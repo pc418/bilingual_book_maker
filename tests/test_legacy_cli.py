@@ -6,8 +6,6 @@ became so the user can update their command. Nothing is guessed silently —
 a legacy flag with no honest equivalent fails loudly instead.
 """
 
-import json
-
 import pytest
 
 from book_maker.legacy_cli import translate_legacy_argv
@@ -220,79 +218,16 @@ class TestEndpointFlags:
         assert "interval" in notices("--interval", "0.5", "--model_list", "m").lower()
 
 
-class TestProvider:
-    def _write(self, tmp_path, monkeypatch, config):
-        (tmp_path / "bbm_providers.json").write_text(json.dumps(config))
-        monkeypatch.chdir(tmp_path)
-
-    def test_a_provider_becomes_its_endpoint(self, tmp_path, monkeypatch):
-        self._write(
-            tmp_path,
-            monkeypatch,
-            {
-                "providers": {
-                    "deepseek": {
-                        "api_style": "openai",
-                        "base_url": "https://api.deepseek.com/v1",
-                        "default_models": ["deepseek-chat"],
-                        "env_key": "BBM_DEEPSEEK_API_KEY",
-                    }
-                }
-            },
-        )
-
-        result = translate_legacy_argv(["--provider", "deepseek"])
-
-        assert result.argv == [
-            "--api_base",
-            "https://api.deepseek.com/v1",
-            "--model",
-            "deepseek-chat",
-        ]
-        assert "BBM_DEEPSEEK_API_KEY" in result.env_keys
-
-    def test_a_claude_style_provider_keeps_its_format(self, tmp_path, monkeypatch):
-        self._write(
-            tmp_path,
-            monkeypatch,
-            {
-                "providers": {
-                    "gw": {
-                        "api_style": "claude",
-                        "base_url": "https://gw.example.com",
-                        "default_models": ["claude-haiku-4.5"],
-                    }
-                }
-            },
-        )
-
-        assert translate_legacy_argv(["--provider", "gw"]).argv == [
-            "--api_format",
-            "anthropic",
-            "--api_base",
-            "https://gw.example.com",
-            "--model",
-            "claude-haiku-4.5",
-        ]
-
-    def test_an_unknown_provider_fails_loud(self, tmp_path, monkeypatch):
-        self._write(tmp_path, monkeypatch, {"providers": {}})
-
-        with pytest.raises(SystemExit, match="ghost"):
-            translate_legacy_argv(["--provider", "ghost"])
-
-
 class TestFaithfulness:
     """An old command must keep doing what it did, or say why it cannot."""
 
-    def test_the_old_default_model_is_supplied(self):
+    def test_a_bare_key_command_still_names_no_model(self):
         # `bbook_maker --book_name b.epub --openai_key sk-...` named no model:
-        # the old parser defaulted to chatgptapi. Without this the rewritten
-        # command dies on "no model named".
-        assert flags("--openai_key", "sk") == {
-            "--key": "sk",
-            "--model": "gpt-3.5-turbo",
-        }
+        # the old parser defaulted to chatgptapi. The openai format now has
+        # its own default, so this layer supplies nothing — injecting the
+        # retired preset here would override that default with gpt-3.5-turbo.
+        assert flags("--openai_key", "sk") == {"--key": "sk"}
+        assert "model" not in notices("--openai_key", "sk")
 
     def test_no_default_is_invented_for_a_machine_translation_route(self):
         assert rewrite("--model", "google") == ["--api_format", "google"]
@@ -329,34 +264,6 @@ class TestFaithfulness:
             ]
             == "OPEN"
         )
-
-    def test_every_provider_default_model_is_kept(self, tmp_path, monkeypatch):
-        (tmp_path / "bbm_providers.json").write_text(
-            json.dumps(
-                {
-                    "providers": {
-                        "p": {
-                            "api_style": "openai",
-                            "base_url": "https://p/v1",
-                            "default_models": ["a", "b", "c"],
-                        }
-                    }
-                }
-            )
-        )
-        monkeypatch.chdir(tmp_path)
-
-        # the old path handed the whole list to set_model_list, which rotates
-        assert flags("--provider", "p")["--model_list"] == "a,b,c"
-
-    def test_a_malformed_project_provider_file_fails_loud(self, tmp_path, monkeypatch):
-        (tmp_path / "bbm_providers.json").write_text("{not json")
-        monkeypatch.chdir(tmp_path)
-
-        # silently falling through to the global file could run the book
-        # against a different endpoint than the one configured here
-        with pytest.raises(SystemExit, match="bbm_providers.json"):
-            translate_legacy_argv(["--provider", "p"])
 
     def test_custom_api_falls_back_to_its_environment_variable(self, monkeypatch):
         monkeypatch.setenv("BBM_CUSTOM_API", "https://env-host/t")
@@ -429,3 +336,29 @@ class TestNotices:
         # --model names an actual model now; only the old aliases translate,
         # and an id this fork has never heard of is the normal case
         assert rewrite("--model", "gpt3") == ["--model", "gpt3"]
+
+
+class TestOrcaRouter:
+    """`--model orcarouter` is a live route; only its key flag is old."""
+
+    def test_the_old_key_flag_becomes_key(self):
+        assert flags("--model", "orcarouter", "--orcarouter_key", "K") == {
+            "--key": "K",
+            "--model": "orcarouter",
+        }
+        assert "--orcarouter_key" in notices(
+            "--model", "orcarouter", "--orcarouter_key", "K"
+        )
+
+    def test_the_model_is_passed_through_untranslated(self):
+        # a rewrite here would print a deprecation notice for a supported
+        # shortcut; the CLI resolves the route itself
+        assert rewrite("--model", "orcarouter/anthropic/claude-sonnet-4-6") == [
+            "--model",
+            "orcarouter/anthropic/claude-sonnet-4-6",
+        ]
+
+    def test_the_key_is_never_echoed(self):
+        assert "K-secret" not in notices(
+            "--model", "orcarouter", "--orcarouter_key", "K-secret"
+        )

@@ -13,7 +13,9 @@ from book_maker.glossary import Glossary
 from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
+from book_maker.provider_loader import resolve_provider
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
+from book_maker.translator import orcarouter_translator as orcarouter
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
 # Where each format looks for a key when --key is absent. $BBM_API_KEY is the
@@ -40,6 +42,12 @@ CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 
 # LLM formats that can resolve a model on their own, so --model is optional.
 MODEL_OPTIONAL_FORMATS = ("codex",)
+
+# The model a format falls back to when the command names none. Only the
+# openai format has one: it has an obvious cheapest current model, and that
+# is what a command carrying nothing but a key used to run before the model
+# presets went away. Anthropic has no equivalent, so it keeps asking.
+DEFAULT_MODELS = {"openai": "gpt-5.6-luna"}
 
 # `--model codex` selects the format rather than a model id. The sidecar then
 # picks its own default, exactly as `--api_format codex` with no --model does.
@@ -134,6 +142,31 @@ def resolve_api_key(api_format, explicit_key, api_base, extra_env_keys=()):
             f"one of: {', '.join(env_names)}."
         )
     return ""
+
+
+def apply_provider(options):
+    """Fill in the endpoint flags `--provider` covers, and name its key variable.
+
+    Only what the command left out: a provider is a shorthand for flags, so
+    every flag actually typed outranks it. Returns the variables to consult
+    for the key, ahead of the format's conventional ones — the entry names
+    the endpoint being called, so its own variable is the right one.
+    """
+    if not options.provider:
+        return ()
+    try:
+        route = resolve_provider(options.provider)
+    except ValueError as err:
+        raise SystemExit(str(err))
+    options.api_format = options.api_format or route.api_format
+    options.api_base = options.api_base or route.api_base
+    if route.models and not options.model and not options.model_list:
+        # One model belongs in --model; several rotate, first one first.
+        if len(route.models) == 1:
+            options.model = route.models[0]
+        else:
+            options.model_list = ",".join(route.models)
+    return (route.env_key,) if route.env_key else ()
 
 
 def get_book_type(book_name):
@@ -324,7 +357,8 @@ def build_parser():
         metavar="MODEL",
         help="model id, exactly as the endpoint names it (e.g. gpt-5-mini, "
         "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Old alias "
-        "values are translated to their model with a note",
+        "values are translated to their model with a note. Defaults to "
+        "gpt-5.6-luna on the openai format; the anthropic format needs an id",
     )
     parser.add_argument(
         "--api_format",
@@ -369,6 +403,16 @@ def build_parser():
         help="endpoint to translate against, e.g. https://api.openai.com/v1, "
         "https://api.anthropic.com, a gateway, or http://localhost:11434/v1 "
         "for ollama. Defaults to the format's official host",
+    )
+    parser.add_argument(
+        "--provider",
+        dest="provider",
+        type=str,
+        default="",
+        help="named endpoint from bbm_providers.json (this directory) or "
+        "~/.bbm/providers.json: its base_url, api_style, default_models and "
+        "env_key stand in for --api_base, --api_format, --model and the key. "
+        "Anything you pass explicitly wins",
     )
     parser.add_argument(
         "--exclude_filelist",
@@ -723,6 +767,8 @@ def main():
         os.environ["http_proxy"] = PROXY
         os.environ["https_proxy"] = PROXY
 
+    provider_env_keys = apply_provider(options)
+
     # A model may be named once, in either flag. Accepting both would leave
     # two answers to "which model is this run using".
     if options.model and options.model_list:
@@ -740,14 +786,29 @@ def main():
         if name.strip()
     ]
 
+    # OrcaRouter is one gateway at one address, so its model id is enough to
+    # say where the request goes. Consulted before the format is inferred,
+    # because that inference reads the endpoint this fills in.
+    orcarouter_env_keys = ()
+    if model_names:
+        route = orcarouter.resolve(model_names[0], options.api_base)
+        if route:
+            model_names[0], options.api_base = route
+            orcarouter_env_keys = (orcarouter.ENV_KEY,)
+
     api_format = options.api_format or infer_api_format(
         options.api_base, model_names[0] if model_names else ""
     )
     options.api_base = normalize_api_base(options.api_base, api_format)
+    if not model_names and api_format in DEFAULT_MODELS:
+        model_names = [DEFAULT_MODELS[api_format]]
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
     API_KEY = resolve_api_key(
-        api_format, options.key, options.api_base, legacy.env_keys
+        api_format,
+        options.key,
+        options.api_base,
+        orcarouter_env_keys + provider_env_keys + legacy.env_keys,
     )
 
     glossary = Glossary()
@@ -939,14 +1000,14 @@ def main():
     if options.retranslate:
         e.retranslate = options.retranslate
     if api_format in LLM_FORMATS:
-        # No preset lists any more: the endpoint names its own models, and a
-        # run that does not say which one to use has nothing to fall back on.
-        # `codex` is the exception — it resolves the model from its own
-        # config, so naming one is optional there.
+        # No preset lists any more: the endpoint names its own models. Only
+        # the formats in DEFAULT_MODELS have one obvious id to fall back on;
+        # `codex` resolves its own from its config. Everything else must be
+        # told, rather than have a whole book billed to a guess.
         if not model_names and api_format not in MODEL_OPTIONAL_FORMATS:
             raise SystemExit(
                 f"--model is required for the {api_format} format. Pass the "
-                f"model id the endpoint uses, e.g. --model gpt-5-mini"
+                f"model id the endpoint uses, e.g. --model claude-sonnet-4-6"
             )
         try:
             e.translate_model.set_model_list(model_names)
