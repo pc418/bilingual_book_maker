@@ -216,6 +216,76 @@ def test_model_list_with_a_preset_model_fails_loud(tmp_path):
     assert "openai" in proc.stdout
 
 
+def test_parallel_workers_is_refused_with_codex(tmp_path):
+    # codex serializes every turn on one thread, and the parallel path then
+    # reads a context attribute Codex does not have — an AttributeError that
+    # only lands once the run is already under way. Refuse it up front
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--parallel-workers", "4")
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--parallel-workers" in flat
+    assert "codex" in flat
+    # nothing may have been dispatched: no output book, no sidecar preflight
+    assert not (tmp_path / f"{src.stem}_bilingual.epub").exists()
+    assert "codex app-server" not in proc.stdout + proc.stderr
+
+
+def test_parallel_workers_is_refused_with_session_context(tmp_path):
+    # every worker would carry a history of its own; that pairing has never
+    # been tested, and a book-length run is the wrong place to find out
+    proc, _ = _run(tmp_path, "--use_context", "session", "--parallel-workers", "4")
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--parallel-workers" in flat
+    assert "--use_context session" in flat
+    assert not (tmp_path / f"{BOOK.stem}_bilingual.epub").exists()
+
+
+def test_parallel_workers_still_runs_with_window_context(tmp_path):
+    # only the two pairings are refused; the openai window route is untouched
+    proc, _ = _run(
+        tmp_path,
+        "--use_context",
+        "--parallel-workers",
+        "4",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--parallel-workers" not in proc.stdout
+
+
+def test_one_worker_is_never_refused(tmp_path):
+    # 1 worker is what every run already does, in either pairing
+    proc, _ = _run(
+        tmp_path,
+        "--use_context",
+        "session",
+        "--parallel-workers",
+        "1",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    # a dry run reaches no model at all, so the codex side of the boundary
+    # can be checked without starting a sidecar
+    proc = _cli(
+        "--book_name",
+        str(tmp_path / BOOK.name),
+        "--model",
+        "codex",
+        "--parallel-workers",
+        "1",
+        "--plan-dry-run",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
 def test_quiet_flag_is_accepted(tmp_path):
     proc, plan = _run(tmp_path, "--plan-dry-run", "--quiet")
     assert proc.returncode == 0
