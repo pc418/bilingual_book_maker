@@ -136,7 +136,7 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model 
 
 * 自定义 API Provider
 
-  任何 OpenAI 兼容的 API（DeepSeek、SiliconFlow、本地代理等）都只是一个接口地址：`--api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat`。想给它起个名字的话，JSON 配置文件仍然可用。
+  内置路由不满足需求时，可以通过 JSON 配置文件自定义 provider。这样任何 OpenAI 兼容的 API（DeepSeek、SiliconFlow、本地代理等）都能按名字调用，不必每条命令都重复 `--api_base` 和 key。
 
   在当前目录创建 `bbm_providers.json`（全局配置放在 `~/.bbm/providers.json`）：
 
@@ -170,15 +170,15 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model 
 
   优先级：项目级 `./bbm_providers.json` 覆盖全局 `~/.bbm/providers.json`。
 
-  `--provider` 和 `--model` 互斥，不能同时使用。
+  `--model` 指定该 provider 下的模型；不写则用 `default_models` 的第一个。
 
   ```shell
-  python3 make_book.py --provider deepseek --api_key sk-xxx --book_name test_books/animal_farm.epub
+  python3 make_book.py --provider deepseek --key sk-xxx --book_name test_books/animal_farm.epub
 
   export BBM_DEEPSEEK_API_KEY=sk-xxx
   python3 make_book.py --provider deepseek --book_name test_books/animal_farm.epub
 
-  python3 make_book.py --provider deepseek --api_key sk-xxx --model_list deepseek-reasoner --book_name test_books/animal_farm.epub
+  python3 make_book.py --provider deepseek --key sk-xxx --model deepseek-reasoner --book_name test_books/animal_farm.epub
   ```
 
 ## 从旧参数迁移
@@ -207,7 +207,6 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 | `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
 | `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
 | `--deployment_id D` | `--model D`，并把 `--api_base` 改写为该部署的 `/openai/v1` 路径 |
-| `--provider NAME` | 从 `bbm_providers.json` 展开为 `--api_base` / `--api_format` / `--model` |
 | `--interval` | 已删除，它只对已移除的 gemini 路由有效 |
 
 说明：
@@ -461,7 +460,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 - `--provider`:
 
-  旧写法，仍然接受：`bbm_providers.json` 中对应条目会展开为 `--api_base` / `--api_format` / `--model`。详见上方「自定义 API Provider」章节。
+  使用 `bbm_providers.json` 中定义的自定义 provider：其 `base_url`、`api_style`、`default_models`、`env_key` 分别填入 `--api_base`、`--api_format`、`--model` 和 key。显式传入的参数优先。详见上方「自定义 API Provider」章节。
 
 - `--api_key`:
 

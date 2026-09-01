@@ -151,7 +151,7 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model 
 
 * Custom API Provider
 
-  Any OpenAI-compatible API (DeepSeek, SiliconFlow, local proxies, etc.) is just an endpoint: `--api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat`. If you would rather name it once, a JSON config file still works.
+  If the built-in routes don't cover your needs, you can define custom providers via a JSON config file. This lets you use any OpenAI-compatible API (DeepSeek, SiliconFlow, local proxies, etc.) by name, without repeating `--api_base` and the key on every command.
 
   Create `bbm_providers.json` in the current directory (or `~/.bbm/providers.json` for global config):
 
@@ -185,15 +185,15 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model 
 
   Priority: project-level `./bbm_providers.json` overrides global `~/.bbm/providers.json`.
 
-  `--provider` and `--model` are mutually exclusive.
+  `--model` names a model at that provider; without it the first of `default_models` is used.
 
   ```shell
-  python3 make_book.py --provider deepseek --api_key sk-xxx --book_name test_books/animal_farm.epub
+  python3 make_book.py --provider deepseek --key sk-xxx --book_name test_books/animal_farm.epub
 
   export BBM_DEEPSEEK_API_KEY=sk-xxx
   python3 make_book.py --provider deepseek --book_name test_books/animal_farm.epub
 
-  python3 make_book.py --provider deepseek --api_key sk-xxx --model_list deepseek-reasoner --book_name test_books/animal_farm.epub
+  python3 make_book.py --provider deepseek --key sk-xxx --model deepseek-reasoner --book_name test_books/animal_farm.epub
   ```
 
 ## Migrating from the old flags
@@ -223,7 +223,6 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 | `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
 | `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
 | `--deployment_id D` | `--model D`, with `--api_base` rewritten to the deployment's `/openai/v1` path |
-| `--provider NAME` | expanded from `bbm_providers.json` into `--api_base` / `--api_format` / `--model` |
 | `--interval` | dropped; it only applied to the removed gemini route |
 
 Notes:
@@ -523,7 +522,7 @@ Notes:
 
 - `--provider`:
 
-  Old spelling, still accepted: the entry named in `bbm_providers.json` is expanded into `--api_base` / `--api_format` / `--model`. See the "Custom API Provider" section above.
+  Use a custom provider defined in `bbm_providers.json`: its `base_url`, `api_style`, `default_models` and `env_key` fill in `--api_base`, `--api_format`, `--model` and the key. Anything you pass explicitly wins. See the "Custom API Provider" section above.
 
 - `--api_key`:
 
