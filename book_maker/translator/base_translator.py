@@ -59,6 +59,15 @@ class Base(ABC):
     # Default values for fatal error handling - subclasses can override
     TRANSLATION_ERROR_MARKER = None
 
+    # Whether a system message can be borrowed for the length of one request.
+    # False where it is not sent per request at all: the codex route folds it
+    # into a thread's base instructions when the thread opens, and the thread
+    # outlives the window, so a batch system message set there would not
+    # describe one group of paragraphs — it would tell every later unit to
+    # come back in "@@"-separated segments. Those routes carry the batch
+    # contract in the prompt instead, which does ride with the request.
+    BATCH_SYS_MSG_PER_REQUEST = True
+
     # Refusals of one rung, by one model, before we stop offering it.
     RUNG_REFUSAL_THRESHOLD = 2
 
@@ -364,7 +373,11 @@ class Base(ABC):
         try:
             # Set batch values
             setattr(self, prompt_attr, batch_prompt)
-            if batch_sys_msg and hasattr(self, sys_msg_attr):
+            if (
+                batch_sys_msg
+                and self.BATCH_SYS_MSG_PER_REQUEST
+                and hasattr(self, sys_msg_attr)
+            ):
                 setattr(self, sys_msg_attr, batch_sys_msg)
             if context_flag:
                 self.context_flag = False
@@ -373,7 +386,11 @@ class Base(ABC):
         finally:
             # Restore original values
             setattr(self, prompt_attr, original_prompt)
-            if original_sys_msg is not None and hasattr(self, sys_msg_attr):
+            # Restored even when it was None. A translator that carries no
+            # system message of its own — codex, whose voice lives in the
+            # thread instructions — would otherwise keep the batch one, and
+            # describe "@@"-separated segments to every later request.
+            if hasattr(self, sys_msg_attr):
                 setattr(self, sys_msg_attr, original_sys_msg)
             if context_flag:
                 self.context_flag = True

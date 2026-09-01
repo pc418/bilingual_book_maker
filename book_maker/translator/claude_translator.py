@@ -75,6 +75,11 @@ def _sdk_base_url(api_base):
 
 
 class Claude(Base):
+    DEFAULT_PROMPT = (
+        "Help me translate the text within triple backticks into {language} "
+        "and provide only the translated result.\n```{text}```"
+    )
+
     # How many requests to allow before concluding the endpoint is not billing
     # cache reads. One miss is normal (nothing is cached yet), and short books
     # should not be nagged.
@@ -122,10 +127,7 @@ class Claude(Base):
         self.client = Anthropic(base_url=base_url, api_key=key, timeout=20)
         self.model = "claude-haiku-4-5-20251001"  # default it for now
         self.language = language
-        self.prompt_template = (
-            prompt_template
-            or "Help me translate the text within triple backticks into {language} and provide only the translated result.\n```{text}```"
-        )
+        self.prompt_template = prompt_template or self.DEFAULT_PROMPT
         self.prompt_sys_msg = prompt_sys_msg or ""
         self.temperature = temperature
         self.context_flag = context_flag
@@ -536,3 +538,25 @@ class Claude(Base):
             self.save_context(text, t_text)
 
         return t_text
+
+    def translate_list(self, text_list):
+        """Translate a group of paragraphs in one request.
+
+        Plan mode hands whole poetry windows here, and the window is the
+        point: verse only survives if the lines are translated together, with
+        their neighbours in view. The inherited default loops over `translate`
+        and dissolves the group into isolated lines, which is the one thing
+        `--poetry-group-size` exists to prevent.
+
+        The delimiter contract, the count check and the line-by-line retry all
+        come from the base, so this route and the openai one agree on what a
+        batch looks like and on what happens when the reply does not come back
+        in the right number of pieces.
+        """
+        return self._do_batch_translate(
+            text_list,
+            self.prompt_template,
+            self.prompt_sys_msg,
+            self.DEFAULT_PROMPT,
+            self.translate,
+        )
