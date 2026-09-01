@@ -160,6 +160,39 @@ class Claude(Base):
         self._session_requests = 0
         self._compact_failures = 0
 
+    # Both of these turn off exactly what session mode cannot afford, and both
+    # are the same question — is a byte-stable prefix being maintained? — so
+    # they answer it the same way. Window mode is untouched by either.
+
+    @property
+    def BATCH_SYS_MSG_PER_REQUEST(self):
+        """False while a session is open: the system message is part of the prefix.
+
+        Anthropic caches the system message together with the history, so
+        borrowing `prompt_sys_msg` for the length of one grouped request moves
+        the prefix for that request and leaves the next one no longer extending
+        it. Every poetry group would then cost a full-price re-read of the
+        whole accumulated history — the one expense session mode exists to
+        avoid. The batch contract is not lost by this: `_build_batch_prompt`
+        also puts it at the head of the user prompt, and that rides with the
+        request rather than in front of it.
+        """
+        return self.session is None
+
+    @property
+    def BATCH_CONTEXT_PER_LINE(self):
+        """False while a session is open: the history replays what was sent.
+
+        A window keeps paragraphs, so it wants one pair per line. A session
+        keeps requests, and the grouped request was a single exchange — split
+        into per-line pairs, the history stops matching what the endpoint
+        actually saw, and the prefix breaks a second way. Off, `context_flag`
+        is left alone for the batch request and `translate` records the
+        joined exchange itself — verbatim by construction, since it saves
+        the very content it just sent.
+        """
+        return self.session is None
+
     def rotate_key(self):
         pass
 

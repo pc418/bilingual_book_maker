@@ -68,6 +68,13 @@ class Base(ABC):
     # contract in the prompt instead, which does ride with the request.
     BATCH_SYS_MSG_PER_REQUEST = True
 
+    # Whether a batch's context is recorded as one pair per line. Window-style
+    # context wants that, for the reason `_do_batch_translate` gives. A history
+    # replayed verbatim wants the opposite: a grouped request was one exchange,
+    # and recording it as several pairs leaves the history no longer matching
+    # what was sent, which is a broken cache prefix.
+    BATCH_CONTEXT_PER_LINE = True
+
     # Refusals of one rung, by one model, before we stop offering it.
     RUNG_REFUSAL_THRESHOLD = 2
 
@@ -368,7 +375,13 @@ class Base(ABC):
         # store a single entry full of "@@" markers and evict three real
         # paragraphs of context. Suppress it here; save per pair on success,
         # the way the structured batch path already does.
+        #
+        # A history that is replayed verbatim rather than windowed wants the
+        # joined exchange saved exactly as it was sent, and says so through
+        # BATCH_CONTEXT_PER_LINE; there translate() is left to do its own
+        # saving and nothing is suppressed.
         context_flag = getattr(self, "context_flag", False)
+        per_line = context_flag and self.BATCH_CONTEXT_PER_LINE
 
         try:
             # Set batch values
@@ -379,7 +392,7 @@ class Base(ABC):
                 and hasattr(self, sys_msg_attr)
             ):
                 setattr(self, sys_msg_attr, batch_sys_msg)
-            if context_flag:
+            if per_line:
                 self.context_flag = False
 
             translated_text = translate_func(batch_text)
@@ -392,7 +405,7 @@ class Base(ABC):
             # describe "@@"-separated segments to every later request.
             if hasattr(self, sys_msg_attr):
                 setattr(self, sys_msg_attr, original_sys_msg)
-            if context_flag:
+            if per_line:
                 self.context_flag = True
 
         # Handle None or empty response
@@ -423,7 +436,7 @@ class Base(ABC):
             # pair — no extra bookkeeping needed on this path
             return [translate_func(t) for t in stripped_texts]
 
-        if context_flag:
+        if per_line:
             for original, translated in zip(text_list, translated_paragraphs):
                 self.save_context(str(original).strip(), translated)
 

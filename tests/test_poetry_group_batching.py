@@ -210,3 +210,90 @@ def test_codex_thread_instructions_survive_a_window():
     assert codex.prompt_template is None
     assert len(server.threads) == 1
     assert BATCH_DELIMITER.strip() not in server.threads[0]
+
+
+# --------------------------------------------------- claude in session mode
+
+
+def _session_claude(replies=(), **kwargs):
+    """A session-mode Claude on the same scripted stub."""
+    kwargs.setdefault("context_flag", True)
+    kwargs.setdefault("context_mode", "session")
+    return _claude(replies, **kwargs)
+
+
+def _extends(calls):
+    """Whether each request's messages are the next request's opening prefix."""
+    return all(
+        later["messages"][: len(earlier["messages"])] == earlier["messages"]
+        for earlier, later in zip(calls, calls[1:])
+    )
+
+
+def test_claude_session_keeps_the_system_message_byte_identical():
+    """The anthropic cache covers the system message, so borrowing it for one
+    grouped request moves the prefix and every later request re-reads the whole
+    accumulated history at full input price."""
+    reply = BATCH_DELIMITER.join(["虎", "灼灼", "林中", "夜里"])
+    claude, calls = _session_claude(["一", reply, "二"], prompt_sys_msg="be terse")
+
+    claude.translate("Tyger Tyger")
+    claude.translate_list(STANZA)
+    claude.translate("of the night")
+
+    assert [c["system"] for c in calls] == ["be terse"] * 3
+
+
+def test_claude_session_still_states_the_batch_contract():
+    """It moves into the user message; it does not go away."""
+    reply = BATCH_DELIMITER.join(["虎", "灼灼", "林中", "夜里"])
+    claude, calls = _session_claude([reply], prompt_sys_msg="be terse")
+
+    claude.translate_list(STANZA)
+
+    content = calls[0]["messages"][-1]["content"]
+    assert "4" in content
+    assert BATCH_DELIMITER.strip() in content
+
+
+def test_claude_session_records_the_group_as_the_one_exchange_it_was():
+    reply = BATCH_DELIMITER.join(["虎", "灼灼", "林中", "夜里"])
+    claude, _ = _session_claude([reply])
+
+    claude.translate_list(STANZA)
+
+    # one pair, not four: the history's job is to replay what was sent, and
+    # what was sent was a single joined request
+    assert len(claude.session.messages()) == 2
+    assert BATCH_DELIMITER.join(STANZA) in claude.session.messages()[0]["content"]
+
+
+def test_claude_session_prefix_survives_a_grouped_request():
+    reply = BATCH_DELIMITER.join(["虎", "灼灼", "林中", "夜里"])
+    claude, calls = _session_claude(["一", reply, "二"])
+
+    claude.translate("Tyger Tyger")
+    claude.translate_list(STANZA)
+    claude.translate("of the night")
+
+    assert _extends(calls), "a grouped request broke the cached prefix"
+
+
+def test_claude_session_prefix_survives_a_fallback_to_line_by_line():
+    """The failed batch request was still sent, so it belongs in the history."""
+    claude, calls = _session_claude(["虎啊虎啊，燃烧在夜的森林里"])
+
+    claude.translate_list(STANZA)
+
+    assert _extends(calls), "the fallback lines did not extend the batch request"
+
+
+def test_claude_window_mode_still_borrows_the_system_message():
+    """Window mode has no prefix to protect; nothing here changes for it."""
+    reply = BATCH_DELIMITER.join(["虎", "灼灼", "林中", "夜里"])
+    claude, calls = _claude([reply], prompt_sys_msg="be terse")
+
+    claude.translate_list(STANZA)
+
+    assert "segments" in calls[0]["system"]
+    assert claude.prompt_sys_msg == "be terse"
