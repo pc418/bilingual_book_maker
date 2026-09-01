@@ -17,10 +17,10 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制�
 
 ```shell
 pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --test
 或
 pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --test
 ```
 
 ## 翻译服务
@@ -319,11 +319,11 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
   # 先免费预览会翻译哪些内容（不需要 key）
   python3 make_book.py --book_name my_book.epub --plan-dry-run
   # 翻译整个分区
-  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify most
+  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify most
   # 先让模型分流一遍版面装置（页眉、页码等）
-  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify model
+  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify model
   # 或交给 coding agent 判断（停下、打印指引，然后重跑）
-  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify agent
+  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
   ```
 
 - `--exclude-translate-tags`:
@@ -472,10 +472,10 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 ```shell
 # 如果你想快速测一下
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --test
 
 # 或翻译完整本书
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --language zh-hans
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --language zh-hans
 
 # 或用 Gemini 翻译整本书
 python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-2.5-flash --key ${gemini_key}
@@ -525,10 +525,10 @@ export BBM_CAIYUN_API_KEY=${your_api_key}
 更加小白的示例
 
 ```shell
-python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
+python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --api_base 'https://xxxxx/v1'
 
 # 有可能你不需要 python3 而是python
-python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
+python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --api_base 'https://xxxxx/v1'
 ```
 
 [演示视频](https://www.bilibili.com/video/BV1XX4y1d75D/?t=0h07m08s)

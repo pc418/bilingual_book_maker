@@ -31,10 +31,10 @@ A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
 
 ```shell
 pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --test
 OR
 pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --test
 ```
 
 ## Translate Service
@@ -362,11 +362,11 @@ Notes:
   # inspect what would be translated (free, no key needed)
   python3 make_book.py --book_name my_book.epub --plan-dry-run
   # translate the whole partition
-  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify most
+  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify most
   # let a model triage the apparatus first
-  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify model
+  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify model
   # or hand the triage to a coding agent (stops, prints instructions, then rerun)
-  python3 make_book.py --book_name my_book.epub --key ${key} --model gpt-5-mini --plan-classify agent
+  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
   ```
 
 - `--exclude-translate-tags`:
@@ -517,7 +517,7 @@ Notes:
   Provide a JSON string with the desired parameters.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
+  python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
   ```
 
 - `--provider`:
@@ -534,19 +534,19 @@ Notes:
 
 ```shell
 # Test quickly
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test --language zh-hans
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --test --language zh-hans
 
 # Test quickly for src
-python3 make_book.py --book_name test_books/Lex_Fridman_episode_322.srt --key ${openai_key} --model gpt-5-mini --test
+python3 make_book.py --book_name test_books/Lex_Fridman_episode_322.srt --key ${openai_key} --test
 
 # Or translate the whole book
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --language zh-hans
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --language zh-hans
 
 # Or translate the whole book using Gemini flash
 python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-2.5-flash --key ${gemini_key}
 
 # Translate an EPUB with parallel chapter processing
-python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --parallel-workers 4
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --parallel-workers 4
 
 # Rotate two Gemini models
 python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model_list gemini-2.5-flash,gemini-2.0-flash --key ${gemini_key}
@@ -555,7 +555,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://
 export OPENAI_API_KEY=${your_api_key}
 
 # Translate to Japanese with context
-python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5-mini --use_context --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --use_context --language ja
 
 # Name the exact model the endpoint serves
 python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-4-1106-preview --key ${openai_key}
@@ -616,10 +616,10 @@ export BBM_CAIYUN_API_KEY=${your_api_key}
 More understandable example
 
 ```shell
-python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
+python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --api_base 'https://xxxxx/v1'
 
 # Or python3 is not in your PATH
-python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
+python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --api_base 'https://xxxxx/v1'
 ```
 
 Microsoft Azure Endpoints
@@ -648,7 +648,7 @@ $book_name=your_book_name # $book_name="animal_farm.epub"
 $openai_key=your_api_key # $openai_key="sk-xxx"
 $language=your_language # see utils.py
 
-docker run --rm --name bilingual_book_maker --mount type=bind,source=$folder_path,target='/app/test_books' bilingual_book_maker --book_name "/app/test_books/$book_name" --key $openai_key --model gpt-5-mini --language $language
+docker run --rm --name bilingual_book_maker --mount type=bind,source=$folder_path,target='/app/test_books' bilingual_book_maker --book_name "/app/test_books/$book_name" --key $openai_key --language $language
 
 # Linux
 export folder_path=${your_folder_path}
@@ -656,14 +656,14 @@ export book_name=${your_book_name}
 export openai_key=${your_api_key}
 export language=${your_language}
 
-docker run --rm --name bilingual_book_maker --mount type=bind,source=${folder_path},target='/app/test_books' bilingual_book_maker --book_name "/app/test_books/${book_name}" --key ${openai_key} --model gpt-5-mini --language "${language}"
+docker run --rm --name bilingual_book_maker --mount type=bind,source=${folder_path},target='/app/test_books' bilingual_book_maker --book_name "/app/test_books/${book_name}" --key ${openai_key} --language "${language}"
 ```
 
 For example:
 
 ```shell
 # Linux
-docker run --rm --name bilingual_book_maker --mount type=bind,source=/home/user/my_books,target='/app/test_books' bilingual_book_maker --book_name /app/test_books/animal_farm.epub --key sk-XXX --model gpt-5-mini --test --test_num 1 --language zh-hant
+docker run --rm --name bilingual_book_maker --mount type=bind,source=/home/user/my_books,target='/app/test_books' bilingual_book_maker --book_name /app/test_books/animal_farm.epub --key sk-XXX --test --test_num 1 --language zh-hant
 ```
 
 ## Notes
