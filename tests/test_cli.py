@@ -242,14 +242,38 @@ def test_naming_a_model_twice_fails_loud(tmp_path):
     assert "once" in output
 
 
-def test_llm_format_without_a_model_fails_loud(tmp_path):
-    # nothing is preset any more: a run that never names a model has nothing
-    # to fall back on, and must say so before it spends a key
+def test_the_openai_format_defaults_to_a_model(tmp_path):
+    # a command with only a key used to die on "--model is required"; the
+    # openai format has one obvious cheapest current model, so it just runs
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
-    proc = _cli("--book_name", str(src), "--key", "sk-test")
+    proc = _cli("--book_name", str(src), "--key", "sk-test", "--test", "--test_num", "1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['gpt-5.6-luna']" in proc.stdout
+
+
+def test_an_old_key_flag_alone_lands_on_the_default_model(tmp_path):
+    # the old parser defaulted to chatgptapi, so `--openai_key sk-...` named
+    # no model; it now gets the format's default rather than a retired preset
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name", str(src), "--openai_key", "sk-test", "--test", "--test_num", "1"
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "offline model list: ['gpt-5.6-luna']" in proc.stdout
+    assert "gpt-3.5-turbo" not in proc.stdout
+
+
+def test_the_anthropic_format_still_asks_for_a_model(tmp_path):
+    # no id there is the obvious cheapest one, and guessing would bill a
+    # whole book to a model nobody chose
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--key", "sk-test", "--api_format", "anthropic")
+    output = proc.stdout + proc.stderr
     assert proc.returncode != 0
-    assert "--model" in proc.stdout + proc.stderr
+    assert "--model is required for the anthropic format" in " ".join(output.split())
 
 
 def test_missing_key_names_where_it_looked(tmp_path):

@@ -65,7 +65,7 @@ A route is an endpoint, not a model name.
 
 | Option | Purpose |
 |---|---|
-| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Old alias values are translated with a note. |
+| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Defaults to `gpt-5.6-luna` on the `openai` format; the `anthropic` format needs one. Old alias values are translated with a note. |
 | `--api_base URL` | The endpoint to translate against. Defaults to the format's official host. A pasted `…/v1/chat/completions` or trailing slash is trimmed. |
 | `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's conventional variable. |
 | `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id; `codex` must be named explicitly. |

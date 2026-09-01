@@ -252,7 +252,7 @@ Notes:
 
 - `--model`:
 
-  The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `deepseek-chat`), sent to `--api_base` with `--key`. Required for the `openai` and `anthropic` formats. The old preset values below are still accepted and rewritten to a real id with a note:
+  The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `deepseek-chat`), sent to `--api_base` with `--key`. The `openai` format defaults to `gpt-5.6-luna`; the `anthropic` format needs an id. The old preset values below are still accepted and rewritten to a real id with a note:
 
   | Model | Key Source | Notes |
   |-------|-----------|-------|

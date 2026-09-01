@@ -231,7 +231,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 - `--model`:
 
-  接口所用的模型 ID（`gpt-5-mini`、`claude-sonnet-4-6`、`deepseek-chat`），配合 `--api_base` 和 `--key` 使用；`openai` 和 `anthropic` 格式必须指定。下表中的旧预设值仍然接受，会改写成真实模型 ID 并打印说明：
+  接口所用的模型 ID（`gpt-5-mini`、`claude-sonnet-4-6`、`deepseek-chat`），配合 `--api_base` 和 `--key` 使用；`openai` 格式不写时默认 `gpt-5.6-luna`，`anthropic` 格式必须指定。下表中的旧预设值仍然接受，会改写成真实模型 ID 并打印说明：
 
   | 模型 | Key 来源 | 说明 |
   |------|---------|------|

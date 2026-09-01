@@ -41,6 +41,12 @@ CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 # LLM formats that can resolve a model on their own, so --model is optional.
 MODEL_OPTIONAL_FORMATS = ("codex",)
 
+# The model a format falls back to when the command names none. Only the
+# openai format has one: it has an obvious cheapest current model, and that
+# is what a command carrying nothing but a key used to run before the model
+# presets went away. Anthropic has no equivalent, so it keeps asking.
+DEFAULT_MODELS = {"openai": "gpt-5.6-luna"}
+
 # `--model codex` selects the format rather than a model id. The sidecar then
 # picks its own default, exactly as `--api_format codex` with no --model does.
 CODEX_MODEL_ALIASES = ("codex",)
@@ -324,7 +330,8 @@ def build_parser():
         metavar="MODEL",
         help="model id, exactly as the endpoint names it (e.g. gpt-5-mini, "
         "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Old alias "
-        "values are translated to their model with a note",
+        "values are translated to their model with a note. Defaults to "
+        "gpt-5.6-luna on the openai format; the anthropic format needs an id",
     )
     parser.add_argument(
         "--api_format",
@@ -744,6 +751,8 @@ def main():
         options.api_base, model_names[0] if model_names else ""
     )
     options.api_base = normalize_api_base(options.api_base, api_format)
+    if not model_names and api_format in DEFAULT_MODELS:
+        model_names = [DEFAULT_MODELS[api_format]]
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
     API_KEY = resolve_api_key(
@@ -939,14 +948,14 @@ def main():
     if options.retranslate:
         e.retranslate = options.retranslate
     if api_format in LLM_FORMATS:
-        # No preset lists any more: the endpoint names its own models, and a
-        # run that does not say which one to use has nothing to fall back on.
-        # `codex` is the exception — it resolves the model from its own
-        # config, so naming one is optional there.
+        # No preset lists any more: the endpoint names its own models. Only
+        # the formats in DEFAULT_MODELS have one obvious id to fall back on;
+        # `codex` resolves its own from its config. Everything else must be
+        # told, rather than have a whole book billed to a guess.
         if not model_names and api_format not in MODEL_OPTIONAL_FORMATS:
             raise SystemExit(
                 f"--model is required for the {api_format} format. Pass the "
-                f"model id the endpoint uses, e.g. --model gpt-5-mini"
+                f"model id the endpoint uses, e.g. --model claude-sonnet-4-6"
             )
         try:
             e.translate_model.set_model_list(model_names)

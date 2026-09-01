@@ -285,14 +285,13 @@ class TestProvider:
 class TestFaithfulness:
     """An old command must keep doing what it did, or say why it cannot."""
 
-    def test_the_old_default_model_is_supplied(self):
+    def test_a_bare_key_command_still_names_no_model(self):
         # `bbook_maker --book_name b.epub --openai_key sk-...` named no model:
-        # the old parser defaulted to chatgptapi. Without this the rewritten
-        # command dies on "no model named".
-        assert flags("--openai_key", "sk") == {
-            "--key": "sk",
-            "--model": "gpt-3.5-turbo",
-        }
+        # the old parser defaulted to chatgptapi. The openai format now has
+        # its own default, so this layer supplies nothing — injecting the
+        # retired preset here would override that default with gpt-3.5-turbo.
+        assert flags("--openai_key", "sk") == {"--key": "sk"}
+        assert "model" not in notices("--openai_key", "sk")
 
     def test_no_default_is_invented_for_a_machine_translation_route(self):
         assert rewrite("--model", "google") == ["--api_format", "google"]
