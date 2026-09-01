@@ -145,7 +145,11 @@ python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
   --plan-classify agent --use_context session
 ```
 
-- **No key flag, no `--api_base`.** Run `codex login` once beforehand; the
+- **The model is not selectable here.** `--model_list` is rejected outright
+  with `--model codex`, so the sidecar's own default is what runs
+  (`gpt-5.6-luna`). Do not offer the user a choice of model on this route.
+- **No key flag, no `--api_base`** (an `--api_base` is swallowed). Run
+  `codex login` once beforehand; the
   run checks the sidecar is up and signed in before parsing the book and
   reports how much of the 5-hour window is left.
 - **`--parallel-workers` buys nothing here** — turns serialize on one
@@ -278,8 +282,8 @@ before anything runs.
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | `--model` | a registered name; `openai` for any OpenAI-shaped endpoint, `codex` for the subscription route | **`openai`** | the endpoint is one of the fixed engines (`google`, `deepl`, …), or the user wants their ChatGPT plan spent (`codex`, §1c) |
-| `--model_list` | comma-separated model ids, rotated across | `$MODEL` from `.env` | the user wants several ids rotated to spread rate limits |
-| `--openai_key` | one key, or several comma-separated to rotate | `$KEY` from `.env`; `$OPENAI_API_KEY` / `$BBM_OPENAI_API_KEY` are read when the flag is absent | another engine: `--claude_key`, `--gemini_key`, `--groq_key`, `--qwen_key`, `--xai_key`, `--deepl_key`, `--caiyun_key`; with `--provider`, `--api_key`. None at all on `codex` |
+| `--model_list` | comma-separated model ids, rotated across | `$MODEL` from `.env` | the user wants several ids rotated to spread rate limits. **Only `--model openai`, `groq`, `gemini` and `--provider` accept it** — with any other `--model`, `codex` included, the run exits 1 |
+| `--openai_key` | one key, or several comma-separated to rotate | *pass nothing* — `$OPENAI_API_KEY` / `$BBM_OPENAI_API_KEY` are read automatically | another engine: `--claude_key`, `--gemini_key`, `--groq_key`, `--qwen_key`, `--xai_key`. None at all on `codex`, which takes no key. (`--api_key` is **`--provider`-only** and is silently ignored with `--model` — do not reach for it as a generic key flag) |
 | `--api_base` | endpoint URL | *unset* (the vendor's own host), or `$BBM_API_BASE` | a gateway, proxy or local server — OpenAI-shaped bases want the `…/v1` form |
 | `--provider` | a name in `bbm_providers.json` / `~/.bbm/providers.json` | *unset* | a non-OpenAI-shaped gateway that needs its own entry (see `references/providers.md`) |
 | `--proxy` | `http://127.0.0.1:7890`-style | *unset* | the user is behind one |
@@ -292,38 +296,36 @@ before anything runs.
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
 | `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it) |
 | `--exclude-translate-tags` | comma-separated tags | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
-| `--plan-classify-model` | a model id | *unset* | never here — it only applies to `--plan-classify model` |
 
 ### Context and consistency
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | `--use_context` | bare/`window`, `session` | **`session`** | the run warns that the endpoint never reported a cached prompt token — session mode costs more there, so drop to bare `--use_context`. Also use bare window mode if a run must go parallel |
-| `--context-compact-at` | an estimated-token budget, or `0` to size it from the model's own context window | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often), a longer window (raise it), or wants the budget derived from the model (`0`) |
-| `--no-context-compact` | on/off | **off** | the user explicitly wants no handoff report — the window still rolls over, but the next one starts empty, losing exactly the continuity this workflow is for |
+| `--context-compact-at` | an estimated-token budget | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window (raise it). **Needs `--use_context session`** on an API route — without it the flag is accepted and does nothing, with no warning. On `codex` it applies unconditionally |
+| `--no-context-compact` | on/off | **off** | the user explicitly wants no handoff report — the window still rolls over, but the next one starts empty, losing exactly the continuity this workflow is for. Same `--use_context session` precondition |
 | `--context_paragraph_limit` | integer | *unset* | window mode only; the user wants more or fewer re-sent pairs |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
-| `--temperature` | float | *unset* (the API default is not sent) | output is erratic; lower it and re-smoke |
+| `--temperature` | float | *unset* (the API default is not sent) | output is erratic; lower it and re-smoke. Ignored on `codex`, and permanently dropped for a model that rejects it once |
 
 ### Output form
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | *(bilingual)* | — | **bilingual: translation added beside the original** | — |
-| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced |
+| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced. `--translation_style` is **not** applied on this path |
 | `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"` |
-| `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS |
+| `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS. Passing both loses this one silently — `--translation_style` wins |
 
 ### Scope and run control
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. Exact names — a typo fails loud at the coverage gate |
+| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. Exact names — a typo fails loud at the coverage gate. **An only-list wins outright**: pass both and the exclude-list is unreachable |
 | `--test` / `--test_num` | flag + integer | **`--test --test_num 8`** at the smoke step only | poetry-heavy books: ~20, once you have confirmed the first N units are body text |
 | `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
 | `--resume` | on/off | **on for the full run** | never off after a crash — replay is positional and fingerprint-guarded |
-| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user and drop `--use_context session` for that run: workers hold separate histories, so the pairing is untested and self-defeating. Pointless on `codex` |
-| `--source_lang` | language | *unset* (auto-detect) | an endpoint that wants the source stated |
+| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user and drop `--use_context session` for that run: workers hold separate histories, so the pairing is untested and self-defeating. **Never on `codex`** — turns serialize on one lock so it buys nothing, and with `--use_context` it crashes the translate run outright |
 | `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
 
 ### Never pass in plan mode
