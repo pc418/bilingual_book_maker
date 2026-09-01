@@ -97,12 +97,12 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model 
 
 * [OrcaRouter](https://www.orcarouter.ai)
 
-  支持 [OrcaRouter](https://www.orcarouter.ai) 网关，默认使用 `orcarouter/auto` 智能路由模型。
+  支持 [OrcaRouter](https://www.orcarouter.ai) 网关：`--model orcarouter` 即 `orcarouter/auto` 智能路由模型，`--model orcarouter/<model>` 选其他模型，都不需要写 `--api_base`。
   它在同一端点上为 AI 代理提供网关级的零信任安全——默认拒绝地筛查每个 prompt/response
   并管控每个工具调用，无需改任何应用代码。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.orcarouter.ai/v1 --model orcarouter/auto --key ${orcarouter_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
 * [Ollama](https://github.com/ollama/ollama)
@@ -252,6 +252,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
   | `geminipro` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Pro |
   | `groq` | `--groq_key` / `BBM_GROQ_API_KEY` | **必须配合 `--model_list`** |
   | `xai` | `--xai_key` / `BBM_XAI_API_KEY` | Grok |
+  | `orcarouter` | `--key` / `BBM_ORCAROUTER_API_KEY` | 仍是真实路由而非旧预设：OrcaRouter 端点上的 `orcarouter/auto`；`--model orcarouter/<model>` 可选其他模型 |
   | `qwen-mt-turbo` | `--qwen_key` / `BBM_QWEN_API_KEY` | 通义千问快速翻译模型 |
   | `qwen-mt-plus` | `--qwen_key` / `BBM_QWEN_API_KEY` | 通义千问高质量翻译模型 |
   | `google` | 无需 key | 免费谷歌翻译 |
