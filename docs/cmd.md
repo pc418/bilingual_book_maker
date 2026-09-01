@@ -65,7 +65,7 @@ A route is an endpoint, not a model name.
 
 | Option | Purpose |
 |---|---|
-| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Old alias values are translated with a note. |
+| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Defaults to `gpt-5.6-luna` on the `openai` format; the `anthropic` format needs one. Old alias values are translated with a note. |
 | `--api_base URL` | The endpoint to translate against. Defaults to the format's official host. A pasted `…/v1/chat/completions` or trailing slash is trimmed. |
 | `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's conventional variable. |
 | `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id; `codex` must be named explicitly. |
@@ -73,6 +73,7 @@ A route is an endpoint, not a model name.
 | `--model` with `codex` | Optional — defaults to `gpt-5.6-luna`. Other ids the sidecar offers: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.2`. |
 | `--model_list IDS` | Several model IDs to rotate across, comma-separated. Kept for compatibility and for rotation; a single model belongs in `--model`. Naming a model in both flags is an error. |
 | `--source_lang LANG` | Source language for endpoints that want it stated; default `auto`. |
+| `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name. Its `base_url`, `api_style` (`openai`, `claude`, `gemini`, `qwen`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Anything passed explicitly wins. |
 
 If the anthropic format is inferred from a model id but the endpoint does not
 serve `/v1/messages`, the first request falls back to the `openai` format for
@@ -82,7 +83,7 @@ Key lookup order: `--key`, then `BBM_API_KEY`, then `OPENAI_API_KEY` /
 `ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` / `BBM_DEEPL_API_KEY` depending on
 the format. Endpoints on localhost need no key.
 
-`--model`, the per-vendor `--*_key` flags, `--provider`, `--api_key`,
+The old `--model` preset names, the per-vendor `--*_key` flags, `--api_key`,
 `--ollama_model`, `--deployment_id` and `--interval` are no longer part of the
 parser, but old command lines still run: `book_maker/legacy_cli.py` rewrites
 them into the flags above before the run starts and prints each substitution.

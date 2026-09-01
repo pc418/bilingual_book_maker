@@ -1166,3 +1166,25 @@ def test_a_strict_endpoint_that_answers_prose_falls_through():
 )
 def test_json_extraction_survives_fences_and_prose(reply, expected):
     assert ChatGPTAPI._extract_json_object(reply) == expected
+
+
+def test_the_model_list_rotates_in_the_order_it_was_given():
+    # a set() pass here made the first model depend on hash order, so the
+    # same command could start on a different model between runs
+    translator = ChatGPTAPI.__new__(ChatGPTAPI)
+    translator._validate_custom_models = lambda models: {
+        "success": True,
+        "available_models": list(models),
+        "unavailable_models": [],
+        "api_models": list(models),
+    }
+
+    translator.set_model_list(["gpt-b", "gpt-a", " gpt-b ", "", "gpt-c"])
+
+    assert translator.model == "gpt-b"
+    assert [next(translator.model_list) for _ in range(4)] == [
+        "gpt-b",
+        "gpt-a",
+        "gpt-c",
+        "gpt-b",
+    ]

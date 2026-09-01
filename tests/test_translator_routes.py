@@ -231,3 +231,41 @@ class TestKeyRotation:
 
         # the header the request actually carried, not just the final state
         assert req.call_args.kwargs["headers"]["x-authorization"] == "token second"
+
+
+class TestOrcaRouterRedirect:
+    """`--model orcarouter[/<id>]` names a gateway, so it names an address.
+
+    OrcaRouter speaks the OpenAI shape; what the shortcut adds is the base
+    URL and, for the bare spelling, the smart-routing model — nothing that
+    needs a translator class of its own.
+    """
+
+    def _resolve(self, model, api_base=None):
+        from book_maker.translator import orcarouter_translator as orcarouter
+
+        return orcarouter.resolve(model, api_base)
+
+    def test_the_bare_name_is_the_smart_routing_model(self):
+        assert self._resolve("orcarouter") == (
+            "orcarouter/auto",
+            "https://api.orcarouter.ai/v1",
+        )
+
+    def test_a_namespaced_id_keeps_its_model(self):
+        assert self._resolve("orcarouter/anthropic/claude-sonnet-4-6") == (
+            "orcarouter/anthropic/claude-sonnet-4-6",
+            "https://api.orcarouter.ai/v1",
+        )
+
+    def test_an_explicit_endpoint_wins(self):
+        # naming the gateway's model is shorthand for its address, not an
+        # override of the one the user chose
+        assert self._resolve("orcarouter", "https://gw.example.com/v1") == (
+            "orcarouter/auto",
+            "https://gw.example.com/v1",
+        )
+
+    @pytest.mark.parametrize("model", ["gpt-5-mini", "", "orcarouterish", "openai/gpt"])
+    def test_anything_else_is_not_this_route(self, model):
+        assert self._resolve(model) is None

@@ -28,8 +28,10 @@ class OfflineTranslator:
     def rotate_key(self):
         pass
 
-    def set_model_list(self, *args, **kwargs):
-        pass
+    def set_model_list(self, model_list=(), *args, **kwargs):
+        # echoed so a CLI test can see which models the run selected —
+        # including the one no --model named
+        print(f"offline model list: {list(model_list)}")
 
     def translate(self, text, *args, **kwargs):
         return f"[offline]{text}"
@@ -42,3 +44,6 @@ class OfflineTranslator:
 
 
 FORMAT_DICT["google"] = OfflineTranslator
+# The openai format too: it is the default route, so the contract tests for
+# what a bare command does have no other way to stay offline.
+FORMAT_DICT["openai"] = OfflineTranslator
