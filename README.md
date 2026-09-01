@@ -109,13 +109,14 @@ bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model 
 
 * [OrcaRouter](https://www.orcarouter.ai)
 
-  Support [OrcaRouter](https://www.orcarouter.ai) gateway, defaulting to the
-  `orcarouter/auto` smart-routing model. It also runs gateway-level, zero-trust
+  Support [OrcaRouter](https://www.orcarouter.ai) gateway: `--model orcarouter` selects the
+  `orcarouter/auto` smart-routing model, and `--model orcarouter/<model>` any other, with no
+  `--api_base` needed. It also runs gateway-level, zero-trust
   security for AI agents on the same endpoint — screening every prompt/response and
   governing every tool call on a default-deny basis, with no application code changes.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.orcarouter.ai/v1 --model orcarouter/auto --key ${orcarouter_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
 * [Ollama](https://github.com/ollama/ollama)
@@ -272,6 +273,7 @@ Notes:
   | `geminipro` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Pro |
   | `groq` | `--groq_key` / `BBM_GROQ_API_KEY` | **Requires `--model_list`** |
   | `xai` | `--xai_key` / `BBM_XAI_API_KEY` | Grok |
+  | `orcarouter` | `--key` / `BBM_ORCAROUTER_API_KEY` | Still a real route, not a preset: `orcarouter/auto` on OrcaRouter's endpoint; `--model orcarouter/<model>` picks another |
   | `qwen-mt-turbo` | `--qwen_key` / `BBM_QWEN_API_KEY` | Qwen fast translation model |
   | `qwen-mt-plus` | `--qwen_key` / `BBM_QWEN_API_KEY` | Qwen high-quality translation model |
   | `google` | N/A | Free. No API key needed |
