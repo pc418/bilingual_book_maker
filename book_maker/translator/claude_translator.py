@@ -75,6 +75,11 @@ def _sdk_base_url(api_base):
 
 
 class Claude(Base):
+    DEFAULT_PROMPT = (
+        "Help me translate the text within triple backticks into {language} "
+        "and provide only the translated result.\n```{text}```"
+    )
+
     # How many requests to allow before concluding the endpoint is not billing
     # cache reads. One miss is normal (nothing is cached yet), and short books
     # should not be nagged.
@@ -122,10 +127,7 @@ class Claude(Base):
         self.client = Anthropic(base_url=base_url, api_key=key, timeout=20)
         self.model = "claude-haiku-4-5-20251001"  # default it for now
         self.language = language
-        self.prompt_template = (
-            prompt_template
-            or "Help me translate the text within triple backticks into {language} and provide only the translated result.\n```{text}```"
-        )
+        self.prompt_template = prompt_template or self.DEFAULT_PROMPT
         self.prompt_sys_msg = prompt_sys_msg or ""
         self.temperature = temperature
         self.context_flag = context_flag
@@ -157,6 +159,39 @@ class Claude(Base):
         self._session_cache_seen = False
         self._session_requests = 0
         self._compact_failures = 0
+
+    # Both of these turn off exactly what session mode cannot afford, and both
+    # are the same question — is a byte-stable prefix being maintained? — so
+    # they answer it the same way. Window mode is untouched by either.
+
+    @property
+    def BATCH_SYS_MSG_PER_REQUEST(self):
+        """False while a session is open: the system message is part of the prefix.
+
+        Anthropic caches the system message together with the history, so
+        borrowing `prompt_sys_msg` for the length of one grouped request moves
+        the prefix for that request and leaves the next one no longer extending
+        it. Every poetry group would then cost a full-price re-read of the
+        whole accumulated history — the one expense session mode exists to
+        avoid. The batch contract is not lost by this: `_build_batch_prompt`
+        also puts it at the head of the user prompt, and that rides with the
+        request rather than in front of it.
+        """
+        return self.session is None
+
+    @property
+    def BATCH_CONTEXT_PER_LINE(self):
+        """False while a session is open: the history replays what was sent.
+
+        A window keeps paragraphs, so it wants one pair per line. A session
+        keeps requests, and the grouped request was a single exchange — split
+        into per-line pairs, the history stops matching what the endpoint
+        actually saw, and the prefix breaks a second way. Off, `context_flag`
+        is left alone for the batch request and `translate` records the
+        joined exchange itself — verbatim by construction, since it saves
+        the very content it just sent.
+        """
+        return self.session is None
 
     def rotate_key(self):
         pass
@@ -536,3 +571,25 @@ class Claude(Base):
             self.save_context(text, t_text)
 
         return t_text
+
+    def translate_list(self, text_list):
+        """Translate a group of paragraphs in one request.
+
+        Plan mode hands whole poetry windows here, and the window is the
+        point: verse only survives if the lines are translated together, with
+        their neighbours in view. The inherited default loops over `translate`
+        and dissolves the group into isolated lines, which is the one thing
+        `--poetry-group-size` exists to prevent.
+
+        The delimiter contract, the count check and the line-by-line retry all
+        come from the base, so this route and the openai one agree on what a
+        batch looks like and on what happens when the reply does not come back
+        in the right number of pieces.
+        """
+        return self._do_batch_translate(
+            text_list,
+            self.prompt_template,
+            self.prompt_sys_msg,
+            self.DEFAULT_PROMPT,
+            self.translate,
+        )
