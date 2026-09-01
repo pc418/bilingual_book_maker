@@ -708,6 +708,10 @@ class EPUBBookLoader(BaseBookLoader):
             # nobody answered, and the greedy all-translate shortcut must not
             # be reachable by simply rerunning the command. A rerun finds the
             # (edited) plan and goes straight through.
+            # The exit code separates this stop from that rerun's success —
+            # agent mode reaches both from one command line, so a caller that
+            # only saw 0 could not tell a handed-off book from a translated
+            # one. See PLAN_HANDOFF_EXIT_CODE.
             # builtins.print, not rich: this block is meant to be copied, and
             # rich would hard-wrap the paths and the rerun command mid-token.
             builtins.print(

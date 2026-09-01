@@ -24,6 +24,7 @@ from ebooklib import epub
 from rich.console import Console
 from rich.markup import escape
 
+from book_maker.loader.classify import PLAN_HANDOFF_EXIT_CODE
 from book_maker.loader.plan import (
     DisplayResolver,
     TranslationPlan,
@@ -751,7 +752,7 @@ def _write_decided_plan(loader, action="translate"):
     loader.plan_classify = "agent"
     with pytest.raises(SystemExit) as exit_info:
         loader.make_bilingual_book()
-    assert exit_info.value.code == 0
+    assert exit_info.value.code == PLAN_HANDOFF_EXIT_CODE
     plan_path = Path(loader.epub_name).with_name(
         Path(loader.epub_name).stem + "_plan.json"
     )
@@ -916,7 +917,7 @@ class TestLoaderPlanMode:
         loader.plan_classify = "agent"
         with pytest.raises(SystemExit) as first:
             loader.make_bilingual_book()
-        assert first.value.code == 0
+        assert first.value.code == PLAN_HANDOFF_EXIT_CODE
         plan_path = src.parent / (src.stem + "_plan.json")
         rows = json.loads(plan_path.read_text())["signatures"]
         assert rows and all(r["action"] is None for r in rows)
@@ -927,7 +928,7 @@ class TestLoaderPlanMode:
         loader2.plan_classify = "agent"
         with pytest.raises(SystemExit) as second:
             loader2.make_bilingual_book()
-        assert second.value.code == 0
+        assert second.value.code == PLAN_HANDOFF_EXIT_CODE
         assert "Paste the block below" in capsys.readouterr().out
         assert not loader2.translate_model.list_calls, "nothing may be paid for"
 
@@ -1008,7 +1009,7 @@ class TestLoaderPlanMode:
         loader2.plan_classify = "agent"
         with pytest.raises(SystemExit) as exit_info:
             loader2.make_bilingual_book()
-        assert exit_info.value.code == 0
+        assert exit_info.value.code == PLAN_HANDOFF_EXIT_CODE
 
         rows = json.loads(plan_path.read_text())["signatures"]
         keys = {r["key"] for r in rows}
@@ -2656,7 +2657,7 @@ class TestModePolicy:
         assert not mode_policy("most").reads_saved_plan
         assert not mode_policy("most").writes_plan_file
         # the agent handoff *is* the job: stopping there is a success
-        assert mode_policy("agent").handoff_exit_code == 0
+        assert mode_policy("agent").handoff_exit_code == PLAN_HANDOFF_EXIT_CODE
         assert mode_policy("model").handoff_exit_code == 1
 
     def test_an_invented_mode_is_refused(self):
@@ -2664,6 +2665,50 @@ class TestModePolicy:
 
         with pytest.raises(ValueError, match="unknown --plan-classify mode"):
             mode_policy("vibes")
+
+
+class TestPlanExitCodes:
+    """Agent mode reaches two very different endings from one command line:
+    it hands the plan over having translated nothing, or it finds the plan
+    answered and translates the whole book. Whatever is running the command
+    can only tell them apart by the exit status."""
+
+    def test_the_handoff_says_nothing_was_translated(self, tmp_path):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == PLAN_HANDOFF_EXIT_CODE
+        assert not loader.translate_model.list_calls, "nothing may be paid for"
+
+    def test_the_rerun_that_translates_succeeds(self, tmp_path):
+        # the same command a second time, once the rows are answered: it goes
+        # through, and owes its caller the plain success of a finished book
+        setup, src = _make_loader(tmp_path, FakeModel)
+        setup.only_filelist = "index_split_004.html"
+        _write_decided_plan(setup)
+
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        loader.make_bilingual_book()  # returning at all is the exit status 0
+        assert (src.parent / (src.stem + "_bilingual.epub")).exists()
+
+    def test_a_refusal_stays_a_failure(self, tmp_path):
+        # the handoff code must not swallow the gates in front of it: a plan
+        # that covers too little of the book is broken, not handed over, and
+        # a caller that retries on the handoff must not retry on this
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.plan_classify = "agent"
+        loader.plan_min_coverage = 1.01  # impossible on purpose
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == 1
+
+    def test_the_handoff_code_collides_with_neither_ending(self):
+        # 0 is a translated book and 1 is every refusal this project raises
+        assert PLAN_HANDOFF_EXIT_CODE not in (0, 1)
 
 
 class TestFileSha256Cache:
