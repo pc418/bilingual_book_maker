@@ -41,6 +41,15 @@ Source `.env` in the same Bash call as the run:
 pasted key as a command-line argument, it leaks into shell history and
 prompt logs.
 
+**Prefer the environment over a key flag, and never guess a key flag's
+name.** A wrong flag name is not a harmless error: argparse answers
+`unrecognized arguments:` by printing the whole command line back, so a
+mistyped key flag prints the key itself into the terminal, the log and the
+transcript. Read the flag name out of `book_maker/cli.py` before the first
+run, or pass no key flag at all and let the run read the environment
+variable. If a key ever does reach the terminal, say so at once and tell the
+user to rotate it.
+
 ## 1. Intake — what to ask for
 
 1. **Book path** and **target language** (`--language`, e.g. `zh-hans`,
@@ -189,6 +198,16 @@ verdict. Judge from `samples`, `units`, `chars`, `pct`, `mean_chars`; when
 the samples do not settle it, choose `"translate"` — over-translating is
 cheap, losing content is not. Want more evidence? `unzip -p <book> <file>`
 and read the markup around the signature.
+
+**An inline skip cuts its text out of the surrounding block.** Skipping a
+signature that wraps part of a word — a drop-cap initial, a small-caps
+fragment, a decorative first letter — does not leave the word alone: the
+block is assembled without that text, so `CHAPTER I` is sent to the model as
+`HAPTER` and `MR. JONES` loses its `M`. Skip an inline signature only when
+its text is *whole* (a URL, a page number, a standalone marker). After
+editing the plan, rerun the plan step and read the affected block rows'
+samples again — a decapitated sample is the tell, and it is visible before
+anything is paid for.
 
 Non-null rows (prose spine, headings, poetry) may also be changed if their
 samples convince you, but the nulls are the required work. Hold a non-null
