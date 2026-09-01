@@ -43,6 +43,13 @@ BASE_INSTRUCTIONS = (
     "structure and any inline markup exactly as given."
 )
 
+# The prompt a batched window rides on when the user named none. A bare
+# `{text}` on purpose: `_build_batch_prompt` prepends the segment count and
+# the delimiter, and the thread instructions already carry the "translate
+# this, reply with nothing else" half, so anything more here would repeat an
+# instruction the thread has.
+BATCH_PROMPT = "{text}"
+
 # Codex's own preamble dwarfs anything we can save per turn, so the warning
 # threshold is about the user's 5-hour window, not about tokens.
 QUOTA_WARN_PERCENT = 90
@@ -51,9 +58,11 @@ QUOTA_WARN_PERCENT = 90
 # for the tail the thread still has to carry: the fresh paragraph, its
 # translation, and the handoff turn itself.
 
-# Used when --model is omitted. Naming one beats letting Codex pick: the
-# compact budget is looked up by model id, so an unknown default would fall
-# back to the conservative 8000 instead of this model's own 17000.
+# The model a codex run translates with when --model_list names none. Naming
+# one keeps that choice here rather than leaving it to whatever the user's
+# codex config happens to default to, and it is the name the window and
+# compaction notices report. It does not decide the compact budget:
+# compact_budget_for() returns the same figure for every model.
 DEFAULT_MODEL = "gpt-5.6-luna"
 
 # A minute past the reset, because the server's clock and ours are not the
@@ -75,6 +84,10 @@ class Codex(Base):
     # It reaches its own sidecar, not `self.openai_client`, so the endpoint
     # capability probe would ask the wrong server.
     SUPPORTS_STRUCTURED_OUTPUTS = False
+
+    # A turn carries no system message of its own; `prompt_sys_msg` is read
+    # once, when a thread opens, and the thread outlives any one window.
+    BATCH_SYS_MSG_PER_REQUEST = False
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
     quiet = False
@@ -399,7 +412,8 @@ class Codex(Base):
         # per-worker buffers to hand out. Letting workers overlap would
         # interleave unrelated chapters into one thread, lose window-token
         # updates to races, and let a compact swap the thread mid-turn.
-        # `--parallel-workers` therefore buys nothing here, and the CLI says so.
+        # `--parallel-workers` therefore buys nothing here, which is why the
+        # CLI refuses the pairing rather than letting a run discover it.
         with self._turn_lock:
             thread_id = self._ensure_thread()
 
@@ -419,6 +433,32 @@ class Codex(Base):
         # display the source and its translation themselves, so printing here
         # showed every paragraph's translation a second time.
         return translated
+
+    def translate_list(self, text_list):
+        """Translate a group of paragraphs in one turn.
+
+        Plan mode hands whole poetry windows here, and the window is the
+        point: verse only survives if the lines are translated together, with
+        their neighbours in view. The inherited default loops over `translate`
+        and dissolves the group into isolated lines, which is the one thing
+        `--poetry-group-size` exists to prevent — and on a metered
+        subscription it also pays for a turn per line instead of per stanza.
+
+        The delimiter contract, the count check and the line-by-line retry all
+        come from the base, so this route and the openai one agree on what a
+        batch looks like and on what happens when the reply does not come back
+        in the right number of pieces. `BATCH_PROMPT` is the carrier the base
+        needs and nothing more: the thread instructions already say to
+        translate whatever arrives, so the only thing worth adding on top of
+        the source is the base's own segment count.
+        """
+        return self._do_batch_translate(
+            text_list,
+            self.prompt_template,
+            self.prompt_sys_msg,
+            BATCH_PROMPT,
+            self.translate,
+        )
 
     def _chat_completion(self, prompt, model=None):
         """One arbitrary question, so plan classification works on this path.

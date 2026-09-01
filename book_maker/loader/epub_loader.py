@@ -64,6 +64,52 @@ from .classify import (
     mode_policy,
 )
 
+# Every key-bearing CLI flag, and the environment variable it falls back to
+# when it is absent. The rerun line printed at a plan handoff is rebuilt from
+# argv, so a key typed on the command line would otherwise be echoed to the
+# terminal, written into whatever log the run is piped to, and pasted whole
+# into an agent session — three copies of a secret, on a run that spends
+# nothing and looks harmless. Naming the variable rather than masking with
+# `***` keeps the printed command runnable for anyone who exports it.
+KEY_FLAG_ENV = {
+    "--openai_key": "BBM_OPENAI_API_KEY",
+    "--caiyun_key": "BBM_CAIYUN_API_KEY",
+    "--deepl_key": "BBM_DEEPL_API_KEY",
+    "--claude_key": "BBM_CLAUDE_API_KEY",
+    "--gemini_key": "BBM_GOOGLE_GEMINI_KEY",
+    "--groq_key": "BBM_GROQ_API_KEY",
+    "--xai_key": "BBM_XAI_API_KEY",
+    "--orcarouter_key": "BBM_ORCAROUTER_API_KEY",
+    "--qwen_key": "BBM_QWEN_API_KEY",
+    # --api_key belongs to --provider, whose key variable is named by the
+    # provider entry rather than fixed here; the generic name is a variable
+    # the user exports, which is all the placeholder has to be.
+    "--api_key": "BBM_API_KEY",
+}
+
+
+def _key_flag_env(flag):
+    """The env var standing in for `flag`'s value, or None if it carries no key.
+
+    Exact spellings are not enough: argparse accepts any unambiguous
+    abbreviation of a long option, so `--openai_k sk-...` is a perfectly valid
+    invocation that an exact lookup would print back verbatim. Anything that
+    prefixes a key flag is therefore treated as that flag. A prefix matching
+    several of them is ambiguous and argparse would have rejected the command,
+    but it is still redacted — a secret must not reach the terminal on the
+    strength of an argument the parser refused.
+    """
+    env_name = KEY_FLAG_ENV.get(flag)
+    if env_name is not None:
+        return env_name
+    if not flag.startswith("--") or len(flag) < 3:
+        return None
+    matches = {env for f, env in KEY_FLAG_ENV.items() if f.startswith(flag)}
+    if len(matches) == 1:
+        return matches.pop()
+    return "BBM_API_KEY" if matches else None
+
+
 # Inline elements that mean something without holding text: a link target,
 # an image, a line break. Emptying a wrapper is a reason to delete it; these
 # were never wrappers.
@@ -708,6 +754,10 @@ class EPUBBookLoader(BaseBookLoader):
             # nobody answered, and the greedy all-translate shortcut must not
             # be reachable by simply rerunning the command. A rerun finds the
             # (edited) plan and goes straight through.
+            # The exit code separates this stop from that rerun's success —
+            # agent mode reaches both from one command line, so a caller that
+            # only saw 0 could not tell a handed-off book from a translated
+            # one. See PLAN_HANDOFF_EXIT_CODE.
             # builtins.print, not rich: this block is meant to be copied, and
             # rich would hard-wrap the paths and the rerun command mid-token.
             builtins.print(
@@ -761,9 +811,28 @@ class EPUBBookLoader(BaseBookLoader):
 
         Reconstructed from argv so the printed instructions name the user's
         actual invocation (their book, their model, their language) — a
-        generic example would have to be translated back by hand.
+        generic example would have to be translated back by hand. Keys are
+        the one thing not reproduced verbatim: see KEY_FLAG_ENV.
         """
-        parts = [shlex.quote(a) for a in sys.argv]
+        parts = []
+        # Set once a bare key flag is seen, so the value that follows it in
+        # the next argv entry is replaced instead of quoted.
+        pending_env = None
+        for arg in sys.argv:
+            if pending_env is not None:
+                parts.append(f'"${pending_env}"')
+                pending_env = None
+                continue
+            flag, joined, _value = arg.partition("=")
+            env_name = _key_flag_env(flag)
+            if env_name is None:
+                parts.append(shlex.quote(arg))
+            elif joined:
+                # `--openai_key=sk-…`: the key never becomes its own entry
+                parts.append(f'{flag}="${env_name}"')
+            else:
+                parts.append(shlex.quote(arg))
+                pending_env = env_name
         return " ".join(["python3", *parts])
 
     def _build_partitioned_plan(self):

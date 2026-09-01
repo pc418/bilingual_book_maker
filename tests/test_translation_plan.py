@@ -24,6 +24,7 @@ from ebooklib import epub
 from rich.console import Console
 from rich.markup import escape
 
+from book_maker.loader.classify import PLAN_HANDOFF_EXIT_CODE
 from book_maker.loader.plan import (
     DisplayResolver,
     TranslationPlan,
@@ -751,7 +752,7 @@ def _write_decided_plan(loader, action="translate"):
     loader.plan_classify = "agent"
     with pytest.raises(SystemExit) as exit_info:
         loader.make_bilingual_book()
-    assert exit_info.value.code == 0
+    assert exit_info.value.code == PLAN_HANDOFF_EXIT_CODE
     plan_path = Path(loader.epub_name).with_name(
         Path(loader.epub_name).stem + "_plan.json"
     )
@@ -916,7 +917,7 @@ class TestLoaderPlanMode:
         loader.plan_classify = "agent"
         with pytest.raises(SystemExit) as first:
             loader.make_bilingual_book()
-        assert first.value.code == 0
+        assert first.value.code == PLAN_HANDOFF_EXIT_CODE
         plan_path = src.parent / (src.stem + "_plan.json")
         rows = json.loads(plan_path.read_text())["signatures"]
         assert rows and all(r["action"] is None for r in rows)
@@ -927,7 +928,7 @@ class TestLoaderPlanMode:
         loader2.plan_classify = "agent"
         with pytest.raises(SystemExit) as second:
             loader2.make_bilingual_book()
-        assert second.value.code == 0
+        assert second.value.code == PLAN_HANDOFF_EXIT_CODE
         assert "Paste the block below" in capsys.readouterr().out
         assert not loader2.translate_model.list_calls, "nothing may be paid for"
 
@@ -1008,7 +1009,7 @@ class TestLoaderPlanMode:
         loader2.plan_classify = "agent"
         with pytest.raises(SystemExit) as exit_info:
             loader2.make_bilingual_book()
-        assert exit_info.value.code == 0
+        assert exit_info.value.code == PLAN_HANDOFF_EXIT_CODE
 
         rows = json.loads(plan_path.read_text())["signatures"]
         keys = {r["key"] for r in rows}
@@ -2656,7 +2657,7 @@ class TestModePolicy:
         assert not mode_policy("most").reads_saved_plan
         assert not mode_policy("most").writes_plan_file
         # the agent handoff *is* the job: stopping there is a success
-        assert mode_policy("agent").handoff_exit_code == 0
+        assert mode_policy("agent").handoff_exit_code == PLAN_HANDOFF_EXIT_CODE
         assert mode_policy("model").handoff_exit_code == 1
 
     def test_an_invented_mode_is_refused(self):
@@ -2664,6 +2665,50 @@ class TestModePolicy:
 
         with pytest.raises(ValueError, match="unknown --plan-classify mode"):
             mode_policy("vibes")
+
+
+class TestPlanExitCodes:
+    """Agent mode reaches two very different endings from one command line:
+    it hands the plan over having translated nothing, or it finds the plan
+    answered and translates the whole book. Whatever is running the command
+    can only tell them apart by the exit status."""
+
+    def test_the_handoff_says_nothing_was_translated(self, tmp_path):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == PLAN_HANDOFF_EXIT_CODE
+        assert not loader.translate_model.list_calls, "nothing may be paid for"
+
+    def test_the_rerun_that_translates_succeeds(self, tmp_path):
+        # the same command a second time, once the rows are answered: it goes
+        # through, and owes its caller the plain success of a finished book
+        setup, src = _make_loader(tmp_path, FakeModel)
+        setup.only_filelist = "index_split_004.html"
+        _write_decided_plan(setup)
+
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        loader.make_bilingual_book()  # returning at all is the exit status 0
+        assert (src.parent / (src.stem + "_bilingual.epub")).exists()
+
+    def test_a_refusal_stays_a_failure(self, tmp_path):
+        # the handoff code must not swallow the gates in front of it: a plan
+        # that covers too little of the book is broken, not handed over, and
+        # a caller that retries on the handoff must not retry on this
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.plan_classify = "agent"
+        loader.plan_min_coverage = 1.01  # impossible on purpose
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == 1
+
+    def test_the_handoff_code_collides_with_neither_ending(self):
+        # 0 is a translated book and 1 is every refusal this project raises
+        assert PLAN_HANDOFF_EXIT_CODE not in (0, 1)
 
 
 class TestFileSha256Cache:
@@ -2775,6 +2820,102 @@ class TestAgentPrompt:
         prompt = build_agent_prompt("/p.json", "/b.epub", "rerun")
         assert "still undecided" not in prompt
         assert "null" in prompt
+
+
+class TestRerunCommandRedaction:
+    """The rerun line is echoed to the terminal, captured by whatever log the
+    run is piped to, and pasted whole into an agent session. A key given on
+    the command line would leak by all three routes, on a handoff that spends
+    nothing and so never looks like the moment to be careful."""
+
+    @staticmethod
+    def _rerun(argv):
+        from book_maker.loader.epub_loader import EPUBBookLoader
+
+        with mock.patch("sys.argv", argv):
+            return EPUBBookLoader._rerun_command()
+
+    def test_an_abbreviated_key_flag_is_redacted(self):
+        # argparse accepts any unambiguous abbreviation, so `--openai_k` is a
+        # working spelling of `--openai_key` — and an exact-name lookup would
+        # print the key it carries straight back at the user.
+        line = self._rerun(
+            ["make_book.py", "--book_name", "b.epub", "--openai_k", "sk-live-secret"]
+        )
+        assert "sk-live-secret" not in line
+        assert '--openai_k "$BBM_OPENAI_API_KEY"' in line
+
+    def test_an_abbreviated_joined_key_flag_is_redacted(self):
+        line = self._rerun(["make_book.py", "--claude_ke=sk-live-secret"])
+        assert "sk-live-secret" not in line
+        assert '--claude_ke="$BBM_CLAUDE_API_KEY"' in line
+
+    def test_a_flag_that_merely_starts_alike_is_left_alone(self):
+        # --api_base is not a prefix of --api_key, and its value is not secret.
+        line = self._rerun(["make_book.py", "--api_base", "https://host/v1"])
+        assert "https://host/v1" in line
+
+    def test_a_separated_key_becomes_its_variable(self):
+        command = self._rerun(
+            ["make_book.py", "--book_name", "b.epub", "--openai_key", "sk-secret"]
+        )
+        assert "sk-secret" not in command
+        # the rest of the command must survive intact — the block is printed
+        # so the user can run it, not so they can reconstruct it
+        assert command == (
+            "python3 make_book.py --book_name b.epub "
+            '--openai_key "$BBM_OPENAI_API_KEY"'
+        )
+
+    def test_the_joined_spelling_is_redacted_too(self):
+        # argparse accepts `--flag=value`, where the key is not an argv entry
+        # of its own and a value-position scan would walk straight past it
+        command = self._rerun(["make_book.py", "--claude_key=sk-ant-secret"])
+        assert "sk-ant-secret" not in command
+        assert command == 'python3 make_book.py --claude_key="$BBM_CLAUDE_API_KEY"'
+
+    def test_comma_joined_keys_go_as_one(self):
+        # --openai_key takes a comma-separated list to spread rate limits.
+        # It is a single argv entry, so redacting it must not leave the
+        # second and third keys standing.
+        command = self._rerun(["make_book.py", "--openai_key", "sk-a,sk-b,sk-c"])
+        for key in ("sk-a", "sk-b", "sk-c"):
+            assert key not in command
+        assert command.count("$BBM_OPENAI_API_KEY") == 1
+
+    def test_a_run_with_no_key_is_unchanged(self):
+        argv = ["make_book.py", "--book_name", "b.epub", "--model", "chatgptapi"]
+        assert self._rerun(argv) == "python3 " + " ".join(argv)
+
+    def test_a_value_that_merely_looks_like_a_flag_is_kept(self):
+        # only the position after a key flag is a secret; an ordinary option
+        # whose name ends in the same letters is not one to redact
+        command = self._rerun(["make_book.py", "--language", "monkey"])
+        assert command == "python3 make_book.py --language monkey"
+
+    def test_every_key_flag_the_cli_accepts_has_a_placeholder(self):
+        # a new vendor flag added to the CLI without a row in the table would
+        # print its key in the clear, and nothing else here would notice
+        import book_maker.cli as cli_mod
+        from book_maker.loader.epub_loader import KEY_FLAG_ENV
+
+        declared = set(
+            re.findall(r'"(--[a-z_]*key[a-z_]*)"', Path(cli_mod.__file__).read_text())
+        )
+        assert declared, "the flag scan found nothing, so it proves nothing"
+        assert declared <= set(KEY_FLAG_ENV)
+
+    def test_the_key_is_absent_from_a_real_handoff(self, tmp_path, capsys):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        argv = ["make_book.py", "--openai_key", "sk-live-secret"]
+        with mock.patch("sys.argv", argv):
+            with pytest.raises(SystemExit):
+                loader.make_bilingual_book()
+        printed = capsys.readouterr().out
+        assert "Paste the block below" in printed, "no handoff, nothing was proved"
+        assert "sk-live-secret" not in printed
 
 
 class TestNumericSignatureSuffix:
