@@ -23,7 +23,13 @@ endpoint; nothing needs to be registered first.
 | the OpenAI shape | `--api_base "$ROOT/v1" --model "$MODEL"` |
 | the anthropic shape, on an anthropic.com host | `--api_base "$ROOT" --model "$MODEL"` |
 | the anthropic shape, on a gateway domain | the same plus `--api_format anthropic` |
+| an entry in `bbm_providers.json` / `~/.bbm/providers.json` | `--provider NAME`, optionally `--model "$MODEL"` |
+| the OrcaRouter gateway | `--model orcarouter` (or `orcarouter/<id>`), no `--api_base` |
 | nothing — a local Codex sidecar on the user's plan | `--model codex`, no key, no base (SKILL.md §1c) |
+
+On the openai format `--model` may be left out entirely: it defaults to
+`gpt-5.6-luna`. Every other format wants an id, and the anthropic format
+errors without one.
 
 `codex` is the one route with no endpoint to probe: it is not a model id and
 not a host, so none of the probes below apply to it. `--model codex` and
@@ -37,6 +43,42 @@ Gemini, Groq, xAI, Qwen and every aggregator are reached through the OpenAI
 shape — their native wrappers were removed, and their OpenAI-compatible
 endpoints are better served by the universal translator (it probes for
 structured output, keeps context, and can run async and batch).
+
+## `--provider NAME`: the same route, written once
+
+An endpoint that is used repeatedly belongs in a provider file instead of on
+every command line. `bbm_providers.json` in the working directory is read
+first, then `~/.bbm/providers.json`; a project entry wins on a shared name.
+Each entry is the route spelled out:
+
+```json
+{
+  "nvidia": {
+    "api_style": "openai",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "default_models": ["moonshotai/kimi-k2-thinking"],
+    "env_key": "NVIDIA_API_KEY"
+  }
+}
+```
+
+`api_style` is `openai`, `claude` (→ `--api_format anthropic`), `gemini` or
+`qwen` (both the openai format at their compatibility bases, so `base_url`
+is optional for them). `default_models` becomes `--model` when it holds one
+id and `--model_list` when it holds several; `env_key` is consulted for the
+key ahead of the format's conventional variables. **Anything passed
+explicitly wins**, so `--provider nvidia --model <id>` keeps the user's
+model. An unknown name is an error that names both files.
+
+## `--model orcarouter`: a gateway with no address to type
+
+`--model orcarouter` routes to OrcaRouter's OpenAI-shaped base and asks for
+its smart-routing pseudo-model; `--model orcarouter/<id>` pins one model
+there. Neither needs `--api_base`, and an `--api_base` you do pass wins.
+The key comes from `BBM_ORCAROUTER_API_KEY` (then the usual fallbacks). It
+is a shortcut, not a legacy alias — no deprecation notice is printed. Probe
+it as any OpenAI-shaped endpoint, against
+`https://api.orcarouter.ai/v1`.
 
 ## Binding `$KEY` and `$ROOT` before any probe
 
@@ -144,7 +186,7 @@ shape question outright; read it instead of guessing.
 |---|---|---|
 | `openai` (any host) | schema when the probe says `strict`, else delimiter | yes |
 | `anthropic` | delimiter (no structured-output work was done for it) | yes, via the prompt rung |
-| `codex` | delimiter, on a thread that is itself the context window | yes |
+| `codex` | one turn per unit, on a thread that is itself the context window | yes, via the prompt rung — the sidecar compiles no schema |
 | `google`, `deepl`, `deeplfree`, `caiyun`, `tencent`, `customapi` | translation only | **no** |
 
 Classification capability does not gate *this* skill — `--plan-classify
