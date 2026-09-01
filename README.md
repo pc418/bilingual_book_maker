@@ -8,79 +8,15 @@ The bilingual_book_maker is an AI translation tool that uses ChatGPT to assist u
 
 ## Supported endpoints
 
-You pick an **endpoint**, not a model name. Three things describe a route:
-
-| Flag | What it is |
-|------|-----------|
-| `--model` | the model id, exactly as your endpoint names it |
-| `--api_base` | the endpoint URL. Defaults to the format's official host |
-| `--key` | the API key (comma-separate several to rotate them) |
-| `--api_format` | the wire format. Inferred; pass it only when the guess is wrong |
-
-`--model` takes a real model id — `gpt-5-mini`, `claude-sonnet-4-6`, or a
-namespaced `openai/gpt-5-mini` for gateways that use those. No preset lists,
-no alias table, nothing to update when a vendor ships a new model. (Old alias
-values like `gpt4` still work; they are translated with a note.)
-
-The format is worked out for you: an explicit `--api_format` wins, otherwise
-the `--api_base` host decides, otherwise a model id mentioning `claude` or
-`anthropic` means the Anthropic shape. If that guess is wrong — a gateway
-serving Claude models over the OpenAI shape — the first request says so and
-the run switches to `openai` by itself.
-
-`--api_base` accepts the URL as you find it in a provider's docs:
-`https://host/v1`, a trailing slash, or the whole
-`https://host/v1/chat/completions` all mean the same thing.
-
-`--api_format` values: `openai` (default), `anthropic`, `codex`, and the fixed
-machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
-`tencent`, `customapi`.
-
-### `codex`: translate on your ChatGPT subscription
-
-`--api_format codex` spends your ChatGPT/Codex plan allowance instead of API
-credits. It needs the [Codex CLI](https://developers.openai.com/codex/cli)
-installed and signed in (`codex login`); bbm drives a `codex app-server`
-sidecar, which owns that session, so there is no `--openai_key` and no
-`--api_base`.
-
-```shell
-python3 make_book.py --book_name test_books/animal_farm.epub \
-  --model codex --language zh-hans
-```
-
-`--model codex` and `--api_format codex` are the same thing: codex is not an
-endpoint, so naming it as the model selects it, the way the other
-non-endpoint engines have always been chosen.
-
-`--model` is optional here and defaults to `gpt-5.6-luna`; the sidecar also
-offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5` and `gpt-5.2`.
-
-Because a fresh Codex thread costs about 17k tokens of preamble before your
-first paragraph, one thread is opened and reused for the whole book — which
-also makes it a context window. At `--context-compact-at` it is condensed
-into a handoff report and a fresh thread is seeded with it, exactly like
-`--use_context session`.
-
-bbm prints how much of your window remains before starting, and again
-whenever that figure moves. If the window runs out mid-book the run does not
-stop: it says when the window resets, waits until a minute past it, and
-carries on. Ctrl+C still works, and the run is resumable either way.
-
-Waiting only happens where waiting helps. A spent 5-hour window comes back on
-a timer; depleted credits and account usage limits do not, so those fail
-immediately rather than hanging, as does a reset more than six hours out (a
-weekly limit, say) — it tells you when it clears instead.
-
-The sidecar is locked down before the first paragraph goes in: shell, MCP
-servers, browsing, hooks and every other agent capability are disabled and
-verified off, and turns run in a private empty directory — book text can only
-be translated, not obeyed, and your per-prompt Codex hooks do not fire.
-
-Anything speaking the OpenAI shape works through `openai` — OpenAI itself,
-Groq, xAI, DeepSeek, SiliconFlow, OpenRouter, Together, Alibaba DashScope,
-Gemini's OpenAI-compatible endpoint, vLLM, LM Studio, Ollama. See
-[Models and languages](./docs/model_lang.md) for a per-vendor cookbook.
+A translator is an endpoint, not a model name: `--api_base` (defaults to the format's
+official host), `--key`, and `--model <id>` exactly as the endpoint names it —
+`gpt-5-mini`, `claude-sonnet-4-6`, `deepseek-chat`. That covers OpenAI, Anthropic, and
+anything speaking the OpenAI shape (Gemini's OpenAI-compatible endpoint, Groq, xAI,
+DashScope, DeepSeek, OpenRouter, Ollama, vLLM, …). `--api_format` selects the fixed
+engines (`google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`) and `codex`.
+The old preset names (`--model gpt4`, `--model gemini`, `--openai_key`, …) still work and
+are rewritten with a note — see [Migrating from the old flags](#migrating-from-the-old-flags).
+Per-vendor base URLs are in [Models and languages](./docs/model_lang.md).
 
 ## Preparation
 
@@ -91,115 +27,26 @@ Gemini's OpenAI-compatible endpoint, vLLM, LM Studio, Ollama. See
 
 ## Quick Start
 
+A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
+
 ```shell
 pip install -r requirements.txt
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
+OR
+pip install -U bbook_maker
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --test
 ```
-
-The commands below translate `test_books/animal_farm.epub`, the sample in this
-repo, so they run as written — point `--book_name` at your own epub/txt/md/pdf
-when you have one. Pick how you pay; the book flags are the same either way.
-
-**On a ChatGPT subscription.** Needs the [Codex CLI](https://developers.openai.com/codex/cli)
-installed and signed in — `codex login`, once. No key, no `--api_base`:
-
-```shell
-python3 make_book.py --book_name test_books/animal_farm.epub --language zh-hans \
-  --model codex \
-  --plan-classify model --use_context session
-```
-
-**On any OpenAI-compatible API.** Your own endpoint, model and key — DeepSeek
-shown, but OpenAI, Groq, xAI, OpenRouter, Gemini, vLLM, Ollama and the rest
-work the same way:
-
-```shell
-python3 make_book.py --book_name test_books/animal_farm.epub --language ja \
-  --api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat \
-  --plan-classify model --use_context session
-```
-
-The two shared flags are what make it a book rather than a tag sweep:
-
-- `--plan-classify model` — partitions the whole book, then has the model rule
-  on what is content and what is apparatus (running heads, page numbers), so
-  nothing is silently missed.
-- `--use_context session` — one running history, compacted into a handoff
-  report as it fills, so late chapters still know who the characters are.
-
-Add `--test` to try any of it on a few paragraphs first. Runs are resumable —
-rerun the same command after a Ctrl+C. Installed from PyPI instead
-(`pip install -U bbook_maker`)? Every command here works the same with
-`bbook_maker` in place of `python3 make_book.py`.
 
 ## Translate Service
 
-- `--key` takes the API key. Several comma-separated keys (`xxx,xxx,xxx`) are
-  rotated to spread rate limits. Or set `BBM_API_KEY`; the conventional
-  `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` are also honored.
-- `--model` is required for the `openai` and `anthropic` formats, and takes
-  the endpoint's own model id.
-- Add `--use_context` to send a context paragraph with each passage (see below).
-
-* OpenAI, and every OpenAI-compatible endpoint
-
-  ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --key ${key} --model gpt-5-mini
-  ```
-
-  Point `--api_base` elsewhere to use the same route for any other vendor:
-
-  ```shell
-  # Groq
-  python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.groq.com/openai/v1 --key ${groq_key} --model llama-3.3-70b-versatile
-
-  # xAI
-  python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-4
-
-  # DeepSeek
-  python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.deepseek.com/v1 --key ${key} --model deepseek-chat
-
-  # Gemini, through its OpenAI-compatible endpoint
-  python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://generativelanguage.googleapis.com/v1beta/openai/ \
-    --key ${gemini_key} --model gemini-2.5-flash
-
-  # Alibaba Qwen, through DashScope's compatible mode
-  python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 \
-    --key ${qwen_key} --model qwen-mt-turbo
-  ```
-
-* [Claude](https://console.anthropic.com/docs)
-
-  The anthropic format is inferred from the host, so `--api_format` is optional here.
-
-  ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base https://api.anthropic.com --key ${claude_key} \
-    --model claude-sonnet-4-6
-  ```
-
-* [Ollama](https://github.com/ollama/ollama) and other local servers
-
-  A local endpoint needs no key.
-
-  ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_base http://localhost:11434/v1 --model ${ollama_model_name}
-  ```
-
-* Google Translate
-
-  ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_format google
-  ```
+- Use `--key` to pass the API key (the old `--openai_key` still works). If you have multiple keys, separate them by commas (xxx,xxx,xxx) to reduce errors caused by API call limits.
+  Or, just set environment variable `BBM_API_KEY` (or `OPENAI_API_KEY`) instead.
+- A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
+- `--model` names the model exactly as the endpoint does, e.g. `--model gpt-5-mini`. To rotate several models against rate limits, use `--model_list gpt-5-mini,gpt-4o-mini` instead. The old presets (`--model gpt4`, `--model gpt4omini`, `--model openai --model_list …`) still work and print what they became.
+- On any OpenAI-compatible endpoint you can add `--use_context` to add a context paragraph to each passage sent to the model for translation (see below).
 
 * DeepL
-
-  [DeepL Translator](https://rapidapi.com/splintPRO/api/dpl-translator) needs a paid token.
+  Support DeepL model [DeepL Translator](https://rapidapi.com/splintPRO/api/dpl-translator) need pay to get the token
 
   ```
   python3 make_book.py --book_name test_books/animal_farm.epub --api_format deepl --key ${deepl_key}
@@ -211,10 +58,41 @@ rerun the same command after a Ctrl+C. Installed from PyPI instead
   python3 make_book.py --book_name test_books/animal_farm.epub --api_format deeplfree
   ```
 
+* [Claude](https://console.anthropic.com/docs)
+
+  Use [Claude](https://console.anthropic.com/docs) model to translate
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --model claude-sonnet-4-6 --key ${claude_key}
+  ```
+
+* Google Translate
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format google
+  ```
+
 * Caiyun Translate
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --api_format caiyun --key ${caiyun_key}
+  ```
+
+* Gemini
+
+  Support Google [Gemini](https://aistudio.google.com/app/apikey) through its OpenAI-compatible endpoint: name the model (eg `gemini-2.5-flash` or `gemini-2.0-flash`), or rotate several with `--model_list gemini-2.5-flash,gemini-2.0-flash`. The old `--model gemini` / `--model geminipro` still work.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-2.5-flash --key ${gemini_key}
+  ```
+
+* Qwen
+
+  Support Alibaba Cloud [Qwen-MT](https://bailian.console.aliyun.com/) specialized translation model. Supports 92 languages with features like terminology intervention and translation memory.
+  Use `--model qwen-mt-turbo` for faster/cheaper translation, or `--model qwen-mt-plus` for higher quality; both go through DashScope's OpenAI-compatible endpoint, and DashScope's `translation_options` travel in `--extra_body`.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
   ```
 
 * [Tencent TranSmart](https://transmart.qq.com)
@@ -223,11 +101,98 @@ rerun the same command after a Ctrl+C. Installed from PyPI instead
   python3 make_book.py --book_name test_books/animal_farm.epub --api_format tencent
   ```
 
-* Your own translation API
+* [xAI](https://x.ai)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub \
-    --api_format customapi --api_base https://your.host/translate
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.x.ai/v1 --model grok-4 --key ${xai_key}
+  ```
+
+* [OrcaRouter](https://www.orcarouter.ai)
+
+  Support [OrcaRouter](https://www.orcarouter.ai) gateway, defaulting to the
+  `orcarouter/auto` smart-routing model. It also runs gateway-level, zero-trust
+  security for AI agents on the same endpoint — screening every prompt/response and
+  governing every tool call on a default-deny basis, with no application code changes.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.orcarouter.ai/v1 --model orcarouter/auto --key ${orcarouter_key}
+  ```
+
+* [Ollama](https://github.com/ollama/ollama)
+
+  Support [Ollama](https://github.com/ollama/ollama) self-host models,
+  If ollama server is not running on localhost, use `--api_base http://x.x.x.x:port/v1` to point to the ollama server address
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base http://localhost:11434/v1 --model ${ollama_model_name}
+  ```
+
+* [groq](https://console.groq.com/keys)
+
+  GroqCloud currently supports models: you can find from [Supported Models](https://console.groq.com/docs/models)
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.groq.com/openai/v1 --model llama3-8b-8192 --key [your_key]
+  ```
+
+* [Codex](https://developers.openai.com/codex/cli)
+
+  Translate on your ChatGPT/Codex plan allowance instead of API credits. Install the
+  [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login` once — a
+  `codex app-server` sidecar owns that session, so no key is needed. `--model_list` is
+  optional and defaults to `gpt-5.6-luna`. One thread is reused for the whole book and
+  compacted at `--context-compact-at`; the sidecar runs sandboxed, with shell, MCP
+  servers, browsing and hooks off.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+  ```
+
+* Custom API Provider
+
+  Any OpenAI-compatible API (DeepSeek, SiliconFlow, local proxies, etc.) is just an endpoint: `--api_base https://api.deepseek.com/v1 --key sk-xxx --model deepseek-chat`. If you would rather name it once, a JSON config file still works.
+
+  Create `bbm_providers.json` in the current directory (or `~/.bbm/providers.json` for global config):
+
+  ```json
+  {
+    "providers": {
+      "deepseek": {
+        "api_style": "openai",
+        "base_url": "https://api.deepseek.com/v1",
+        "default_models": ["deepseek-chat", "deepseek-reasoner"],
+        "env_key": "BBM_DEEPSEEK_API_KEY"
+      },
+      "siliconflow": {
+        "api_style": "openai",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "default_models": ["Qwen/Qwen2.5-72B-Instruct"],
+        "env_key": "BBM_SILICONFLOW_API_KEY"
+      }
+    }
+  }
+  ```
+
+  Config fields:
+
+  | Field | Required | Description |
+  |-------|----------|-------------|
+  | `api_style` | Yes | Translator interface style. Supported: `openai`, `claude`, `gemini`, `qwen` |
+  | `base_url` | No | API endpoint URL. Falls back to the api_style's default |
+  | `default_models` | No | Default model list. Required if `--model_list` is not provided |
+  | `env_key` | No | Environment variable name for API key. Required if `--api_key` is not provided |
+
+  Priority: project-level `./bbm_providers.json` overrides global `~/.bbm/providers.json`.
+
+  `--provider` and `--model` are mutually exclusive.
+
+  ```shell
+  python3 make_book.py --provider deepseek --api_key sk-xxx --book_name test_books/animal_farm.epub
+
+  export BBM_DEEPSEEK_API_KEY=sk-xxx
+  python3 make_book.py --provider deepseek --book_name test_books/animal_farm.epub
+
+  python3 make_book.py --provider deepseek --api_key sk-xxx --model_list deepseek-reasoner --book_name test_books/animal_farm.epub
   ```
 
 ## Migrating from the old flags
@@ -285,36 +250,46 @@ Notes:
 
 ## Params
 
-- `--model`, `--api_base`, `--key`, `--api_format`:
+- `--model`:
 
-  How a route is chosen. Most runs pass `--model`, `--key` and sometimes
-  `--api_base`; the format is inferred from the endpoint host, or failing
-  that from the model id.
+  The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `deepseek-chat`), sent to `--api_base` with `--key`. Required for the `openai` and `anthropic` formats. The old preset values below are still accepted and rewritten to a real id with a note:
 
-  `--model_list a,b,c` is kept for rotating across several models to spread
-  rate limits, and for compatibility with older commands. Name a model in one
-  flag or the other, not both.
+  | Model | Key Source | Notes |
+  |-------|-----------|-------|
+  | `chatgptapi` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-3.5-turbo. Auto-detects available models from API |
+  | `gpt4` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4 family. Auto-balances across available GPT-4 variants |
+  | `gpt4omini` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4o-mini |
+  | `gpt4o` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4o |
+  | `gpt5mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-5-mini |
+  | `o1preview` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-preview |
+  | `o1` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1 |
+  | `o1mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-mini |
+  | `o3mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o3-mini |
+  | `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | `--model openai --model_list X` is now just `--model_list X` |
+  | `codex` | No key — `codex login` (Codex CLI) | Your ChatGPT/Codex plan allowance, through a local `codex app-server` sidecar |
+  | `claude` | `--claude_key` / `BBM_CLAUDE_API_KEY` | Rewritten to `claude-haiku-4-5-20251001`; any `claude-*` id passes through as-is |
+  | `gemini` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Flash. Supports `--model_list` |
+  | `geminipro` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Pro |
+  | `groq` | `--groq_key` / `BBM_GROQ_API_KEY` | **Requires `--model_list`** |
+  | `xai` | `--xai_key` / `BBM_XAI_API_KEY` | Grok |
+  | `qwen-mt-turbo` | `--qwen_key` / `BBM_QWEN_API_KEY` | Qwen fast translation model |
+  | `qwen-mt-plus` | `--qwen_key` / `BBM_QWEN_API_KEY` | Qwen high-quality translation model |
+  | `google` | N/A | Free. No API key needed |
+  | `caiyun` | `--caiyun_key` / `BBM_CAIYUN_API_KEY` | Caiyun |
+  | `deepl` | `--deepl_key` / `BBM_DEEPL_API_KEY` | DeepL (paid) |
+  | `deeplfree` | N/A | DeepL Free |
+  | `tencentransmart` | N/A | Tencent TranSmart. Free |
+  | `customapi` | `--custom_api` / `BBM_CUSTOM_API` | Custom translation API |
 
-  | `--api_format` | Key | Model |
-  |----------------|-----|-------|
-  | `openai` (default) | required | `--model` required |
-  | `anthropic` | required | `--model` required |
-  | `google` | none | fixed engine |
-  | `deeplfree` | none | fixed engine |
-  | `tencent` | none | fixed engine |
-  | `customapi` | none — pass the URL as `--api_base` | fixed engine |
-  | `caiyun` | required | fixed engine |
-  | `deepl` | required | fixed engine |
+  Anything else is an endpoint: `--api_base <url> --key <key> --model <id>`.
 
-  A key is looked for in `--key`, then `BBM_API_KEY`, then the format's
-  conventional variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-  `BBM_CAIYUN_API_KEY`, `BBM_DEEPL_API_KEY`). Endpoints on localhost need
-  no key at all.
+- `--key`:
 
-- `--source_lang`:
+  API key for the endpoint; comma-separate several to rotate them past per-key rate limits. Falls back to `$BBM_API_KEY`, then the format's conventional variable (`$OPENAI_API_KEY`, `$ANTHROPIC_API_KEY`, `$BBM_CAIYUN_API_KEY`, `$BBM_DEEPL_API_KEY`).
 
-  Name the source language for endpoints that want it stated rather than
-  detected (default `auto`).
+- `--api_format`:
+
+  The wire format the endpoint speaks: `openai` (default), `anthropic`, `codex`, or a fixed engine — `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred when omitted: an `api.anthropic.com` host, or a model id mentioning `claude`, means `anthropic`; everything else is `openai`. Pass it only when the guess is wrong, or to select an engine.
 
 - `--test`:
 
@@ -325,6 +300,10 @@ Notes:
   Set the target language like `--language "Simplified Chinese"`. Default target language is `"Simplified Chinese"`.
   Read available languages by helper message: `python make_book.py --help`
 
+- `--source_lang`:
+
+  Source language, for endpoints that want it stated (currently only `--api_format customapi`). Default: auto-detect.
+
 - `--proxy`:
 
   Use `--proxy` option to specify proxy server for internet access. Enter a string such as `http://127.0.0.1:7890`.
@@ -334,7 +313,7 @@ Notes:
   Use `--resume` option to manually resume the process after an interruption.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_format google --resume
+  python3 make_book.py --book_name test_books/animal_farm.epub --model google --resume
   ```
 
 - `--translate-tags`:
@@ -359,37 +338,22 @@ Notes:
   worth translating is the classification entry you pick here:
 
   - `none` (default): no plan — translate the `--translate-tags` selection as usual.
-  - `most`: translate the whole partition, no classification. It asks nothing, so it
-    writes no plan JSON and ignores an existing one; every signature is recorded in the
-    ledger it prints as an explicit `user` decision, so nothing is translated that
-    nobody decided to translate.
-  - `model`: an LLM rules on **every** signature the plan has not already decided, then the
-    run continues and translates the book. Use `--plan-classify-model X` to pick a
-    different model for it — naming one implies this mode, and a failure then aborts
-    instead of falling back. If the model leaves any signature unresolved, the run stops
-    and hands those rows to the agent flow rather than translating them by default.
+  - `most`: translate the whole partition, no classification.
+  - `model`: an LLM rules on the uncertain signatures first (headings, the prose spine and
+    poetry groups are never asked about), then the run continues. Use
+    `--plan-classify-model X` to pick a different model for it — naming one implies this
+    mode, and a failure then aborts instead of falling back.
   - `agent`: makes no API call. Writes the plan, prints a block of instructions to paste
     into a coding-agent session (Claude Code, Codex, ...), and **stops before translating**.
     Edit the actions, then rerun the same command to translate.
 
-  Note the difference in cost between the last two: `agent` always stops, while a `model`
-  run whose classification fully resolves goes straight on to translate the whole book in
-  the same command. Add `--test --test_num 20` to sample it first.
-
-  Plan mode is entered only by `--plan-classify` (or `--plan-dry-run`), and in it
-  `--translate-tags` is ignored — the plan partitions the whole book.
+  In plan mode `--translate-tags` is ignored — the plan partitions the whole book.
 
   - `--plan-dry-run`: print the per-signature coverage table, write `<book>_plan.json`, and
     exit. No API key or credits needed. Honors `--only_filelist` / `--exclude_filelist`.
-    Its rows are all undecided — a later `model` run classifies them, an `agent` run hands
-    them over, and editing them yourself works too.
-  - `<book>_plan.json`: a signature is decided by setting three fields together —
-    `"action"` (`"translate"` or `"skip"`), `"decided_by"` (`"user"` when you edit it by
-    hand), and `"content_type"`, the name of what the text is. Naming it is the reasoning;
-    a verdict without one cannot be audited, and the run refuses it. Each row carries up
-    to 5 real `samples` so you can judge without opening the epub. Your decisions are
-    never overwritten; the file is rewritten only to add rows for signatures a settings
-    change introduced (delete it to regenerate from scratch).
+  - `<book>_plan.json`: edit a signature's `"action"` to `"skip"` to exclude it from the
+    real run; the file is never overwritten once it exists (delete it to regenerate).
+    Each row carries up to 5 real `samples` so you can judge without opening the epub.
   - `--plan-min-coverage` (default 0.5): plan mode aborts if the plan covers less than this
     fraction of the book's text, instead of silently translating a fraction of it.
 
@@ -418,8 +382,7 @@ Notes:
 
 - `--api_base`:
 
-  If you want to change api_base like using Cloudflare Workers, use `--api_base <URL>` to support it.
-  **Note: the api url should be '`https://xxxx/v1`'. Quotation marks are required.**
+  The endpoint URL — `https://api.openai.com/v1`, a Cloudflare Workers proxy, a gateway, or `http://localhost:11434/v1` for Ollama. Defaults to the format's official host. `https://host/v1`, with a trailing slash, or the full `.../chat/completions` URL all mean the same thing.
 
 - `--allow_navigable_strings`:
 
@@ -462,31 +425,21 @@ Notes:
 - `--use_context`:
 
   prompts the model to create a three-paragraph summary. If it's the beginning of the translation, it will summarize the entire passage sent (the size depending on `--accumulated_num`).
-  For subsequent passages, it will amend the summary to include details from the most recent passage, creating a running one-paragraph context payload of the important details of the entire translated work. This improves consistency of flow and tone throughout the translation. This option is available for all ChatGPT-compatible models and Gemini models.
-
-  `--use_context` also takes an optional mode. Bare `--use_context` (or
-  `--use_context window`) is the behaviour described above. `--use_context
-  session` instead keeps a single append-only history of everything
-  translated so far, so an endpoint with prompt caching re-reads it at its
-  cache rate — context can then grow to chapter length for less money than
-  window mode spends on three paragraphs. When the history reaches the
-  compact budget, the model is asked for a translator handoff report
-  (a summary, and style notes unless you fixed a style through `--prompt`),
-  which seeds the next window and is appended to
-  `<book>_handoff.md`. That file is plain markdown: readable, hand-editable,
-  and re-read when a run resumes.
+  For subsequent passages, it will amend the summary to include details from the most recent passage, creating a running one-paragraph context payload of the important details of the entire translated work. This improves consistency of flow and tone throughout the translation. This option is available on OpenAI-compatible endpoints.
 
 - `--context_paragraph_limit`:
 
-  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option (window mode only).
+  Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option. This applies to window mode only.
+
+- `--use_context session`:
+
+  `--use_context` also takes a mode. Bare `--use_context` (or `--use_context window`) is the behaviour described above. `--use_context session` instead keeps a single append-only history of everything translated so far, so a model endpoint that supports prompt caching re-reads it at its cache rate. Context can then grow to chapter length for less money than window mode spends on a few paragraphs. When the history reaches the compact budget, the model is asked for a translator handoff report, which seeds the next window and is appended to `<book>_handoff.md`. If the endpoint never reports cached tokens, a warning is printed, since without caching this mode costs more than window mode.
 
 - `--context-compact-at`:
 
-  Session mode only. The estimated-token budget the history may reach before
-  it is compacted into a handoff report. Left unset, each model uses its
-  default of `8000`, which costs between 0.5x and 1.1x what window mode
-  costs while carrying several times the context. `2500` is the cheapest
-  setting if you want it; the minimum is `500`.
+  Session mode only. The estimated-token budget the history may reach before it is compacted into a handoff report. Default `8000`, minimum `500`.
+
+  At `8000` a run costs between roughly 0.5x and 1.1x what window mode costs, while carrying several times the context — the exact ratio depends on how cheaply your endpoint prices cached input. `--context-compact-at 2500` is the cheapest setting (about 0.4-0.5x) if you would rather have that than the longer context.
 
 - `--parallel-workers`:
 
@@ -497,7 +450,7 @@ Notes:
 
 - `--temperature`:
 
-  Use `--temperature` to set the temperature parameter for `chatgptapi`/`gpt4`/`claude` models.
+  Use `--temperature` to set the sampling temperature on the `openai` and `anthropic` formats. It is not sent when it equals the API default, and dropped for a model that rejects it.
   For example: `--temperature 0.7`.
 
 - `--block_size`:
@@ -558,13 +511,21 @@ Notes:
 
 - `--extra_body`:
 
-  Pass additional JSON parameters on the `openai` route. This is the vent for
-  vendor-specific request fields; other formats ignore it and say so. Provide a
-  JSON string with the desired parameters.
+  Pass additional JSON parameters in every request on the `openai` format — any
+  OpenAI-compatible endpoint. The `anthropic` format and the fixed engines ignore it.
+  Provide a JSON string with the desired parameters.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
   ```
+
+- `--provider`:
+
+  Old spelling, still accepted: the entry named in `bbm_providers.json` is expanded into `--api_base` / `--api_format` / `--model`. See the "Custom API Provider" section above.
+
+- `--api_key`:
+
+  Old spelling of `--key`, still accepted.
 
 ### Examples
 
@@ -581,34 +542,34 @@ python3 make_book.py --book_name test_books/Lex_Fridman_episode_322.srt --key ${
 python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --language zh-hans
 
 # Or translate the whole book using Gemini flash
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-2.5-flash
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-2.5-flash --key ${gemini_key}
 
 # Translate an EPUB with parallel chapter processing
 python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini --parallel-workers 4
 
-# Use Gemini through its OpenAI-compatible endpoint, rotating two models
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model_list gemini-2.5-flash,gemini-2.0-flash
+# Rotate two Gemini models
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model_list gemini-2.5-flash,gemini-2.0-flash --key ${gemini_key}
 
-# Set env BBM_API_KEY (or OPENAI_API_KEY) to omit --key
-export BBM_API_KEY=${your_api_key}
+# Set env OPENAI_API_KEY (or BBM_API_KEY) to omit --key
+export OPENAI_API_KEY=${your_api_key}
 
 # Translate to Japanese with context
 python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5-mini --use_context --language ja
 
 # Name the exact model the endpoint serves
-python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5-mini --key ${openai_key}
+python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-4-1106-preview --key ${openai_key}
 
-**Note** any other OpenAI-compatible host works the same way
+**Note** you can use other `openai like` model in this way
 python3 make_book.py --book_name test_books/animal_farm.epub --model yi-34b-chat-0205 --key ${openai_key} --api_base "https://api.lingyiwanwu.com/v1"
 
 # Rotate several models to spread rate limits
-python3 make_book.py --book_name test_books/animal_farm.epub --model_list gpt-5-mini,gpt-4o-mini --key ${openai_key}
+python3 make_book.py --book_name test_books/animal_farm.epub --model_list gpt-4-1106-preview,gpt-4-0125-preview,gpt-3.5-turbo-0125 --key ${openai_key}
 
-# Use the DeepL model with Japanese
+# Use DeepL with Japanese
 python3 make_book.py --book_name test_books/animal_farm.epub --api_format deepl --key ${deepl_key} --language ja
 
 # Use Claude with Japanese
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.anthropic.com --key ${claude_key} --model claude-sonnet-4-6 --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --model claude-sonnet-4-6 --key ${claude_key} --language ja
 
 # Use your own translation API with Japanese
 python3 make_book.py --book_name test_books/animal_farm.epub --api_format customapi --api_base ${custom_api} --language ja
@@ -622,9 +583,6 @@ python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags di
 # Plan mode: auto-discover translatable content (poetry, blockquotes, table cells,
 # ...) and batch verse lines in stanza windows; preview the plan with --plan-dry-run
 python3 make_book.py --book_name test_books/animal_farm.epub --plan-dry-run
-# Let the model rule on what is content and what is apparatus (see Quick Start)
-python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify model
-# Or translate the whole partition without classifying anything
 python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify most
 
 # Tweaking the prompt
@@ -663,8 +621,14 @@ python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5
 python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
 ```
 
-Azure OpenAI has no dedicated flag: point `--api_base` at the deployment's
-OpenAI-compatible URL and name the deployment in `--model_list`.
+Microsoft Azure Endpoints
+
+```shell
+python3 make_book.py --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model 'deployment-name'
+
+# Or python3 is not in your PATH
+python make_book.py --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model 'deployment-name'
+```
 
 ## Docker
 
