@@ -1,9 +1,31 @@
 import re
+from pathlib import Path
+
 from rich import print
+from rich.markup import escape
 from anthropic import Anthropic, BadRequestError, UnprocessableEntityError
 
 from .base_translator import Base
+from .chatgptapi_translator import (
+    MAX_USABLE_CONTEXT_WINDOW,
+    MIN_USABLE_CONTEXT_WINDOW,
+)
+from ..config import config
+from ..session_context import (
+    HandoffReport,
+    SessionHistory,
+    compact_budget_for,
+    handoff_prompt,
+)
 from ..structured import RungRejected
+
+# The window this route falls back to when the CLI hands it a limit of 0.
+# Borrowed from the openai route deliberately: how many pairs are worth
+# re-sending is a property of the mode, not of the endpoint serving it, and
+# two numbers for one question is how they drift apart.
+DEFAULT_CONTEXT_PARAGRAPH_LIMIT = config["translator"]["chatgptapi"][
+    "context_paragraph_limit"
+]
 
 
 def _sdk_base_url(api_base):
@@ -24,6 +46,30 @@ def _sdk_base_url(api_base):
 
 
 class Claude(Base):
+    # How many requests to allow before concluding the endpoint is not billing
+    # cache reads. One miss is normal (nothing is cached yet), and short books
+    # should not be nagged.
+    CACHE_WARN_AFTER = 10
+
+    # Compact attempts before giving up on a summary and starting clean. More
+    # than one so a transient error does not cost the accumulated context;
+    # bounded so a broken endpoint cannot grow the history forever.
+    COMPACT_ATTEMPTS = 3
+
+    # Session-mode state, declared here so the window-mode path is well
+    # defined on any instance — including the test fixtures that build one
+    # without running __init__. `session is None` means window mode
+    # everywhere in this class.
+    session = None
+    handoff_path = None
+    context_compact_at = None
+    no_context_compact = False
+    context_mode = "window"
+
+    # Set by the CLI from --quiet. Suppresses this class's own echoes.
+    quiet = False
+    style_note = None
+
     def __init__(
         self,
         key,
@@ -34,6 +80,11 @@ class Claude(Base):
         temperature=1.0,
         context_flag=False,
         context_paragraph_limit=5,
+        context_mode="window",
+        context_compact_at=None,
+        no_context_compact=False,
+        style_note=None,
+        handoff_path=None,
         **kwargs,
     ) -> None:
         super().__init__(key, language)
@@ -51,7 +102,32 @@ class Claude(Base):
         self.context_flag = context_flag
         self.context_list = []
         self.context_translated_list = []
-        self.context_paragraph_limit = context_paragraph_limit
+        # The CLI's default is 0, and 0 here meant the window kept nothing at
+        # all: save_context appended a pair and popped it again on the same
+        # call, so --use_context bought a request-shaped no-op.
+        self.context_paragraph_limit = (
+            context_paragraph_limit
+            if context_paragraph_limit > 0
+            else DEFAULT_CONTEXT_PARAGRAPH_LIMIT
+        )
+        # Session mode replaces the window entirely; `session is None` is the
+        # single test for "are we in window mode" everywhere below.
+        self.context_mode = context_mode or "window"
+        self.session = (
+            SessionHistory()
+            if context_flag and self.context_mode == "session"
+            else None
+        )
+        self.context_compact_at = context_compact_at
+        self.no_context_compact = no_context_compact
+        self.style_note = style_note
+        self.handoff_path = Path(handoff_path) if handoff_path else None
+        self._auto_budget = None
+        self._window_asked = False
+        self._session_cache_warned = False
+        self._session_cache_seen = False
+        self._session_requests = 0
+        self._compact_failures = 0
 
     def rotate_key(self):
         pass
@@ -78,15 +154,17 @@ class Claude(Base):
             )
         self.model = models[0]
 
+    def _user_content(self, text):
+        """The user message for one unit.
+
+        Deterministic for a given text, which is what lets session mode store
+        exactly what it sent without threading the string around.
+        """
+        return self.prompt_template.format(text=text, language=self.language)
+
     def create_messages(self, text, intermediate_messages=None):
         """Create messages for the current translation request"""
-        current_msg = {
-            "role": "user",
-            "content": self.prompt_template.format(
-                text=text,
-                language=self.language,
-            ),
-        }
+        current_msg = {"role": "user", "content": self._user_content(text)}
 
         messages = []
         if intermediate_messages:
@@ -97,6 +175,11 @@ class Claude(Base):
 
     def create_context_messages(self):
         """Create a message pair containing all context paragraphs"""
+        if self.session is not None:
+            # Session mode: the whole append-only history is the prefix. The
+            # per-unit window below does not apply — that is the mode this
+            # one replaces.
+            return self.session.messages()
         if not self.context_flag or not self.context_list:
             return []
 
@@ -117,6 +200,10 @@ class Claude(Base):
         if not self.context_flag:
             return
 
+        if self.session is not None:
+            self._save_session_context(text, t_text)
+            return
+
         self.context_list.append(text)
         self.context_translated_list.append(t_text)
 
@@ -124,6 +211,236 @@ class Claude(Base):
         if len(self.context_list) > self.context_paragraph_limit:
             self.context_list.pop(0)
             self.context_translated_list.pop(0)
+
+    # ---- session mode -----------------------------------------------------
+
+    def _cache_kwargs(self):
+        """The cache breakpoint session mode is built on, or nothing.
+
+        Anthropic caches nothing unless it is asked to: without this the
+        history is re-read at full input price on every request, which is
+        strictly worse than the window mode session mode replaces. The
+        top-level breakpoint marks the last block of the request, so each
+        request writes the pair it just added and reads everything before it.
+
+        Window mode asks for none — its prefix is three paragraphs and would
+        only pay the write premium.
+        """
+        if self.session is None:
+            return {}
+        return {"cache_control": {"type": "ephemeral"}}
+
+    def _note_cache_usage(self, message):
+        """Warn once if session mode never gets a cache read billed back.
+
+        A gateway speaking the anthropic shape may drop `cache_control`
+        entirely. That is invisible in the output and only shows up on the
+        bill, so it has to be said out loud.
+        """
+        if self.session is None or self._session_cache_warned:
+            return
+        usage = getattr(message, "usage", None)
+        if getattr(usage, "cache_read_input_tokens", 0):
+            self._session_cache_seen = True
+            return
+        self._session_requests += 1
+        if self._session_cache_seen or self._session_requests < self.CACHE_WARN_AFTER:
+            return
+        self._session_cache_warned = True
+        print(
+            "[bold yellow]Warning:[/bold yellow] this endpoint has not reported "
+            "a single cached prompt token after "
+            f"{self._session_requests} requests. Session mode assumes prompt "
+            "caching is billed through; without it the history is charged at "
+            "full price every request. Consider --use_context (window mode)."
+        )
+
+    def _session_budget(self):
+        """How large a window may grow before it rolls over.
+
+        `--context-compact-at 0` asks for the model's own size instead of a
+        number the user had to guess.
+        """
+        if self.context_compact_at is None:
+            return compact_budget_for(self.model)
+        if self.context_compact_at == 0:
+            return self._model_sized_budget()
+        return self.context_compact_at
+
+    def _model_sized_budget(self):
+        """0.9 x the context window this endpoint reports for the model.
+
+        Asked once, and once is enough: `/v1/models` is a static record, so a
+        miss will not become a hit later — unlike the codex sidecar, which
+        only learns a window after a turn has spent tokens.
+        """
+        if not self._window_asked:
+            self._window_asked = True
+            self._auto_budget = self._learn_context_window()
+        return self._auto_budget or compact_budget_for(self.model)
+
+    def _learn_context_window(self):
+        """The budget the endpoint's own answer implies, or None.
+
+        Anthropic's `/v1/models` carries `max_input_tokens`; a gateway serving
+        the anthropic shape may 404 or answer a record without it. Neither is
+        a reason to end a run that has a default budget to fall back on, so
+        every outcome here is announced rather than raised — a budget the user
+        did not ask for is worth one line.
+        """
+        default = compact_budget_for(self.model)
+        try:
+            record = self.client.models.retrieve(self.model)
+        except Exception as e:
+            print(
+                f"[yellow]ℹ could not ask this endpoint for {self.model}'s "
+                f"context window ({e}); compacting at the default {default} "
+                f"instead[/yellow]"
+            )
+            return None
+        window = getattr(record, "max_input_tokens", None)
+        # `True` is an `int` in Python and would yield a budget of 0 — no
+        # rollover at all — so the type check is stricter than it looks.
+        if (
+            isinstance(window, bool)
+            or not isinstance(window, int)
+            or not MIN_USABLE_CONTEXT_WINDOW <= window <= MAX_USABLE_CONTEXT_WINDOW
+        ):
+            print(
+                f"[yellow]ℹ this endpoint does not report a usable context "
+                f"window for {self.model}; compacting at the default "
+                f"{default} instead[/yellow]"
+            )
+            return None
+        budget = window * 9 // 10
+        print(
+            f"[cyan]ℹ {self.model} reports a {window}-token context window; "
+            f"compacting at {budget}[/cyan]"
+        )
+        return budget
+
+    def _save_session_context(self, text, t_text):
+        # Store what was *sent*, not the bare source. The next request replays
+        # this message verbatim, so any difference — the prompt template, say —
+        # would make the newest pair a cache miss, and the run would re-read a
+        # paragraph at full input price every request.
+        self.session.append(self._user_content(text), t_text)
+        if not self.session.should_compact(self._session_budget()):
+            return
+        if self.no_context_compact:
+            self._start_empty_window()
+        else:
+            self._compact_session()
+
+    def _compact_session(self):
+        """Ask for a handoff report, then start the next window seeded with it.
+
+        The report is requested on top of the existing history — that is the
+        one turn where the whole window is worth re-reading, because it is
+        being condensed into what replaces it.
+        """
+        budget = self._session_budget()
+        messages = [
+            *self.session.messages(),
+            {
+                "role": "user",
+                "content": handoff_prompt(with_style=not self.style_note),
+            },
+        ]
+        try:
+            r = self.client.messages.create(
+                max_tokens=4096,
+                messages=messages,
+                system=self.prompt_sys_msg,
+                temperature=self.temperature,
+                model=self.model,
+                **self._cache_kwargs(),
+            )
+            report_text = "".join(
+                block.text
+                for block in r.content
+                if getattr(block, "type", "") == "text"
+            )
+        except Exception as e:
+            # Keep the window. One rate-limited or dropped request is not a
+            # reason to throw away a book's worth of accumulated context — the
+            # budget stays exceeded, so the next unit simply tries again.
+            self._compact_failures += 1
+            # Give up on attempts, or as soon as the window has outgrown its
+            # budget badly enough that retrying is the wrong bet: a compact
+            # that fails because the history is too long will keep failing,
+            # and the translation requests carrying that history fail with it.
+            give_up = (
+                self._compact_failures >= self.COMPACT_ATTEMPTS
+                or self.session.estimated_tokens() > 2 * budget
+            )
+            print(
+                f"[yellow]ℹ handoff report failed ({e}); "
+                + (
+                    "starting the next context window without a summary"
+                    if give_up
+                    else "keeping the current context and retrying on the next paragraph"
+                )
+                + "[/yellow]"
+            )
+            if give_up:
+                # Bounded: without this the history would grow past the
+                # budget forever on a persistently failing endpoint.
+                self._compact_failures = 0
+                self.session.reset(seed="")
+            return
+        self._compact_failures = 0
+
+        report = HandoffReport(
+            window=self.session.windows,
+            # A style the user fixed is handed on verbatim, so it cannot be
+            # eroded window by window by a model re-describing it.
+            style_note=self.style_note,
+            summary=report_text.strip(),
+        )
+        self._show_handoff(report)
+        if self.handoff_path:
+            try:
+                report.append_to(self.handoff_path)
+            except OSError as e:
+                # The paragraph is already translated and billed. Failing here
+                # would lose it over a file that is not what was asked for.
+                print(
+                    f"[yellow]ℹ could not write {self.handoff_path} ({e}); "
+                    f"the run continues without a saved handoff[/yellow]"
+                )
+        self.session.reset(seed=report.seed_text())
+
+    def _start_empty_window(self):
+        """Roll over with no handoff report, because the user asked for none.
+
+        Continuity across the seam is what the report buys, and
+        `--no-context-compact` declines to buy it — so this is a plain reset,
+        not a cheaper summary.
+        """
+        self.session.reset(seed="")
+        if self.quiet:
+            return
+        print(
+            f"[bold cyan]— context window {self.session.windows}, started "
+            f"empty (--no-context-compact) —[/bold cyan]"
+        )
+
+    def _show_handoff(self, report):
+        """Print the report the next window will inherit.
+
+        `escape` is not optional: rich reads square brackets as markup, and
+        these reports genuinely contain things like "[PGA]", which would be
+        swallowed or raise on an unclosed tag.
+        """
+        if self.quiet:
+            # --quiet suppresses echoes like this one; warnings and errors
+            # still print.
+            return
+        print(
+            f"[bold cyan]— handoff report, window {report.window} —[/bold cyan]\n"
+            + escape(report.render())
+        )
 
     def _chat_completion(self, prompt, model=None):
         """One question, one answer — the channel plan classification needs.
@@ -162,8 +479,10 @@ class Claude(Base):
             system=self.prompt_sys_msg,
             temperature=self.temperature,
             model=self.model,
+            **self._cache_kwargs(),
         )
         t_text = r.content[0].text
+        self._note_cache_usage(r)
 
         if self.context_flag:
             self.save_context(text, t_text)
