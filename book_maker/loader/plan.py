@@ -307,9 +307,17 @@ def parse_css_display(css_text):
     css_text = re.sub(r"/\*.*?\*/", " ", css_text, flags=re.S)
     unconditional, conditional = _flatten_at_rules(css_text)
     rules = _display_rules(unconditional)
-    conditions = {}
+    conditional_displays = {}
     for condition, text in conditional:
-        for key in _display_rules(text):
+        displays = conditional_displays.setdefault(condition, {})
+        for key, value in _display_rules(text).items():
+            displays.pop(key, None)
+            displays[key] = value
+    conditions = {}
+    for condition, displays in conditional_displays.items():
+        for key, value in displays.items():
+            if value != "none":
+                continue
             conditions.setdefault(key, [])
             if condition not in conditions[key]:
                 conditions[key].append(condition)

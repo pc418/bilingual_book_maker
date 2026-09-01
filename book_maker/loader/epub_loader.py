@@ -1045,7 +1045,9 @@ class EPUBBookLoader(BaseBookLoader):
         the hazard `_write_single_translation` documents.
         """
         tail = inline_subtree_root(unit.nodes[-1], unit.resolver)
-        if EPUBBookLoader._markup_covers_run(tail, {id(n) for n in unit.nodes}):
+        if tail.name != "ruby" and EPUBBookLoader._markup_covers_run(
+            tail, {id(n) for n in unit.nodes}
+        ):
             span = copy(tail)
             span.clear()
             # a translated copy is a second rendering, not a second anchor
@@ -1120,7 +1122,11 @@ class EPUBBookLoader(BaseBookLoader):
         for element in reversed(emptied):
             if element.parent is None or element.attrs is None:
                 continue  # already detached with an enclosing wrapper
-            if element.name in _KEEP_WHEN_EMPTY or element.get("id"):
+            if (
+                element.name in _KEEP_WHEN_EMPTY
+                or element.get("id")
+                or (element.name == "a" and element.get("name"))
+            ):
                 continue
             if element.find(string=True) is not None:
                 continue
@@ -1128,7 +1134,11 @@ class EPUBBookLoader(BaseBookLoader):
             # <span><a id="ch1">Chapter One</a></span> is how a heading marks
             # itself, and deleting the wrapper takes with it the anchor every
             # cross-reference in the book points at.
-            if element.find(list(_KEEP_WHEN_EMPTY)) or element.find(attrs={"id": True}):
+            if (
+                element.find(list(_KEEP_WHEN_EMPTY))
+                or element.find(attrs={"id": True})
+                or element.find("a", attrs={"name": True})
+            ):
                 continue
             # extract, not decompose: decompose clears the state of every
             # descendant, and a later run in the same document may still

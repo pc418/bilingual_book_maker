@@ -1356,6 +1356,20 @@ class TestEpubHardening:
         assert soup.find(id="target") is not None
         assert "ZHANG YI" in soup.get_text()
 
+    def test_single_translate_keeps_a_legacy_named_anchor_target(self, tmp_path):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        soup = bs(
+            '<body><p><span><a name="target">chapter</a></span> one</p></body>',
+            "html.parser",
+        )
+        fp = partition_soup(soup, DisplayResolver([]), "x.html")
+        loader._insert_plan_translation(fp.units[0], "ZHANG YI", single_translate=True)
+
+        anchor = soup.find("a", attrs={"name": "target"})
+        assert anchor is not None
+        assert anchor.get_text() == ""
+        assert "ZHANG YI" in soup.get_text()
+
     def test_single_translate_still_removes_a_husk_that_targets_nothing(self, tmp_path):
         # the complement: an emptied wrapper with nothing to preserve is
         # still removed, so the fix above does not turn into "keep everything"
@@ -1468,6 +1482,20 @@ class TestEpubHardening:
         assert [s.get("class") for s in trans] == [["lin"], ["lin"]]
         assert all(s.get("id") is None for s in trans)
         assert list(soup.find("p").stripped_strings) == ["one", "T1", "two", "T2"]
+
+    def test_bilingual_anchored_ruby_translation_uses_a_neutral_wrapper(self, tmp_path):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        soup = bs(
+            "<body><p><ruby>漢字<rt>かんじ</rt></ruby><br/>next</p></body>",
+            "html.parser",
+        )
+        fp = partition_soup(soup, DisplayResolver([]), "x.html")
+        loader._insert_plan_translation(fp.units[0], "kanji", single_translate=False)
+
+        assert len(soup.find_all("ruby")) == 1
+        translated = next(t for t in soup.find_all("span") if t.get_text() == "kanji")
+        assert translated.name == "span"
+        assert soup.find("ruby").find("rt") is not None
 
     def test_bilingual_anchored_translation_keeps_bare_span_for_fragment_markup(
         self, tmp_path
@@ -1621,11 +1649,12 @@ class TestEpubHardening:
         # dropped either way.
         m, conditional = parse_css_display(
             "@supports (display: flex) { @media print { .a { display:none } } "
-            ".b { display: inline } }"
+            ".b { display: inline } .c { display: none } }"
         )
         assert m == {}
         assert (None, "a") not in conditional
-        assert conditional[(None, "b")] == ["@supports (display: flex)"]
+        assert (None, "b") not in conditional
+        assert conditional[(None, "c")] == ["@supports (display: flex)"]
 
     # -- item 5: br / whitespace glue --------------------------------------
 

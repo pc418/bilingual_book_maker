@@ -65,3 +65,6 @@ markers = [
 # because they go through an offline stand-in. Both markers are asked for by
 # name; the default selection is hermetic.
 addopts = "-m 'not corpus and not live_provider'"
+
+[tool.black]
+target-version = ["py312"]
