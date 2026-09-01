@@ -346,7 +346,9 @@ class TestOrcaRouter:
             "--key": "K",
             "--model": "orcarouter",
         }
-        assert "--orcarouter_key" in notices("--model", "orcarouter", "--orcarouter_key", "K")
+        assert "--orcarouter_key" in notices(
+            "--model", "orcarouter", "--orcarouter_key", "K"
+        )
 
     def test_the_model_is_passed_through_untranslated(self):
         # a rewrite here would print a deprecation notice for a supported

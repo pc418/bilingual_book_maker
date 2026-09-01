@@ -248,7 +248,9 @@ def test_the_openai_format_defaults_to_a_model(tmp_path):
     # openai format has one obvious cheapest current model, so it just runs
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
-    proc = _cli("--book_name", str(src), "--key", "sk-test", "--test", "--test_num", "1")
+    proc = _cli(
+        "--book_name", str(src), "--key", "sk-test", "--test", "--test_num", "1"
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "offline model list: ['gpt-5.6-luna']" in proc.stdout
 
@@ -271,7 +273,9 @@ def test_the_anthropic_format_still_asks_for_a_model(tmp_path):
     # whole book to a model nobody chose
     src = tmp_path / BOOK.name
     src.write_bytes(BOOK.read_bytes())
-    proc = _cli("--book_name", str(src), "--key", "sk-test", "--api_format", "anthropic")
+    proc = _cli(
+        "--book_name", str(src), "--key", "sk-test", "--api_format", "anthropic"
+    )
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0
     assert "--model is required for the anthropic format" in " ".join(output.split())
