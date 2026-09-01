@@ -2777,6 +2777,82 @@ class TestAgentPrompt:
         assert "null" in prompt
 
 
+class TestRerunCommandRedaction:
+    """The rerun line is echoed to the terminal, captured by whatever log the
+    run is piped to, and pasted whole into an agent session. A key given on
+    the command line would leak by all three routes, on a handoff that spends
+    nothing and so never looks like the moment to be careful."""
+
+    @staticmethod
+    def _rerun(argv):
+        from book_maker.loader.epub_loader import EPUBBookLoader
+
+        with mock.patch("sys.argv", argv):
+            return EPUBBookLoader._rerun_command()
+
+    def test_a_separated_key_becomes_its_variable(self):
+        command = self._rerun(
+            ["make_book.py", "--book_name", "b.epub", "--openai_key", "sk-secret"]
+        )
+        assert "sk-secret" not in command
+        # the rest of the command must survive intact — the block is printed
+        # so the user can run it, not so they can reconstruct it
+        assert command == (
+            "python3 make_book.py --book_name b.epub "
+            '--openai_key "$BBM_OPENAI_API_KEY"'
+        )
+
+    def test_the_joined_spelling_is_redacted_too(self):
+        # argparse accepts `--flag=value`, where the key is not an argv entry
+        # of its own and a value-position scan would walk straight past it
+        command = self._rerun(["make_book.py", "--claude_key=sk-ant-secret"])
+        assert "sk-ant-secret" not in command
+        assert command == 'python3 make_book.py --claude_key="$BBM_CLAUDE_API_KEY"'
+
+    def test_comma_joined_keys_go_as_one(self):
+        # --openai_key takes a comma-separated list to spread rate limits.
+        # It is a single argv entry, so redacting it must not leave the
+        # second and third keys standing.
+        command = self._rerun(["make_book.py", "--openai_key", "sk-a,sk-b,sk-c"])
+        for key in ("sk-a", "sk-b", "sk-c"):
+            assert key not in command
+        assert command.count("$BBM_OPENAI_API_KEY") == 1
+
+    def test_a_run_with_no_key_is_unchanged(self):
+        argv = ["make_book.py", "--book_name", "b.epub", "--model", "chatgptapi"]
+        assert self._rerun(argv) == "python3 " + " ".join(argv)
+
+    def test_a_value_that_merely_looks_like_a_flag_is_kept(self):
+        # only the position after a key flag is a secret; an ordinary option
+        # whose name ends in the same letters is not one to redact
+        command = self._rerun(["make_book.py", "--language", "monkey"])
+        assert command == "python3 make_book.py --language monkey"
+
+    def test_every_key_flag_the_cli_accepts_has_a_placeholder(self):
+        # a new vendor flag added to the CLI without a row in the table would
+        # print its key in the clear, and nothing else here would notice
+        import book_maker.cli as cli_mod
+        from book_maker.loader.epub_loader import KEY_FLAG_ENV
+
+        declared = set(
+            re.findall(r'"(--[a-z_]*key[a-z_]*)"', Path(cli_mod.__file__).read_text())
+        )
+        assert declared, "the flag scan found nothing, so it proves nothing"
+        assert declared <= set(KEY_FLAG_ENV)
+
+    def test_the_key_is_absent_from_a_real_handoff(self, tmp_path, capsys):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        argv = ["make_book.py", "--openai_key", "sk-live-secret"]
+        with mock.patch("sys.argv", argv):
+            with pytest.raises(SystemExit):
+                loader.make_bilingual_book()
+        printed = capsys.readouterr().out
+        assert "Paste the block below" in printed, "no handoff, nothing was proved"
+        assert "sk-live-secret" not in printed
+
+
 class TestNumericSignatureSuffix:
     """A signature that names two kinds of content has no right answer.
 
