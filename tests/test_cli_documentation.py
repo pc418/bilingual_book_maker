@@ -2,6 +2,8 @@
 
 import ast
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,3 +46,23 @@ def test_cli_references_mention_every_long_option():
         assert (
             documented == expected
         ), f"{name} is missing CLI options: {sorted(expected - documented)}"
+
+
+def test_help_renders():
+    """`--help` must survive argparse's own %-interpolation.
+
+    argparse runs every help string through `%` formatting, so a literal
+    percent sign in one of them ("90% of it") is read as a conversion and
+    raises TypeError — taking down `--help` for the whole CLI, not just the
+    flag that owns the string. Nothing else exercises this: the help text is
+    never formatted until someone asks for it.
+    """
+    proc = subprocess.run(
+        [sys.executable, "make_book.py", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "--context-compact-at" in proc.stdout
+    assert "90% of" in proc.stdout.replace("\n", " ").replace("  ", " ")
