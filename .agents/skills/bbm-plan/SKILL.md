@@ -41,6 +41,13 @@ Source `.env` in the same Bash call as the run:
 pasted key as a command-line argument, it leaks into shell history and
 prompt logs.
 
+**A key passed as `--key` is printed back at you.** The agent handoff block
+reprints the whole command line verbatim so the operator can rerun it, so a
+key on the command line lands in the terminal and in the log every time the
+plan hands off. Prefer the environment (`$BBM_API_KEY`, `$OPENAI_API_KEY`,
+`$ANTHROPIC_API_KEY` are read when `--key` is absent), and if a key does get
+echoed, say so and tell the user to rotate it.
+
 **Prefer the environment over a key flag, and never guess a key flag's
 name.** A wrong flag name is not a harmless error: argparse answers
 `unrecognized arguments:` by printing the whole command line back, so a
@@ -161,10 +168,17 @@ python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
 
 Plan, classify, smoke and full run are otherwise identical.
 
-## 2. Plan (free — agent mode makes no API call)
+## 2. Plan (agent mode translates nothing)
 
 Run the base command once. It partitions the whole book, writes
 `<book>_plan.json`, prints a handoff block, and exits without translating.
+
+**Not strictly offline on the openai route**: `--model` is verified against
+the endpoint before the plan is built (a `GET /models`, and on an endpoint
+that serves no listing, one ~10-token completion per model). So an
+unreachable gateway kills the planning run before it starts, and the step is
+free only in the sense that no book text is translated. The anthropic route
+validates nothing and is genuinely offline.
 
 What the report gives you, and what each part is for:
 
@@ -283,39 +297,38 @@ so you can honour a request without guessing at legal values.
 |---|---|---|---|
 | `--plan-classify` | `none`, `most`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
-| `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it) |
+| `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it). **A window becomes one request only on the openai route**; anthropic and codex send one line per call whatever this says, so raising it cannot fix split verse there |
 | `--exclude-translate-tags` | comma-separated tags | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
-| `--plan-classify-model` | a model id | *unset* | never here — it only applies to `--plan-classify model` |
 
 ### Context and consistency
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--use_context` | bare/`window`, `session` | **`session`** | the run warns that the endpoint never reported a cached prompt token — session mode costs more there, so drop to bare `--use_context`. Also use bare window mode if a run must go parallel |
-| `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window before compaction (raise it) |
-| `--context_paragraph_limit` | integer | *unset* | window mode only; the user wants more or fewer re-sent pairs |
+| `--use_context` | bare/`window`, `session` | **`session`** — on the **openai** route | the run warns that the endpoint never reported a cached prompt token (session costs more there, so drop to bare `--use_context`), or a run must go parallel. **On the anthropic route session mode is silently inert** — the translator never reads it, and bare window mode keeps zero pairs unless you also pass `--context_paragraph_limit 3`. On codex the thread is the context and the flag is moot |
+| `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window before compaction (raise it). **openai and codex only** — the anthropic route drops it, and drops it silently when session mode is asked for |
+| `--context_paragraph_limit` | integer | *unset* (openai substitutes 3) | window mode only. **Required on the anthropic route** for `--use_context` to carry anything at all — its default of 0 keeps zero pairs |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
-| `--temperature` | float | *unset* (the API default is not sent) | output is erratic; lower it and re-smoke |
+| `--temperature` | float | *unset* (the API default is not sent) | output is erratic; lower it and re-smoke. Ignored on codex; openai retries without it if the model rejects it |
 
 ### Output form
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | *(bilingual)* | — | **bilingual: translation added beside the original** | — |
-| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced |
+| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced. `--translation_style` and `--translation_color` are **silently ignored** on this path |
 | `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"` |
-| `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS |
+| `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS. Passing both loses this one silently — `--translation_style` wins |
 
 ### Scope and run control
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. Exact names — a typo fails loud at the coverage gate |
+| `--only_filelist` | comma-separated internal filenames, **OPF-relative** (`s04.xhtml`, not `EPUB/s04.xhtml`) | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. A typo fails loud (empty plan, exit 1). Wins outright over an exclude-list |
+| `--exclude_filelist` | same form | *unset* | dropping a few documents. **A typo is silent here** — the file you meant to skip is simply translated, with no warning; verify the names against the plan's document list |
 | `--test` / `--test_num` | flag + integer | **`--test --test_num 8`** at the smoke step only | poetry-heavy books: ~20, once you have confirmed the first N units are body text |
 | `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
-| `--resume` | on/off | **on for the full run** | never off after a crash — replay is positional and fingerprint-guarded |
+| `--resume` | on/off | **on for the full run, once a cache exists** | never off after a crash — replay is positional and fingerprint-guarded. On a first run with no `.<book>.temp.bin` it raises an uncaught traceback, so do not add it to the smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
 | `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user and drop `--use_context session` for that run: workers hold separate histories, so the pairing is untested and self-defeating. Pointless on `codex` |
-| `--source_lang` | language | *unset* (auto-detect) | an endpoint that wants the source stated |
 | `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
 
 ### Never pass in plan mode
