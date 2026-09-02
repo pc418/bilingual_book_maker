@@ -407,3 +407,33 @@ def test_a_dry_run_asks_no_endpoint_anything(tmp_path):
     # the dry run decides nothing, so the plan it writes is all questions
     rows = json.loads(plan.read_text())["signatures"]
     assert all(row["action"] is None for row in rows)
+
+
+class TestARefusedModelIsNotASchemaVerdict:
+    """A model the endpoint will not serve is not "no schema support".
+
+    `auto` degrades to tag mode when the probe cannot answer, which is right
+    for a probe that failed. It is wrong for a model the endpoint refuses:
+    there is no run to degrade to, and the printed reason would name the
+    schema when the problem is the model id.
+    """
+
+    def test_it_travels_instead_of_becoming_tag_mode(self):
+        from book_maker.cli import resolve_plan_mode
+        from book_maker.translator.capabilities import ModelUnavailable
+
+        def probe():
+            raise ModelUnavailable("This endpoint does not serve 'ghost'.")
+
+        with pytest.raises(ModelUnavailable):
+            resolve_plan_mode("epub", "openai", False, probe)
+
+    def test_another_probe_failure_still_degrades(self):
+        from book_maker.cli import resolve_plan_mode
+
+        def probe():
+            raise RuntimeError("connection reset")
+
+        mode, reason = resolve_plan_mode("epub", "openai", False, probe)
+        assert mode == "none"
+        assert "connection reset" in reason

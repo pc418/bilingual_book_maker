@@ -16,6 +16,7 @@ from book_maker.loader.ledger import PlanLedgerError
 from book_maker.provider_loader import resolve_provider
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
 from book_maker.translator.base_translator import PriceTable
+from book_maker.translator.capabilities import ModelUnavailable
 from book_maker.translator import orcarouter_translator as orcarouter
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
@@ -422,6 +423,12 @@ def resolve_plan_mode(book_type, api_format, translate_tags_given, probe):
         return "none", "this endpoint offers no JSON-schema verdict"
     try:
         verdict = probe()
+    except ModelUnavailable:
+        # Not a verdict about schemas at all: the endpoint will not serve the
+        # model, so there is no run to fall back to. Reporting it as "plan
+        # mode off" would print a reason that names the wrong thing and then
+        # fail anyway at the first request.
+        raise
     except Exception as e:
         # A probe failure is not a reason to stop: the run has a working
         # answer (tag mode) and whatever is wrong with the endpoint will

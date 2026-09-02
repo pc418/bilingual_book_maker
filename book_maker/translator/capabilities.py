@@ -39,7 +39,14 @@ from tenacity import (
 
 
 class ModelUnavailable(Exception):
-    """This endpoint will not serve the named model."""
+    """This endpoint will not serve the named model.
+
+    The message names the model and, where the endpoint has a listing, what it
+    does offer instead — the whole explanation, so callers print it rather
+    than a traceback.
+    """
+
+    user_facing = True
 
 
 class StructuredOutputUnsupported(Exception):
@@ -103,6 +110,37 @@ STRUCTURED_PROBE_SCHEMA = {
         "additionalProperties": False,
     },
 }
+
+# Route probe. One tiny chat request per model, asking for a single word —
+# the cheapest question that can be put to a route. Nothing about the answer
+# is read: what is being established is that the endpoint served this model at
+# all, not what it is good at. No schema and no temperature, because a rung
+# refusal or a sampling refusal would let a second question fail the first. A
+# small cap is safe here in a way it is not for the structured probe: an
+# answer cut short still proves the endpoint routed the model, which is the
+# entire question.
+ROUTE_PROBE_PROMPT = "Reply with the single word: PONG."
+ROUTE_PROBE_MAX_TOKENS = 16
+
+# How many listed model ids an error message may carry. A gateway lists
+# hundreds; the listing is a hint under the refusal, not the finding.
+LISTING_HINT_LIMIT = 12
+
+# What an endpoint says when it will not route a model. The status is the
+# reliable half; the phrases are for the gateways that answer 400 instead of
+# 404. Everything else a request can fail with — a bad key, a quota, a dropped
+# connection, a parameter this particular model does not take — says nothing
+# about whether the model exists, and reporting one of those as a missing
+# model sends the user hunting for a typo that is not there.
+MODEL_NOT_FOUND_PHRASES = (
+    "model_not_found",
+    "does not exist",
+    "no such model",
+    "unknown model",
+    "model not found",
+    "invalid model",
+)
+
 
 # --context-compact-at 0 compacts at 90% of the model's window, leaving room
 # for the tail the history does not cover: the fresh paragraph, its
@@ -341,8 +379,8 @@ def fetch_endpoint_models(client):
         return [i["id"] for i in client.models.list().model_dump()["data"]]
     except (NotFoundError, BadRequestError):
         print(
-            "[yellow]Model availability check skipped: API does not support "
-            "models endpoint.[/yellow]"
+            "[yellow]This endpoint has no model listing to compare a name "
+            "against.[/yellow]"
         )
         return None
     except Exception as e:
@@ -350,75 +388,134 @@ def fetch_endpoint_models(client):
         raise
 
 
-def verify_model_reachable(client, model_name):
-    """Confirm one model answers, for endpoints with no model listing.
+def names_missing_model(error, model):
+    """Whether `error` is the endpoint refusing to route `model` at all.
 
-    Costs a real request (~10 tokens). Worth it: the alternative is finding
-    out three hours into a book that half the rotation was a typo.
+    A 404 on the chat route is unambiguous. A 400 is not: endpoints answer
+    400 for a schema they will not compile, a parameter this model does not
+    take, a payload they will not size — so a 400 counts only when it both
+    names the model and says it is not one. Without that second half, an
+    endpoint refusing `max_tokens` for a reasoning model (a message that
+    names it too) would be reported as a missing model.
     """
-    print(
-        f"[yellow]Model validation: Making a test API call to verify "
-        f"'{model_name}' is accessible. This uses ~10 tokens.[/yellow]"
-    )
+    if isinstance(error, NotFoundError) or getattr(error, "status_code", None) == 404:
+        return True
+    if not isinstance(error, BadRequestError):
+        return False
+    text = str(error).lower()
+    if "model_not_found" in text:
+        return True
+    named = bool(model) and model.lower() in text
+    return named and any(phrase in text for phrase in MODEL_NOT_FOUND_PHRASES)
+
+
+def probe_model_route(client, model):
+    """Ask this endpoint to serve `model` once, as cheaply as a request can be.
+
+    A model listing is not the authority it looks like: OpenAI-compatible
+    gateways routinely serve a model they do not list, or list it under
+    another id, so a listing gate refuses models that work. The route is the
+    authority, and this is the whole question put to it.
+
+    Returns None when the endpoint answered. Raises `ModelUnavailable` when it
+    said there is no such model; every other failure is re-raised untouched,
+    because it is not an answer about the model.
+    """
     try:
         client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": "Say 'ok'"}],
-            max_tokens=10,
+            model=model,
+            messages=[{"role": "user", "content": ROUTE_PROBE_PROMPT}],
+            max_tokens=ROUTE_PROBE_MAX_TOKENS,
         )
     except Exception as e:
-        raise ModelUnavailable(
-            f"Model '{model_name}' is not accessible. Error: {e}. "
-            f"Please check the model name and your API permissions."
-        )
-    print(f"[green]Model '{model_name}' is accessible and working.[/green]")
+        if names_missing_model(e, model):
+            raise ModelUnavailable(
+                f"This endpoint does not serve the model {model!r} ({e})."
+            ) from e
+        raise
+    return None
 
 
-def verify_models(client, model_list):
-    """Which of `model_list` this endpoint will actually serve.
+def _listing_hint(client):
+    """What the endpoint admits to serving, for an error message. Best effort.
+
+    The listing is no longer the gate, so a listing that cannot be fetched
+    must not turn a refusal into a crash — the refusal is the finding, and
+    this is only the sentence after it.
+    """
+    try:
+        return fetch_endpoint_models(client)
+    except Exception:
+        return None
+
+
+def describe_listing(api_models, limit=LISTING_HINT_LIMIT):
+    """A listing short enough to read under an error message.
+
+    Gateways list hundreds of models. Printing all of them buries the
+    refusal that the listing is only a hint for.
+    """
+    names = list(api_models or [])
+    if len(names) <= limit:
+        return f"{names}"
+    return f"{names[:limit]} and {len(names) - limit} more"
+
+
+def verify_model_routes(client, model_list):
+    """Which of `model_list` this endpoint actually serves, in the order given.
+
+    One route probe per model. A model that answers is usable; a model the
+    endpoint has no route for is dropped and named; anything else that goes
+    wrong is not evidence about the model, so the model is kept and the run
+    finds out from the real request, where transport failures belong.
 
     Returns success plus the split, in the order the caller asked for, so
     rotation order stays the order the user typed.
     """
-    api_models = fetch_endpoint_models(client)
+    model_list = list(model_list)
+    # Silent when every model answers: the probe costs about ten tokens and
+    # says nothing a reader has to act on. Only a refusal is news.
+    available, unavailable = [], []
+    for model_name in model_list:
+        try:
+            probe_model_route(client, model_name)
+        except ModelUnavailable as e:
+            print(f"[red]{e}[/red]")
+            unavailable.append(model_name)
+            continue
+        except Exception as e:
+            print(
+                f"[yellow]ℹ could not confirm {model_name!r} ({e}); that is no "
+                f"answer about the model, so the run keeps it[/yellow]"
+            )
+        available.append(model_name)
 
-    if api_models is None:
-        available, unavailable = [], []
-        for model_name in model_list:
-            try:
-                verify_model_reachable(client, model_name)
-                available.append(model_name)
-            except ModelUnavailable as e:
-                print(f"[red]{e}[/red]")
-                unavailable.append(model_name)
-        api_models = []
-    else:
-        served = set(api_models)
-        available = [m for m in model_list if m in served]
-        unavailable = [m for m in model_list if m not in served]
+    # The one place a listing is still worth fetching: a hint under a refusal,
+    # never a gate in front of one.
+    api_models = _listing_hint(client) if unavailable else None
+    if unavailable and api_models:
+        print(f"[yellow]This endpoint lists: {describe_listing(api_models)}[/yellow]")
 
     if not available:
         print(
-            f"[red]Error: None of the models {list(model_list)} are available "
-            f"in the API.[/red]"
+            f"[red]Error: this endpoint served none of the models "
+            f"{model_list}.[/red]"
         )
-        if api_models:
-            print(f"[yellow]Available models: {api_models}[/yellow]")
         print(
-            "[yellow]Please check your model name, API key, endpoint, and "
-            "model permissions.[/yellow]"
+            "[yellow]Check the model id, the API base, and your key's model "
+            "permissions.[/yellow]"
         )
         return {
             "success": False,
             "available_models": [],
-            "unavailable_models": list(model_list),
+            "unavailable_models": model_list,
             "api_models": api_models,
         }
 
     if unavailable:
         print(
-            f"[yellow]Warning: {unavailable} not accessible, using "
-            f"{available}[/yellow]"
+            f"[yellow]Warning: {unavailable} not served by this endpoint, "
+            f"using {available}[/yellow]"
         )
 
     return {

@@ -18,7 +18,11 @@ from openai import (
 )
 
 from book_maker.structured import StructuredJSONFailed
-from book_maker.translator.capabilities import CapabilityLedger
+from book_maker.translator.capabilities import (
+    ROUTE_PROBE_MAX_TOKENS,
+    CapabilityLedger,
+    ModelUnavailable,
+)
 from book_maker.translator.chatgptapi_translator import (
     ChatGPTAPI,
     StructuredOutputUnsupported,
@@ -1173,12 +1177,6 @@ def test_the_model_list_rotates_in_the_order_it_was_given():
     # a set() pass here made the first model depend on hash order, so the
     # same command could start on a different model between runs
     translator = ChatGPTAPI.__new__(ChatGPTAPI)
-    translator._validate_custom_models = lambda models: {
-        "success": True,
-        "available_models": list(models),
-        "unavailable_models": [],
-        "api_models": list(models),
-    }
 
     translator.set_model_list(["gpt-b", "gpt-a", " gpt-b ", "", "gpt-c"])
 
@@ -1189,6 +1187,184 @@ def test_the_model_list_rotates_in_the_order_it_was_given():
         "gpt-c",
         "gpt-b",
     ]
+
+
+# --------------------------------------------------------------------------
+# The route probe: which models this endpoint serves, asked lazily
+# --------------------------------------------------------------------------
+
+
+def _no_listing():
+    """An endpoint with `/chat/completions` and nothing else."""
+    return SimpleNamespace(list=Mock(side_effect=_api_error(NotFoundError, 404)))
+
+
+def _routed(create, models=("gpt-a",), listing=None):
+    """A translator whose `--model_list` has been recorded but not yet checked."""
+    translator = _translator(create=create)
+    translator.openai_client.models = listing or _no_listing()
+    translator.set_model_list(list(models))
+    return translator
+
+
+def test_set_model_list_asks_the_endpoint_nothing():
+    # the list is recorded, not verified: a run that never translates
+    # (--plan-dry-run, the agent handoff) must not pay a startup round trip
+    create = Mock()
+    listing = _no_listing()
+    translator = _routed(create, models=["gpt-a", "gpt-b"], listing=listing)
+
+    assert create.call_count == 0
+    assert listing.list.call_count == 0
+    assert translator.model == "gpt-a"
+    assert translator._model_names == ["gpt-a", "gpt-b"]
+
+
+def test_the_route_is_checked_at_the_first_paid_call():
+    create = Mock(
+        side_effect=[_completion("PONG"), _completion('{"probe":"schema_ok"}')]
+    )
+    translator = _routed(create)
+
+    assert create.call_count == 0
+    translator._probe_verdict()
+
+    route, schema = create.call_args_list
+    assert route.kwargs["model"] == "gpt-a"
+    assert route.kwargs["max_tokens"] == ROUTE_PROBE_MAX_TOKENS
+    assert "response_format" not in route.kwargs
+    # ...and the capability probe still runs on its own terms afterwards
+    assert schema.kwargs["response_format"]["type"] == "json_schema"
+
+
+def test_the_route_is_checked_once_per_run():
+    create = Mock(
+        side_effect=[_completion("PONG"), _completion('{"probe":"schema_ok"}')]
+    )
+    translator = _routed(create)
+
+    for _ in range(4):
+        translator._probe_verdict()
+
+    # one route probe plus one capability probe, neither repeated per request
+    assert create.call_count == 2
+
+
+def test_a_model_the_endpoint_will_not_serve_stops_the_run():
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    with pytest.raises(ModelUnavailable, match="ghost"):
+        translator._probe_verdict()
+
+
+def test_the_refusal_is_the_message_a_reader_gets_not_a_traceback():
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    with pytest.raises(ModelUnavailable) as caught:
+        translator._probe_verdict()
+
+    assert caught.value.user_facing is True
+
+
+def test_a_route_refusal_is_not_re_probed_by_every_retry():
+    # get_translation is wrapped in three tenacity attempts; a fatal answer
+    # about the model must cost one request, not one per attempt
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    for _ in range(3):
+        with pytest.raises(ModelUnavailable):
+            translator._probe_verdict()
+
+    assert create.call_count == 1
+
+
+def test_the_check_narrows_the_list_to_the_models_that_answer():
+    create = Mock(
+        side_effect=[
+            _completion("PONG"),
+            _api_error(NotFoundError, 404, "no such model"),
+            _completion("PONG"),
+            _completion('{"probe":"schema_ok"}'),
+        ]
+    )
+    translator = _routed(create, models=["gpt-a", "ghost", "gpt-c"])
+
+    translator._probe_verdict()
+
+    assert translator._model_names == ["gpt-a", "gpt-c"]
+    # rotation keeps the order the user typed, minus what the endpoint refused
+    assert [next(translator.model_list) for _ in range(3)] == [
+        "gpt-a",
+        "gpt-c",
+        "gpt-a",
+    ]
+
+
+def test_a_refused_current_model_is_replaced_by_one_that_answers():
+    create = Mock(
+        side_effect=[
+            _api_error(NotFoundError, 404, "no such model"),
+            _completion("PONG"),
+            _completion('{"probe":"schema_ok"}'),
+        ]
+    )
+    translator = _routed(create, models=["ghost", "gpt-c"])
+    assert translator.model == "ghost"
+
+    translator._probe_verdict()
+
+    assert translator.model == "gpt-c"
+    # the capability probe asked about the survivor, not the refused model
+    assert create.call_args_list[-1].kwargs["model"] == "gpt-c"
+
+
+def test_a_model_the_endpoint_serves_but_does_not_list_is_kept():
+    # the listing is the wrong authority: gateways serve models they do not
+    # list, and the old gate refused them before they were ever tried
+    listing = SimpleNamespace(model_dump=lambda: {"data": [{"id": "something-else"}]})
+    create = Mock(
+        side_effect=[_completion("PONG"), _completion('{"probe":"schema_ok"}')]
+    )
+    translator = _routed(
+        create, models=["unlisted"], listing=SimpleNamespace(list=lambda: listing)
+    )
+
+    translator._probe_verdict()
+
+    assert translator._model_names == ["unlisted"]
+
+
+def test_the_batch_path_checks_the_route_too():
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    with pytest.raises(ModelUnavailable):
+        translator.translate_list(["one", "two"])
+
+
+def test_the_classification_path_checks_the_route_too():
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    with pytest.raises(ModelUnavailable):
+        translator.structured_json("classify", {"schema": {}})
+
+
+def test_a_transport_failure_never_reads_as_a_missing_model(capsys):
+    create = Mock(
+        side_effect=[
+            APIConnectionError(request=httpx.Request("POST", "https://x/v1")),
+            _completion('{"probe":"schema_ok"}'),
+        ]
+    )
+    translator = _routed(create, models=["gpt-a"])
+
+    assert translator._probe_verdict() == "strict"
+    out = capsys.readouterr().out
+    assert "does not serve" not in out
 
 
 # --------------------------------------------------------------------------
