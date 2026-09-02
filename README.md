@@ -504,6 +504,12 @@ Notes:
 
   At `8000` a run costs between roughly 0.5x and 1.1x what window mode costs, while carrying several times the context — the exact ratio depends on how cheaply your endpoint prices cached input. `--context-compact-at 2500` is the cheapest setting (about 0.4-0.5x) if you would rather have that than the longer context.
 
+  `--context-compact-at 0` sizes the budget from the model's own context window instead: 90% of it, and of the smallest window when `--model_list` puts several models in play, asked once before the first paid request. An endpoint that cannot report a window ends the run rather than falling back to a number, since that number would be a guess about the one model nobody could size. Only OpenAI-shaped endpoints can be asked, so other formats need a number.
+
+- `--no-context-compact`:
+
+  Session mode only. Never buy a handoff report: the window still rolls over when it reaches the budget, but the next one starts empty instead of inheriting a summary. Cheaper, and the seam is a clean break rather than a summary.
+
 - `--parallel-workers`:
 
   Use `--parallel-workers` to process EPUB chapters or Markdown batches/sections in
