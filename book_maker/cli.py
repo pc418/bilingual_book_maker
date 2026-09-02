@@ -969,6 +969,21 @@ def main():
         )
         exit(1)
 
+    # Session mode is one growing history: the renderings it establishes,
+    # the handoff report and the cached prefix all live in it. Workers
+    # cannot share one — chapters would interleave and the byte-stable
+    # prefix would be gone — so each would start its own, cold at every
+    # chapter, paying session prices for the chapter-local context bare
+    # --use_context already gives. Refused rather than sold as session mode.
+    if options.parallel_workers > 1 and options.context_mode == "session":
+        print(
+            "[bold red]Error: --parallel-workers is not supported with "
+            "--use_context session: one history is the context, and a worker "
+            "cannot share it. Use bare --use_context to keep the workers, or "
+            "drop --parallel-workers to keep the session.[/bold red]"
+        )
+        exit(1)
+
     # Parallel workers each get a clone carrying their own chapter context.
     # A format that keeps no re-sendable window has nothing to clone, and the
     # run died reading a context attribute it never set — after the chapters

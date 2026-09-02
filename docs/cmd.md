@@ -52,7 +52,7 @@ sections after it provide additional notes for selected workflows.
 | `--batch_size N` | Aggregated unit count for loaders that support it. |
 | `--block_size N` | Merge paragraphs into delimiter-translated blocks. |
 | `--sentence_mode` | Translate EPUB paragraphs sentence by sentence; incompatible with plan mode. |
-| `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. |
+| `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. Refused with `--use_context session` and with the `codex` format, which keep one history and one thread. |
 | `--batch` | Submit an EPUB ChatGPT Batch API job; incompatible with plan mode. |
 | `--batch-use` | Consume a previously submitted batch job; incompatible with plan mode. |
 | `--extra_body JSON` | Extra request fields for the `openai` route; other formats ignore it and say so. |

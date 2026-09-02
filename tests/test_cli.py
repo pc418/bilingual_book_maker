@@ -377,10 +377,9 @@ def test_parallel_workers_is_refused_with_codex(tmp_path):
     assert "codex app-server" not in proc.stdout + proc.stderr
 
 
-def test_parallel_workers_runs_with_session_context(tmp_path):
-    # each worker is handed a clone with a session history of its own
-    # (_clone_translator_for_context), so the pairing is supported here
-    # rather than refused
+def test_parallel_workers_with_session_context_is_refused(tmp_path):
+    # one history is the context; a worker cannot share it, and a fresh
+    # history per chapter is window mode at session prices
     proc, _ = _run(
         tmp_path,
         "--use_context",
@@ -391,8 +390,12 @@ def test_parallel_workers_runs_with_session_context(tmp_path):
         "--test_num",
         "1",
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "--parallel-workers" not in proc.stdout
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--parallel-workers" in flat
+    assert "--use_context session" in flat
+    # refused before anything is dispatched
+    assert not list(tmp_path.glob("*_bilingual.epub"))
 
 
 def test_parallel_workers_still_runs_with_window_context(tmp_path):

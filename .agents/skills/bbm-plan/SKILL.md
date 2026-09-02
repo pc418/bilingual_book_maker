@@ -383,7 +383,7 @@ so you can honour a request without guessing at legal values.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--use_context` | bare/`window`, `session` | **`session`** on openai and anthropic; **nothing** on codex, where the thread is the context | the progress bar's `cached=` count is still 0 after a dozen requests — the endpoint is not caching, so session mode re-reads the history at full price; drop to bare `--use_context`, which re-sends the last few pairs instead — or a run must go parallel. The bar shows `in= out= cached=` tokens live (`spent=` when the entry carries `prices`, §0b) and the run ends with one closing line; under `--quiet` only the line |
+| `--use_context` | bare/`window`, `session` | **`session`** on openai and anthropic; **nothing** on codex, where the thread is the context | the progress bar's `cached=` count is still 0 after a dozen requests — the endpoint is not caching, so session mode re-reads the history at full price; drop to bare `--use_context`, which re-sends the last few pairs instead — and drop to it too when a run must go parallel, where `session` is refused. The bar shows `in= out= cached=` tokens live (`spent=` when the entry carries `prices`, §0b) and the run ends with one closing line; under `--quiet` only the line |
 | `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window before compaction (raise it). **Needs `--use_context session`** on an API route — without it the flag is accepted and does nothing. On `codex` it applies unconditionally |
 | `--context_paragraph_limit` | integer | *unset* (the translator substitutes 3) | window mode only, and only when the user wants a different number of pairs re-sent |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
@@ -406,7 +406,7 @@ so you can honour a request without guessing at legal values.
 | `--test` / `--test_num` | flag + integer | **`--test --test_num 8`** at the smoke step only | poetry-heavy books: ~20, once you have confirmed the first N units are body text |
 | `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
 | `--resume` | on/off | **on for the full run, once a cache exists** | never off after a crash — replay is positional and fingerprint-guarded. On a first run with no `.<book>.temp.bin` it raises an uncaught traceback, so do not add it to the smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
-| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user: with `--use_context` each worker is handed its own fresh history, so continuity stops at every chapter boundary and session mode buys nothing. **Never on `codex`** (below) |
+| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then drop to bare `--use_context`: **`--use_context session` is refused with it** (one history is the context and workers cannot share it), and bare window context is per chapter anyway, so continuity stops at every chapter boundary. **Never on `codex`** (below) |
 | `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
 
 ### Never pass in plan mode
@@ -427,6 +427,9 @@ so you can honour a request without guessing at legal values.
 - `--parallel-workers` on `codex` — it shreds the one thread the route's
   whole context lives in (measured: 225 document switches in 416 turns) and
   buys no speed, because turns serialize anyway.
+- `--parallel-workers` with `--use_context session`, on any route — one
+  history is the run's whole context, and a worker cannot share it. Both
+  are refused on the command line, before a key is read.
 
 ## Halt / resume — safe by construction
 
