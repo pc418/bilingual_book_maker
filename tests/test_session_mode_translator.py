@@ -897,12 +897,6 @@ class TestAutoBudgetAcrossModels:
                 "small": SimpleNamespace(id="small", context_length=10_000),
             }
         )
-        t._validate_custom_models = lambda models: {
-            "success": True,
-            "available_models": list(models),
-            "unavailable_models": [],
-            "api_models": list(models),
-        }
         t.set_model_list(["big", "small"])
         assert t._session_budget() == 9_000, "rotation was not measured as a whole"
 

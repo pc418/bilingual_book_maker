@@ -41,12 +41,14 @@ from .capabilities import (
     ENTRY_RUNG,
     RUNG_REFUSAL_ERRORS,
     CapabilityLedger,
+    ModelUnavailable,
     StructuredOutputUnsupported,
     StructuredRefusal,
     classify_bad_request,
+    describe_listing,
     learn_context_window,
     probe_structured_output,
-    verify_models,
+    verify_model_routes,
 )
 from ..structured import (
     RungRejected,
@@ -212,6 +214,11 @@ class ChatGPTAPI(Base):
     # history is shared across all of them, so an auto budget has to be one
     # the smallest window survives.
     _model_names = ()
+    # The models this run was given and has not yet confirmed the endpoint
+    # will serve, plus the refusal if it turned out not to. `None` on both
+    # means nothing is owed: either the check has run, or no list was set.
+    _unverified_models = None
+    _route_failure = None
     context_mode = "window"
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
@@ -306,13 +313,67 @@ class ChatGPTAPI(Base):
             None  # Will be set by rotate_model() after model_list is initialized
         )
 
+    def _ensure_models_routable(self):
+        """Confirm the endpoint serves the models this run was given. Once.
+
+        Deliberately not part of `set_model_list`: a run that never
+        translates — `--plan-dry-run`, or `--plan-classify agent`, which
+        writes the plan and exits — must not buy a startup round trip for a
+        request it will never make. Naming a model the endpoint does not
+        serve first costs something at the first paid call, so that is where
+        it is caught.
+
+        Settled under the API lock, so N parallel workers issue one probe per
+        model rather than N. A refusal is kept and re-raised rather than
+        re-probed: `get_translation` retries three times, and a model does not
+        become available in between.
+        """
+        with self._api_lock:
+            if self._route_failure is not None:
+                raise self._route_failure
+            pending = self._unverified_models
+            if pending is None:
+                return
+            # Cleared before the probe, not after: the endpoint is asked once
+            # per run whatever it answers.
+            self._unverified_models = None
+
+            result = verify_model_routes(self.openai_client, pending)
+            if not result["success"]:
+                listed = result["api_models"]
+                self._route_failure = ModelUnavailable(
+                    f"This endpoint served none of the models {pending}."
+                    + (f" It lists {describe_listing(listed)}." if listed else "")
+                    + " Check the model id, the API base, and your key's "
+                    "model permissions."
+                )
+                raise self._route_failure
+
+            available = result["available_models"]
+            if available == pending:
+                return
+            # A partially available list narrows to what works, in the order
+            # the user gave. The model in hand may be one of the refused ones,
+            # in which case rotation restarts on the first that answered.
+            self._model_names = available
+            self.model_list = cycle(available)
+            if self.model not in available:
+                self.model = available[0]
+
     def _probe_verdict(self, model=None):
         """The endpoint's graded schema support, probed once per model.
 
         One of "strict", "shape", "json" or False. Subclasses that do not route
         through `self.openai_client` probe nothing: sending the capability
         request to the wrong endpoint would answer about the wrong server.
+
+        Also the narrowest point every paid path in this class passes: the
+        single paragraph, the batch and the classifier each ask for a verdict
+        before they spend. So this is where the run confirms the endpoint
+        serves the models it was given — before the model name is read, since
+        the check may drop the one currently in hand.
         """
+        self._ensure_models_routable()
         model = model or self.model
         probe = self._probe if self.SUPPORTS_STRUCTURED_OUTPUTS else None
         return self.capabilities.ensure_verdict(model, probe)
@@ -357,13 +418,15 @@ class ChatGPTAPI(Base):
         `strict` endpoint that returns prose falls through instead of aborting
         the run.
         """
+        # The verdict first: asking for it is what checks the route, and the
+        # check may narrow `--model_list` out from under `self.model`.
+        entry = ENTRY_RUNG.get(self._probe_verdict(model), "prompt")
         target = model or self.model
         ladder = [
             ("json_schema", lambda: self._json_schema_rung(prompt, schema, target)),
             ("json_object", lambda: self._json_object_rung(prompt, schema, target)),
             ("prompt", lambda: self._prompt_rung(prompt, schema, target)),
         ]
-        entry = ENTRY_RUNG.get(self._probe_verdict(target), "prompt")
         start = next(i for i, (name, _) in enumerate(ladder) if name == entry)
         return ladder[start:]
 
@@ -1094,7 +1157,7 @@ class ChatGPTAPI(Base):
         """Execute the actual structured batch translation with tenacity retry"""
         self.rotate_key()
         self.rotate_model()
-        if not self._ensure_structured_support(self.model):
+        if not self._ensure_structured_support():
             # eligibility was decided for the model current at call time, but
             # rotation may have moved us to a different one: a model that
             # never passed the probe must not be handed a schema
@@ -1161,16 +1224,17 @@ class ChatGPTAPI(Base):
         self._note_structured_success()
         return paragraphs
 
-    def _validate_custom_models(self, custom_model_list):
-        """Which of these models this endpoint will serve (see capabilities)."""
-        return verify_models(self.openai_client, custom_model_list)
-
     def set_model_list(self, model_list):
         """The only way models get set: whatever the user named, in that order.
 
         No name is special. Rotation follows the order given — the old
         `set()` pass made it depend on hash order, so the same command could
         start on a different model between runs.
+
+        Nothing is asked of the endpoint here. Whether it will serve these
+        models is settled at the first paid call, by
+        `_ensure_models_routable`, so a run that writes a plan and exits pays
+        for nothing.
         """
         seen = {}
         for name in model_list:
@@ -1183,21 +1247,6 @@ class ChatGPTAPI(Base):
                 "Empty model list provided. Use --model_list with at least one model name."
             )
 
-        validation_result = self._validate_custom_models(model_list)
-        if not validation_result["success"]:
-            raise ValueError(
-                f"Custom model validation failed. "
-                f"Requested: {model_list}. "
-                f"Unavailable: {validation_result['unavailable_models']}. "
-                f"Available models in API: {validation_result['api_models']}. "
-                f"Check your model name, API key, and permissions."
-            )
-        # If some models were partially available, use only the available ones
-        if validation_result["unavailable_models"]:
-            model_list = [
-                m for m in model_list if m in set(validation_result["available_models"])
-            ]
-
         print(f"Using model list {model_list}")
         # Remembered as a list too: `cycle` cannot be read back, and an auto
         # budget has to size the shared history for the smallest window among
@@ -1206,6 +1255,8 @@ class ChatGPTAPI(Base):
         self.model_list = cycle(model_list)
         # Set the initial model so it is available before rotate_model() runs.
         self.model = model_list[0]
+        self._unverified_models = model_list
+        self._route_failure = None
 
     def batch_init(self, book_name):
         self.book_name = self.sanitize_book_name(book_name)
@@ -1415,6 +1466,10 @@ class ChatGPTAPI(Base):
         return file_paths
 
     def batch(self):
+        # The whole submission is billed to one model, picked here and frozen
+        # into every request in the file, so the list it is picked from has to
+        # be settled before the pick rather than at the first request built.
+        self._ensure_models_routable()
         self.rotate_model()
         self.batch_model = self.model
         # current working directory

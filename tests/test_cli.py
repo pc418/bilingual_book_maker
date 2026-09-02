@@ -1158,3 +1158,77 @@ def test_the_codex_route_is_refused_an_auto_sized_budget_too(tmp_path):
 def test_a_named_compact_budget_is_never_refused(tmp_path):
     proc, _ = _run(tmp_path, "--context-compact-at", "3000", "--plan-dry-run")
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_the_agent_handoff_makes_no_model_verification_call(tmp_path, monkeypatch):
+    """`--plan-classify agent` writes a plan and stops. It must pay nothing.
+
+    Model verification used to happen eagerly in `set_model_list`, at CLI
+    setup, so a run that never translated a word still bought a startup
+    round trip. Any use of the client at all fails this test loudly.
+    """
+    from book_maker.translator import FORMAT_DICT, chatgptapi_translator
+
+    # tests/hermetic swaps the openai route for an offline stand-in, which is
+    # right for every other CLI contract test and useless here: the route
+    # check being tested lives in the real translator.
+    monkeypatch.setitem(FORMAT_DICT, "openai", chatgptapi_translator.ChatGPTAPI)
+
+    class NetworkUsed(BaseException):
+        """A BaseException on purpose: the route check gives a model the
+        benefit of the doubt on any `Exception`, so an ordinary one raised
+        here would be swallowed and this test would pass without proving
+        anything."""
+
+    class NoNetwork:
+        def __getattr__(self, name):
+            raise NetworkUsed(f"the run used the network: openai_client.{name}")
+
+    monkeypatch.setattr(chatgptapi_translator, "OpenAI", lambda *a, **k: NoNetwork())
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "make_book.py",
+            "--book_name",
+            str(src),
+            "--api_format",
+            "openai",
+            "--model",
+            "a-model-nothing-serves",
+            "--key",
+            "not-a-real-key",
+            "--plan-classify",
+            "agent",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as stopped:
+        main()
+
+    assert stopped.value.code == PLAN_HANDOFF_EXIT_CODE
+    assert (tmp_path / f"{src.stem}_plan.json").exists()
+
+
+def test_the_dry_run_builds_no_translator_at_all(tmp_path, monkeypatch):
+    """`--plan-dry-run` writes a plan from the file. Nothing is asked of an
+    endpoint, so nothing may be paid for — not even a client."""
+    from book_maker.translator import chatgptapi_translator
+
+    def refuse(*args, **kwargs):
+        raise BaseException("a dry run built an API client")
+
+    monkeypatch.setattr(chatgptapi_translator, "OpenAI", refuse)
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["make_book.py", "--book_name", str(src), "--plan-dry-run"],
+    )
+
+    main()
+
+    assert (tmp_path / f"{src.stem}_plan.json").exists()

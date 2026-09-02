@@ -26,6 +26,7 @@ from openai import (
 
 from book_maker.translator.capabilities import (
     CONTEXT_WINDOW_LOOKUP_ATTEMPTS,
+    ROUTE_PROBE_MAX_TOKENS,
     STRUCTURED_FAILURE_THRESHOLD,
     CapabilityLedger,
     ContextWindowUnknown,
@@ -35,9 +36,9 @@ from book_maker.translator.capabilities import (
     detect_context_window,
     grade_probe_response,
     learn_context_window,
+    probe_model_route,
     probe_structured_output,
-    verify_model_reachable,
-    verify_models,
+    verify_model_routes,
 )
 
 REQUEST = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
@@ -271,75 +272,200 @@ class TestTemperature:
         assert ledger.sampling_kwargs("other", 0.3) == {"temperature": 0.3}
 
 
-class TestModelVerification:
-    """Which models the endpoint will actually serve."""
+def _route_client(create, ids=None):
+    """A client whose chat route answers `create` and whose listing is `ids`.
 
-    def _listing_client(self, ids, create=None):
+    `ids=None` stands for the many OpenAI-compatible servers that implement
+    `/chat/completions` and nothing else.
+    """
+    if ids is None:
+        models = SimpleNamespace(list=Mock(side_effect=_api_error(NotFoundError, 404)))
+    else:
         listing = SimpleNamespace(model_dump=lambda: {"data": [{"id": i} for i in ids]})
-        return SimpleNamespace(
-            models=SimpleNamespace(list=lambda: listing),
-            chat=SimpleNamespace(completions=SimpleNamespace(create=create or Mock())),
+        models = SimpleNamespace(list=lambda: listing)
+    return SimpleNamespace(
+        models=models,
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+    )
+
+
+class TestRouteProbe:
+    """Whether an endpoint serves a model is asked of the route, not a list.
+
+    The listing used to be the gate, and it is the wrong authority: gateways
+    routinely serve a model they do not list, or list it under another id, so
+    a model that works was refused before it was ever tried. These pin the
+    replacement — one tiny request, and a listing kept only as a hint.
+    """
+
+    def test_the_probe_is_one_short_capped_request(self):
+        create = Mock(return_value=_completion("PONG"))
+
+        probe_model_route(_route_client(create), "test-model")
+
+        request = create.call_args.kwargs
+        assert request["model"] == "test-model"
+        assert len(request["messages"]) == 1
+        assert request["messages"][0]["role"] == "user"
+        assert request["max_tokens"] == ROUTE_PROBE_MAX_TOKENS
+        # This asks whether the endpoint routes a model and nothing else: a
+        # schema or a temperature would let a second question fail the first.
+        assert "response_format" not in request
+        assert "temperature" not in request
+
+    def test_a_model_the_endpoint_answers_for_is_usable(self):
+        # The answer's content is never read: what was asked is whether the
+        # endpoint served this model at all.
+        client = _route_client(Mock(return_value=_completion("something else")))
+        assert probe_model_route(client, "test-model") is None
+
+    def test_a_model_that_answers_but_is_not_listed_is_still_usable(self):
+        """The whole point: the route is the authority, the listing is not."""
+        client = _route_client(Mock(return_value=_completion("PONG")), ids=["other"])
+
+        result = verify_model_routes(client, ["unlisted"])
+
+        assert result["success"] is True
+        assert result["available_models"] == ["unlisted"]
+
+    def test_a_404_is_a_missing_model(self):
+        create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+
+        with pytest.raises(ModelUnavailable, match="ghost"):
+            probe_model_route(_route_client(create), "ghost")
+
+    def test_a_400_naming_the_model_is_a_missing_model(self):
+        create = Mock(
+            side_effect=_api_error(
+                BadRequestError, 400, "The model `ghost` does not exist"
+            )
         )
+
+        with pytest.raises(ModelUnavailable, match="ghost"):
+            probe_model_route(_route_client(create), "ghost")
+
+    def test_a_400_about_a_parameter_is_not_a_missing_model(self):
+        # "'max_tokens' is not supported with gpt-5" names the model too, and
+        # condemning it for that sends the user hunting for a typo that is
+        # not there.
+        create = Mock(
+            side_effect=_api_error(
+                BadRequestError,
+                400,
+                "Unsupported parameter: 'max_tokens' is not supported with gpt-5",
+            )
+        )
+
+        with pytest.raises(BadRequestError):
+            probe_model_route(_route_client(create), "gpt-5")
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            _api_error(AuthenticationError, 401, "bad key"),
+            _api_error(PermissionDeniedError, 403, "no access"),
+            _api_error(RateLimitError, 429, "slow down"),
+            APIConnectionError(request=REQUEST),
+        ],
+    )
+    def test_other_failures_are_never_reported_as_a_missing_model(self, error):
+        create = Mock(side_effect=error)
+
+        with pytest.raises(type(error)):
+            probe_model_route(_route_client(create), "test-model")
+
+
+class TestRouteVerification:
+    """The list-level answer: which models survive, in the order given."""
 
     def test_available_models_keep_the_requested_order(self):
         """Rotation follows what the user typed, not set/hash order."""
-        client = self._listing_client(["c", "b", "a"])
+        client = _route_client(
+            Mock(return_value=_completion("PONG")), ids=["c", "b", "a"]
+        )
 
-        result = verify_models(client, ["a", "b", "c"])
+        result = verify_model_routes(client, ["a", "b", "c"])
 
         assert result["success"] is True
         assert result["available_models"] == ["a", "b", "c"]
 
-    def test_unknown_models_are_reported_but_do_not_block(self):
-        client = self._listing_client(["a"])
+    def test_every_named_model_is_probed(self):
+        create = Mock(return_value=_completion("PONG"))
 
-        result = verify_models(client, ["a", "ghost"])
+        verify_model_routes(_route_client(create, ids=[]), ["a", "b", "c"])
+
+        assert [c.kwargs["model"] for c in create.call_args_list] == ["a", "b", "c"]
+
+    def test_a_partial_list_narrows_to_what_answers(self):
+        client = _route_client(
+            Mock(
+                side_effect=[
+                    _completion("PONG"),
+                    _api_error(NotFoundError, 404, "no such model"),
+                    _completion("PONG"),
+                ]
+            ),
+            ids=["a", "c"],
+        )
+
+        result = verify_model_routes(client, ["a", "ghost", "c"])
 
         assert result["success"] is True
-        assert result["available_models"] == ["a"]
+        assert result["available_models"] == ["a", "c"]
         assert result["unavailable_models"] == ["ghost"]
 
-    def test_nothing_available_fails_loud(self):
-        client = self._listing_client(["other"])
+    def test_a_model_only_a_transport_error_stood_between_is_kept(self, capsys):
+        """Not an answer about the model, so it is not evidence against it."""
+        client = _route_client(Mock(side_effect=APIConnectionError(request=REQUEST)))
 
-        result = verify_models(client, ["a", "b"])
+        result = verify_model_routes(client, ["m"])
+
+        assert result["success"] is True
+        assert result["available_models"] == ["m"]
+        assert "could not confirm" in capsys.readouterr().out
+
+    def test_nothing_usable_fails_loud_and_quotes_the_listing(self, capsys):
+        client = _route_client(
+            Mock(side_effect=_api_error(NotFoundError, 404, "no such model")),
+            ids=["real-model"],
+        )
+
+        result = verify_model_routes(client, ["a", "b"])
 
         assert result["success"] is False
         assert result["available_models"] == []
         assert result["unavailable_models"] == ["a", "b"]
+        # the one place the listing is still useful: a hint in the refusal
+        assert result["api_models"] == ["real-model"]
+        assert "real-model" in capsys.readouterr().out
 
-    def test_endpoints_without_a_model_listing_are_asked_directly(self):
-        """A server with only /chat/completions must still be usable."""
-        create = Mock(return_value=_completion("ok"))
-        client = SimpleNamespace(
-            models=SimpleNamespace(
-                list=Mock(side_effect=_api_error(NotFoundError, 404))
-            ),
-            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+    def test_an_endpoint_with_no_listing_still_reports_the_refusal(self, capsys):
+        """A server with only /chat/completions must still say what happened."""
+        client = _route_client(
+            Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
         )
 
-        result = verify_models(client, ["only-model"])
+        result = verify_model_routes(client, ["ghost"])
 
-        assert result["success"] is True
-        assert result["available_models"] == ["only-model"]
-        assert create.call_args.kwargs["model"] == "only-model"
+        assert result["success"] is False
+        assert result["api_models"] is None
+        assert "ghost" in capsys.readouterr().out
 
-    def test_reachability_check_sends_a_minimal_request(self):
-        create = Mock(return_value=_completion("ok"))
+    def test_a_broken_listing_does_not_break_the_verdict(self):
+        """The hint is best effort; it must not turn a refusal into a crash."""
+        client = SimpleNamespace(
+            models=SimpleNamespace(list=Mock(side_effect=RuntimeError("boom"))),
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=Mock(side_effect=_api_error(NotFoundError, 404, "nope"))
+                )
+            ),
+        )
 
-        verify_model_reachable(_client(create), "test-model")
+        result = verify_model_routes(client, ["ghost"])
 
-        request = create.call_args.kwargs
-        assert request["model"] == "test-model"
-        assert request["max_tokens"] == 10
-        # The model owns its sampling here; this asks reachability, nothing else.
-        assert "temperature" not in request
-
-    def test_an_unreachable_model_raises(self):
-        create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
-
-        with pytest.raises(ModelUnavailable, match="not accessible"):
-            verify_model_reachable(_client(create), "ghost")
+        assert result["success"] is False
+        assert result["api_models"] is None
 
 
 class TestBadRequestClassification:

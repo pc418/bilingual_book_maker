@@ -18,6 +18,17 @@ from book_maker.translator.claude_translator import Claude
 from book_maker.translator.custom_api_translator import CustomAPI
 
 
+def _openai_completion(content):
+    """An OpenAI-shaped chat completion, for the fallback's client."""
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=content), finish_reason="stop"
+            )
+        ]
+    )
+
+
 class TestCustomAPIEndpoint:
     """`--api_format customapi --api_base URL` is the documented route."""
 
@@ -174,6 +185,50 @@ class TestAnthropicFallback:
             translator._build_openai_fallback()
 
         assert chatgpt.call_args.kwargs["api_base"] == expected
+
+    def test_the_model_check_is_owed_to_the_shape_that_answered(self):
+        # the anthropic 404 was about the wire format, not the model, so it
+        # is no verdict on the model at all; the endpoint that does answer
+        # is the one that gets asked
+        with patch("book_maker.translator.claude_translator.Anthropic"):
+            translator = Claude("k", "zh-hans", api_base="https://gw.example.com")
+        translator.model = "claude-sonnet-4-6"
+
+        with patch("book_maker.translator.chatgptapi_translator.OpenAI"):
+            fallback = translator._build_openai_fallback()
+
+        assert fallback._unverified_models == ["claude-sonnet-4-6"]
+
+    def test_the_switch_costs_one_route_check_and_claims_no_missing_model(self, capsys):
+        from book_maker.translator.capabilities import ROUTE_PROBE_MAX_TOKENS
+
+        translator = self._claude(self._not_found())
+        translator.model = "claude-sonnet-4-6"
+        create = Mock(
+            side_effect=[
+                _openai_completion("PONG"),  # the route check
+                _openai_completion("not json"),  # the capability probe
+                _openai_completion("译文"),
+                _openai_completion("译文二"),
+            ]
+        )
+        client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            models=SimpleNamespace(list=Mock(side_effect=RuntimeError("no listing"))),
+        )
+
+        with patch(
+            "book_maker.translator.chatgptapi_translator.OpenAI", return_value=client
+        ):
+            assert translator.translate("one") == "译文"
+            assert translator.translate("two") == "译文二"
+
+        first = create.call_args_list[0].kwargs
+        assert first["model"] == "claude-sonnet-4-6"
+        assert first["max_tokens"] == ROUTE_PROBE_MAX_TOKENS
+        # probed once for the whole run, not once per paragraph
+        assert sum("max_tokens" in c.kwargs for c in create.call_args_list) == 1
+        assert "does not serve" not in capsys.readouterr().out
 
 
 class TestBaseNormalization:

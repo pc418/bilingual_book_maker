@@ -284,10 +284,15 @@ class Claude(Base):
             context_compact_at=self.context_compact_at,
             no_context_compact=self.no_context_compact,
         )
-        # Straight assignment rather than set_model_list: the model is already
-        # chosen, and re-validating it would spend requests mid-run.
+        # Straight assignment rather than set_model_list, which would echo a
+        # model list the user never typed. The route check is still owed, and
+        # owed to *this* shape: the anthropic 404 that sent us here was about
+        # the wire format, so it says nothing about the model, and the
+        # endpoint that does answer is the one worth asking.
         fallback.model_list = cycle([self.model])
         fallback.model = self.model
+        fallback._model_names = [self.model]
+        fallback._unverified_models = [self.model]
         # One history and one meter across the switch: the pairs the
         # anthropic shape collected go on being replayed, and the bar keeps
         # counting instead of freezing at the request that switched.
