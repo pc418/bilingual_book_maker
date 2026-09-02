@@ -26,7 +26,7 @@ The row contract, in full::
                   *some* devices — evidence, never a verdict
     parents       inline rows only: the block keys it appears inside
     action        "translate" | "skip" | null   (null = still a question)
-    decided_by    "llm" | "agent" | "user" | null
+    decided_by    "llm" | "agent" | "user" | "all" | null
     content_type  what the decider called this text, or null
     disposition   what actually happened once the action was applied
 
@@ -53,7 +53,11 @@ SIGNATURE_SAMPLE_CAP = 5
 SAMPLE_MAX_CHARS = 80
 
 VALID_ACTIONS = frozenset(["translate", "skip"])
-VALID_DECIDED_BY = frozenset(["llm", "agent", "user"])
+# "all" is --plan-classify all: the mode decided, nobody ruled. It is the
+# one provenance that does not stick — a rebuilt ledger reopens those rows
+# so the run's own decider rules on them, while "user", "agent" and "llm"
+# rows are carried forward (see plan.py, build_ledger).
+VALID_DECIDED_BY = frozenset(["llm", "agent", "user", "all"])
 VALID_SCOPES = ("block", "inline")
 
 # Fields a classifier actually judges. A matching signature key says only

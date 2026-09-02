@@ -64,7 +64,8 @@ How to read a signature row:
   conditional_css  CSS that hides it only on some devices — evidence that
               it may be device-specific duplicate apparatus, not a verdict
   action      null (decide!), "translate", or "skip"
-  decided_by  who decided: "llm", "agent", "user"
+  decided_by  who decided: "llm", "agent", "user" (a --plan-classify all
+              run writes "all")
   content_type  what the decider called this text
 
 What to do, for every null row:

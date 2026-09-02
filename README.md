@@ -267,7 +267,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   Use `--translate-tags` to specify tags need for translation. Use comma to separate multiple tags.
   For example: `--translate-tags h1,h2,h3,p,div`
 
-- `--plan-classify {none,most,model,agent}` (epub only):
+- `--plan-classify {none,all,model,agent}` (epub only):
 
   **Plan mode**: instead of selecting tags, every text node in the book is either assigned
   to a translation unit or skipped for an explicit, reported reason (hidden content,
@@ -283,7 +283,8 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   worth translating is the classification entry you pick here:
 
   - `none` (default): no plan — translate the `--translate-tags` selection as usual.
-  - `most`: translate the whole partition, no classification.
+  - `all`: translate the whole partition, no classification. (Spelled `most` before;
+    that name still works and prints a note.)
   - `model`: an LLM rules on the uncertain signatures first (headings, the prose spine and
     poetry groups are never asked about), then the run continues. Use
     `--plan-classify-model X` to pick a different model for it — naming one implies this
@@ -306,7 +307,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   # inspect what would be translated (free, no key needed)
   python3 make_book.py --book_name my_book.epub --plan-dry-run
   # translate the whole partition
-  python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify most
+  python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify all
   # let a model triage the apparatus first
   python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify model
   # or hand the triage to a coding agent (stops, prints instructions, then rerun)
@@ -540,7 +541,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags di
 # Plan mode: auto-discover translatable content (poetry, blockquotes, table cells,
 # ...) and batch verse lines in stanza windows; preview the plan with --plan-dry-run
 python3 make_book.py --book_name test_books/animal_farm.epub --plan-dry-run
-python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify most
+python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify all
 
 # Tweaking the prompt
 python3 make_book.py --book_name test_books/animal_farm.epub --prompt prompt_template_sample.txt

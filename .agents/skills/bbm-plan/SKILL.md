@@ -292,7 +292,7 @@ before anything runs.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--plan-classify` | `none`, `most`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
+| `--plan-classify` | `none`, `all`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
 | `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it) |
 | `--exclude-translate-tags` | comma-separated tags | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |

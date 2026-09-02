@@ -381,13 +381,16 @@ def main():
     parser.add_argument(
         "--plan-classify",
         dest="plan_classify",
-        choices=["none", "most", "model", "agent"],
+        # "most" was this mode's name and still parses; it is left out of
+        # the metavar so --help documents one name, not two.
+        choices=["none", "all", "most", "model", "agent"],
+        metavar="{none,all,model,agent}",
         default="none",
         help="coverage-complete plan mode (epub only): partition the whole "
         "book, then decide which tag signatures are worth translating. "
         "'none' (default): no plan — translate the --translate-tags "
         "selection as usual. "
-        "'most': translate the whole partition, no classification, no plan "
+        "'all': translate the whole partition, no classification, no plan "
         "file. "
         "'model': an LLM rules on every undecided signature, then the run "
         "continues and translates the book; unresolved rows stop it instead. "
@@ -605,6 +608,12 @@ So you are close to reaching the limit. You have to choose your own value, there
 
     options = parser.parse_args()
     options.context_flag, options.context_mode = resolve_context_mode(options)
+
+    # The mode was called "most" until it was renamed for being read as
+    # "most of the book". Scripts that say it keep working.
+    if options.plan_classify == "most":
+        print("note: --plan-classify most is now --plan-classify all")
+        options.plan_classify = "all"
 
     if options.provider and options.model:
         parser.error("--provider and --model are mutually exclusive")
@@ -984,11 +993,11 @@ So you are close to reaching the limit. You have to choose your own value, there
     # contradiction, not a preference to resolve silently.
     classify_mode = options.plan_classify
     if options.plan_classify_model:
-        if classify_mode in ("most", "agent"):
+        if classify_mode in ("all", "agent"):
             reason = (
                 "agent mode makes no API call"
                 if classify_mode == "agent"
-                else "most mode skips classification"
+                else "all mode skips classification"
             )
             print(
                 f"[bold red]Error:[/bold red] --plan-classify-model cannot be "
@@ -1030,7 +1039,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         e.plan_min_coverage = options.plan_min_coverage
         e.poetry_group_size = options.poetry_group_size
         # plan mode is triggered by translate_tags == "auto"; the classify
-        # entry reaches the loader as chosen. "most" in particular must stay
+        # entry reaches the loader as chosen. "all" in particular must stay
         # distinguishable from "no plan": it is the deliberate
         # translate-everything decision, and the loader has to know it was
         # made rather than infer it from the absence of one.

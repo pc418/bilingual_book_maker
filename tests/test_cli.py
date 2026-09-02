@@ -74,21 +74,21 @@ def test_explicit_none_is_the_same_as_no_flag(tmp_path):
     assert not plan.exists()
 
 
-def test_most_mode_translates_without_asking_or_writing_a_plan(tmp_path):
-    # 'most' is the deliberate translate-everything entry: no questions, so
+def test_all_mode_translates_without_asking_or_writing_a_plan(tmp_path):
+    # 'all' is the deliberate translate-everything entry: no questions, so
     # no plan file to answer them in, and no agent stop
-    proc, plan = _run(tmp_path, "--plan-classify", "most", "--test", "--test_num", "1")
+    proc, plan = _run(tmp_path, "--plan-classify", "all", "--test", "--test_num", "1")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert not plan.exists()
     assert "Paste the block below" not in proc.stdout
 
 
-def test_most_mode_ignores_an_existing_plan(tmp_path):
-    # half-loading an earlier run's skips would make "most" quietly mean
-    # "most, except whatever something else decided"
+def test_all_mode_ignores_an_existing_plan(tmp_path):
+    # half-loading an earlier run's skips would make "all" quietly mean
+    # "all, except whatever something else decided"
     proc, plan = _run(tmp_path, "--plan-classify", "agent")
     assert plan.exists()
-    proc, _ = _run(tmp_path, "--plan-classify", "most", "--test", "--test_num", "1")
+    proc, _ = _run(tmp_path, "--plan-classify", "all", "--test", "--test_num", "1")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "ignores the existing plan" in " ".join(proc.stdout.split())
 
@@ -168,11 +168,11 @@ def test_agent_mode_rejects_a_classifier_model(tmp_path):
     assert "cannot be combined" in proc.stdout
 
 
-def test_most_mode_rejects_a_classifier_model(tmp_path):
-    # 'most' explicitly skips classification; naming a classifier alongside
+def test_all_mode_rejects_a_classifier_model(tmp_path):
+    # 'all' explicitly skips classification; naming a classifier alongside
     # it is a contradiction, not a preference to resolve silently
     proc, _ = _run(
-        tmp_path, "--plan-classify", "most", "--plan-classify-model", "gpt-4o"
+        tmp_path, "--plan-classify", "all", "--plan-classify-model", "gpt-4o"
     )
     assert proc.returncode == 1
     assert "cannot be combined" in proc.stdout
@@ -678,3 +678,19 @@ def test_the_routes_that_carry_chapter_context_are_not_refused():
     assert MODEL_DICT["qwen"].SUPPORTS_PARALLEL_CONTEXT
     assert not MODEL_DICT["gemini"].SUPPORTS_PARALLEL_CONTEXT
     assert not MODEL_DICT["deepl"].SUPPORTS_PARALLEL_CONTEXT
+
+
+def test_the_old_mode_name_still_works_and_says_it_moved(tmp_path):
+    # scripts written before the rename keep running
+    proc, plan = _run(tmp_path, "--plan-classify", "most", "--test", "--test_num", "1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not plan.exists()
+    assert "--plan-classify most is now --plan-classify all" in " ".join(
+        proc.stdout.split()
+    )
+
+
+def test_the_old_mode_name_is_not_advertised():
+    proc = _cli("--help")
+    assert "{none,all,model,agent}" in " ".join(proc.stdout.split())
+    assert "'most'" not in proc.stdout

@@ -782,7 +782,7 @@ def _make_loader(tmp_path, model_cls, book=ANIMAL_FARM):
     loader.translate_tags = "auto"
     # tests that exercise the plan JSON set this to "agent"; the default is
     # the deliberate translate-everything mode, which writes no plan file
-    loader.plan_classify = "most"
+    loader.plan_classify = "all"
     return loader, src
 
 
@@ -2682,9 +2682,9 @@ class TestModePolicy:
         from book_maker.loader.classify import MODES, mode_policy
 
         assert [mode_policy(m).name for m in MODES] == list(MODES)
-        # "most" asks nothing, so it neither reads nor writes the file
-        assert not mode_policy("most").reads_saved_plan
-        assert not mode_policy("most").writes_plan_file
+        # "all" asks nothing, so it neither reads nor writes the file
+        assert not mode_policy("all").reads_saved_plan
+        assert not mode_policy("all").writes_plan_file
         # the agent handoff *is* the job: stopping there is a success
         assert mode_policy("agent").handoff_exit_code == PLAN_HANDOFF_EXIT_CODE
         assert mode_policy("model").handoff_exit_code == 1
@@ -2694,6 +2694,54 @@ class TestModePolicy:
 
         with pytest.raises(ValueError, match="unknown --plan-classify mode"):
             mode_policy("vibes")
+
+
+class TestAllModeAttribution:
+    """`--plan-classify all` decides every row. The row must say the mode
+    did it, not a person: nobody looked at the samples, and a row reading
+    "user" is indistinguishable from one somebody edited by hand."""
+
+    @staticmethod
+    def _plan():
+        soup = bs(
+            '<body><p>Prose.</p><span class="pageno">12</span></body>',
+            "html.parser",
+        )
+        return TranslationPlan(
+            [partition_soup(soup, DisplayResolver([]), "c.xhtml")], (), 8
+        )
+
+    def test_the_rows_it_decides_are_attributed_to_the_mode(self):
+        from book_maker.loader.classify import decide_everything
+
+        ledger = self._plan().build_ledger()
+        assert ledger.undecided_keys(), "nothing to decide, the test proves nothing"
+        decide_everything(ledger)
+        decided = {row["decided_by"] for row in ledger.rows.values()}
+        assert decided == {"all"}
+        assert all(row["action"] == "translate" for row in ledger.rows.values())
+
+    def test_the_ledger_accepts_that_provenance(self):
+        from book_maker.loader.ledger import VALID_DECIDED_BY
+
+        assert "all" in VALID_DECIDED_BY
+        assert "user" in VALID_DECIDED_BY
+
+    def test_an_all_row_does_not_settle_a_later_run_but_a_user_row_does(self):
+        # the mode's blanket answer is not a decision anybody made, so a
+        # rebuilt ledger asks again; a hand-edited row is a real decision
+        # and is carried forward
+        plan = self._plan()
+        prior = plan.build_ledger()
+        keys = sorted(prior.rows)
+        prior.decide(keys[0], "skip", "all", "unclassified")
+        prior.decide(keys[1], "skip", "user", "running head")
+
+        rebuilt = plan.build_ledger(decisions=prior)
+        assert rebuilt.rows[keys[0]]["action"] is None
+        assert rebuilt.rows[keys[0]]["decided_by"] is None
+        assert rebuilt.rows[keys[1]]["action"] == "skip"
+        assert rebuilt.rows[keys[1]]["decided_by"] == "user"
 
 
 class TestPlanExitCodes:

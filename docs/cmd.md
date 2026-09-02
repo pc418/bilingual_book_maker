@@ -31,8 +31,8 @@ sections after it provide additional notes for selected workflows.
 | Option | Purpose |
 |---|---|
 | `--plan-dry-run` | Build/report a free EPUB plan and exit. |
-| `--plan-classify {none,most,model,agent}` | Select no plan, greedy plan, model triage, or coding-agent triage. |
-| `--plan-classify-model MODEL` | Classification model; implies model mode and conflicts with `most`/`agent`. |
+| `--plan-classify {none,all,model,agent}` | Select no plan, greedy plan, model triage, or coding-agent triage. (`most` is the old name for `all` and still parses.) |
+| `--plan-classify-model MODEL` | Classification model; implies model mode and conflicts with `all`/`agent`. |
 | `--plan-min-coverage FRACTION` | Fail if selected planned text is below this fraction; default `0.5`. |
 | `--poetry-group-size N` | Maximum verse lines per planned translation request; default `8`. |
 

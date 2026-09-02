@@ -266,7 +266,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   # 先免费预览会翻译哪些内容（不需要 key）
   python3 make_book.py --book_name my_book.epub --plan-dry-run
   # 翻译整个分区
-  python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify most
+  python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify all
   # 先让模型分流一遍版面装置（页眉、页码等）
   python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify model
   # 或交给 coding agent 判断（停下、打印指引，然后重跑）
@@ -457,7 +457,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --provider deepseek
 python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags div,p
 
 # 计划模式：自动发现要翻译的内容（诗歌、列表、无 <p> 包裹的正文都能覆盖）
-python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify most
+python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify all
 
 # 修改prompt
 python3 make_book.py --book_name test_books/animal_farm.epub --prompt prompt_template_sample.txt

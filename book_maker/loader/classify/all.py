@@ -1,9 +1,9 @@
 """The translate-everything entry, and what makes it different from a
 default.
 
-`most` reaches the same outcome a silent fallback would — every signature
+`all` reaches the same outcome a silent fallback would — every signature
 translated — but it gets there by *recording a decision* on every open
-question, attributed to the user who asked for it. That is the whole
+question, attributed to the mode that made it. That is the whole
 difference, and it is why the mode exists: the failure this design was
 built to remove is not "everything got translated", it is "something got
 translated and nobody is on record as having decided it".
@@ -15,9 +15,10 @@ half-applying an earlier run's skips. Those two policies live in
 a condition repeated wherever the loader happens to branch.
 """
 
-# The name a decider goes on the row under. "user" is accurate: the person
-# who typed --plan-classify most made this call for every signature.
-DECIDED_BY = "user"
+# The name a decider goes on the row under. The mode, not "user": a person
+# asked for the mode, but nobody ruled on this signature, and a row reading
+# "user" is indistinguishable from one somebody edited by hand.
+DECIDED_BY = "all"
 
 # ...and the honest name for what they decided about. Nobody looked at this
 # signature's samples, so the row must not claim a judgment about its

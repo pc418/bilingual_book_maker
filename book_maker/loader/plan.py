@@ -1403,6 +1403,12 @@ class TranslationPlan:
                     ):
                         ledger.reopened_keys.add(key)
                     continue
+                if prior.get("decided_by") == "all":
+                    # Nobody ruled on this row; the mode did. Carrying it
+                    # forward would let one --plan-classify all run settle
+                    # every later run's questions, which is the opposite of
+                    # what the modes are for. It reopens; a decider rules.
+                    continue
                 row["action"] = prior.get("action")
                 row["decided_by"] = prior.get("decided_by")
                 row["content_type"] = prior.get("content_type")
