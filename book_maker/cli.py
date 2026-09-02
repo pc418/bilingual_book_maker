@@ -927,7 +927,10 @@ So you are close to reaching the limit. You have to choose your own value, there
             )
         e.plan_mode = True
         e.translate_tags = "auto"
-    if options.exclude_translate_tags:
+    # `--exclude-translate-tags ""` is the documented way to exclude nothing
+    # (README). Testing for truthiness swallowed it and left the sup,code
+    # default standing, with nothing printed to say so.
+    if options.exclude_translate_tags is not None:
         e.exclude_translate_tags = options.exclude_translate_tags
     if hasattr(e, "plan_min_coverage"):
         e.plan_min_coverage = options.plan_min_coverage

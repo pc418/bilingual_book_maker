@@ -381,3 +381,14 @@ def test_a_promptdown_file_in_block_form_still_loads(tmp_path):
     prompt = parse_prompt_arg(str(md))
     assert "{text}" in prompt["user"]
     assert prompt["system"] == "Be faithful."
+
+
+def test_an_empty_exclude_translate_tags_excludes_nothing(tmp_path):
+    # the README documents --exclude-translate-tags "" as the way to
+    # translate code and sup too; the empty string is falsy, so it used to
+    # leave the sup,code default in place with no sign anything was ignored
+    proc, plan = _run(
+        tmp_path, "--plan-classify", "agent", "--exclude-translate-tags", ""
+    )
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE, proc.stdout + proc.stderr
+    assert json.loads(plan.read_text())["exclude_tags"] == []
