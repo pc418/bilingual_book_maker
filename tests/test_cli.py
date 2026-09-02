@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 BOOK = REPO / "test_books" / "animal_farm.epub"
 # tests/hermetic/sitecustomize.py swaps the `google` translator for an
@@ -347,3 +349,35 @@ def test_compact_budget_still_rejects_a_budget_too_small_to_use():
 
     with pytest.raises(argparse.ArgumentTypeError):
         compact_budget("499")
+
+
+def test_a_promptdown_file_with_no_user_message_fails_clearly(tmp_path):
+    # the repo's own prompt_md.prompt.md is written in promptdown's table
+    # form, which the pinned promptdown does not parse. It used to fall
+    # through to `prompt["user"]` and die with a KeyError traceback, after
+    # the user had already been told the file loaded
+    from book_maker.cli import parse_prompt_arg
+
+    md = tmp_path / "style.prompt.md"
+    md.write_text(
+        "# Prompt\n\n## Conversation\n\n"
+        "| Role | Content |\n|---|---|\n| User | Translate {text} |\n"
+    )
+    with pytest.raises(ValueError) as excinfo:
+        parse_prompt_arg(str(md))
+    message = str(excinfo.value)
+    assert str(md) in message
+    assert "**User:**" in message
+
+
+def test_a_promptdown_file_in_block_form_still_loads(tmp_path):
+    from book_maker.cli import parse_prompt_arg
+
+    md = tmp_path / "style.prompt.md"
+    md.write_text(
+        "# Prompt\n\n## Developer Message\n\nBe faithful.\n\n"
+        "## Conversation\n\n**User:**\nTranslate {text} into {language}\n"
+    )
+    prompt = parse_prompt_arg(str(md))
+    assert "{text}" in prompt["user"]
+    assert prompt["system"] == "Be faithful."

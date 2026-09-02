@@ -72,8 +72,18 @@ def parse_prompt_arg(prompt_arg):
 
             return prompt
         except Exception as e:
-            print(f"Error parsing PromptDown file: {e}")
-            # Fall through to other parsing methods
+            # Falling through left `prompt` half-built and the next line
+            # died on `prompt["user"]` with a KeyError traceback — after
+            # the run had already printed that the file loaded. The pinned
+            # promptdown reads the block form only; its table form (which
+            # this repo's own prompt_md.prompt.md still uses) parses to a
+            # conversation with no user message.
+            raise ValueError(
+                f"could not read the PromptDown file {prompt_arg}: {e}. "
+                f"Write the conversation in block form -- a line reading "
+                f"`**User:**` followed by the template, which must contain "
+                f"`{{text}}`."
+            ) from e
 
     # Existing parsing logic for JSON strings and other formats
     if not any(prompt_arg.endswith(ext) for ext in [".json", ".txt", ".md"]):
