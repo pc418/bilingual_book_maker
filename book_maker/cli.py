@@ -776,6 +776,25 @@ So you are close to reaching the limit. You have to choose your own value, there
         )
         exit(1)
 
+    # Parallel workers each get a clone carrying their own chapter context.
+    # A route that keeps no re-sendable window has nothing to clone, and the
+    # run died reading a context attribute it never set — after the chapters
+    # were already dispatched. (Codex and session mode are refused earlier,
+    # on the command line alone.)
+    if (
+        options.parallel_workers > 1
+        and options.context_mode is not None
+        and not getattr(translate_model, "SUPPORTS_PARALLEL_CONTEXT", False)
+    ):
+        print(
+            f"[bold red]Error: --parallel-workers is not supported with "
+            f"--use_context on the {options.provider or options.model} "
+            f"route, which keeps no per-chapter context for a worker to "
+            f"carry. Drop --parallel-workers, or drop --use_context for "
+            f"this run.[/bold red]"
+        )
+        exit(1)
+
     # Sizing the budget from the model's own window is part of the session
     # machinery: a route with no history to size has nothing to answer with,
     # and 0 there meant "no budget at all", silently.

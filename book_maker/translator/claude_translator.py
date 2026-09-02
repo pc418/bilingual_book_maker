@@ -81,6 +81,7 @@ class Claude(Base):
     )
 
     SUPPORTS_SESSION_CONTEXT = True
+    SUPPORTS_PARALLEL_CONTEXT = True
 
     # How many requests to allow before concluding the endpoint is not billing
     # cache reads. One miss is normal (nothing is cached yet), and short books

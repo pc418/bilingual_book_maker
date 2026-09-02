@@ -17,6 +17,10 @@ class QwenTranslator(Base):
     Todo: support more languages, terminology, and domain hints
     """
 
+    # It keeps a re-sendable window of pairs, bounded by
+    # context_paragraph_limit, so a per-chapter clone has state to carry.
+    SUPPORTS_PARALLEL_CONTEXT = True
+
     # Language mapping from bilingual_book_maker format to Qwen language codes
     LANGUAGE_MAP = {
         # Common languages

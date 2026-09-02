@@ -627,3 +627,54 @@ def test_a_named_compact_budget_is_never_refused(tmp_path):
         "--plan-dry-run",
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_parallel_workers_with_context_is_refused_on_gemini(tmp_path):
+    # Gemini.__init__ takes context_paragraph_limit and never stores it, so
+    # the parallel banner read an attribute that was not there — an
+    # AttributeError after the chapters had already been dispatched
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "gemini",
+        "--gemini_key",
+        "k",
+        "--use_context",
+        "--parallel-workers",
+        "2",
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--parallel-workers" in flat
+    assert "--use_context" in flat
+
+
+def test_parallel_workers_without_context_is_left_alone_on_gemini(tmp_path):
+    # only the pairing is refused; parallel on its own is untouched
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "gemini",
+        "--gemini_key",
+        "k",
+        "--parallel-workers",
+        "2",
+        "--plan-dry-run",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_the_routes_that_carry_chapter_context_are_not_refused():
+    from book_maker.translator import MODEL_DICT
+
+    assert MODEL_DICT["openai"].SUPPORTS_PARALLEL_CONTEXT
+    assert MODEL_DICT["claude"].SUPPORTS_PARALLEL_CONTEXT
+    assert MODEL_DICT["qwen"].SUPPORTS_PARALLEL_CONTEXT
+    assert not MODEL_DICT["gemini"].SUPPORTS_PARALLEL_CONTEXT
+    assert not MODEL_DICT["deepl"].SUPPORTS_PARALLEL_CONTEXT

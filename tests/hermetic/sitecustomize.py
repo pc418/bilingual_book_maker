@@ -27,6 +27,7 @@ class OfflineTranslator:
 
     TRANSLATION_ERROR_MARKER = None
     SUPPORTS_SESSION_CONTEXT = True
+    SUPPORTS_PARALLEL_CONTEXT = True
     context_paragraph_limit = 3
 
     def __init__(self, *args, **kwargs):

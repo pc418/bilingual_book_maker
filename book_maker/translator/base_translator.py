@@ -67,6 +67,11 @@ class Base(ABC):
     # history it sizes.
     SUPPORTS_SESSION_CONTEXT = False
 
+    # Does this format survive `--parallel-workers` with `--use_context`?
+    # Each worker is handed a clone carrying its own chapter context, which
+    # a format that keeps no re-sendable window cannot provide.
+    SUPPORTS_PARALLEL_CONTEXT = False
+
     # Whether a system message can be borrowed for the length of one request.
     # False where it is not sent per request at all: the codex route folds it
     # into a thread's base instructions when the thread opens, and the thread
