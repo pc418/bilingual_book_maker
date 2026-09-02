@@ -53,14 +53,19 @@ Each entry is the route spelled out:
 
 ```json
 {
-  "nvidia": {
-    "api_style": "openai",
-    "base_url": "https://integrate.api.nvidia.com/v1",
-    "default_models": ["moonshotai/kimi-k2-thinking"],
-    "env_key": "NVIDIA_API_KEY"
+  "providers": {
+    "nvidia": {
+      "api_style": "openai",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "default_models": ["moonshotai/kimi-k2-thinking"],
+      "env_key": "NVIDIA_API_KEY"
+    }
   }
 }
 ```
+
+The `providers` wrapper is required — the loader reads nothing from a file
+without it.
 
 `api_style` is `openai`, `claude` (→ `--api_format anthropic`), `gemini` or
 `qwen` (both the openai format at their compatibility bases, so `base_url`
@@ -80,31 +85,46 @@ is a shortcut, not a legacy alias — no deprecation notice is printed. Probe
 it as any OpenAI-shaped endpoint, against
 `https://api.orcarouter.ai/v1`.
 
-## Binding `$KEY` and `$ROOT` before any probe
+## Binding `$KEY`, `$ROOT`, `$MODEL` from the entry before any probe
 
-The shape decides which key variable to read. Do **not** take "whichever
+The entry decides which key variable to read. Do **not** take "whichever
 key is set" — `.env` is sourced into a shell that may already export other
 providers' keys from `~/.zshenv`, and a stale one would route the run to an
-endpoint the user never chose. Exit before curl when either half is
-missing: an empty bearer token produces a 401 that reads like a bad key.
+endpoint the user never chose. Exit before curl when anything is missing:
+an empty bearer token produces a 401 that reads like a bad key.
 
 ```bash
-route_env() {   # $1 = openai | anthropic
-  case "$1" in
-    openai)    KEY="${BBM_API_KEY:-${OPENAI_API_KEY:-}}";     DEFAULT_ROOT=https://api.openai.com ;;
-    anthropic) KEY="${BBM_API_KEY:-${ANTHROPIC_API_KEY:-}}";  DEFAULT_ROOT=https://api.anthropic.com ;;
-    *) echo "unknown shape $1" >&2; return 2 ;;
-  esac
-  ROOT="${BBM_API_BASE:-}"; ROOT="${ROOT%/}"; ROOT="${ROOT%/v1}"
-  ROOT="${ROOT:-$DEFAULT_ROOT}"
-  [ -n "${MODEL:-}" ] || { echo "MODEL is unset in .env" >&2; return 1; }
-  [ -n "$KEY" ]       || { echo "no key set for the $1 route" >&2; return 1; }
+route_env() {   # $1 = provider name, as in bbm_providers.json / ~/.bbm/providers.json
+  eval "$(python3 - "$1" <<'EOF'
+import json, os, pathlib, shlex, sys
+name = sys.argv[1]; entry = None
+for f in (pathlib.Path.home()/".bbm"/"providers.json", pathlib.Path("bbm_providers.json")):
+    if f.is_file():
+        entry = json.load(open(f)).get("providers", {}).get(name, entry)
+if entry is None:
+    print(f'echo "no provider entry named {name}" >&2; return 1'); sys.exit()
+shape = {"claude": "anthropic"}.get(entry.get("api_style"), "openai")
+host = {"gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1"}.get(entry.get("api_style"))
+root = (entry.get("base_url") or host or {"anthropic": "https://api.anthropic.com"}.get(shape, "https://api.openai.com")).rstrip("/")
+root = root[:-3] if root.endswith("/v1") else root
+key_var = entry.get("env_key") or "BBM_API_KEY"
+model = (entry.get("default_models") or [""])[0] or ("gpt-5.6-luna" if shape == "openai" else "")
+print(f"SHAPE={shape} ROOT={shlex.quote(root)} MODEL={shlex.quote(model)} KEY_VAR={key_var}")
+EOF
+)"
+  [ -n "${SHAPE:-}" ] || return 1
+  KEY="$(printenv "$KEY_VAR" 2>/dev/null || true)"   # same in bash and zsh; .env is exported by set -a
+  [ -n "$MODEL" ] || { echo "entry $1 names no model (the anthropic format needs one)" >&2; return 1; }
+  [ -n "$KEY" ]   || { echo "$KEY_VAR is unset — fill .env" >&2; return 1; }
 }
 ```
 
-On a gateway the key belongs to the *gateway*, not the model's vendor: a
-Claude model reached over the OpenAI shape uses `OPENAI_API_KEY`, because
-that is the shape being spoken. Verified in bash and zsh.
+`$ROOT` comes out with no trailing `/v1` whatever the entry wrote, so every
+probe path below is spelled in full. On a gateway the key belongs to the
+*gateway*, not the model's vendor: a Claude model reached over the OpenAI
+shape reads the gateway entry's `env_key`, because that is the shape being
+spoken.
 
 ## Shapes, and how to probe each
 
@@ -167,7 +187,7 @@ the OpenAI-shape call above.
 | `claude-` | OpenAI if a gateway base is set; else anthropic | the other one |
 | anything else (`gpt-`, `o1`, `o3`, `gemini-`, `grok-`, `llama`, `qwen`, `deepseek`, …) | OpenAI | — |
 
-Why OpenAI-first whenever `BBM_API_BASE` points at a gateway: aggregators
+Why OpenAI-first whenever the entry's `base_url` is a gateway: aggregators
 serve Claude and Gemini models on `/chat/completions` too. Go native only
 when the endpoint is Anthropic's own, or when the gateway rejects the OpenAI
 shape.

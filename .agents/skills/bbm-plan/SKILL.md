@@ -24,50 +24,96 @@ gets a bilingual epub back — they are never asked to experiment with flags,
 halt semantics or resume mechanics.
 
 Three runs of one command with small flag changes: **plan → smoke → full**.
-All state lives on disk (`.env`, `<book>_plan.json`, the resume cache,
-`run.log`), so any step can be redone after a crash or in a new session.
+All state lives on disk (`bbm_providers.json`, `.env`, `<book>_plan.json`,
+the resume cache, `run.log`), so any step can be redone after a crash or in a new session.
 
-## 0. Credentials
+## 0. Credentials and route — probe first, then ask
 
-Copy `assets/env.example` (this skill dir) to `.env` at the repo root and
-have the user fill it. Two fields matter: `MODEL`, the exact model id, and
-one API key for wherever that model lives. `MODEL` and `BBM_API_BASE` are
-skill-level fields — make_book.py does not read them from env, you translate
-them into flags. If the user's gateway already has an entry in
-`bbm_providers.json` (repo root) or `~/.bbm/providers.json`, `--provider
-NAME` carries the endpoint instead and only the key has to be exported.
+Find out what the user already has before asking for anything. Three
+sources, all checked for **presence only** — never print a value:
 
-Source `.env` in the same Bash call as the run:
-`set -a; source .env; set +a; …`. Never echo values; check presence with
-`[ -n "$MODEL" ]`. If `.env` is unfilled, stop and ask — never accept a
-pasted key as a command-line argument, it leaks into shell history and
-prompt logs.
+```bash
+set -a; [ -f .env ] && source .env; set +a
+python3 - <<'EOF'
+import json, os, pathlib
+seen = []
+for f in (pathlib.Path("bbm_providers.json"), pathlib.Path.home()/".bbm"/"providers.json"):
+    if f.is_file():
+        for name, e in json.load(open(f)).get("providers", {}).items():
+            key = e.get("env_key") or "BBM_API_KEY"
+            seen.append(f"{name}: {e.get('api_style')} {e.get('base_url','(default host)')} "
+                        f"model={(e.get('default_models') or ['(none)'])[0]} {key}={'set' if os.environ.get(key) else 'UNSET'}")
+print("\n".join(seen) or "no provider entries")
+for v in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "BBM_API_KEY", "BBM_ORCAROUTER_API_KEY"):
+    print(v, "set" if os.environ.get(v) else "unset")
+EOF
+command -v codex >/dev/null && codex login status 2>&1 | head -1 || echo "codex: not installed"
+```
 
-**A key passed as `--key` is printed back at you.** The agent handoff block
-reprints the whole command line verbatim so the operator can rerun it, so a
-key on the command line lands in the terminal and in the log every time the
-plan hands off. Prefer the environment (`$BBM_API_KEY`, `$OPENAI_API_KEY`,
-`$ANTHROPIC_API_KEY` are read when `--key` is absent), and if a key does get
-echoed, say so and tell the user to rotate it.
+That prints every provider entry with whether its key is present, the four
+conventional key variables, and whether the codex CLI is signed in
+(`Logged in using ChatGPT`). Then ask **one** question that covers the
+route, the model and the prompt file together — the user answers once:
 
-**There is one key flag, `--key`, whatever the route is.** The old
-per-vendor flags (`--openai_key`, `--claude_key`, …) and `--api_key` still
-parse — they are rewritten to `--key` and the substitution is printed — so
-nothing needs guessing. Prefer the environment anyway: argparse answers a
-mistyped flag with `unrecognized arguments:` and the whole command line, so a
-key on the line reaches the terminal, the log and the transcript either way.
-If a key ever does reach the terminal, say so at once and tell the user to
-rotate it.
+> Here is what I found: *(the list)*. Which do you want this book to spend —
+> a provider entry, one of the bare keys, or your ChatGPT plan through
+> codex? Any model other than the entry's default? And do you have a prompt
+> or style file you want the translation to use?
 
-## 1. Intake — what to ask for
+Read the answer into the `ROUTE` array every later step uses:
+
+| the user picks | `ROUTE` | format |
+|---|---|---|
+| a provider entry `NAME` | `(--provider NAME)` — add `--model "$MODEL"` only if they named a different one | the entry's `api_style`: `openai`/`gemini`/`qwen` → openai, `claude` → anthropic |
+| a bare `OPENAI_API_KEY` | `(--provider openai)` after step 0b | openai |
+| a bare `ANTHROPIC_API_KEY` | `(--provider anthropic)` after step 0b | anthropic |
+| `BBM_ORCAROUTER_API_KEY` | `(--model orcarouter)` | openai |
+| codex, signed in | `(--model codex)` — §1c, nothing else to set up | codex |
+
+The route decides the **default flag set** (§1d). Say the choice back in
+one line with the format it implies.
+
+### 0b. Nothing usable yet, or a bare key with no entry — hand over the file
+
+Put the dummy where the run will read it, then ask the user to fill it.
+Do not write the entry for them from guesses:
+
+```bash
+[ -f bbm_providers.json ] || cp .agents/skills/bbm-plan/assets/bbm_providers.example.json bbm_providers.json
+[ -f .env ]               || cp .agents/skills/bbm-plan/assets/env.example .env
+git check-ignore -q bbm_providers.json .env || printf 'bbm_providers.json\n.env\n' >> .git/info/exclude
+```
+
+Then tell them exactly what to edit and stop until they say it is done:
+
+- `bbm_providers.json`: keep the entry they will use, fill `base_url`,
+  `default_models` (the exact id the endpoint spells) and `env_key`; delete
+  the `FILL-ME` entry if unused. The file holds no secrets — `env_key`
+  only names a variable. The shape is `{"providers": {NAME: {...}}}`;
+  `api_style` is `openai`, `claude`, `gemini` or `qwen`.
+- `.env`: the variable `env_key` names, with the key as its value.
+
+A bare key with no entry gets the same treatment: the example file's
+`openai` / `anthropic` entries already point at the vendor hosts and read
+the conventional variable, so nothing needs editing beyond deleting the
+others. Rerun the probe afterwards; it should now show the entry with its
+key `set`.
+
+**Keys never go on the command line.** The handoff block reprints the
+whole command verbatim and argparse echoes it back on any mistyped flag,
+so `--key` lands in the terminal, the log and the transcript. The entry's
+`env_key` (or `$BBM_API_KEY`) is read when `--key` is absent, which is why
+this skill never passes it. The old per-vendor flags (`--openai_key`, …)
+and `--api_key` still parse and are rewritten to `--key` with a printed
+notice. If a key ever does reach the terminal, say so at once and tell the
+user to rotate it.
+
+## 1. Intake — what else to ask for
 
 1. **Book path** and **target language** (`--language`, e.g. `zh-hans`,
    `ja`, `Simplified Chinese`).
-2. **Their prompt file, if they have one.** Ask outright: *"Do you have a
-   prompt or style file you want this translation to use?"* A user's own
-   prompt is how register, honorifics and terminology get fixed for the
-   whole book, and it costs nothing to ask. If they hand one over, lint it
-   before the first paid run — contract and commands in
+2. **Their prompt file** — asked in step 0's one question. If they hand
+   one over, lint it before the first paid run — contract and commands in
    **`references/prompt-files.md`**. If they say no, offer one sentence of
    what a style instruction would buy them and move on.
    Independently, look for an existing template in the book's directory and
@@ -81,48 +127,34 @@ rotate it.
    replaced text, a visual style for the translation, specific chapters
    only.
 
-Base command, with the route flags settled by step 1b (OpenAI shape shown —
-the common case):
+Base command — `ROUTE` from step 0, the context flags from §1d:
 
 ```bash
 set -a; source .env; set +a
-API_BASE_FLAG=()
-[ -n "$BBM_API_BASE" ] && API_BASE_FLAG=(--api_base "$BBM_API_BASE")
-ROUTE=(--key "$KEY" --model "$MODEL")   # ← add --api_format only if step 1b says so
+ROUTE=(--provider openai)                   # or (--provider NAME) / (--model codex)
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
-  --language "$LANG" --plan-classify agent "${API_BASE_FLAG[@]}" \
-  --use_context session
+  --language "$LANG" --plan-classify agent "${CONTEXT[@]}"
 ```
 
-(The conditional flag is an array on purpose: `${VAR:+--flag "$VAR"}`
-mis-tokenizes under zsh — macOS's default shell — into a single argv word
-that argparse rejects. The array form works in bash and zsh alike.)
+(Arrays on purpose: `${VAR:+--flag "$VAR"}` mis-tokenizes under zsh —
+macOS's default shell — into one argv word that argparse rejects. The array
+form works in bash and zsh alike.)
 
-**A named gateway replaces the route flags.** When the endpoint has an entry
-in `bbm_providers.json` (repo root) or `~/.bbm/providers.json`, use
-`ROUTE=(--provider NAME)`: the entry's `base_url`, `api_style`,
-`default_models` and `env_key` stand in for `--api_base`, `--api_format`,
-`--model`/`--model_list` and the key variable. Anything you pass explicitly
-wins, so `--provider NAME --model "$MODEL"` is a legal route and is how you
-keep the user's model on their gateway. Step 1b still applies — probe the
-entry's `base_url`, not a guess.
+## 1b. Endpoint probe — verify the entry before the classify work (sub-cent)
 
-## 1b. Endpoint probe — infer the route, then verify it (sub-cent)
+The entry names the endpoint; prove it answers, so a typo'd model id or a
+wrong shape surfaces here and not after the plan is built. Skip this on
+`codex` (nothing to curl). Three ordered questions, each answered by a call:
 
-Never assume a route from the key alone. Infer it from the **model name**,
-then prove it, so a typo or a wrong shape surfaces here and not after the
-classify work. Three ordered questions, each answered by a call:
-
-**0. Bind `$KEY` and `$ROOT` for the shape you are about to probe**, and
-refuse to curl without them. **The shape names the key variable** — never
-scan for whichever key happens to be set, because a stale export in
-`~/.zshenv` would silently route the run somewhere the user never asked
-for. `route_env` below is copied verbatim from `references/providers.md`,
-which also carries the per-shape defaults:
+**0. Bind `$KEY`, `$ROOT`, `$MODEL` from the entry**, and refuse to curl
+without them. `route_env NAME` below is copied verbatim from
+`references/providers.md`; it reads the entry, never "whichever key is set",
+because a stale export in `~/.zshenv` would silently route the run somewhere
+the user never asked for:
 
 ```bash
 set -a; source .env; set +a
-route_env openai        # or: anthropic — sets KEY, ROOT, or exits
+route_env openai        # the provider name — sets KEY, ROOT, MODEL, SHAPE or exits
 ```
 
 **1. Does this model id exist here?** On any OpenAI-shaped base the model
@@ -138,17 +170,13 @@ unsupported path both return 404 later, and only this tells them apart. A
 non-OpenAI-shaped endpoint has no such listing: skip to question 2 and let
 the probe judge the id.
 
-**2. Which shape does it speak?** Use the reference's three recipes
-**verbatim**, token-cap rule included. `gpt-*` and unknown ids → OpenAI;
-`claude-*`/`gemini-*` → OpenAI first when `BBM_API_BASE` names a gateway,
-native when it is the vendor's own endpoint.
+**2. Does it answer in that shape?** Use the reference's recipes
+**verbatim**, token-cap rule included, for the `$SHAPE` the entry declares.
 
-**3. Which flags does that make?** Record them once as the `ROUTE` array
-every later step uses, and state the choice in one line with its reason.
-
-Probe the format, don't ask the user to fix it: on 404 retry with `/v1`
-added or removed; on an auth rejection try that shape's native scheme.
-Whatever passes is what `--api_base` gets. Stop and ask only when the key
+**3. Anything to correct?** A passing probe means the entry is right and
+`ROUTE` stays `(--provider NAME)`. On 404 retry with `/v1` added or removed
+and tell the user which `base_url` to write into the entry; on an auth
+rejection try that shape's native scheme. Stop and ask only when the key
 itself is rejected by its own provider.
 
 ## 1c. The codex route — a subscription, not an endpoint
@@ -183,6 +211,24 @@ python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
   `.env`.
 
 Plan, classify, smoke and full run are otherwise identical.
+
+## 1d. Default flag set, by format
+
+The route's format picks the context flags; everything else is the same
+command. This is what you pass unless the user asked for something else or
+the book argues otherwise — the flag menu explains each choice and the
+legal alternatives.
+
+| format | `ROUTE` | `CONTEXT` | why |
+|---|---|---|---|
+| openai (any OpenAI-shaped entry, `orcarouter`) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
+| anthropic (`api_style: claude`) | `(--provider NAME)` | `(--use_context --context_paragraph_limit 3)` | session mode is inert on this route and bare window mode keeps zero pairs without the limit |
+| codex | `(--model codex)` | `()` | the thread is the context; context flags are moot |
+
+Common to all three, per step: `--plan-classify agent` always; the smoke
+adds `--quiet --test --test_num 8`; the full run adds `--quiet --resume`.
+Nothing from the "Never pass in plan mode" list, ever.
+
 
 ## 2. Plan (agent mode translates nothing)
 
@@ -301,12 +347,12 @@ so you can honour a request without guessing at legal values.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--model` | any model id the endpoint uses, verbatim; or `codex`; or `orcarouter` / `orcarouter/<id>` | `$MODEL` from `.env`; unset on the openai format means `gpt-5.6-luna` | the user names a different model, wants their ChatGPT plan spent (`codex`, §1c), or wants the OrcaRouter gateway — `--model orcarouter` routes there and needs no `--api_base` |
+| `--model` | any model id the endpoint uses, verbatim; or `codex`; or `orcarouter` / `orcarouter/<id>` | the entry's `default_models`; unset on the openai format means `gpt-5.6-luna` | the user names a different model, wants their ChatGPT plan spent (`codex`, §1c), or wants the OrcaRouter gateway — `--model orcarouter` routes there and needs no `--api_base` |
 | `--model_list` | several ids, comma-separated | *unset* — say one model in `--model` | rate limits force rotation. Naming a model in both flags is an error, and each id keeps its own prompt cache, so rotating re-pays the `--use_context session` history at full price on every switch |
-| `--key` | one key, or several comma-separated to rotate past rate limits | `$KEY` from `.env`; falls back to `$BBM_API_KEY`, then `$OPENAI_API_KEY` / `$ANTHROPIC_API_KEY` | omit entirely on the `codex` route |
+| `--key` | one key, or several comma-separated to rotate past rate limits | **never passed** — the entry's `env_key` (then `$BBM_API_KEY`, `$OPENAI_API_KEY` / `$ANTHROPIC_API_KEY`) is read from the environment | omit entirely on the `codex` route |
 | `--api_format` | `openai`, `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi` | *unset* — inferred from `--api_base`, then the model id | step 1b proved the guess wrong; the machine-translation formats cannot answer questions, so they are translation-only |
-| `--api_base` | endpoint URL | *unset* (the format's official host), or `$BBM_API_BASE` | a gateway, proxy or local server. OpenAI shape wants `…/v1`; anthropic shape wants the bare host |
-| `--provider` | a name from `bbm_providers.json` (repo root) or `~/.bbm/providers.json` | *unset* | the endpoint is already an entry there — it supplies `--api_base`, `--api_format`, the model(s) and the key variable in one word. Explicit flags still win, so `--model` may ride along. An unknown name is an error naming both files |
+| `--api_base` | endpoint URL | *unset* — the entry's `base_url` | a gateway, proxy or local server. OpenAI shape wants `…/v1`; anthropic shape wants the bare host |
+| `--provider` | a name from `bbm_providers.json` (repo root) or `~/.bbm/providers.json` | **the route, step 0** | the endpoint is already an entry there — it supplies `--api_base`, `--api_format`, the model(s) and the key variable in one word. Explicit flags still win, so `--model` may ride along. An unknown name is an error naming both files |
 | `--proxy` | `http://127.0.0.1:7890`-style | *unset* | the user is behind one |
 
 ### Plan mode
