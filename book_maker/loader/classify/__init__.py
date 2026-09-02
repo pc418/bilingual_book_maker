@@ -69,6 +69,11 @@ def mode_policy(name):
     try:
         return MODE_POLICY[name]
     except KeyError:
+        if name == "none":
+            raise ValueError(
+                "plan mode needs a classify mode: --plan-classify all, model "
+                "or agent ('none' means no plan mode)"
+            ) from None
         raise ValueError(
             f"unknown --plan-classify mode {name!r}; expected one of "
             f'{", ".join(MODES)}'

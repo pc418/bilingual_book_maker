@@ -1701,6 +1701,7 @@ class TestEpubHardening:
             )
             resumed.plan_mode = True
             resumed.translate_tags = "auto"
+            resumed.plan_classify = "all"
             with pytest.raises(SystemExit) as excinfo:
                 resumed.make_bilingual_book()
             assert excinfo.value.code == 1
@@ -1730,6 +1731,7 @@ class TestEpubHardening:
             )
             resumed.plan_mode = True
             resumed.translate_tags = "auto"
+            resumed.plan_classify = "all"
             resumed.make_bilingual_book()
         if isinstance(excinfo.value, SystemExit):
             assert excinfo.value.code == 1
@@ -1763,6 +1765,7 @@ class TestEpubHardening:
         )
         resumed.plan_mode = True
         resumed.translate_tags = "auto"
+        resumed.plan_classify = "all"
         with pytest.raises(SystemExit) as excinfo:
             resumed.make_bilingual_book()
         assert excinfo.value.code == 1
@@ -1797,6 +1800,7 @@ class TestEpubHardening:
         )
         resumed.plan_mode = True
         resumed.translate_tags = "auto"
+        resumed.plan_classify = "all"
         assert len(resumed.p_to_save) == done
         resumed.make_bilingual_book()
 
