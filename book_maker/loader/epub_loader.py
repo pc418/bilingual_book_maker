@@ -222,11 +222,11 @@ class EPUBBookLoader(BaseBookLoader):
         self.plan_mode = False
         self.plan_min_coverage = 0.5
         self.poetry_group_size = 8
-        # all | model | agent (see .classify). "all" is the deliberate
-        # translate-the-whole-partition choice and the only mode that asks
-        # nothing; there is no mode where nobody decides and the code
-        # translates whatever it could not rule out.
-        self.plan_classify = "all"
+        # "none" = no plan mode, the CLI's default. A caller that turns plan
+        # mode on must pick all | model | agent (see .classify): there is no
+        # mode where nobody decides and the code translates whatever it could
+        # not rule out, so "none" inside plan mode is refused, not defaulted.
+        self.plan_classify = "none"
         self.plan_classify_model = None  # user-chosen classifier; failure blocks
         self._plan_css = None
         self._plan_overrides = None

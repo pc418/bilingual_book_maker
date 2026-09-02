@@ -216,6 +216,7 @@ def test_plan_mode_preserves_translated_imported_nav_and_manifest(
         language="zh-hans",
     )
     loader.plan_mode = True
+    loader.plan_classify = "all"
     loader.translate_tags = "auto"
     loader.quiet = True
 
