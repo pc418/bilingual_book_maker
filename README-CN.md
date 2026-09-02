@@ -307,7 +307,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
   - `auto`（默认）：epub 且端点经校验会严格应用 JSON Schema 时，按 `model` 建计划；否则（含计划无法建成时）照常翻译 `--translate-tags` 选中的标签。
   - `none`：不建计划，照常翻译 `--translate-tags` 选中的标签。
-  - `most`：翻译整个分区，不做分类。
+  - `all`：翻译整个分区，不做分类。（旧名 `most` 仍可用，会打印一行提示改用 `all`。）
   - `model`：先让一个 LLM 裁决不确定的签名（标题、正文主干和诗歌分组不会被问到），然后继续翻译。可用 `--plan-classify-model X` 指定分类用的模型——指定了就意味着此模式，且分类失败会中止而不是回退。
   - `agent`：不调用 API。写出计划 JSON，打印一段可以粘贴进 coding-agent 会话（Claude Code、Codex 等）的指引，然后**在翻译前停下**。改完 action 后重跑同一条命令即可翻译。
 
@@ -319,7 +319,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
   # 先免费预览会翻译哪些内容（不需要 key）
   python3 make_book.py --book_name my_book.epub --plan-dry-run
   # 翻译整个分区
-  python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify most
+  python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify all
   # 先让模型分流一遍版面装置（页眉、页码等）
   python3 make_book.py --book_name my_book.epub --openai_key ${key} --plan-classify model
   # 或交给 coding agent 判断（停下、打印指引，然后重跑）
@@ -500,7 +500,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --provider deepseek
 python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags div,p
 
 # 计划模式：自动发现要翻译的内容（诗歌、列表、无 <p> 包裹的正文都能覆盖）
-python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify most
+python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify all
 
 # 修改prompt
 python3 make_book.py --book_name test_books/animal_farm.epub --prompt prompt_template_sample.txt

@@ -753,7 +753,7 @@ def _make_loader(tmp_path, model_cls, book=ANIMAL_FARM):
     loader.translate_tags = "auto"
     # tests that exercise the plan JSON set this to "agent"; the default is
     # the deliberate translate-everything mode, which writes no plan file
-    loader.plan_classify = "most"
+    loader.plan_classify = "all"
     return loader, src
 
 
@@ -2538,6 +2538,27 @@ class TestClassifyPaging:
         }
 
 
+class TestAllMode:
+    """`all` decides every row itself, and says so on every row."""
+
+    def test_every_row_is_decided_and_attributed_to_the_mode(self):
+        from book_maker.loader.classify import decide_everything
+
+        ledger = _ledger([("block", "p", ["prose"]), ("block", "h1", ["HEAD"])])
+        assert decide_everything(ledger) == 2
+        assert not ledger.undecided_keys()
+        assert {r["decided_by"] for r in ledger.rows.values()} == {"all"}
+        # nobody looked at the samples, so nothing may claim to have named them
+        assert {r["content_type"] for r in ledger.rows.values()} == {"unclassified"}
+
+    def test_a_hand_decided_row_is_still_the_users(self, tmp_path):
+        # "all" is a new decider name, not a replacement: a plan JSON edited
+        # by a person still says "user", and still loads.
+        ledger = _ledger([("block", "p", ["prose"])])
+        ledger.decide("block:p", "skip", "user", "running head")
+        assert ledger.rows["block:p"]["decided_by"] == "user"
+
+
 class TestModePolicy:
     """What each mode does with the plan *file* is a table, not a condition
     repeated wherever the loader happens to branch on the mode's name."""
@@ -2546,9 +2567,9 @@ class TestModePolicy:
         from book_maker.loader.classify import MODES, mode_policy
 
         assert [mode_policy(m).name for m in MODES] == list(MODES)
-        # "most" asks nothing, so it neither reads nor writes the file
-        assert not mode_policy("most").reads_saved_plan
-        assert not mode_policy("most").writes_plan_file
+        # "all" asks nothing, so it neither reads nor writes the file
+        assert not mode_policy("all").reads_saved_plan
+        assert not mode_policy("all").writes_plan_file
         # the agent handoff *is* the job: stopping there is a success
         assert mode_policy("agent").handoff_exit_code == 0
         assert mode_policy("model").handoff_exit_code == 1

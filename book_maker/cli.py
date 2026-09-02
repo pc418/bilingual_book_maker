@@ -508,7 +508,11 @@ def build_parser():
     parser.add_argument(
         "--plan-classify",
         dest="plan_classify",
-        choices=["auto", "none", "most", "model", "agent"],
+        # "most" is the old name of "all", still parsed and mapped in main()
+        # with a notice. The metavar is what --help and the usage line show,
+        # so a retired spelling stays out of the advertised surface.
+        choices=["auto", "none", "all", "model", "agent", "most"],
+        metavar="{auto,none,all,model,agent}",
         default="auto",
         help="coverage-complete plan mode (epub only): partition the whole "
         "book, then decide which tag signatures are worth translating. "
@@ -518,7 +522,7 @@ def build_parser():
         "completed falls back to that selection too. "
         "'none': no plan — translate the --translate-tags "
         "selection as usual. "
-        "'most': translate the whole partition, no classification, no plan "
+        "'all': translate the whole partition, no classification, no plan "
         "file. "
         "'model': an LLM rules on every undecided signature, then the run "
         "continues and translates the book; unresolved rows stop it instead. "
@@ -746,6 +750,11 @@ def main():
     translate_tags_given = options.translate_tags is not None
     if not translate_tags_given:
         options.translate_tags = "p"
+    if options.plan_classify == "most":
+        # renamed: the mode translates the whole partition, and "all" is what
+        # that is. Old command lines keep working, quietly corrected once.
+        print("[yellow]--plan-classify most is now --plan-classify all[/yellow]")
+        options.plan_classify = "all"
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
@@ -986,11 +995,11 @@ def main():
     if options.plan_classify_model:
         # naming a classifier is naming the mode it belongs to
         plan_auto = False
-        if classify_mode in ("most", "agent"):
+        if classify_mode in ("all", "agent"):
             reason = (
                 "agent mode makes no API call"
                 if classify_mode == "agent"
-                else "most mode skips classification"
+                else "all mode skips classification"
             )
             print(
                 f"[bold red]Error:[/bold red] --plan-classify-model cannot be "
@@ -1029,7 +1038,7 @@ def main():
         e.plan_min_coverage = options.plan_min_coverage
         e.poetry_group_size = options.poetry_group_size
         # plan mode is triggered by translate_tags == "auto"; the classify
-        # entry reaches the loader as chosen. "most" in particular must stay
+        # entry reaches the loader as chosen. "all" in particular must stay
         # distinguishable from "no plan": it is the deliberate
         # translate-everything decision, and the loader has to know it was
         # made rather than infer it from the absence of one.

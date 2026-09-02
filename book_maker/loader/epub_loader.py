@@ -178,11 +178,11 @@ class EPUBBookLoader(BaseBookLoader):
         self.plan_fallback_tags = "p"
         self.plan_min_coverage = 0.5
         self.poetry_group_size = 8
-        # most | model | agent (see .classify). "most" is the deliberate
+        # all | model | agent (see .classify). "all" is the deliberate
         # translate-the-whole-partition choice and the only mode that asks
         # nothing; there is no mode where nobody decides and the code
         # translates whatever it could not rule out.
-        self.plan_classify = "most"
+        self.plan_classify = "all"
         self.plan_classify_model = None  # user-chosen classifier; failure blocks
         self._plan_css = None
         self._plan_overrides = None
@@ -601,9 +601,9 @@ class EPUBBookLoader(BaseBookLoader):
         if saved_ledger is not None:
             added = set(ledger.rows) - set(saved_ledger.rows)
             dropped = set(saved_ledger.rows) - set(ledger.rows)
-        if policy.name == "most":
-            # "most" answers every question the same way, on purpose and out
-            # loud — see classify/most.py for why that is not a default.
+        if policy.name == "all":
+            # "all" answers every question the same way, on purpose and out
+            # loud — see classify/all.py for why that is not a default.
             decide_everything(ledger)
             plan.record_dispositions(ledger)
 
@@ -697,7 +697,7 @@ class EPUBBookLoader(BaseBookLoader):
         # samples are book text: rich would eat "[Seven] warriors [they were]"
         print(escape(plan.report(ledger)))
         if plan_written or not policy.writes_plan_file:
-            # already written above with its own message, or ("most") a mode
+            # already written above with its own message, or ("all") a mode
             # that asks nothing and therefore writes no plan file
             pass
         elif not plan_existed:
@@ -891,7 +891,7 @@ class EPUBBookLoader(BaseBookLoader):
                 )
                 + f"[yellow]Nothing was decided, so nothing will be "
                 f"translated. Use --plan-classify agent to decide the rows "
-                f"yourself, or --plan-classify most to translate the whole "
+                f"yourself, or --plan-classify all to translate the whole "
                 f"partition deliberately.[/yellow]"
             )
             raise SystemExit(1)
