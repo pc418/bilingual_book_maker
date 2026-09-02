@@ -4,7 +4,10 @@
       "api_style": "openai",
       "base_url": "https://api.openai.com/v1",
       "default_models": ["gpt-5.6-luna"],
-      "env_key": "OPENAI_API_KEY"
+      "env_key": "OPENAI_API_KEY",
+      "prices": {
+        "gpt-5.6-luna": {"input": 0.20, "output": 1.20, "cached_input": 0.02}
+      }
     },
     "anthropic": {
       "api_style": "claude",

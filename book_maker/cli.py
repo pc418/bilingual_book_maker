@@ -15,6 +15,7 @@ from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
 from book_maker.provider_loader import resolve_provider
 from book_maker.translator import FORMAT_DICT, LLM_FORMATS
+from book_maker.translator.base_translator import PriceTable
 from book_maker.translator import orcarouter_translator as orcarouter
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
@@ -160,6 +161,11 @@ def apply_provider(options):
         raise SystemExit(str(err))
     options.api_format = options.api_format or route.api_format
     options.api_base = options.api_base or route.api_base
+    # Prices are the entry's to know and the meter's to apply; they ride
+    # on the options until the translator exists.
+    options.price_table = (
+        PriceTable(route.prices, route.currency) if route.prices else None
+    )
     if route.models and not options.model and not options.model_list:
         # One model belongs in --model; several rotate, first one first.
         if len(route.models) == 1:
@@ -998,6 +1004,10 @@ def main():
         parallel_workers=options.parallel_workers,
         **loader_kwargs,
     )
+    price_table = getattr(options, "price_table", None)
+    if price_table is not None and hasattr(e.translate_model, "usage"):
+        # the bar shows what was spent instead of token counts
+        e.translate_model.usage.prices = price_table
     # Parse and set extra_body only on request paths that consume it. Setting
     # an arbitrary attribute on the other translators used to print success
     # and then silently drop the fields.

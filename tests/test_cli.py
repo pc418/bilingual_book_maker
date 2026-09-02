@@ -594,6 +594,29 @@ class TestProviderPrecedence:
         assert options.api_base == "https://api.provider.example/v1"
         assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
 
+    def test_a_priced_entry_puts_a_price_table_on_the_options(self, provider_entry):
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://api.provider.example/v1",
+            default_models=["model-one"],
+            prices={"model-one": {"input": 1, "output": 2}},
+            currency="EUR",
+        )
+        options = _options(provider="p")
+        resolve_endpoint(options)
+        assert options.price_table.price_for("model-one") == {"input": 1, "output": 2}
+        assert options.price_table.currency == "EUR"
+
+    def test_an_unpriced_entry_leaves_the_meter_on_tokens(self, provider_entry):
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="openai", base_url="https://api.provider.example/v1")
+        options = _options(provider="p", model="m")
+        resolve_endpoint(options)
+        assert options.price_table is None
+
     def test_a_model_at_a_provider_keeps_the_providers_endpoint(self, provider_entry):
         from book_maker.cli import resolve_endpoint
 

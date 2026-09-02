@@ -351,7 +351,7 @@ class ChatGPTAPI(Base):
             )
         except RUNG_REFUSAL_ERRORS as e:
             raise RungRejected(e) from e
-        self._note_usage(completion)
+        self._note_usage(completion, model)
         return completion.choices[0].message.content
 
     def _json_schema_rung(self, prompt, schema, model):
@@ -506,7 +506,7 @@ class ChatGPTAPI(Base):
             self._note_temperature_rejected(model)
             completion = await create({})
 
-        self._note_usage(completion)
+        self._note_usage(completion, model)
         translated = completion.choices[0].message.content or ""
         if self.context_flag:
             current_context = current_context.append(
@@ -612,12 +612,13 @@ class ChatGPTAPI(Base):
     # bounded so a broken endpoint cannot grow the history forever.
     COMPACT_ATTEMPTS = 3
 
-    def _note_usage(self, completion):
+    def _note_usage(self, completion, model=None):
         """Add what the endpoint billed for this request to the meter.
 
         `cached_tokens` is what session mode is watched by: without
         pass-through caching the history is re-read at full price every
-        request, and only this number says so.
+        request, and only this number says so. `model` is the id the
+        request asked for — the one a provider entry prices.
         """
         usage = getattr(completion, "usage", None)
         if usage is None:
@@ -627,6 +628,7 @@ class ChatGPTAPI(Base):
             getattr(usage, "prompt_tokens", 0),
             getattr(usage, "completion_tokens", 0),
             getattr(details, "cached_tokens", 0),
+            model=model or self.model,
         )
 
     def _session_budget(self):

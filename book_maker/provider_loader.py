@@ -34,8 +34,16 @@ API_STYLE_ROUTES = {
 }
 
 REQUIRED_FIELDS = {"api_style"}
-OPTIONAL_FIELDS = {"base_url", "default_models", "env_key"}
+OPTIONAL_FIELDS = {"base_url", "default_models", "env_key", "prices", "currency"}
 ALL_VALID_FIELDS = REQUIRED_FIELDS | OPTIONAL_FIELDS
+
+# `prices`: {model id: {"input", "output", optional "cached_input"}}, each a
+# price per million tokens in `currency` (default USD). With a price for
+# every model the run uses, the progress bar shows what was spent instead
+# of token counts. `cached_input` left out means cache reads cost the
+# input price — the conservative reading, never an optimistic one.
+PRICE_REQUIRED = {"input", "output"}
+PRICE_FIELDS = PRICE_REQUIRED | {"cached_input"}
 
 
 @dataclass
@@ -46,6 +54,8 @@ class ProviderRoute:
     api_base: str
     models: list
     env_key: str
+    prices: dict = None
+    currency: str = "USD"
 
 
 def _load_json_file(path):
@@ -95,6 +105,8 @@ def validate_provider(name, provider):
             f"Supported: {sorted(API_STYLE_ROUTES)}"
         )
 
+    _validate_prices(name, provider)
+
     models = provider.get("default_models")
     if models is None:
         return
@@ -108,6 +120,44 @@ def validate_provider(name, provider):
         raise ValueError(
             f"provider {name!r}: default_models must not contain a blank name"
         )
+
+
+def _validate_prices(name, provider):
+    currency = provider.get("currency")
+    if currency is not None and (not isinstance(currency, str) or not currency.strip()):
+        raise ValueError(f"provider {name!r}: currency must be a code such as USD")
+    prices = provider.get("prices")
+    if prices is None:
+        return
+    if not isinstance(prices, dict) or not prices:
+        raise ValueError(
+            f"provider {name!r}: prices must map model ids to "
+            f'{{"input", "output", "cached_input"}} per million tokens'
+        )
+    for model, price in prices.items():
+        if not isinstance(price, dict):
+            raise ValueError(f"provider {name!r}: prices[{model!r}] must be an object")
+        missing = PRICE_REQUIRED - set(price)
+        if missing:
+            raise ValueError(
+                f"provider {name!r}: prices[{model!r}] is missing {sorted(missing)}"
+            )
+        unknown = set(price) - PRICE_FIELDS
+        if unknown:
+            raise ValueError(
+                f"provider {name!r}: prices[{model!r}] has unknown fields "
+                f"{sorted(unknown)}; known: {sorted(PRICE_FIELDS)}"
+            )
+        for field, value in price.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"provider {name!r}: prices[{model!r}].{field} must be a "
+                    f"number of {provider.get('currency') or 'USD'} per million tokens"
+                )
+            if value < 0:
+                raise ValueError(
+                    f"provider {name!r}: prices[{model!r}].{field} must not be negative"
+                )
 
 
 def get_provider(name):
@@ -134,4 +184,6 @@ def resolve_provider(name):
         api_base=provider.get("base_url") or style_base or "",
         models=list(provider.get("default_models") or []),
         env_key=provider.get("env_key") or "",
+        prices=provider.get("prices") or None,
+        currency=(provider.get("currency") or "USD").strip(),
     )

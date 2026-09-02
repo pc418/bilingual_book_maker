@@ -7,6 +7,7 @@ typed outranks it.
 """
 
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -228,3 +229,58 @@ class TestApplyingToACommand:
     def test_an_unknown_provider_stops_the_run(self, configs):
         with pytest.raises(SystemExit, match="ghost"):
             apply_provider(_options(provider="ghost"))
+
+
+# --------------------------------------------------------------------------
+# prices: what a model charges per million tokens, so the bar can show spent
+# --------------------------------------------------------------------------
+
+
+def _entry(**extra):
+    return {"api_style": "openai", "base_url": "https://x.example/v1", **extra}
+
+
+def test_prices_and_currency_ride_on_the_route(tmp_path, monkeypatch):
+    import json
+    from book_maker.provider_loader import resolve_provider
+
+    prices = {"luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02}}
+    (tmp_path / "bbm_providers.json").write_text(
+        json.dumps({"providers": {"p": _entry(prices=prices, currency="usd")}})
+    )
+    monkeypatch.chdir(tmp_path)
+    route = resolve_provider("p")
+    assert route.prices == prices and route.currency == "usd"
+
+    (tmp_path / "bbm_providers.json").write_text(
+        json.dumps({"providers": {"p": _entry()}})
+    )
+    route = resolve_provider("p")
+    assert route.prices is None and route.currency == "USD"
+
+
+@pytest.mark.parametrize(
+    "prices, complaint",
+    [
+        ({}, "must map model ids"),
+        ({"luna": {"input": 0.2}}, "missing ['output']"),
+        ({"luna": {"input": 0.2, "output": 1.2, "cache": 0.1}}, "unknown fields"),
+        ({"luna": {"input": "0.2", "output": 1.2}}, "must be a number"),
+        ({"luna": {"input": -1, "output": 1.2}}, "must not be negative"),
+        ({"luna": 0.2}, "must be an object"),
+    ],
+)
+def test_a_price_that_cannot_be_applied_is_refused(prices, complaint):
+    from book_maker.provider_loader import validate_provider
+
+    with pytest.raises(ValueError, match=re.escape(complaint)):
+        validate_provider("p", _entry(prices=prices))
+
+
+def test_a_blank_currency_is_refused():
+    from book_maker.provider_loader import validate_provider
+
+    with pytest.raises(ValueError, match="currency"):
+        validate_provider(
+            "p", _entry(prices={"m": {"input": 1, "output": 2}}, currency=" ")
+        )
