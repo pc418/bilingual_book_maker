@@ -463,7 +463,7 @@ early and one late chapter.
 | `--use_context session` not supported for *txt/srt/pdf* | those loaders never hand context to the model; epub is where this workflow lives anyway |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
-| codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. Progress is saved and the run exits 1; rerun with `--resume` after the time it names |
+| codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints (everything, unless `--accumulated_num` was raised); rerun with `--resume` after the time it names |
 | `handoff report failed (…); starting the next window` | one compact produced no report. Informational; translation continues |
 
 Route caveats worth knowing before reading a diff of two runs: an unset

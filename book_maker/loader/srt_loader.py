@@ -8,7 +8,7 @@ from pathlib import Path
 
 from book_maker.utils import prompt_config_to_kwargs
 
-from .base_loader import BaseBookLoader
+from .base_loader import BaseBookLoader, is_user_facing
 
 
 class SRTBookLoader(BaseBookLoader):
@@ -187,6 +187,11 @@ class SRTBookLoader(BaseBookLoader):
                     try:
                         temp = self.translate_model.translate(text)
                     except Exception as e:
+                        if is_user_facing(e):
+                            # already explained: wrapping it would replace
+                            # the reason with "something is wrong" and drop
+                            # the marker the loader's own handler reads
+                            raise
                         print(e)
                         raise Exception("Something is wrong when translate") from e
 
@@ -207,6 +212,8 @@ class SRTBookLoader(BaseBookLoader):
                                         self._get_block_translate(block)
                                     )
                                 except Exception as e:
+                                    if is_user_facing(e):
+                                        raise
                                     print(e)
                                     raise Exception(
                                         "Something is wrong when translate"
@@ -257,7 +264,10 @@ class SRTBookLoader(BaseBookLoader):
             print("you can resume it next time")
             self._save_progress()
             self._save_temp_book()
-            sys.exit(0)
+            # An already-explained stop is a failure, not an interrupt:
+            # exiting 0 reported a finished file for a run that gave up on a
+            # spent quota. Everything else keeps the behaviour it had.
+            sys.exit(1 if is_user_facing(e) else 0)
 
     def _save_temp_book(self):
         for i, block in enumerate(self.blocks):

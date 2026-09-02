@@ -236,7 +236,7 @@ class Codex(Base):
             raise CodexQuotaExhausted(
                 f"the Codex plan allowance is spent and does not reset until "
                 f"{when} ({seconds / 3600:.0f} h away), which is too long to "
-                f"wait out. Progress is saved; rerun with --resume after then."
+                f"wait out. Rerun with --resume once it has."
             )
         when = datetime.fromtimestamp(limits.blocking_reset).strftime("%Y-%m-%d %H:%M")
         print(

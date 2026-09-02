@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from book_maker.utils import prompt_config_to_kwargs
 
-from .base_loader import BaseBookLoader
+from .base_loader import BaseBookLoader, is_user_facing
 
 import fitz
 
@@ -357,6 +357,10 @@ class PDFBookLoader(BaseBookLoader):
                         try:
                             temp = self.translate_model.translate(batch_text)
                         except Exception as e:
+                            if is_user_facing(e):
+                                # already explained: wrapping it would drop
+                                # the marker the loader's handler reads
+                                raise
                             print(e)
                             raise Exception("Something is wrong when translate") from e
                         self.p_to_save.append(temp)
@@ -389,7 +393,10 @@ class PDFBookLoader(BaseBookLoader):
             print("you can resume it next time")
             self._save_progress()
             self._save_temp_book()
-            sys.exit(0)
+            # An already-explained stop is a failure, not an interrupt:
+            # exiting 0 reported a finished file for a run that gave up on a
+            # spent quota. Everything else keeps the behaviour it had.
+            sys.exit(1 if is_user_facing(e) else 0)
 
     def _save_temp_book(self):
         index = 0

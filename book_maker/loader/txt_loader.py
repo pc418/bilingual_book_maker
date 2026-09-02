@@ -4,7 +4,7 @@ from pathlib import Path
 
 from book_maker.utils import prompt_config_to_kwargs
 
-from .base_loader import BaseBookLoader
+from .base_loader import BaseBookLoader, is_user_facing
 
 
 class TXTBookLoader(BaseBookLoader):
@@ -85,6 +85,10 @@ class TXTBookLoader(BaseBookLoader):
             print("you can resume it next time")
             self._save_progress()
             self._save_temp_book()
+            if is_user_facing(e):
+                # its message is the whole explanation; a traceback on top
+                # only buries it
+                sys.exit(1)
             raise
 
     def _render_bilingual_result(self, translate_missing):
@@ -118,6 +122,8 @@ class TXTBookLoader(BaseBookLoader):
                 except KeyboardInterrupt:
                     raise
                 except Exception as e:
+                    if is_user_facing(e):
+                        raise
                     print(e)
                     raise Exception("Something is wrong when translate") from e
                 self.p_to_save.append(translated_text)

@@ -738,3 +738,28 @@ class TestWeeklyLimit:
         t._sleep = slept.append
         assert t.translate("one") == "一"
         assert slept and slept[0] > 0
+
+
+class TestQuotaMessageDoesNotOverpromise:
+    def test_it_does_not_claim_progress_was_saved(self):
+        # an epub run with --accumulated_num > 1 skips checkpointing, so the
+        # claim was not the translator's to make; the loader prints what it
+        # actually saved
+        from book_maker.codex_client import CodexQuotaExhausted
+
+        now = 1788055986
+        t = _codex(
+            ["一"],
+            limits=RateLimits(
+                used_percent=100,
+                resets_at=now + 5 * 24 * 3600,
+                reached_type="rate_limit_reached",
+            ),
+        )
+        t._now = lambda: now
+        with pytest.raises(CodexQuotaExhausted) as stop:
+            t.translate("one")
+        message = str(stop.value)
+        assert "Progress is saved" not in message
+        assert "--resume" in message
+        assert "does not reset until" in message
