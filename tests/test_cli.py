@@ -541,3 +541,121 @@ def test_an_orcarouter_model_id_is_kept_as_named(tmp_path):
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "offline model list: ['orcarouter/openai/gpt-5-mini']" in proc.stdout
+
+
+def _options(**kwargs):
+    """The flags `resolve_endpoint` reads, defaulting to "not passed"."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        model=kwargs.pop("model", ""),
+        model_list=kwargs.pop("model_list", ""),
+        api_base=kwargs.pop("api_base", ""),
+        api_format=kwargs.pop("api_format", ""),
+        provider=kwargs.pop("provider", ""),
+        **kwargs,
+    )
+
+
+@pytest.fixture
+def provider_entry(tmp_path, monkeypatch):
+    """Write a `p` provider entry and run from a directory that sees it."""
+
+    def write(**entry):
+        (tmp_path / "bbm_providers.json").write_text(
+            json.dumps({"providers": {"p": entry}}), encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+
+    return write
+
+
+class TestProviderPrecedence:
+    """`--provider` is shorthand for flags, so it fills gaps and settles nothing.
+
+    A model name that selects a route (`codex`, `orcarouter`) says where the
+    request goes; a provider entry only says where it would go otherwise.
+    """
+
+    def test_a_provider_alone_supplies_format_base_and_models(self, provider_entry):
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://api.provider.example/v1",
+            default_models=["model-one", "model-two"],
+            env_key="BBM_TEST_PROVIDER_KEY",
+        )
+        options = _options(provider="p")
+        models, api_format, env_keys = resolve_endpoint(options)
+
+        assert models == ["model-one", "model-two"]
+        assert api_format == "openai"
+        assert options.api_base == "https://api.provider.example/v1"
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
+
+    def test_a_model_at_a_provider_keeps_the_providers_endpoint(self, provider_entry):
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://api.provider.example/v1",
+            default_models=["model-one"],
+        )
+        options = _options(provider="p", model="my-model")
+        models, api_format, _ = resolve_endpoint(options)
+
+        assert models == ["my-model"]
+        assert api_format == "openai"
+        assert options.api_base == "https://api.provider.example/v1"
+
+    def test_model_codex_selects_the_sidecar_at_a_provider(self, provider_entry):
+        # `codex` is not a model id at the provider's endpoint: it names the
+        # sidecar, so the entry's api_style must not route it to the gateway
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://api.provider.example/v1",
+            default_models=["model-one"],
+        )
+        options = _options(provider="p", model="codex")
+        models, api_format, _ = resolve_endpoint(options)
+
+        assert api_format == "codex"
+        assert models == ["codex"]
+
+    def test_model_orcarouter_keeps_its_own_gateway_at_a_provider(self, provider_entry):
+        # the OrcaRouter key would otherwise be sent to the provider's base
+        from book_maker.cli import resolve_endpoint
+        from book_maker.translator import orcarouter_translator as orcarouter
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://api.provider.example/v1",
+            env_key="BBM_TEST_PROVIDER_KEY",
+        )
+        options = _options(provider="p", model="orcarouter")
+        models, api_format, env_keys = resolve_endpoint(options)
+
+        assert models == ["orcarouter/auto"]
+        assert options.api_base == orcarouter.API_BASE
+        assert api_format == "openai"
+        assert env_keys[0] == orcarouter.ENV_KEY
+
+    def test_an_explicit_api_base_still_outranks_the_orcarouter_shortcut(self):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(model="orcarouter/openai/gpt-5", api_base="https://mine/v1")
+        models, _, _ = resolve_endpoint(options)
+
+        assert models == ["orcarouter/openai/gpt-5"]
+        assert options.api_base == "https://mine/v1"
+
+    def test_an_explicit_api_format_still_outranks_a_route_selecting_model(self):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(model="codex", api_format="openai")
+        _, api_format, _ = resolve_endpoint(options)
+
+        assert api_format == "openai"

@@ -169,6 +169,70 @@ def apply_provider(options):
     return (route.env_key,) if route.env_key else ()
 
 
+def named_models(options):
+    """The models the command names, in the order it named them."""
+    return [
+        name.strip()
+        for name in (
+            options.model_list.split(",")
+            if options.model_list
+            else [options.model or ""]
+        )
+        if name.strip()
+    ]
+
+
+def resolve_endpoint(options):
+    """`(model names, api format, key variables)` for this command.
+
+    `options.api_base` is left holding the address the run will use.
+
+    Order matters: `--provider` is shorthand for flags the command left out,
+    so it is applied only after everything the command itself said — a route
+    the model name selected included.
+    """
+    # A model may be named once, in either flag. Accepting both would leave
+    # two answers to "which model is this run using".
+    if options.model and options.model_list:
+        raise SystemExit(
+            "Name the model once: --model for a single model, --model_list "
+            "only to rotate across several."
+        )
+    model_names = named_models(options)
+
+    # A model name that selects a route — `codex`, `orcarouter`,
+    # `orcarouter/<id>` — is resolved before `--provider` fills anything in.
+    # Such a name says where the request goes; a provider entry only says
+    # where it would have gone otherwise, so the endpoint it stands for must
+    # not be allowed to capture a route the command named. OrcaRouter is one
+    # gateway at one address, so its model id is enough to address it.
+    orcarouter_env_keys = ()
+    if model_names:
+        route = orcarouter.resolve(model_names[0], options.api_base)
+        if route:
+            model_names[0], options.api_base = route
+            orcarouter_env_keys = (orcarouter.ENV_KEY,)
+        if route or model_names[0].lower() in CODEX_MODEL_ALIASES:
+            # settled from the route itself, so the provider's api_style
+            # cannot answer a question the model name already answered
+            options.api_format = options.api_format or infer_api_format(
+                options.api_base, model_names[0]
+            )
+
+    provider_env_keys = apply_provider(options)
+    if not model_names:
+        # the entry names the models when the command named none
+        model_names = named_models(options)
+
+    api_format = options.api_format or infer_api_format(
+        options.api_base, model_names[0] if model_names else ""
+    )
+    options.api_base = normalize_api_base(options.api_base, api_format)
+    if not model_names and api_format in DEFAULT_MODELS:
+        model_names = [DEFAULT_MODELS[api_format]]
+    return model_names, api_format, orcarouter_env_keys + provider_env_keys
+
+
 def get_book_type(book_name):
     return Path(book_name).suffix.lower().lstrip(".")
 
@@ -829,48 +893,14 @@ def main():
         os.environ["http_proxy"] = PROXY
         os.environ["https_proxy"] = PROXY
 
-    provider_env_keys = apply_provider(options)
-
-    # A model may be named once, in either flag. Accepting both would leave
-    # two answers to "which model is this run using".
-    if options.model and options.model_list:
-        raise SystemExit(
-            "Name the model once: --model for a single model, --model_list "
-            "only to rotate across several."
-        )
-    model_names = [
-        name.strip()
-        for name in (
-            options.model_list.split(",")
-            if options.model_list
-            else [options.model or ""]
-        )
-        if name.strip()
-    ]
-
-    # OrcaRouter is one gateway at one address, so its model id is enough to
-    # say where the request goes. Consulted before the format is inferred,
-    # because that inference reads the endpoint this fills in.
-    orcarouter_env_keys = ()
-    if model_names:
-        route = orcarouter.resolve(model_names[0], options.api_base)
-        if route:
-            model_names[0], options.api_base = route
-            orcarouter_env_keys = (orcarouter.ENV_KEY,)
-
-    api_format = options.api_format or infer_api_format(
-        options.api_base, model_names[0] if model_names else ""
-    )
-    options.api_base = normalize_api_base(options.api_base, api_format)
-    if not model_names and api_format in DEFAULT_MODELS:
-        model_names = [DEFAULT_MODELS[api_format]]
+    model_names, api_format, endpoint_env_keys = resolve_endpoint(options)
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
     API_KEY = resolve_api_key(
         api_format,
         options.key,
         options.api_base,
-        orcarouter_env_keys + provider_env_keys + legacy.env_keys,
+        endpoint_env_keys + legacy.env_keys,
     )
 
     glossary = Glossary()
