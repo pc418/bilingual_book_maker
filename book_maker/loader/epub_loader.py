@@ -533,8 +533,9 @@ class EPUBBookLoader(BaseBookLoader):
             )
         if self.accumulated_num > 1:
             print(
-                "note: plan mode batches poetry windows itself; "
-                "--accumulated_num is ignored"
+                "note: plan mode batches short units itself; "
+                "--accumulated_num is ignored here — pass --plan-classify none "
+                "for tag-mode batching"
             )
         # The plan would refuse this cache anyway (see _prepare_translation_plan),
         # but only after the classifier has been paid for and a plan JSON

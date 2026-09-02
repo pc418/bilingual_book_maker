@@ -366,7 +366,12 @@ def classify_plan(ledger, translator, model=None):
 
     pages = list(_pages(candidates))
     if len(pages) > 1:
-        print(f"classifying {len(candidates)} signature(s) in {len(pages)} requests")
+        # flushed: with stdout redirected, a stalled request would otherwise
+        # leave the log ending before this line, hiding what was running
+        print(
+            f"classifying {len(candidates)} signature(s) in {len(pages)} requests",
+            flush=True,
+        )
 
     budget = _Budget(len(candidates))
     verdicts = {}
