@@ -1138,21 +1138,35 @@ def test_an_auto_sized_compact_budget_is_refused_where_nothing_can_size_it(tmp_p
     assert "Traceback" not in proc.stderr
 
 
-def test_the_codex_route_is_refused_an_auto_sized_budget_too(tmp_path):
-    # codex keeps a session history but cannot be asked for a window, and the
-    # refusal has to land before the sidecar is started for nothing
-    src = tmp_path / BOOK.name
-    src.write_bytes(BOOK.read_bytes())
-    proc = _cli(
-        "--book_name",
-        str(src),
-        "--api_format",
-        "codex",
-        "--context-compact-at",
-        "0",
-    )
-    assert proc.returncode == 1
-    assert "--context-compact-at 0" in " ".join(proc.stdout.split())
+def test_every_model_bearing_route_can_be_asked_for_a_window():
+    # codex used to be refused here: it keeps a session history but had no way
+    # to report a window. The sidecar reports one on its token-usage push and
+    # the anthropic model record carries `max_input_tokens`, so all three
+    # model-bearing routes now answer `0`. The classes are imported directly:
+    # the offline stand-in swaps two of them into FORMAT_DICT.
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+    from book_maker.translator.claude_translator import Claude
+    from book_maker.translator.codex_translator import Codex
+
+    for cls in (ChatGPTAPI, Claude, Codex):
+        assert cls.SUPPORTS_AUTO_COMPACT_BUDGET is True, cls.__name__
+
+
+def test_the_engines_with_no_model_to_ask_about_still_refuse_it():
+    # the machine-translation engines have no model record and no session
+    # history; `0` there meant no budget at all, silently, which is a compact
+    # per paragraph
+    from book_maker.translator.caiyun_translator import Caiyun
+    from book_maker.translator.custom_api_translator import CustomAPI
+    from book_maker.translator.deepl_translator import DeepL
+    from book_maker.translator.deepl_free_translator import DeepLFree
+    from book_maker.translator.google_translator import Google
+    from book_maker.translator.tencent_transmart_translator import TencentTranSmart
+
+    for cls in (Caiyun, CustomAPI, DeepL, DeepLFree, Google, TencentTranSmart):
+        assert (
+            getattr(cls, "SUPPORTS_AUTO_COMPACT_BUDGET", False) is False
+        ), cls.__name__
 
 
 def test_a_named_compact_budget_is_never_refused(tmp_path):

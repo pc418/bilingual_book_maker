@@ -504,7 +504,9 @@ Notes:
 
   At `8000` a run costs between roughly 0.5x and 1.1x what window mode costs, while carrying several times the context — the exact ratio depends on how cheaply your endpoint prices cached input. `--context-compact-at 2500` is the cheapest setting (about 0.4-0.5x) if you would rather have that than the longer context.
 
-  `--context-compact-at 0` sizes the budget from the model's own context window instead: 90% of it, and of the smallest window when `--model_list` puts several models in play, asked once before the first paid request. An endpoint that cannot report a window ends the run rather than falling back to a number, since that number would be a guess about the one model nobody could size. Only OpenAI-shaped endpoints can be asked, so other formats need a number.
+  `--context-compact-at 0` sizes the budget from the model's own context window instead: 90% of it, and of the smallest window when `--model_list` puts several models in play. It works on the three routes that have a model to ask about — openai, anthropic and codex — and the machine-translation engines need a number.
+
+  What silence costs differs by route, because it means different things. On the openai route the budget is settled before the first paid request and an endpoint that reports no window ends the run: `/v1/models` is a static record, so a miss will not become a hit later, and a fallback would be a guess about the one model nobody could size. On the anthropic route (a gateway may serve the shape without carrying `max_input_tokens`) and on the codex route (the sidecar only learns a window once a turn has spent tokens) a miss prints one line and the default budget is used, and codex keeps asking until the sidecar answers.
 
 - `--no-context-compact`:
 

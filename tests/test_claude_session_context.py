@@ -38,8 +38,13 @@ def _message(text, cache_read=0):
     )
 
 
-def _translator(replies=None, cache_read=0, **kwargs):
-    """A Claude wired to a scripted client. No network, real __init__."""
+def _translator(replies=None, cache_read=0, window=None, **kwargs):
+    """A Claude wired to a scripted client. No network, real __init__.
+
+    `window` scripts what `/v1/models` reports for the model, which only
+    `--context-compact-at 0` ever asks for; the default makes the lookup fail
+    the test loudly if anything else reaches for it.
+    """
     kwargs.setdefault("context_flag", True)
     kwargs.setdefault("context_mode", "session")
     with patch("book_maker.translator.claude_translator.Anthropic"):
@@ -56,11 +61,14 @@ def _translator(replies=None, cache_read=0, **kwargs):
             reply = "译文"
         return _message(reply, cache_read)
 
+    if window is None:
+        retrieve = Mock(side_effect=AssertionError("the model was not asked about"))
+    else:
+        retrieve = Mock(return_value=SimpleNamespace(max_input_tokens=window))
+
     t.client = SimpleNamespace(
         messages=SimpleNamespace(create=Mock(side_effect=create)),
-        models=SimpleNamespace(
-            retrieve=Mock(side_effect=AssertionError("the model was not asked about"))
-        ),
+        models=SimpleNamespace(retrieve=retrieve),
     )
     t.sent = sent
     return t
@@ -452,6 +460,58 @@ class TestOversizedHistoryDoesNotWedge:
         t.translate(self.UNIT)
         t.translate(self.UNIT)
         assert t.session.messages(), "a rate limit cost the accumulated context"
+
+
+class TestAutoCompactBudget:
+    """`--context-compact-at 0` sizes the window from the model's own."""
+
+    def test_it_takes_nine_tenths_of_the_reported_window(self, capsys):
+        t = _translator(context_compact_at=0, window=200_000)
+        assert t._session_budget() == 180_000
+        assert "180000" in capsys.readouterr().out
+
+    def test_the_model_is_asked_once(self):
+        t = _translator(context_compact_at=0, window=200_000)
+        for _ in range(3):
+            t._session_budget()
+        assert t.client.models.retrieve.call_count == 1
+
+    def test_a_window_nobody_reports_falls_back_loudly(self, capsys):
+        t = _translator(context_compact_at=0, window=None)
+        t.client.models.retrieve = Mock(return_value=SimpleNamespace())
+        assert t._session_budget() == 8000
+        assert "does not report" in capsys.readouterr().out
+
+    def test_an_endpoint_that_refuses_the_lookup_is_not_fatal(self, capsys):
+        t = _translator(context_compact_at=0, window=None)
+        t.client.models.retrieve = Mock(side_effect=RuntimeError("404"))
+        assert t._session_budget() == 8000
+        assert "404" in capsys.readouterr().out
+
+    def test_a_bracketed_error_does_not_crash_the_notice(self, capsys):
+        """rich would read `[Errno 2]` as markup and raise out of a fallback
+        whose whole point is that it does not end the run."""
+        t = _translator(context_compact_at=0, window=None)
+        t.client.models.retrieve = Mock(side_effect=OSError("[Errno 2] gone"))
+        assert t._session_budget() == 8000
+        assert "[Errno 2]" in capsys.readouterr().out
+
+    def test_an_absurd_window_is_refused(self):
+        t = _translator(context_compact_at=0, window=99)
+        assert t._session_budget() == 8000
+
+    def test_a_boolean_is_not_a_window(self):
+        """`True` is an int in Python, and 0.9 x True is a budget of 0 — no
+        rollover at all."""
+        t = _translator(context_compact_at=0, window=True)
+        assert t._session_budget() == 8000
+
+    def test_an_explicit_budget_asks_nothing(self):
+        t = _translator(context_compact_at=2500, window=None)
+        assert t._session_budget() == 2500
+
+    def test_the_route_declares_it_can_be_asked(self):
+        assert Claude.SUPPORTS_AUTO_COMPACT_BUDGET is True
 
 
 class TestCompactIsVisible:
