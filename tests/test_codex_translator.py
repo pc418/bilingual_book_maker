@@ -654,3 +654,42 @@ class TestAutoCompactBudget:
         t.translate("x" * 200)
         t.server.thread_windows = {t._thread_id: 10_000}
         assert t._budget() == 9_000
+
+
+class TestQuiet:
+    """--quiet is what every paid run of the plan workflow uses; it must
+    reach this format's own echoes, not just the loader's."""
+
+    def test_the_per_unit_quota_line_is_silenced(self, capsys):
+        t = _codex(["一", "二"])
+        t.quiet = True
+        t.translate("one")
+        t.server.set_limits(RateLimits(used_percent=42, resets_at=1788055986))
+        t.translate("two")
+        assert "of the window remaining" not in capsys.readouterr().out
+
+    def test_the_per_unit_quota_line_still_prints_when_not_quiet(self, capsys):
+        t = _codex(["一", "二"])
+        t.translate("one")
+        t.server.set_limits(RateLimits(used_percent=42, resets_at=1788055986))
+        t.translate("two")
+        assert "of the window remaining" in capsys.readouterr().out
+
+    def test_preflight_says_nothing_about_a_healthy_window(self, capsys):
+        t = _codex()
+        t.quiet = True
+        t.preflight()
+        assert capsys.readouterr().out == ""
+
+    def test_preflight_still_warns_about_a_spent_one(self, capsys):
+        limits = RateLimits(
+            used_percent=95,
+            window_minutes=300,
+            resets_at=1788055986,
+            plan_type="plus",
+            reached_type=None,
+        )
+        t = _codex(limits=limits)
+        t.quiet = True
+        t.preflight()
+        assert "5% of your Codex window remains" in capsys.readouterr().out

@@ -167,6 +167,9 @@ class Codex(Base):
             return None
         plan = f" ({limits.plan_type} plan)" if limits.plan_type else ""
         self._last_remaining = limits.remaining_percent
+        if self.quiet and limits.used_percent < QUOTA_WARN_PERCENT:
+            # --quiet keeps warnings and errors; a healthy window is neither.
+            return limits
         if limits.used_percent >= QUOTA_WARN_PERCENT:
             print(
                 f"[bold yellow]Warning:[/bold yellow] only "
@@ -191,6 +194,10 @@ class Codex(Base):
 
     def _report_quota(self):
         """Print the remaining share whenever it moves."""
+        if self.quiet:
+            # It moves on nearly every unit, so this was a line per
+            # paragraph in every log a --quiet run wrote.
+            return
         limits = self.server.latest_rate_limits()
         if limits is None:
             return
