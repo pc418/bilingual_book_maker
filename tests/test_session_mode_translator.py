@@ -19,6 +19,7 @@ from openai import LengthFinishReasonError
 from book_maker.session_context import DEFAULT_COMPACT_BUDGET, handoff_prompt
 from book_maker.translator.chatgptapi_translator import (
     ChatGPTAPI,
+    ContextWindowUnknown,
     batch_field_name,
     single_field_name,
 )
@@ -564,7 +565,8 @@ class TestAutoCompactBudget:
     """`--context-compact-at 0`: size the budget from the model's own window."""
 
     def _with_model(self, model_object, **kw):
-        t = _translator(["译文"] * 40, context_compact_at=0, **kw)
+        kw.setdefault("context_compact_at", 0)
+        t = _translator(["译文"] * 40, **kw)
         t.openai_client.models = SimpleNamespace(
             retrieve=Mock(
                 side_effect=(
@@ -581,18 +583,44 @@ class TestAutoCompactBudget:
         assert t._session_budget() == 9_000
         assert "10000" in capsys.readouterr().out
 
-    def test_it_says_so_and_falls_back_when_nothing_is_reported(self, capsys):
+    def test_an_endpoint_reporting_no_window_stops_the_run(self):
+        # `0` asked for the endpoint's number. Falling back to the default
+        # would be a guess about the one model nobody could size, which is
+        # what passing `0` was meant to avoid.
         t = self._with_model(SimpleNamespace(id="test-model"))
-        assert t._session_budget() == DEFAULT_COMPACT_BUDGET
-        out = capsys.readouterr().out
-        assert "context window" in out and "8000" in out
+        with pytest.raises(ContextWindowUnknown) as stop:
+            t._session_budget()
+        message = str(stop.value)
+        assert "--context-compact-at 0" in message
+        assert "test-model" in message
+        assert "8000" in message, "it must say what to pass instead"
 
-    def test_an_endpoint_that_refuses_the_lookup_is_not_fatal(self, capsys):
+    def test_a_lookup_that_never_answers_stops_the_run(self):
         def boom(*a, **k):
-            raise RuntimeError("404 no such endpoint")
+            raise RuntimeError("connection reset")
 
         t = self._with_model(boom)
-        assert t._session_budget() == DEFAULT_COMPACT_BUDGET
+        with pytest.raises(ContextWindowUnknown) as stop:
+            t._session_budget()
+        assert "could not be asked" in str(stop.value)
+
+    def test_a_number_needs_no_lookup_at_all(self):
+        t = self._with_model(SimpleNamespace(id="test-model"), context_compact_at=600)
+        t.preflight()
+        assert t._session_budget() == 600
+        assert t.openai_client.models.retrieve.call_count == 0
+
+    def test_preflight_asks_before_anything_is_translated(self):
+        t = self._with_model(SimpleNamespace(id="test-model", context_length=10_000))
+        t.preflight()
+        assert t.openai_client.models.retrieve.call_count == 1
+        assert not t.sent, "preflight must not send a translation request"
+
+    def test_preflight_is_where_an_unanswerable_endpoint_is_caught(self):
+        t = self._with_model(SimpleNamespace(id="test-model"))
+        with pytest.raises(ContextWindowUnknown):
+            t.preflight()
+        assert not t.sent, "nothing may be paid for before the refusal"
 
     def test_the_window_is_looked_up_once(self):
         t = self._with_model(SimpleNamespace(id="test-model", context_length=10_000))
@@ -641,7 +669,7 @@ class TestAutoBudgetAcrossModels:
         t.model = "big"
         assert t._session_budget() == 9_000, "the smaller model was not measured"
 
-    def test_an_unmeasurable_model_holds_the_budget_at_the_default(self):
+    def test_one_unmeasurable_model_stops_the_whole_run(self):
         from openai import NotFoundError
 
         missing = NotFoundError(
@@ -655,9 +683,11 @@ class TestAutoBudgetAcrossModels:
         )
         t._model_names = ["big", "mystery"]
         t.model = "big"
-        # The unknown model may be smaller than anything measured, so the
-        # shared history must not grow past what the default already assumed.
-        assert t._session_budget() == DEFAULT_COMPACT_BUDGET
+        # The unknown model may be the smallest of them, and the history is
+        # shared, so there is no budget here that is not a guess.
+        with pytest.raises(ContextWindowUnknown) as stop:
+            t._session_budget()
+        assert "mystery" in str(stop.value)
 
     def test_each_model_is_looked_up_once(self):
         t = self._with_windows(
@@ -668,18 +698,27 @@ class TestAutoBudgetAcrossModels:
             t._session_budget()
         assert t.openai_client.models.retrieve.call_count == 1
 
-    def test_a_transient_failure_does_not_settle_the_budget_forever(self):
-        answers = {"a": RuntimeError("connection reset")}
-        t = self._with_windows(answers)
-        t.model = "a"
-        assert t._session_budget() == DEFAULT_COMPACT_BUDGET
-        answers["a"] = SimpleNamespace(id="a", context_length=10_000)
-        assert t._session_budget() == 9_000, "the retry never happened"
+    def test_a_transient_failure_is_retried_before_it_becomes_fatal(self):
+        answers = [
+            RuntimeError("connection reset"),
+            SimpleNamespace(id="a", context_length=10_000),
+        ]
 
-    def test_it_stops_retrying_a_hopeless_endpoint(self):
+        def retrieve(model):
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        t = self._with_windows({})
+        t.openai_client.models.retrieve = Mock(side_effect=retrieve)
+        t.model = "a"
+        assert t._session_budget() == 9_000, "one blip must not end the run"
+
+    def test_it_stops_asking_a_hopeless_endpoint_and_then_refuses(self):
         t = self._with_windows({"a": RuntimeError("connection reset")})
         t.model = "a"
-        for _ in range(10):
+        with pytest.raises(ContextWindowUnknown):
             t._session_budget()
         assert t.openai_client.models.retrieve.call_count <= 3
 
@@ -691,8 +730,9 @@ class TestAutoBudgetAcrossModels:
         )
         t = self._with_windows({"a": error})
         t.model = "a"
-        for _ in range(3):
-            assert t._session_budget() == DEFAULT_COMPACT_BUDGET
+        with pytest.raises(ContextWindowUnknown) as stop:
+            t._session_budget()
+        assert "no record of" in str(stop.value)
         assert t.openai_client.models.retrieve.call_count == 1
 
 
@@ -706,27 +746,21 @@ class TestReportedWindowIsChecked:
         )
         return t._session_budget()
 
+    def _refused(self, model_object):
+        """A record with nothing usable in it is a record with no window."""
+        with pytest.raises(ContextWindowUnknown) as stop:
+            self._budget_for(model_object)
+        assert "no usable one" in str(stop.value)
+
     def test_a_boolean_is_not_a_window(self):
         # `True` is an int in Python, and 0.9 * True is 0 — no rollover at all.
-        assert (
-            self._budget_for(SimpleNamespace(id="m", context_length=True))
-            == DEFAULT_COMPACT_BUDGET
-        )
+        self._refused(SimpleNamespace(id="m", context_length=True))
 
     def test_a_window_too_small_to_hold_a_paragraph_is_refused(self):
-        assert (
-            self._budget_for(SimpleNamespace(id="m", context_length=100))
-            == DEFAULT_COMPACT_BUDGET
-        )
+        self._refused(SimpleNamespace(id="m", context_length=100))
 
     def test_an_absurd_window_is_refused(self):
-        assert (
-            self._budget_for(SimpleNamespace(id="m", context_length=10**30))
-            == DEFAULT_COMPACT_BUDGET
-        )
+        self._refused(SimpleNamespace(id="m", context_length=10**30))
 
     def test_a_string_is_refused(self):
-        assert (
-            self._budget_for(SimpleNamespace(id="m", context_length="128000"))
-            == DEFAULT_COMPACT_BUDGET
-        )
+        self._refused(SimpleNamespace(id="m", context_length="128000"))

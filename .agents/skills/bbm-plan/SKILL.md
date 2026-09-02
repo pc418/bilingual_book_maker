@@ -372,7 +372,7 @@ so you can honour a request without guessing at legal values.
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | `--use_context` | bare/`window`, `session` | **`session`** on openai and anthropic; **nothing** on codex, where the thread is the context | the run warns that the endpoint never reported a cached prompt token — session mode costs more there, so drop to bare `--use_context`, which re-sends the last few pairs instead. On a `gemini` or `qwen` provider entry `session` is refused outright: those routes never implemented it |
-| `--context-compact-at` | an estimated-token budget (≥500), or `0` | **unset → 8000** | the user asks for a longer window (raise it) or the cheapest run (the recipe below). `0` sizes the budget from the model's own context window and is refused on a route that cannot report one. **Needs `--use_context session`** on an API route — without it the flag is accepted and does nothing. On `codex` it applies unconditionally |
+| `--context-compact-at` | an estimated-token budget (≥500), or `0` | **unset → 8000** | the user asks for a longer window (raise it) or the cheapest run (the recipe below). `0` sizes the budget from the model's own context window: the run asks the endpoint for every model in play before translating anything, and stops there if it cannot answer for one of them. A route with no session history refuses `0` outright. **Needs `--use_context session`** on an API route — without it the flag is accepted and does nothing. On `codex` it applies unconditionally |
 | `--no-context-compact` | on/off | **off** | the user asks for the cheapest run: `--use_context session --context-compact-at 3000 --no-context-compact` pays for no handoff turn at all, because the window rolls over empty at ~3000 tokens. The cost is the continuity this workflow exists for — every rollover forgets the book so far |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
 
@@ -457,6 +457,7 @@ early and one late chapter.
 | `invalid action` on plan load | typo in a hand-edited `action` — fix the JSON, rerun |
 | coverage-gate error / empty plan | the plan skips nearly everything — re-check the plan |
 | `--only_filelist / --exclude_filelist names N document(s) this book does not have` | a typo, caught before anything is paid for; the message lists the near matches |
+| `--context-compact-at 0 sizes the budget … this endpoint reports no usable one` | that endpoint does not publish a context window for that model. Pass a number (8000 default, 2500 cheapest); nothing was paid |
 | `--use_context session is not implemented for the … route` | that route keeps no history; use bare `--use_context`, or a route that does (§1d) |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
 | `--use_context session` not supported for *txt/srt/pdf* | those loaders never hand context to the model; epub is where this workflow lives anyway |

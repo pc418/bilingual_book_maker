@@ -78,12 +78,30 @@ MAX_USABLE_CONTEXT_WINDOW = 10_000_000
 # A lookup that keeps erroring is an endpoint that will not answer this run.
 CONTEXT_WINDOW_LOOKUP_ATTEMPTS = 3
 
+# What to do instead, appended to every refusal below.
+AUTO_BUDGET_ADVICE = (
+    "Pass a number instead: 8000 is the default, 2500 the cheapest setting "
+    "on most endpoints."
+)
+
 CHATGPT_CONFIG = config["translator"]["chatgptapi"]
 
 PROMPT_ENV_MAP = {
     "user": "BBM_CHATGPTAPI_USER_MSG_TEMPLATE",
     "system": "BBM_CHATGPTAPI_SYS_MSG",
 }
+
+
+class ContextWindowUnknown(Exception):
+    """`--context-compact-at 0` was asked for and the endpoint cannot answer.
+
+    There is no honest fallback: a default budget is a guess about the very
+    model nobody could size, and the flag exists to stop the user guessing.
+    The message is the whole explanation, so callers print it rather than a
+    traceback.
+    """
+
+    user_facing = True
 
 
 class StructuredOutputUnsupported(Exception):
@@ -397,8 +415,6 @@ class ChatGPTAPI(Base):
         self.context_compact_at = context_compact_at
         self.no_context_compact = no_context_compact
         self._model_windows = {}
-        self._window_misses = set()
-        self._window_lookup_failures = 0
         self.style_note = style_note
         self.handoff_path = Path(handoff_path) if handoff_path else None
         self._session_cache_warned = False
@@ -974,6 +990,17 @@ class ChatGPTAPI(Base):
             "full price every request. Consider --use_context (window mode)."
         )
 
+    def preflight(self):
+        """Settle what must be known before the first paid request.
+
+        Only `--context-compact-at 0` needs it, and it needs it here: the
+        budget is the endpoint's answer about every model in play, so asking
+        at the first compaction would learn a book too late — and would
+        learn it after the money was spent.
+        """
+        if self.context_compact_at == 0:
+            self._model_sized_budget()
+
     def _session_budget(self):
         """How large a window may grow before it rolls over.
 
@@ -991,62 +1018,58 @@ class ChatGPTAPI(Base):
 
         `--model_list` rotates a model per request and the history is shared
         across all of them, so the budget has to be one the smallest window
-        survives. Every configured model is measured here, before the history
-        is big enough for the smallest to choke on — learning a model's window
-        from the request that failed on it would be learning it too late.
+        survives. Every configured model is measured, and a model that cannot
+        be measured ends the run rather than borrowing the default: the
+        default would be a guess about the one model nobody could size, and
+        guessing is what `0` was passed to avoid.
         """
         models = list(self._model_names) or [self.model]
-        for model in models:
-            self._learn_context_window(model)
-        known = [self._model_windows[m] for m in models if m in self._model_windows]
-        default = compact_budget_for(self.model)
-        if not known:
-            return default
-        budget = min(known) * 9 // 10
-        if len(known) < len(models):
-            # A model nobody could measure may be the smallest of them. Sizing
-            # the shared history past what the default already assumed safe
-            # would be betting on the one number we do not have.
-            return min(budget, default)
-        return budget
+        return min(self._learn_context_window(m) for m in models) * 9 // 10
 
     def _learn_context_window(self, model):
-        """Ask the endpoint about `model` once, and remember what it said."""
-        if model in self._model_windows or model in self._window_misses:
-            return
-        if self._window_lookup_failures >= CONTEXT_WINDOW_LOOKUP_ATTEMPTS:
-            return
-        try:
-            reported = self._detect_context_window(model)
-        except NotFoundError:
-            # A definitive answer: this endpoint has no such record. Asking
-            # again would get the same 404 for every paragraph of the book.
-            reported = None
-        except Exception as e:
-            # Not an answer at all — a timeout, a refreshed token, a 5xx. The
-            # budget falls back for now and the next unit asks again, since a
-            # transient blip should not silently cost the whole run its
-            # auto-sizing. Bounded, so a dead route is not asked forever.
-            self._window_lookup_failures += 1
-            if self._window_lookup_failures >= CONTEXT_WINDOW_LOOKUP_ATTEMPTS:
-                print(
-                    f"[yellow]ℹ could not ask this endpoint for {model}'s "
-                    f"context window ({e}); compacting at the default "
-                    f"{compact_budget_for(model)} instead[/yellow]"
+        """The window this endpoint reports for `model`. Asked once.
+
+        Raises `ContextWindowUnknown` on any answer that is not a usable
+        number: a 404 or a record without the field is definitive, and a
+        transport failure is retried up to `CONTEXT_WINDOW_LOOKUP_ATTEMPTS`
+        before it becomes one too.
+        """
+        if model in self._model_windows:
+            return self._model_windows[model]
+        last_error = None
+        for _ in range(CONTEXT_WINDOW_LOOKUP_ATTEMPTS):
+            try:
+                reported = self._detect_context_window(model)
+            except NotFoundError as e:
+                # Definitive: this endpoint has no such record, and asking
+                # again would collect the same 404.
+                raise ContextWindowUnknown(
+                    f"--context-compact-at 0 sizes the budget from the "
+                    f"model's own context window, and this endpoint has no "
+                    f"record of {model!r} to read one from. "
+                    f"{AUTO_BUDGET_ADVICE}"
+                ) from e
+            except Exception as e:
+                # Not an answer at all — a timeout, a refreshed token, a 5xx.
+                last_error = e
+                continue
+            if reported is None:
+                raise ContextWindowUnknown(
+                    f"--context-compact-at 0 sizes the budget from the "
+                    f"model's own context window, and this endpoint reports "
+                    f"no usable one for {model!r}. {AUTO_BUDGET_ADVICE}"
                 )
-            return
-        if reported:
             self._model_windows[model] = reported
             print(
                 f"[cyan]ℹ {model} reports a {reported}-token context window; "
                 f"compacting at {reported * 9 // 10}[/cyan]"
             )
-            return
-        self._window_misses.add(model)
-        print(
-            f"[yellow]ℹ this endpoint does not report a context window for "
-            f"{model}; compacting at the default {compact_budget_for(model)} "
-            f"instead[/yellow]"
+            return reported
+        raise ContextWindowUnknown(
+            f"--context-compact-at 0 sizes the budget from the model's own "
+            f"context window, and this endpoint could not be asked for "
+            f"{model!r} in {CONTEXT_WINDOW_LOOKUP_ATTEMPTS} attempts "
+            f"({last_error}). {AUTO_BUDGET_ADVICE}"
         )
 
     def _detect_context_window(self, model):

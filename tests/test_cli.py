@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -596,6 +596,31 @@ def test_an_auto_sized_compact_budget_is_refused_where_nothing_can_size_it(tmp_p
     assert proc.returncode == 1
     flat = " ".join(proc.stdout.split())
     assert "--context-compact-at 0" in flat
+
+
+def test_an_auto_sized_budget_that_cannot_be_sized_fails_clean(tmp_path):
+    # the openai format keeps `0` because a gateway can answer it; when the
+    # endpoint cannot, the run says so and stops instead of quietly
+    # compacting at a default the user did not ask for
+    from book_maker.translator.chatgptapi_translator import (
+        ChatGPTAPI,
+        ContextWindowUnknown,
+    )
+
+    t = ChatGPTAPI.__new__(ChatGPTAPI)
+    t.context_compact_at = 0
+    t._model_windows = {}
+    t._model_names = ()
+    t.model = "some-model"
+    t.openai_client = ModuleType("c")
+    t.openai_client.models = ModuleType("m")
+    t.openai_client.models.retrieve = lambda model: SimpleNamespace(id=model)
+    with pytest.raises(ContextWindowUnknown) as stop:
+        t.preflight()
+    assert "--context-compact-at 0" in str(stop.value)
+    assert getattr(
+        stop.value, "user_facing", False
+    ), "the CLI prints it, not a traceback"
 
 
 def test_an_auto_sized_compact_budget_is_kept_on_the_session_routes(tmp_path):

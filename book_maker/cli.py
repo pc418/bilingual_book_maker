@@ -1095,11 +1095,6 @@ So you are close to reaching the limit. You have to choose your own value, there
         if not options.api_base:
             raise ValueError("`api_base` must be provided when using `deployment_id`")
         e.translate_model.set_deployment_id(options.deployment_id)
-    # Check the sidecar is up and signed in before the first paid turn: a
-    # login prompt after ten minutes of translating is the wrong time to
-    # find out. Every refusal that needs no sidecar has already run.
-    if hasattr(e.translate_model, "preflight"):
-        e.translate_model.preflight()
     # The refusals live at the top of main(); what is left here is the part
     # that has to talk to the endpoint.
     if options.model in ("openai", "groq"):
@@ -1162,6 +1157,20 @@ So you are close to reaching the limit. You have to choose your own value, there
                 raise ValueError(
                     "Provider has no default_models. Please provide --model_list"
                 )
+
+    # Everything that must be settled before the first paid request, now
+    # that the model list is known: the codex sidecar is up and signed in,
+    # and an auto-sized compact budget has a number from the endpoint for
+    # every model in play. A login prompt — or a window nobody can report —
+    # after ten minutes of translating is the wrong time to find out.
+    if hasattr(e.translate_model, "preflight"):
+        try:
+            e.translate_model.preflight()
+        except Exception as err:
+            if not getattr(err, "user_facing", False):
+                raise
+            print(f"[bold red]{escape(str(err))}[/bold red]")
+            exit(1)
 
     try:
         e.make_bilingual_book()
