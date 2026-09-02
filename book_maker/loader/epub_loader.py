@@ -2677,7 +2677,10 @@ class EPUBBookLoader(BaseBookLoader):
                 print("you can resume it next time")
                 self._save_progress()
                 self._save_temp_book()
-            sys.exit(0)
+            # A halted run has no finished book. 0 told every caller — a
+            # script, a shell, an agent — that it did, and the shell's own
+            # code for a process killed by SIGINT is 130.
+            sys.exit(130)
         except Exception as e:
             # Handle connection errors gracefully
             error_msg = str(e)

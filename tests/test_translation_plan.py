@@ -2735,9 +2735,32 @@ class TestPlanExitCodes:
             loader.make_bilingual_book()
         assert stop.value.code == 1
 
+    def test_an_interrupted_run_does_not_report_success(self, tmp_path):
+        # Ctrl+C leaves a half-translated book and a checkpoint. Exiting 0
+        # told every caller the opposite; 130 is what a shell reports for a
+        # process killed by SIGINT
+        loader, src = _make_loader(tmp_path, FakeModel)
+
+        class Interrupted(FakeModel):
+            calls = 0
+
+            def translate_list(self, text_list):
+                type(self).calls += 1
+                if type(self).calls > 2:
+                    raise KeyboardInterrupt
+                return super().translate_list(text_list)
+
+        loader, src = _make_loader(tmp_path, Interrupted)
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == 130
+        # the halt is only safe because the work so far was written down
+        assert loader.p_to_save
+        assert (src.parent / ("." + src.stem + ".temp.bin")).exists()
+
     def test_the_handoff_code_collides_with_neither_ending(self):
         # 0 is a translated book and 1 is every refusal this project raises
-        assert PLAN_HANDOFF_EXIT_CODE not in (0, 1)
+        assert PLAN_HANDOFF_EXIT_CODE not in (0, 1, 130)
 
 
 class TestFileSha256Cache:
