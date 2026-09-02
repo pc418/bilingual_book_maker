@@ -576,3 +576,54 @@ def test_session_context_is_accepted_on_the_routes_that_implement_it():
     assert not MODEL_DICT["xai"].SUPPORTS_SESSION_CONTEXT
     assert not MODEL_DICT["orcarouter"].SUPPORTS_SESSION_CONTEXT
     assert not MODEL_DICT["gemini"].SUPPORTS_SESSION_CONTEXT
+
+
+def test_an_auto_sized_compact_budget_is_refused_where_nothing_can_size_it(tmp_path):
+    # 0 asks the route for the model's context window; a route with no
+    # session history has nothing to ask, and 0 meant no budget at all
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "gemini",
+        "--gemini_key",
+        "k",
+        "--context-compact-at",
+        "0",
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--context-compact-at 0" in flat
+
+
+def test_an_auto_sized_compact_budget_is_kept_on_the_session_routes(tmp_path):
+    proc, _ = _run(
+        tmp_path,
+        "--use_context",
+        "session",
+        "--context-compact-at",
+        "0",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_a_named_compact_budget_is_never_refused(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "gemini",
+        "--gemini_key",
+        "k",
+        "--context-compact-at",
+        "3000",
+        "--plan-dry-run",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr

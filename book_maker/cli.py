@@ -775,6 +775,21 @@ So you are close to reaching the limit. You have to choose your own value, there
             f"window of paragraph pairs.[/bold red]"
         )
         exit(1)
+
+    # Sizing the budget from the model's own window is part of the session
+    # machinery: a route with no history to size has nothing to answer with,
+    # and 0 there meant "no budget at all", silently.
+    if options.context_compact_at == 0 and not getattr(
+        translate_model, "SUPPORTS_SESSION_CONTEXT", False
+    ):
+        print(
+            f"[bold red]Error: --context-compact-at 0 sizes the budget from "
+            f"the model's own context window, which only the routes that "
+            f"keep a session history can ask for (openai, claude, codex). "
+            f"The {options.provider or options.model} route needs a number."
+            f"[/bold red]"
+        )
+        exit(1)
     API_KEY = ""
     if options.model in [
         "openai",
