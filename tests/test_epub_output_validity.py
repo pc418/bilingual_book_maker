@@ -451,3 +451,25 @@ def test_absolute_and_empty_srcs_are_left_alone():
         "https://example.com/x",
         "",
     ]
+
+
+def test_the_translated_sibling_is_stamped_with_the_target_language():
+    """A German epigraph's Chinese translation is not German (260901 operator
+    finding): the copy keeps every attribute the original had, so the
+    language attributes must be rewritten, and only when present."""
+    from bs4 import BeautifulSoup
+    from book_maker.loader.helper import EPUBBookLoaderHelper
+
+    soup = BeautifulSoup(
+        '<body><div xml:lang="de" lang="de">Bin gar keine Russin</div>'
+        "<p>plain</p></body>",
+        "html.parser",
+    )
+    helper = EPUBBookLoaderHelper(None, 1, "", False, language="zh-hans")
+    helper.insert_trans(soup.div, "我根本不是俄国人")
+    helper.insert_trans(soup.p, "平常")
+    divs = soup.find_all("div")
+    assert divs[0]["xml:lang"] == "de" and divs[0]["lang"] == "de"
+    assert divs[1]["xml:lang"] == "zh-hans" and divs[1]["lang"] == "zh-hans"
+    ps = soup.find_all("p")
+    assert "xml:lang" not in ps[1].attrs and "lang" not in ps[1].attrs

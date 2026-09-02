@@ -3160,3 +3160,31 @@ class TestNumericSignatureSuffix:
         parent = fp.inline_rows[0]["parent_key"]
         assert parent in ledger.rows
         assert parent == fp.units[0].key
+
+
+class TestOperatorFindings:
+    """From the 260901 operator smoke of the skill (The Waste Land)."""
+
+    def test_the_handoff_offers_the_smoke_not_the_whole_book(self):
+        from book_maker.loader.classify.agent import build_agent_prompt
+
+        text = build_agent_prompt(
+            "b_plan.json",
+            "b.epub",
+            "python make_book.py --book_name b.epub",
+            unresolved=["block:p"],
+        )
+        assert "--quiet --test --test_num 8" in text
+        assert "--quiet --resume" in text
+        # the bare command must not be offered as the thing to run
+        assert "python make_book.py --book_name b.epub\n" not in text
+
+    def test_a_run_without_resume_says_it_overwrites_the_cache(self, tmp_path, capsys):
+        src = tmp_path / ANIMAL_FARM.name
+        shutil.copy(ANIMAL_FARM, src)
+        (tmp_path / ("." + src.stem + ".temp.bin")).write_bytes(b"x")
+        _make_loader(tmp_path, FakeModel)
+        assert "existing progress cache" in capsys.readouterr().out
+        (tmp_path / ("." + src.stem + ".temp.bin")).unlink()
+        _make_loader(tmp_path, FakeModel)
+        assert "existing progress cache" not in capsys.readouterr().out

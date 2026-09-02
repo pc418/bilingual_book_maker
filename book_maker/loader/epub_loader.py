@@ -30,6 +30,7 @@ from book_maker.utils import num_tokens_from_text, prompt_config_to_kwargs
 
 from .base_loader import BaseBookLoader
 from .helper import (
+    restamp_language,
     EPUBBookLoaderHelper,
     append_inline_translation,
     backfill_toc_hrefs,
@@ -205,6 +206,7 @@ class EPUBBookLoader(BaseBookLoader):
             self.accumulated_num,
             self.translation_style,
             self.context_flag,
+            language=self.language,
         )
         self.retranslate = None
         self.exclude_filelist = ""
@@ -295,6 +297,14 @@ class EPUBBookLoader(BaseBookLoader):
         self.bin_path = f"{Path(epub_name).parent}/.{Path(epub_name).stem}.temp.bin"
         if self.resume:
             self.load_state()
+        elif os.path.exists(self.bin_path):
+            # Overwriting is the documented behaviour; doing it silently is
+            # not. A run that meant to continue has one flag to add.
+            print(
+                f"[yellow]existing progress cache {self.bin_path} — starting "
+                f"fresh and overwriting it; pass --resume to continue it "
+                f"instead[/yellow]"
+            )
 
     @staticmethod
     def _is_special_text(text):
@@ -1096,7 +1106,9 @@ class EPUBBookLoader(BaseBookLoader):
             unit.owner_runs > 1
             or not is_simple_owner(unit.element, unit.resolver)
         ):
-            self._insert_anchored_translation(unit, t_text, translation_style)
+            self._insert_anchored_translation(
+                unit, t_text, translation_style, language=self.language
+            )
         else:
             self._insert_trans_preserving_tags(
                 unit.element, t_text, translation_style, False
@@ -1136,7 +1148,7 @@ class EPUBBookLoader(BaseBookLoader):
         }
 
     @staticmethod
-    def _insert_anchored_translation(unit, t_text, translation_style=""):
+    def _insert_anchored_translation(unit, t_text, translation_style="", language=None):
         """Append a translation next to the run it translates.
 
         For owners that cannot be cloned — a wrapper holding nested blocks,
@@ -1157,6 +1169,7 @@ class EPUBBookLoader(BaseBookLoader):
             tail, {id(n) for n in unit.nodes}
         ):
             span = copy(tail)
+            restamp_language(span, language)
             span.clear()
             # a translated copy is a second rendering, not a second anchor
             strip_duplicate_ids(span)
@@ -2454,6 +2467,7 @@ class EPUBBookLoader(BaseBookLoader):
             self.accumulated_num,
             self.translation_style,
             self.context_flag,
+            language=self.language,
         )
 
         # Check for fatal errors before starting

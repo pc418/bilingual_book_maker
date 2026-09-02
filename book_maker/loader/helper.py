@@ -198,14 +198,37 @@ def strip_duplicate_ids(element):
     return element
 
 
+LANG_ATTRS = ("xml:lang", "lang")
+
+
+def restamp_language(element, language):
+    """A translated copy is in the target language, whatever its source said.
+
+    Only attributes the original carried are touched: a sibling that never
+    declared a language keeps not declaring one.
+    """
+    if not language or not isinstance(element, Tag):
+        return element
+    for attr in LANG_ATTRS:
+        if attr in element.attrs:
+            element[attr] = language
+    return element
+
+
 class EPUBBookLoaderHelper:
     def __init__(
-        self, translate_model, accumulated_num, translation_style, context_flag
+        self,
+        translate_model,
+        accumulated_num,
+        translation_style,
+        context_flag,
+        language=None,
     ):
         self.translate_model = translate_model
         self.accumulated_num = accumulated_num
         self.translation_style = translation_style
         self.context_flag = context_flag
+        self.language = language
 
     def insert_trans(self, p, text, translation_style="", single_translate=False):
         if text is None:
@@ -232,6 +255,7 @@ class EPUBBookLoaderHelper:
             # it points at. When the original is extracted there is no
             # duplicate, so single-translate keeps its ids.
             strip_duplicate_ids(new_p)
+        restamp_language(new_p, self.language)
         p.insert_after(new_p)
         if single_translate:
             p.extract()
