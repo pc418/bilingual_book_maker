@@ -366,40 +366,46 @@ class TestAutoGlossary:
         assert "鲍克瑟" in tail and "拳击手" not in tail
 
 
-class TestCacheGuardrail:
-    def test_warns_when_the_endpoint_never_reports_a_cache_hit(self, capsys):
-        t = _translator(["一"] * 12)
-        t._session_cache_warned = False
-        for i in range(12):
-            t.get_translation(f"unit {i}")
-        assert "cache" in capsys.readouterr().out.lower()
+class TestUsageMeter:
+    """The cache guard is gone. What replaced it is the meter the loader pins
+    on the progress bar: in/out/cached tokens, summed over every billed
+    request on every path. A history read back at full price shows up as a
+    `cached` count that stays at zero — the operator's call, not a warning."""
 
-    def test_silent_when_cache_reads_are_reported(self, capsys):
+    def test_plain_requests_are_metered(self):
+        t = _translator(["一"] * 3, cached_tokens=0)
+        for i in range(3):
+            t.get_translation(f"unit {i}")
+        assert t.usage.requests == 3
+        assert t.usage.prompt == 300 and t.usage.cached == 0
+
+    def test_cache_reads_are_summed(self):
         t = _translator()
         t.openai_client.chat.completions.create = Mock(
             side_effect=lambda **c: _completion("译文", cached_tokens=64)
         )
-        for i in range(12):
+        for i in range(3):
             t.get_translation(f"unit {i}")
-        assert "not passing through cache" not in capsys.readouterr().out.lower()
+        assert t.usage.cached == 192
+        assert t.usage_postfix() == {"in": "300", "out": "0", "cached": "192"}
 
-    # The guardrail has to hold on the structured path too: every "strict"
+    def test_an_answer_without_usage_is_not_counted(self):
+        t = _translator(["一"] * 3)  # _usage(None): the endpoint said nothing
+        for i in range(3):
+            t.get_translation(f"unit {i}")
+        assert t.usage.requests == 0 and t.usage_postfix() is None
+
+    # The meter has to read on the structured path too: every "strict"
     # endpoint translates through `.parse`, and that is exactly where session
     # mode is used, so a reading taken only on the plain path is never taken.
-    def test_warns_on_the_structured_path_too(self, capsys):
-        t = _translator(["一"] * 12, verdict="strict")
-        for i in range(12):
+    def test_the_structured_path_is_metered(self):
+        t = _translator(["一"] * 3, verdict="strict", cached_tokens=64)
+        for i in range(3):
             t.get_translation(f"unit {i}")
-        assert t.openai_client.chat.completions.parse.call_count == 12
-        assert "cache" in capsys.readouterr().out.lower()
+        assert t.openai_client.chat.completions.parse.call_count == 3
+        assert t.usage.requests == 3 and t.usage.cached == 192
 
-    def test_structured_path_silent_when_cache_reads_are_reported(self, capsys):
-        t = _translator(["一"] * 12, verdict="strict", cached_tokens=64)
-        for i in range(12):
-            t.get_translation(f"unit {i}")
-        assert "cache" not in capsys.readouterr().out.lower()
-
-    def test_structured_batch_requests_are_counted_too(self, capsys):
+    def test_structured_batch_requests_are_metered_too(self):
         """`--accumulated_num` sends whole batches through `.parse`. Those are
         the requests being billed, so they are the ones to read."""
         t = _translator(verdict="strict")
@@ -415,19 +421,18 @@ class TestCacheGuardrail:
                         finish_reason="stop",
                     )
                 ],
-                usage=None,
+                usage=_usage(8),
             )
         )
-        for i in range(12):
+        for i in range(4):
             assert t.translate_list([f"a {i}", f"b {i}"]) == ["一", "二"]
-        assert "cache" in capsys.readouterr().out.lower()
+        assert t.usage.requests == 4 and t.usage.cached == 32
 
     def test_a_truncated_structured_answer_still_counts_its_request(self):
-        """The truncated request was billed before it was thrown away; not
-        counting it delays the warning by one request per truncation."""
+        """The truncated request was billed before it was thrown away."""
         error = LengthFinishReasonError(
             completion=SimpleNamespace(
-                usage=None,
+                usage=_usage(0),
                 choices=[
                     SimpleNamespace(
                         message=SimpleNamespace(content='{"x":"半'),
@@ -436,14 +441,14 @@ class TestCacheGuardrail:
                 ],
             )
         )
-        t = _translator(verdict="strict")
+        t = _translator(verdict="strict", cached_tokens=0)
         t.openai_client.chat.completions.parse = Mock(side_effect=error)
 
         t.get_translation("one")
 
         # Two billed requests went out for this paragraph: the truncated
         # structured one and the plain retranslation.
-        assert t._session_requests == 2
+        assert t.usage.requests == 2
 
 
 class TestWindowModeUnchanged:
