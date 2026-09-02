@@ -13,7 +13,7 @@ A translator is an endpoint: `--api_base` (defaults to the format's official hos
 default, `claude-sonnet-4-6`, `deepseek-chat`, anything an OpenAI-compatible or Anthropic
 endpoint serves. `--api_format` selects the fixed engines (`google`, `caiyun`, `deepl`,
 `deeplfree`, `tencent`, `customapi`) and `codex`; `--provider` names a gateway from
-`bbm_providers.json`. The old preset names and key flags (`--model gpt4`, `--model gemini`,
+`bbm_providers.json`. The old preset names and key flags (`--model gpt4o`, `--model gemini`,
 `--openai_key`, …) still work and are rewritten with a note — see
 [Migrating from the old flags](#migrating-from-the-old-flags) and
 [Models and languages](./docs/model_lang.md).
@@ -226,7 +226,8 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 | Old | Rewritten to |
 |---|---|
-| `--model chatgptapi` / `gpt4` / `gpt4o` / `gpt4omini` / `gpt5mini` / `o1` / `o1mini` / `o1preview` / `o3mini` | `--model <that model>` |
+| `--model gpt4o` / `gpt4omini` / `o3mini` | `--model <that model>` |
+| `--model chatgptapi` / `openai` | dropped: the openai format is the default, and `--model` names a model when you want one |
 | `--model openai --model_list X` | `--model_list X` |
 | `--model claude` | `--model claude-haiku-4-5-20251001` |
 | an exact `claude-*` id | unchanged — the anthropic format is inferred from the id |
@@ -254,10 +255,13 @@ Notes:
   so plainly.
 - `--model` values that are not old aliases pass through untouched: they are
   model ids, which is the normal case now.
-- No alias changes *which model* runs. Two overlap with real ids: `o1`
-  translates to itself, and `qwen-mt-turbo` / `qwen-mt-plus` additionally fill
-  in DashScope's endpoint — the only host serving them — which your own
-  `--api_base` overrides.
+- No alias changes *which model* runs. `qwen-mt-turbo` / `qwen-mt-plus`
+  additionally fill in DashScope's endpoint — the only host serving them —
+  which your own `--api_base` overrides.
+- The aliases for models OpenAI has retired (`gpt4`, `gpt5mini`, `o1`,
+  `o1mini`, `o1preview`) are gone. They now travel verbatim as model ids and
+  the endpoint's model check names them, which is the same failure one step
+  earlier and with a better message.
 
 ## Use
 
@@ -272,16 +276,10 @@ Notes:
 
   | Model | Key Source | Notes |
   |-------|-----------|-------|
-  | `chatgptapi` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-3.5-turbo. Auto-detects available models from API |
-  | `gpt4` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4 family. Auto-balances across available GPT-4 variants |
   | `gpt4omini` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4o-mini |
   | `gpt4o` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4o |
-  | `gpt5mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-5-mini |
-  | `o1preview` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-preview |
-  | `o1` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1 |
-  | `o1mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-mini |
   | `o3mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o3-mini |
-  | `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | **Requires `--model_list`**. Use any OpenAI-compatible model |
+  | `chatgptapi` / `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | The OpenAI route, which is the default. Carries no model: `gpt-5.6-luna` runs unless `--model` names another |
   | `codex` | No key — `codex login` (Codex CLI) | Your ChatGPT/Codex plan allowance, through a local `codex app-server` sidecar |
   | `claude` and listed `claude-*` IDs | `--claude_key` / `BBM_CLAUDE_API_KEY` | Exact built-in choices shown by `--help`; arbitrary unlisted IDs require `--provider` or the `openai` route |
   | `gemini` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Flash. Supports `--model_list` |
@@ -472,8 +470,11 @@ Notes:
 
 - `--temperature`:
 
-  Use `--temperature` to set the temperature parameter for `chatgptapi`/`gpt4`/`claude` models.
-  For example: `--temperature 0.7`.
+  Sampling temperature, on the formats that take one. The anthropic format
+  always sends it; the openai format leaves it out when it equals the API
+  default and when the model rejects an explicit one (gpt-5.x, the
+  o-series); the codex format has no such setting and ignores it. For
+  example: `--temperature 0.7`.
 
 - `--block_size`:
 
@@ -576,8 +577,8 @@ python3 make_book.py --book_name test_books/animal_farm.epub --gemini_key ${gemi
 # Set env OPENAI_API_KEY to ignore option --openai_key
 export OPENAI_API_KEY=${your_api_key}
 
-# Use the GPT-4 model with context to Japanese
-python3 make_book.py --book_name test_books/animal_farm.epub --model gpt4 --use_context --language ja
+# Name a model and add context, translating to Japanese
+python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-4o --use_context --language ja
 
 # Use a specific OpenAI model alias
 python3 make_book.py --book_name test_books/animal_farm.epub --model openai --model_list gpt-4-1106-preview --openai_key ${openai_key}
