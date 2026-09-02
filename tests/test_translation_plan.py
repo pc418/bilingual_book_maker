@@ -2806,3 +2806,35 @@ class TestNumericSignatureSuffix:
         parent = fp.inline_rows[0]["parent_key"]
         assert parent in ledger.rows
         assert parent == fp.units[0].key
+
+
+class TestAllRowsReopen:
+    def test_prior_all_rows_revert_to_null_while_user_rows_are_kept(self):
+        """`--plan-classify all` decided by policy, not by looking, so its
+        rows are not carried into the next run: a model or agent run sees
+        them null, with no prior verdict to lean on. A person's ruling is a
+        decision and stays."""
+        from book_maker.loader.plan import TranslationPlan, partition_soup
+
+        soup = bs(
+            '<body><p class="body">Prose here.</p>'
+            '<p class="note">A note by the editor.</p></body>',
+            "html.parser",
+        )
+        fp = partition_soup(soup, _make_resolver(""), "x.html")
+        plan = TranslationPlan([fp], (), 8)
+
+        prior = plan.build_ledger()
+        prior.decide("block:p.body", "translate", "all", "unclassified")
+        prior.decide("block:p.note", "skip", "user", "editorial note")
+
+        ledger = plan.build_ledger(decisions=prior)
+        body = ledger.rows["block:p.body"]
+        assert (body["action"], body["decided_by"], body["content_type"]) == (
+            None,
+            None,
+            None,
+        )
+        note = ledger.rows["block:p.note"]
+        assert (note["action"], note["decided_by"]) == ("skip", "user")
+        assert ledger.undecided_keys() == ["block:p.body"]
