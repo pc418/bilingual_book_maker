@@ -1343,12 +1343,22 @@ def main():
         # Last, because the probe needs the model this run settled on. The
         # verdict costs one sub-cent request and is cached, so the first
         # translation does not pay for it again.
-        mode, reason = resolve_plan_mode(
-            book_type,
-            api_format,
-            translate_tags_given,
-            getattr(e.translate_model, "_probe_verdict", None),
-        )
+        try:
+            mode, reason = resolve_plan_mode(
+                book_type,
+                api_format,
+                translate_tags_given,
+                getattr(e.translate_model, "_probe_verdict", None),
+            )
+        except Exception as err:
+            # Asking for the verdict is also what confirms the endpoint
+            # serves the model, so a refusal arrives here. It is the whole
+            # explanation; a traceback on top of it buries the model id the
+            # reader has to fix.
+            if not getattr(err, "user_facing", False):
+                raise
+            print(f"[bold red]{escape(str(err))}[/bold red]")
+            exit(1)
         if mode == "model":
             print(f"plan mode: on ({reason})")
             e.plan_mode = True
