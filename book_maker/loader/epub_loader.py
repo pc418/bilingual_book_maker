@@ -1438,21 +1438,33 @@ class EPUBBookLoader(BaseBookLoader):
         `cached` is the number session mode is watched by: a history read
         back at full price every request shows up here and nowhere else.
         """
-        postfix = getattr(self.translate_model, "usage_postfix", lambda: None)()
-        if postfix:
-            pbar.set_postfix(postfix, refresh=False)
+        try:
+            postfix = self._usage_postfix()
+            if postfix:
+                pbar.set_postfix(postfix, refresh=False)
+        except Exception:
+            pass  # a readout; never a reason to stop the run it decorates
+
+    def _usage_postfix(self):
+        return getattr(self.translate_model, "usage_postfix", lambda: None)()
 
     def _usage_suffix(self):
-        postfix = getattr(self.translate_model, "usage_postfix", lambda: None)()
-        if not postfix:
+        try:
+            postfix = self._usage_postfix()
+            if not postfix:
+                return ""
+            return " " + " ".join(f"{k}={v}" for k, v in postfix.items())
+        except Exception:
             return ""
-        return " " + " ".join(f"{k}={v}" for k, v in postfix.items())
 
     def _print_usage(self):
         """One closing line, printed even under --quiet: the bill is not noise."""
-        summary = getattr(self.translate_model, "usage_summary", lambda: None)()
-        if summary:
-            print(summary)
+        try:
+            summary = getattr(self.translate_model, "usage_summary", lambda: None)()
+            if summary:
+                print(summary)
+        except Exception:
+            pass
 
     def _process_paragraph(self, p, new_p, index, p_to_save_len, thread_safe=False):
         if self.resume and index < p_to_save_len:

@@ -964,15 +964,20 @@ class ChatGPTAPI(Base):
         pass-through caching the history is re-read at full price every
         request, and only this number says so.
         """
-        usage = getattr(completion, "usage", None)
-        if usage is None:
+        try:
+            usage = getattr(completion, "usage", None)
+            if usage is None:
+                return
+            details = getattr(usage, "prompt_tokens_details", None)
+            self.usage.note(
+                getattr(usage, "prompt_tokens", 0),
+                getattr(usage, "completion_tokens", 0),
+                getattr(details, "cached_tokens", 0),
+            )
+        except Exception:
+            # a readout, not a gate: a usage record shaped strangely by a
+            # gateway is not a reason to stop a paid run
             return
-        details = getattr(usage, "prompt_tokens_details", None)
-        self.usage.note(
-            getattr(usage, "prompt_tokens", 0),
-            getattr(usage, "completion_tokens", 0),
-            getattr(details, "cached_tokens", 0),
-        )
 
     def preflight(self):
         """Settle what must be known before the first paid request.

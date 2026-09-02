@@ -296,16 +296,21 @@ class Claude(Base):
         total is the three input counts together; `cache_read_input_tokens`
         is the number a gateway that drops `cache_control` never reports.
         """
-        usage = getattr(message, "usage", None)
-        if usage is None:
+        try:
+            usage = getattr(message, "usage", None)
+            if usage is None:
+                return
+            read = getattr(usage, "cache_read_input_tokens", 0) or 0
+            written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            self.usage.note(
+                (getattr(usage, "input_tokens", 0) or 0) + read + written,
+                getattr(usage, "output_tokens", 0),
+                read,
+            )
+        except Exception:
+            # a readout, not a gate: a usage record shaped strangely by a
+            # gateway is not a reason to stop a paid run
             return
-        read = getattr(usage, "cache_read_input_tokens", 0) or 0
-        written = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        self.usage.note(
-            (getattr(usage, "input_tokens", 0) or 0) + read + written,
-            getattr(usage, "output_tokens", 0),
-            read,
-        )
 
     def _session_budget(self):
         """How large a window may grow before it rolls over.

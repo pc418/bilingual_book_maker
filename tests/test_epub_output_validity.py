@@ -525,3 +525,18 @@ def test_a_translation_span_the_loader_made_declares_its_language():
     made = BeautifulSoup("<span>x</span>", "html.parser").span
     stamp_translation(made, plain, "zh-hans")
     assert "lang" not in made.attrs
+
+
+def test_the_stamp_takes_whatever_language_it_is_handed():
+    """A --language nobody sanitised — a number, bytes, spaces — stamps
+    nothing rather than raising inside the loader."""
+    from bs4 import BeautifulSoup
+    from book_maker.loader.helper import language_tag, stamp_translation
+
+    assert language_tag(3) is None
+    assert language_tag("  ") is None
+    assert language_tag(b"ja") is None
+    assert language_tag("  ja ") == "ja"
+    div = BeautifulSoup('<div lang="de">x</div>', "html.parser").div
+    assert stamp_translation("not a node", div, "ja") == "not a node"
+    assert stamp_translation(div, None, "ja") is div

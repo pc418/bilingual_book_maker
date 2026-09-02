@@ -27,6 +27,20 @@ def short_count(n):
     return f"{n / 1_000_000:.2f}M"
 
 
+def _count(value):
+    """A token count as an int; anything a gateway sends that is not one is 0.
+
+    The meter is a readout: a field reported as a string, None or a nested
+    object costs the number on the bar, never the run.
+    """
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class UsageMeter:
     """Tokens billed so far, summed over every request that reported them.
 
@@ -47,9 +61,9 @@ class UsageMeter:
 
     def note(self, prompt=0, completion=0, cached=0):
         with self._lock:
-            self.prompt += prompt or 0
-            self.completion += completion or 0
-            self.cached += cached or 0
+            self.prompt += _count(prompt)
+            self.completion += _count(completion)
+            self.cached += _count(cached)
             self.requests += 1
 
     def postfix(self):

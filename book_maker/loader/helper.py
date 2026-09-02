@@ -215,9 +215,11 @@ def language_tag(language):
     becomes its code; a value it does not know is kept only when it already
     reads as a tag, and anything else stamps nothing.
     """
-    if not language:
+    if not language or not isinstance(language, str):
         return None
     value = language.strip()
+    if not value:
+        return None
     known = TO_LANGUAGE_CODE.get(value.lower())
     if known:
         return known
