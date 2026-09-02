@@ -88,23 +88,43 @@ def test_explicit_none_is_the_same_as_no_flag(tmp_path):
     assert not plan.exists()
 
 
-def test_most_mode_translates_without_asking_or_writing_a_plan(tmp_path):
-    # 'most' is the deliberate translate-everything entry: no questions, so
+def test_all_mode_translates_without_asking_or_writing_a_plan(tmp_path):
+    # 'all' is the deliberate translate-everything entry: no questions, so
     # no plan file to answer them in, and no agent stop
-    proc, plan = _run(tmp_path, "--plan-classify", "most", "--test", "--test_num", "1")
+    proc, plan = _run(tmp_path, "--plan-classify", "all", "--test", "--test_num", "1")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert not plan.exists()
     assert "Paste the block below" not in proc.stdout
 
 
-def test_most_mode_ignores_an_existing_plan(tmp_path):
-    # half-loading an earlier run's skips would make "most" quietly mean
-    # "most, except whatever something else decided"
+def test_all_mode_ignores_an_existing_plan(tmp_path):
+    # half-loading an earlier run's skips would make "all" quietly mean
+    # "all, except whatever something else decided"
     proc, plan = _run(tmp_path, "--plan-classify", "agent")
     assert plan.exists()
-    proc, _ = _run(tmp_path, "--plan-classify", "most", "--test", "--test_num", "1")
+    proc, _ = _run(tmp_path, "--plan-classify", "all", "--test", "--test_num", "1")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "ignores the existing plan" in " ".join(proc.stdout.split())
+
+
+def test_most_is_the_old_name_of_all(tmp_path):
+    # the mode translates the whole partition, and "all" is what that is.
+    # Old command lines keep working and are corrected once, out loud.
+    proc, plan = _run(tmp_path, "--plan-classify", "most", "--test", "--test_num", "1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--plan-classify most is now --plan-classify all" in " ".join(
+        proc.stdout.split()
+    )
+    assert not plan.exists()
+
+
+def test_the_retired_name_is_not_advertised():
+    proc = _cli("--help")
+    text = " ".join(proc.stdout.split())
+    assert "--plan-classify {auto,none,all,model,agent}" in text
+    # the choices list is the whole advertisement; "most" is parsed, not shown
+    assert "'most'" not in text
+    assert "agent,most" not in text
 
 
 def test_explicit_tag_list_loses_to_the_classify_flag(tmp_path):
@@ -182,11 +202,11 @@ def test_agent_mode_rejects_a_classifier_model(tmp_path):
     assert "cannot be combined" in proc.stdout
 
 
-def test_most_mode_rejects_a_classifier_model(tmp_path):
-    # 'most' explicitly skips classification; naming a classifier alongside
+def test_all_mode_rejects_a_classifier_model(tmp_path):
+    # 'all' explicitly skips classification; naming a classifier alongside
     # it is a contradiction, not a preference to resolve silently
     proc, _ = _run(
-        tmp_path, "--plan-classify", "most", "--plan-classify-model", "gpt-4o"
+        tmp_path, "--plan-classify", "all", "--plan-classify-model", "gpt-4o"
     )
     assert proc.returncode == 1
     assert "cannot be combined" in proc.stdout

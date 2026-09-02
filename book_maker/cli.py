@@ -300,6 +300,46 @@ def resolve_context_mode(options):
     return (mode is not None), mode
 
 
+# The plan is built from LLM verdicts on a pinned JSON Schema, so it is only
+# worth entering automatically where the schema is known to be applied. That
+# is established by the capability probe, which speaks the OpenAI wire format
+# and grades one endpoint; every other route (anthropic, google, deepl, codex,
+# ...) has no such verdict to offer and stays in tag mode.
+PLAN_AUTO_FORMAT = "openai"
+
+
+def resolve_plan_mode(book_type, api_format, translate_tags_given, probe):
+    """What `--plan-classify auto` means for this run: `(mode, reason)`.
+
+    `mode` is "model" (plan the book) or "none" (translate the
+    `--translate-tags` selection); `reason` is the one line the run prints
+    about it. `probe` is called — at most once, and only when its answer can
+    still change the outcome — for the endpoint's graded schema support; None
+    means this translator has no probe.
+    """
+    if book_type != "epub":
+        return "none", f"plan mode needs an epub; this is a {book_type} book"
+    if translate_tags_given:
+        return "none", "--translate-tags names what to translate"
+    if api_format != PLAN_AUTO_FORMAT:
+        return "none", f"the {api_format} route has no JSON-schema verdict"
+    if probe is None:
+        return "none", "this endpoint offers no JSON-schema verdict"
+    try:
+        verdict = probe()
+    except Exception as e:
+        # A probe failure is not a reason to stop: the run has a working
+        # answer (tag mode) and whatever is wrong with the endpoint will
+        # surface loudly at the first translation request.
+        return "none", f"the JSON-schema probe failed: {e}"
+    if verdict != "strict":
+        return "none", (
+            f"the endpoint does not verify a strict JSON schema "
+            f"({verdict or 'no schema support'})"
+        )
+    return "model", "endpoint verified strict JSON schema"
+
+
 def build_parser():
     translate_format_list = list(FORMAT_DICT.keys())
     # No prefix abbreviation: `--model` must not resolve to `--model_list`.
@@ -432,7 +472,11 @@ def build_parser():
         "--translate-tags",
         dest="translate_tags",
         type=str,
-        default="p",
+        # None, not "p", so a run can tell a typed selection from an
+        # untouched flag: naming tags is how a user opts out of the automatic
+        # plan, and `--translate-tags p` must mean that too. Normalized to
+        # "p" immediately after parsing.
+        default=None,
         help="which tags to translate, example --translate-tags p,blockquote "
         "(default: p). Ignored in plan mode — see --plan-classify",
     )
@@ -464,13 +508,21 @@ def build_parser():
     parser.add_argument(
         "--plan-classify",
         dest="plan_classify",
-        choices=["none", "most", "model", "agent"],
-        default="none",
+        # "most" is the old name of "all", still parsed and mapped in main()
+        # with a notice. The metavar is what --help and the usage line show,
+        # so a retired spelling stays out of the advertised surface.
+        choices=["auto", "none", "all", "model", "agent", "most"],
+        metavar="{auto,none,all,model,agent}",
+        default="auto",
         help="coverage-complete plan mode (epub only): partition the whole "
         "book, then decide which tag signatures are worth translating. "
-        "'none' (default): no plan — translate the --translate-tags "
+        "'auto' (default): plan the book as 'model' when it is an epub and "
+        "the endpoint is verified to apply a strict JSON schema, otherwise "
+        "translate the --translate-tags selection; a plan that cannot be "
+        "completed falls back to that selection too. "
+        "'none': no plan — translate the --translate-tags "
         "selection as usual. "
-        "'most': translate the whole partition, no classification, no plan "
+        "'all': translate the whole partition, no classification, no plan "
         "file. "
         "'model': an LLM rules on every undecided signature, then the run "
         "continues and translates the book; unresolved rows stop it instead. "
@@ -693,6 +745,16 @@ def main():
 
     options = parse_args(legacy.argv)
     options.context_flag, options.context_mode = resolve_context_mode(options)
+    # A named tag selection is an opt-out from the automatic plan; the
+    # parser's None is the only way to tell one from the "p" default.
+    translate_tags_given = options.translate_tags is not None
+    if not translate_tags_given:
+        options.translate_tags = "p"
+    if options.plan_classify == "most":
+        # renamed: the mode translates the whole partition, and "all" is what
+        # that is. Old command lines keep working, quietly corrected once.
+        print("[yellow]--plan-classify most is now --plan-classify all[/yellow]")
+        options.plan_classify = "all"
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
@@ -924,12 +986,20 @@ def main():
     # model mode; asking for it alongside a no-classification mode is a
     # contradiction, not a preference to resolve silently.
     classify_mode = options.plan_classify
+    # 'auto' cannot be settled yet: its answer comes from the endpoint's
+    # capability probe, and the model this run uses is only known once the
+    # model list has been validated. Held as tag mode until then.
+    plan_auto = classify_mode == "auto"
+    if plan_auto:
+        classify_mode = "none"
     if options.plan_classify_model:
-        if classify_mode in ("most", "agent"):
+        # naming a classifier is naming the mode it belongs to
+        plan_auto = False
+        if classify_mode in ("all", "agent"):
             reason = (
                 "agent mode makes no API call"
                 if classify_mode == "agent"
-                else "most mode skips classification"
+                else "all mode skips classification"
             )
             print(
                 f"[bold red]Error:[/bold red] --plan-classify-model cannot be "
@@ -968,7 +1038,7 @@ def main():
         e.plan_min_coverage = options.plan_min_coverage
         e.poetry_group_size = options.poetry_group_size
         # plan mode is triggered by translate_tags == "auto"; the classify
-        # entry reaches the loader as chosen. "most" in particular must stay
+        # entry reaches the loader as chosen. "all" in particular must stay
         # distinguishable from "no plan": it is the deliberate
         # translate-everything decision, and the loader has to know it was
         # made rather than infer it from the absence of one.
@@ -1041,6 +1111,26 @@ def main():
         e.batch_flag = options.batch_flag
     if options.batch_use_flag:
         e.batch_use_flag = options.batch_use_flag
+
+    if plan_auto:
+        # Last, because the probe needs the model this run settled on. The
+        # verdict costs one sub-cent request and is cached, so the first
+        # translation does not pay for it again.
+        mode, reason = resolve_plan_mode(
+            book_type,
+            api_format,
+            translate_tags_given,
+            getattr(e.translate_model, "_probe_verdict", None),
+        )
+        if mode == "model":
+            print(f"plan mode: on ({reason})")
+            e.plan_mode = True
+            e.plan_auto = True
+            e.plan_fallback_tags = options.translate_tags
+            e.translate_tags = "auto"
+            e.plan_classify = "model"
+        else:
+            print(f"plan mode: off ({reason})")
 
     try:
         e.make_bilingual_book()

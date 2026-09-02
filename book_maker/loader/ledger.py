@@ -26,7 +26,7 @@ The row contract, in full::
                   *some* devices — evidence, never a verdict
     parents       inline rows only: the block keys it appears inside
     action        "translate" | "skip" | null   (null = still a question)
-    decided_by    "llm" | "agent" | "user" | null
+    decided_by    "llm" | "agent" | "user" | "all" | null
     content_type  what the decider called this text, or null
     disposition   what actually happened once the action was applied
 
@@ -53,7 +53,10 @@ SIGNATURE_SAMPLE_CAP = 5
 SAMPLE_MAX_CHARS = 80
 
 VALID_ACTIONS = frozenset(["translate", "skip"])
-VALID_DECIDED_BY = frozenset(["llm", "agent", "user"])
+# "all" is --plan-classify all: the mode decided the rule, nobody looked at
+# the samples. Distinct from "user" on purpose — a hand-edited row and a
+# translate-everything run must not read the same afterwards.
+VALID_DECIDED_BY = frozenset(["llm", "agent", "user", "all"])
 VALID_SCOPES = ("block", "inline")
 
 
