@@ -13,22 +13,53 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制�
 
 ## 快速开始
 
-本地放了一个 `test_books/animal_farm.epub` 给大家测试
+本地放了一个 `test_books/animal_farm.epub` 给大家测试，`--test` 只翻开头几段。
 
 ```shell
-pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --openai_key ${openai_key} --test
-或
-pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} --test
+pip install -r requirements.txt      # 或：pip install -U bbook_maker
+```
+
+**最省事的方式是 provider 文件。** 复制随仓库提供的示例，填上你的接口，导出一次
+key，之后每条命令只写 provider 名字：
+
+```shell
+cp bbm_providers.example.json bbm_providers.json
+# 按你的接口改 base_url、default_models、env_key
+export OPENAI_API_KEY=sk-...
+python3 make_book.py --book_name test_books/animal_farm.epub --provider openai --test
+```
+
+也可以直接写参数：有接口地址、key 和模型名，配置就齐了。
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub \
+  --key sk-... --model gpt-5.6-luna --test
+```
+
+**想用 ChatGPT 订阅额度而不是 API 余额**：装上
+[Codex CLI](https://developers.openai.com/codex/cli)，执行一次 `codex login`，
+然后不需要 key、也不需要接口地址——`--model codex` 通过本地 sidecar 消耗你的套餐
+额度。这条路上 `--use_context` 没有意义（整个上下文就是那一个线程），并且不写
+`--plan-classify` 就是 tag 模式。
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
 ```
 
 ## 翻译服务
 
-翻译器由接口决定：`--api_base`（默认为该格式的官方地址）、`--key`，以及接口所用的模型 ID `--model <id>`——默认 `gpt-5.6-luna`，也可以是 `claude-sonnet-4-6`、`deepseek-chat` 等任何 OpenAI 兼容或 Anthropic 接口提供的模型。`--api_format` 用来选固定引擎（`google`、`caiyun`、`deepl`、`deeplfree`、`tencent`、`customapi`）和 `codex`；`--provider` 从 `bbm_providers.json` 按名字选网关。旧的预设名和 key 参数（`--model gpt4`、`--model gemini`、`--openai_key`……）仍然可用，会被改写并打印说明——见[从旧参数迁移](#从旧参数迁移)。
+翻译器由接口决定：`--api_base`（默认为该格式的官方地址）、`--key`，以及接口所用的模型 ID `--model <id>`——默认 `gpt-5.6-luna`，也可以是 `claude-sonnet-4-6`、`deepseek-chat` 等任何 OpenAI 兼容或 Anthropic 接口提供的模型。`--api_format` 用来选固定引擎（`google`、`caiyun`、`deepl`、`deeplfree`、`tencent`、`customapi`）和 `codex`；`--provider` 从 `bbm_providers.json` 按名字选网关。旧的预设名和 key 参数（`--model gpt4o`、`--model gemini`、`--openai_key`……）仍然可用，会被改写并打印说明——见[从旧参数迁移](#从旧参数迁移)。
 
-- 使用 `--key` 指定 API key（旧的 `--openai_key` 仍然可用），如果有多个可以用英文逗号分隔(xxx,xxx,xxx)，可以减少接口调用次数限制带来的错误。
-  或者，指定环境变量 `BBM_API_KEY`（或 `OPENAI_API_KEY`）来略过这个选项。
+- **任何 OpenAI 兼容接口**都由三样东西描述：`--api_base`（以 `/v1` 结尾的地址）、
+  `--key`，以及该接口自己拼写的 `--model <id>`。用 OpenAI 官方地址时不必写
+  `--api_base`，不写 `--model` 就是默认的 `gpt-5.6-luna`。provider 条目保存的
+  正是这三样，省得每次重打。
+- `--key` 支持英文逗号分隔的多个 key 并轮换使用，这是绕开单 key 速率限制的办法；
+  它也会读 `$BBM_API_KEY`，再读该格式自己的变量（`$OPENAI_API_KEY`、
+  `$ANTHROPIC_API_KEY`），所以 key 完全不必出现在命令行上。
+- `--model_list` 用英文逗号分隔多个模型，轮流使用。
+- `--use_context` 会把前文一起发给模型，让人名与语气保持一致；选哪种模式见下面
+  该参数自己的条目。
 
 * DeepL
 
@@ -377,7 +408,14 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 - `--use_context session`:
 
-  `--use_context` 还可以带一个模式值。裸写 `--use_context`（等同 `--use_context window`）即上面描述的行为；`--use_context session` 改为维护一份只追加的历史记录，支持提示缓存的端点会以缓存价重新读取它，因此上下文可以增长到整章的长度，花费反而低于 window 模式发送几个段落。历史达到压缩预算时，模型会被要求写一份交接报告，用于播种下一个窗口，并追加到 `<book>_handoff.md`。若端点从不返回缓存 token 数，会打印警告——没有缓存时该模式比 window 模式更贵。
+  `--use_context` 还可以带一个模式值，选哪一个取决于你的端点怎么计费。**端点对提示
+  缓存计价时用 `--use_context session`**（OpenAI 与 Anthropic 官方端点都计价），
+  否则用裸写的 `--use_context`（window 模式）。session 模式维护一份只追加的历史
+  记录，并以缓存价重新读取它，因此上下文可以增长到整章的长度，花费反而低于 window
+  模式发送几个段落；没有缓存时，同一份历史每次都按原价重读。历史达到压缩预算时，
+  模型会被要求写一份交接报告，用于播种下一个窗口，并追加到 `<book>_handoff.md`。
+  进度条上的 `cached=` 就是判据：十几个请求之后仍然是 0，说明端点没有缓存，退回
+  window 模式。
 
 - `--context-compact-at`:
 

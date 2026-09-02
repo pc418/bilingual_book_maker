@@ -166,3 +166,6 @@ output/
 /user-msg-log.md
 /translate*.sh
 /CLAUDE.md
+
+# your own provider entries, copied from bbm_providers.example.json
+bbm_providers.json
