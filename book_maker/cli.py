@@ -363,16 +363,23 @@ MIN_COMPACT_BUDGET = 500
 
 
 def compact_budget(value):
-    """argparse type for --context-compact-at: a usable positive budget."""
+    """argparse type for --context-compact-at: a usable budget, or 0 for auto.
+
+    `0` means "size it from the model": the translator asks the endpoint for
+    the model's context window and compacts at 90% of it, and stops the run
+    when the endpoint cannot answer — a default there would be a guess about
+    the one model nobody could size.
+    """
     try:
         budget = int(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}")
-    if budget < MIN_COMPACT_BUDGET:
+    if budget and budget < MIN_COMPACT_BUDGET:
         raise argparse.ArgumentTypeError(
             f"a compact budget of {budget} is too small to be useful; use at "
             f"least {MIN_COMPACT_BUDGET} estimated tokens (2500 is the "
-            f"cheapest setting on most endpoints)"
+            f"cheapest setting on most endpoints), or 0 to size the budget "
+            f"from the model's own context window"
         )
     return budget
 
@@ -747,7 +754,17 @@ So you are close to reaching the limit. You have to choose your own value, there
         help="session mode only: estimated-token budget for the history "
         "before it is compacted into a translator handoff report. Default: "
         "8000, which costs about what window mode costs for several times "
-        "the context; 2500 is the cheapest setting on most endpoints",
+        "the context; 2500 is the cheapest setting on most endpoints. 0 "
+        "sizes the budget from the model's own context window (90%% of it) "
+        "and stops the run when the endpoint cannot report one",
+    )
+    parser.add_argument(
+        "--no-context-compact",
+        dest="no_context_compact",
+        action="store_true",
+        help="session mode only: never ask for a handoff report. The window "
+        "still rolls over when it reaches the budget, but the next one starts "
+        "empty instead of inheriting a summary",
     )
     parser.add_argument(
         "--glossary",
@@ -976,6 +993,21 @@ def main():
         )
         exit(1)
 
+    # Sizing the budget from the model's own window is something the route
+    # has to be able to *ask*: an OpenAI-shaped endpoint answers from its
+    # model record, and nothing else here does. `0` on the others meant "no
+    # budget at all", silently, which is a compact per paragraph.
+    if options.context_compact_at == 0 and not getattr(
+        translate_model, "SUPPORTS_AUTO_COMPACT_BUDGET", False
+    ):
+        print(
+            f"[bold red]Error: --context-compact-at 0 sizes the budget from "
+            f"the model's own context window, and only an OpenAI-shaped "
+            f"endpoint can be asked for one. The {api_format} format needs a "
+            f"number instead.[/bold red]"
+        )
+        exit(1)
+
     # One codex thread is the route's whole context. A second worker would
     # interleave chapters into it (measured: 225 document switches in 416
     # turns), and serializing the turns only hides that. Refused here,
@@ -1052,6 +1084,7 @@ def main():
     if options.context_mode != "session" and api_format != "codex":
         for flag, value in (
             ("--context-compact-at", options.context_compact_at),
+            ("--no-context-compact", options.no_context_compact),
             ("--glossary-auto", options.glossary_auto),
         ):
             if value:
@@ -1084,6 +1117,7 @@ def main():
         loader_kwargs.update(
             context_mode=options.context_mode,
             context_compact_at=options.context_compact_at,
+            no_context_compact=options.no_context_compact,
             glossary=glossary,
             glossary_auto=options.glossary_auto,
         )

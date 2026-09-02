@@ -106,6 +106,7 @@ class Codex(Base):
         server=None,
         binary="codex",
         context_compact_at=None,
+        no_context_compact=False,
         glossary=None,
         glossary_auto=False,
         style_note=None,
@@ -122,6 +123,7 @@ class Codex(Base):
         self.model = DEFAULT_MODEL
         self.model_list = None
         self.context_compact_at = context_compact_at
+        self.no_context_compact = no_context_compact
         # `pinned` is the author's --glossary file and never changes.
         # `learned` accumulates what compacts establish. `glossary` is the two
         # combined, pins on top, and is what gets injected per unit.
@@ -387,6 +389,24 @@ class Codex(Base):
         self._thread_id = None
         self._ensure_thread(seed=report.seed_text() if report_text else "")
 
+    def _start_empty_thread(self):
+        """Roll over with no handoff report, because the user asked for none.
+
+        Continuity across the seam is what the report buys, and
+        `--no-context-compact` declines to buy it — this is Codex's `/new`,
+        not a cheaper summary.
+        """
+        self._window += 1
+        self._window_tokens = 0
+        self._thread_id = None
+        self._ensure_thread(seed="")
+        if self.quiet:
+            return
+        print(
+            f"[bold cyan]— codex thread {self._window}, started empty "
+            f"(--no-context-compact) —[/bold cyan]"
+        )
+
     def _show_handoff(self, report):
         """Print the report the next thread will be seeded with.
 
@@ -441,7 +461,10 @@ class Codex(Base):
 
             self._window_tokens += estimate_tokens(text) + estimate_tokens(translated)
             if self._window_tokens >= self._budget():
-                self._compact_window()
+                if self.no_context_compact:
+                    self._start_empty_thread()
+                else:
+                    self._compact_window()
 
         # `needprint` is accepted for signature compatibility only. The loaders
         # display the source and its translation themselves, so printing here

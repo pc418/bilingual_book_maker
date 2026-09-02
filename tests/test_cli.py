@@ -1102,3 +1102,59 @@ def test_the_old_mode_name_is_not_advertised():
     proc = _cli("--help")
     assert "{auto,none,all,model,agent}" in " ".join(proc.stdout.split())
     assert "'most'" not in proc.stdout
+
+
+def test_compact_budget_takes_zero_as_auto():
+    """0 is the auto sentinel: size the budget from the model's own window."""
+    from book_maker.cli import compact_budget
+
+    assert compact_budget("0") == 0
+
+
+def test_compact_budget_still_rejects_a_budget_too_small_to_use():
+    import argparse
+
+    from book_maker.cli import compact_budget
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        compact_budget("499")
+
+
+def test_an_auto_sized_compact_budget_is_refused_where_nothing_can_size_it(tmp_path):
+    # 0 asks the route for the model's own context window; a route that has no
+    # way to ask has nothing to size with, and 0 there meant no budget at all
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--api_format",
+        "google",
+        "--context-compact-at",
+        "0",
+    )
+    assert proc.returncode == 1
+    assert "--context-compact-at 0" in " ".join(proc.stdout.split())
+    assert "Traceback" not in proc.stderr
+
+
+def test_the_codex_route_is_refused_an_auto_sized_budget_too(tmp_path):
+    # codex keeps a session history but cannot be asked for a window, and the
+    # refusal has to land before the sidecar is started for nothing
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--api_format",
+        "codex",
+        "--context-compact-at",
+        "0",
+    )
+    assert proc.returncode == 1
+    assert "--context-compact-at 0" in " ".join(proc.stdout.split())
+
+
+def test_a_named_compact_budget_is_never_refused(tmp_path):
+    proc, _ = _run(tmp_path, "--context-compact-at", "3000", "--plan-dry-run")
+    assert proc.returncode == 0, proc.stdout + proc.stderr

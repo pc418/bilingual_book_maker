@@ -720,3 +720,41 @@ class TestQuotaMessageDoesNotOverpromise:
         assert "Progress is saved" not in message
         assert "--resume" in message
         assert "does not reset until" in message
+
+
+class TestCompactionDisabled:
+    """`--no-context-compact`: open a fresh thread, never buy a report."""
+
+    def test_it_starts_a_new_thread_without_a_handoff_turn(self, tmp_path):
+        t = _codex(
+            ["译文"] * 40,
+            context_compact_at=100,
+            no_context_compact=True,
+            handoff_path=tmp_path / "h.md",
+        )
+        for _ in range(4):
+            t.translate("x" * 400)
+        assert len(t.server.threads) > 1, "the thread was never rolled over"
+        assert not any(
+            turn["text"].startswith(handoff_prompt(with_glossary=False)[:40])
+            for turn in t.server.turns
+        ), "a handoff report was requested with compaction disabled"
+        assert not (tmp_path / "h.md").exists()
+
+    def test_the_next_thread_is_seeded_with_nothing(self):
+        t = _codex(["译文"] * 40, context_compact_at=100, no_context_compact=True)
+        for _ in range(4):
+            t.translate("x" * 400)
+        assert all(
+            not (thread["base_instructions"] or "").count("handoff")
+            for thread in t.server.threads
+        )
+
+    def test_without_the_flag_the_thread_is_still_compacted(self):
+        t = _codex(["译文"] * 40, context_compact_at=100)
+        for _ in range(4):
+            t.translate("x" * 400)
+        assert any(
+            turn["text"].startswith(handoff_prompt(with_glossary=False)[:40])
+            for turn in t.server.turns
+        ), "a budget must still buy the handoff report"

@@ -216,6 +216,13 @@ class Base(ABC):
     # history it sizes.
     SUPPORTS_SESSION_CONTEXT = False
 
+    # Can `--context-compact-at 0` be honored here — can this route be asked
+    # what context window the model has? An OpenAI-shaped `/models` record
+    # answers it; the anthropic route and the codex sidecar do not, and `0`
+    # there would mean no budget at all, so the CLI refuses it up front
+    # rather than compacting after every paragraph.
+    SUPPORTS_AUTO_COMPACT_BUDGET = False
+
     # Does this format survive `--parallel-workers` with `--use_context`?
     # Each worker is handed a clone carrying its own chapter context, which
     # a format that keeps no re-sendable window cannot provide.

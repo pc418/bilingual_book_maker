@@ -25,12 +25,16 @@ from openai import (
 )
 
 from book_maker.translator.capabilities import (
+    CONTEXT_WINDOW_LOOKUP_ATTEMPTS,
     STRUCTURED_FAILURE_THRESHOLD,
     CapabilityLedger,
+    ContextWindowUnknown,
     ModelUnavailable,
     ProbeDeferred,
     classify_bad_request,
+    detect_context_window,
     grade_probe_response,
+    learn_context_window,
     probe_structured_output,
     verify_model_reachable,
     verify_models,
@@ -352,3 +356,108 @@ class TestBadRequestClassification:
         # Misreading a temperature 400 as "no schema support" demotes the model
         # for the rest of the run and hides the real cause from the user.
         assert classify_bad_request(_api_error(BadRequestError, 400, message)) == kind
+
+
+def _models_client(retrieve):
+    return SimpleNamespace(models=SimpleNamespace(retrieve=retrieve))
+
+
+class TestContextWindowDetection:
+    """What `--context-compact-at 0` reads off a model record.
+
+    The number decides how much context a whole book carries, and it arrives
+    over the wire from whatever gateway is in front of the model, so every
+    answer that is not a usable integer must be no answer at all.
+    """
+
+    @pytest.mark.parametrize(
+        "field",
+        ["context_length", "context_window", "max_context_length", "max_input_tokens"],
+    )
+    def test_every_known_spelling_is_read(self, field):
+        record = SimpleNamespace(id="m", **{field: 128_000})
+        assert detect_context_window(
+            _models_client(Mock(return_value=record)), "m"
+        ) == (128_000)
+
+    def test_a_dict_record_is_read_too(self):
+        # gateways that hand back plain JSON rather than a model object
+        client = _models_client(Mock(return_value={"id": "m", "context_length": 8_192}))
+        assert detect_context_window(client, "m") == 8_192
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            None,
+            True,  # an int in Python, and 0.9 x True is 0: no rollover at all
+            "128000",
+            100,  # too small to hold a paragraph and its translation
+            10**30,
+        ],
+    )
+    def test_an_unusable_answer_is_no_answer(self, value):
+        record = SimpleNamespace(id="m", context_length=value)
+        assert detect_context_window(
+            _models_client(Mock(return_value=record)), "m"
+        ) is (None)
+
+    def test_a_record_without_any_window_field_is_no_answer(self):
+        record = SimpleNamespace(id="m")
+        assert detect_context_window(
+            _models_client(Mock(return_value=record)), "m"
+        ) is (None)
+
+
+class TestContextWindowLearning:
+    """`learn_context_window` never guesses: it answers or it stops the run."""
+
+    def test_it_returns_the_reported_window(self, capsys):
+        record = SimpleNamespace(id="m", context_length=10_000)
+        assert learn_context_window(_models_client(Mock(return_value=record)), "m") == (
+            10_000
+        )
+        # the budget it implies is worth one line; it was never typed by anyone
+        assert "10000" in capsys.readouterr().out
+
+    def test_an_endpoint_reporting_nothing_stops_the_run(self):
+        client = _models_client(Mock(return_value=SimpleNamespace(id="m")))
+        with pytest.raises(ContextWindowUnknown) as stop:
+            learn_context_window(client, "m")
+        message = str(stop.value)
+        assert "--context-compact-at 0" in message
+        assert "m" in message
+        assert "8000" in message, "it must say what to pass instead"
+
+    def test_the_refusal_is_printable_rather_than_a_traceback(self):
+        client = _models_client(Mock(return_value=SimpleNamespace(id="m")))
+        with pytest.raises(ContextWindowUnknown) as stop:
+            learn_context_window(client, "m")
+        assert getattr(stop.value, "user_facing", False)
+
+    def test_a_missing_model_is_settled_not_retried(self):
+        retrieve = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+        with pytest.raises(ContextWindowUnknown) as stop:
+            learn_context_window(_models_client(retrieve), "ghost")
+        assert "no record of" in str(stop.value)
+        assert retrieve.call_count == 1, "a 404 is definitive; asking again costs time"
+
+    def test_a_transient_failure_is_retried_before_it_becomes_fatal(self):
+        answers = [
+            RuntimeError("connection reset"),
+            SimpleNamespace(id="m", context_length=10_000),
+        ]
+
+        def retrieve(model):
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        assert learn_context_window(_models_client(retrieve), "m") == 10_000
+
+    def test_it_stops_asking_a_hopeless_endpoint_and_then_refuses(self):
+        retrieve = Mock(side_effect=RuntimeError("connection reset"))
+        with pytest.raises(ContextWindowUnknown) as stop:
+            learn_context_window(_models_client(retrieve), "m")
+        assert "could not be asked" in str(stop.value)
+        assert retrieve.call_count == CONTEXT_WINDOW_LOOKUP_ATTEMPTS

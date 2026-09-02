@@ -44,6 +44,7 @@ from .capabilities import (
     StructuredOutputUnsupported,
     StructuredRefusal,
     classify_bad_request,
+    learn_context_window,
     probe_structured_output,
     verify_models,
 )
@@ -191,6 +192,9 @@ class ChatGPTAPI(Base):
 
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
+    # `/v1/models` is where a gateway reports a model's context window, so
+    # this is the one route `--context-compact-at 0` can be asked of.
+    SUPPORTS_AUTO_COMPACT_BUDGET = True
 
     # Session-mode state, declared here so the window-mode path is well
     # defined on any instance — including the subclasses and test fixtures
@@ -203,6 +207,11 @@ class ChatGPTAPI(Base):
     glossary_auto = False
     handoff_path = None
     context_compact_at = None
+    no_context_compact = False
+    # Every model --model_list rotates through, not just the current one: the
+    # history is shared across all of them, so an auto budget has to be one
+    # the smallest window survives.
+    _model_names = ()
     context_mode = "window"
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
@@ -221,6 +230,7 @@ class ChatGPTAPI(Base):
         context_paragraph_limit=0,
         context_mode="window",
         context_compact_at=None,
+        no_context_compact=False,
         glossary=None,
         glossary_auto=False,
         style_note=None,
@@ -263,6 +273,8 @@ class ChatGPTAPI(Base):
             else None
         )
         self.context_compact_at = context_compact_at
+        self.no_context_compact = no_context_compact
+        self._model_windows = {}
         # `pinned` is the author's --glossary file and never changes.
         # `learned` accumulates what compacts establish. `glossary` is the two
         # combined, pins on top, and is what gets injected per unit.
@@ -650,12 +662,56 @@ class ChatGPTAPI(Base):
             # gateway is not a reason to stop a paid run
             return
 
+    def preflight(self):
+        """Settle what must be known before the first paid request.
+
+        Only `--context-compact-at 0` needs it, and it needs it here: the
+        budget is the endpoint's answer about every model in play, so asking
+        at the first compaction would learn a book too late — and would learn
+        it after the money was spent.
+
+        Only when there is a history to size: window mode never reads the
+        budget, and the CLI has already said the flag is being ignored there,
+        so a lookup that can end the run would contradict it.
+        """
+        if self.context_compact_at == 0 and self.session is not None:
+            self._model_sized_budget()
+
     def _session_budget(self):
-        return (
-            self.context_compact_at
-            if self.context_compact_at is not None
-            else compact_budget_for(self.model)
-        )
+        """How large a window may grow before it rolls over.
+
+        `--context-compact-at 0` asks for the model's own size instead of a
+        number the user had to guess.
+        """
+        if self.context_compact_at is None:
+            return compact_budget_for(self.model)
+        if self.context_compact_at == 0:
+            return self._model_sized_budget()
+        return self.context_compact_at
+
+    def _model_sized_budget(self):
+        """0.9 x the smallest context window among the models in play.
+
+        `--model_list` rotates a model per request and the history is shared
+        across all of them, so the budget has to be one the smallest window
+        survives. Every configured model is measured, and a model that cannot
+        be measured ends the run rather than borrowing the default: the
+        default would be a guess about the one model nobody could size, and
+        guessing is what `0` was passed to avoid.
+        """
+        models = list(self._model_names) or [self.model]
+        return min(self._learn_context_window(m) for m in models) * 9 // 10
+
+    def _learn_context_window(self, model):
+        """The window this endpoint reports for `model`. Asked once per run.
+
+        The lookup itself lives in `capabilities`, with everything else this
+        endpoint is asked about; what belongs here is only the memo, because
+        "once" means once for this translator's client.
+        """
+        if model not in self._model_windows:
+            self._model_windows[model] = learn_context_window(self.openai_client, model)
+        return self._model_windows[model]
 
     def _compact_session(self):
         """Ask for a handoff report, then start the next window seeded with it.
@@ -787,8 +843,27 @@ class ChatGPTAPI(Base):
         # glossary block — would make the newest pair a cache miss, and the
         # run would re-read a paragraph at full input price every request.
         self.session.append(self._user_content(text), t_text)
-        if self.session.should_compact(self._session_budget()):
+        if not self.session.should_compact(self._session_budget()):
+            return
+        if self.no_context_compact:
+            self._start_empty_window()
+        else:
             self._compact_session()
+
+    def _start_empty_window(self):
+        """Roll over with no handoff report, because the user asked for none.
+
+        Continuity across the seam is what the report buys, and
+        `--no-context-compact` declines to buy it — so this is a plain reset,
+        not a cheaper summary.
+        """
+        self.session.reset(seed="")
+        if self.quiet:
+            return
+        print(
+            f"[bold cyan]— context window {self.session.windows}, started "
+            f"empty (--no-context-compact) —[/bold cyan]"
+        )
 
     @retry(
         stop=stop_after_attempt(3),
@@ -1124,6 +1199,10 @@ class ChatGPTAPI(Base):
             ]
 
         print(f"Using model list {model_list}")
+        # Remembered as a list too: `cycle` cannot be read back, and an auto
+        # budget has to size the shared history for the smallest window among
+        # *all* of them, not just whichever is current.
+        self._model_names = model_list
         self.model_list = cycle(model_list)
         # Set the initial model so it is available before rotate_model() runs.
         self.model = model_list[0]
