@@ -9,47 +9,94 @@ live gateway on 2026-08-07.
 `--model` only accepts keys of `MODEL_DICT`
 (`book_maker/translator/__init__.py`) — argparse rejects anything else. So a
 model id the repo has never heard of (`gpt-5.6-luna`, `claude-haiku-4.5`,
-`deepseek-v4-flash`) can only arrive through a flag that carries an arbitrary
-string:
+`deepseek-v4-flash`) can only arrive through a flag that carries an
+arbitrary string. **This skill's route is `--provider`** (SKILL.md §0): one
+entry names the endpoint, the shape, the model and the key variable, so
+none of them has to be retyped per run.
 
-| the id you have | how it reaches the translator |
+| the endpoint | how the run reaches it |
 |---|---|
-| is a MODEL_DICT key (`claude-haiku-4-5-20251001`, `gemini`, `groq`, `qwen`) | `--model <that key>` |
-| is not, and the endpoint speaks the OpenAI shape | `--model openai --model_list "$MODEL"` |
-| is not, and the endpoint speaks anthropic/gemini/qwen natively | `--provider <name>` + `--model_list "$MODEL"` (below) |
+| an entry in `bbm_providers.json` / `~/.bbm/providers.json` | `--provider NAME`, plus `--model_list "$MODEL"` only to override the entry's model |
+| an OpenAI-shaped host with no entry | `--model openai --model_list "$MODEL" --api_base "$ROOT/v1"` |
+| a MODEL_DICT key that already means the model you want | `--model <that key>` |
 | there is no endpoint — the user's ChatGPT/Codex plan | `--model codex`, no key, no base, nothing to probe (SKILL.md §1c) |
 
+`--provider` and `--model` are mutually exclusive, so on a provider route a
+different model is named in `--model_list`, never in `--model`.
+
 **Never `--model chatgptapi` for an arbitrary id**: that preset runs a
-hardcoded GPT-3.5-family discovery and ignores `--model_list`
-(`cli.py:806-823`). Only `openai`, `groq`, `gemini` and `--provider` honor it;
-every other `--model` value refuses the combination loudly (`cli.py:828-836`).
+hardcoded GPT-3.5-family discovery and ignores `--model_list`. Only
+`openai`, `groq`, `gemini` and `--provider` honor it; every other `--model`
+value refuses the combination loudly, on the command line alone, before a
+key is read or a codex sidecar is started.
 
-## Binding `$KEY` and `$ROOT` before any probe
+## `--provider`: the route, written once (`provider_loader.py`)
 
-The shape decides which key variable to read. Do **not** take "whichever
+`bbm_providers.json` in the working directory is read first, then
+`~/.bbm/providers.json`; a project entry wins on a shared name. The
+`providers` wrapper is required — the loader reads nothing from a file
+without it.
+
+```json
+{"providers": {"mygw": {
+  "api_style": "claude",
+  "base_url": "https://api.example.com",
+  "env_key": "MY_GATEWAY_KEY",
+  "default_models": ["claude-haiku-4.5"]
+}}}
+```
+
+`api_style` is `openai`, `claude`, `gemini` or `qwen`, and it is the only
+required field. `default_models` becomes the model list when `--model_list`
+is absent; `env_key` names the variable the key is read from, and without
+it (or an explicit `--api_key`) the run stops asking for one. An unknown
+provider name is an error that lists the names both files do define.
+
+**Only `openai` and `claude` entries carry a session history.** `gemini`
+and `qwen` entries refuse `--use_context session` outright, which makes
+them the wrong route for this workflow — see the capability table below.
+
+## Binding `$KEY`, `$ROOT`, `$MODEL` from the entry before any probe
+
+The entry decides which key variable to read. Do **not** take "whichever
 key is set" — `.env` is sourced into a shell that may already export other
 providers' keys from `~/.zshenv`, and a stale one would route the run to an
-endpoint the user never chose. Exit before curl when either half is
-missing: an empty bearer token produces a 401 that reads like a bad key.
+endpoint the user never chose. Exit before curl when anything is missing:
+an empty bearer token produces a 401 that reads like a bad key.
 
 ```bash
-route_env() {   # $1 = openai | anthropic | gemini
-  case "$1" in
-    openai)    KEY="${OPENAI_API_KEY:-}";        DEFAULT_ROOT=https://api.openai.com ;;
-    anthropic) KEY="${BBM_CLAUDE_API_KEY:-}";    DEFAULT_ROOT=https://api.anthropic.com ;;
-    gemini)    KEY="${BBM_GOOGLE_GEMINI_KEY:-}"; DEFAULT_ROOT=https://generativelanguage.googleapis.com ;;
-    *) echo "unknown shape $1" >&2; return 2 ;;
-  esac
-  ROOT="${BBM_API_BASE:-}"; ROOT="${ROOT%/}"; ROOT="${ROOT%/v1}"
-  ROOT="${ROOT:-$DEFAULT_ROOT}"
-  [ -n "${MODEL:-}" ] || { echo "MODEL is unset in .env" >&2; return 1; }
-  [ -n "$KEY" ]       || { echo "no key set for the $1 route" >&2; return 1; }
+route_env() {   # $1 = provider name, as in bbm_providers.json / ~/.bbm/providers.json
+  eval "$(python3 - "$1" <<'EOF'
+import json, os, pathlib, shlex, sys
+name = sys.argv[1]; entry = None
+for f in (pathlib.Path.home()/".bbm"/"providers.json", pathlib.Path("bbm_providers.json")):
+    if f.is_file():
+        entry = json.load(open(f)).get("providers", {}).get(name, entry)
+if entry is None:
+    print(f'echo "no provider entry named {name}" >&2; return 1'); sys.exit()
+shape = {"claude": "anthropic"}.get(entry.get("api_style"), "openai")
+host = {"gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1"}.get(entry.get("api_style"))
+root = (entry.get("base_url") or host or {"anthropic": "https://api.anthropic.com"}.get(shape, "https://api.openai.com")).rstrip("/")
+root = root[:-3] if root.endswith("/v1") else root
+key_var = entry.get("env_key") or ""
+model = (entry.get("default_models") or [""])[0]
+print(f"SHAPE={shape} ROOT={shlex.quote(root)} MODEL={shlex.quote(model)} KEY_VAR={key_var}")
+EOF
+)"
+  [ -n "${SHAPE:-}" ] || return 1
+  [ -n "$KEY_VAR" ] || { echo "entry $1 names no env_key" >&2; return 1; }
+  KEY="$(printenv "$KEY_VAR" 2>/dev/null || true)"   # same in bash and zsh; .env is exported by set -a
+  [ -n "$MODEL" ] || { echo "entry $1 names no model" >&2; return 1; }
+  [ -n "$KEY" ]   || { echo "$KEY_VAR is unset — fill .env" >&2; return 1; }
 }
 ```
 
-On a gateway the key belongs to the *gateway*, not the model's vendor: a
-Claude model reached over the OpenAI shape uses `OPENAI_API_KEY`, because
-that is the shape being spoken. Verified in bash and zsh.
+`$ROOT` comes out with no trailing `/v1` whatever the entry wrote, so every
+probe path below is spelled in full. On a gateway the key belongs to the
+*gateway*, not the model's vendor: a Claude model reached over the OpenAI
+shape reads the gateway entry's `env_key`, because that is the shape being
+spoken.
 
 ## Shapes, and how to probe each
 
@@ -75,8 +122,8 @@ curl -sS "$ROOT/v1/chat/completions" \
   -d '{"model":"'"$MODEL"'","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-Passes when the body has `.choices[0]`. → `--model openai --model_list
-"$MODEL" --api_base "$ROOT/v1"`
+Passes when the body has `.choices[0]`. → the entry is `"api_style":
+"openai"` with `"base_url": "$ROOT/v1"`.
 
 **Anthropic shape**. `max_tokens` is *mandatory* here, unlike above; 16 is
 past every floor seen so far.
@@ -88,13 +135,13 @@ curl -sS "$ROOT/v1/messages" \
   -d '{"model":"'"$MODEL"'","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
-Passes when the body has `.content[0]`. → `--model claude-…` (a MODEL_DICT
-key) or a `claude` provider, with `--api_base "$ROOT"`. The reply's `model`
-field echoes the id the endpoint actually resolved to
-(`claude-haiku-4.5` → `claude-haiku-4-5-20251001`), which tells you whether a
-MODEL_DICT key would have reached the same model. Real Anthropic requires
-`x-api-key`; gateways commonly accept `Authorization: Bearer` too, so try
-`x-api-key` first and Bearer second.
+Passes when the body has `.content[0]`. → the entry is `"api_style":
+"claude"` with `"base_url": "$ROOT"`. The reply's `model` field echoes the
+id the endpoint actually resolved to (`claude-haiku-4.5` →
+`claude-haiku-4-5-20251001`), which is the id to write into
+`default_models`. Real Anthropic requires `x-api-key`; gateways commonly
+accept `Authorization: Bearer` too, so try `x-api-key` first and Bearer
+second.
 
 **`--api_base` for this route takes the root, not `/v1`**: the SDK appends
 `/v1/messages` itself. Passing `https://host/v1` used to produce
@@ -110,28 +157,28 @@ curl -sS "$ROOT/v1beta/models/$MODEL:generateContent" \
   -d '{"contents":[{"parts":[{"text":"hi"}]}]}'
 ```
 
-Passes when the body has `.candidates[0]`. → `--model gemini` (+
-`--model_list "$MODEL"`, which gemini honors) or a `gemini` provider, with
-`--api_base "$ROOT"`. Default root when unset:
-`https://generativelanguage.googleapis.com`. `--api_base` is threaded into
-the client as of 2026-08-07; before that it was silently discarded, so on an
-older checkout a custom Gemini base is a no-op, not an error.
+Passes when the body has `.candidates[0]`. → a `"api_style": "gemini"`
+entry, default root `https://generativelanguage.googleapis.com`. **Not a
+route for this workflow**: it refuses `--use_context session`. Reach a
+Gemini model through an OpenAI-shaped gateway entry instead when the
+translation needs continuity.
 
-## Inferring which shape to try first, from the model name
+## Choosing an `api_style` for a new entry
+
+The entry declares the shape, so this only comes up when writing one.
 
 | model name starts with | try first | then |
 |---|---|---|
-| `gpt-`, `o1`, `o3`, `chatgpt` | OpenAI | — |
-| `claude-` | OpenAI, **if** a gateway base is set; else anthropic | the other one |
-| `gemini-` | OpenAI if a gateway base is set; else gemini | the other one |
-| `grok-` | OpenAI | — (`--model xai` ignores `--model_list` and pins `grok-beta`) |
-| `llama`, `mixtral`, `gemma`, `qwen3`, `deepseek`, anything else | OpenAI | — |
-| `qwen-mt-turbo`, `qwen-mt-plus` | `--model qwen-mt-turbo` / `-plus` — the id itself, not the bare `qwen` alias | — MT-only, see caveat below |
+| `gpt-`, `o1`, `o3`, `chatgpt` | `openai` | — |
+| `claude-` | `openai` **if** the host is a gateway; `claude` if it is anthropic's own | the other one |
+| `gemini-` | `openai` at a gateway (a `gemini` entry cannot keep a session) | — |
+| `llama`, `mixtral`, `gemma`, `qwen3`, `deepseek`, anything else | `openai` | — |
 
-Why OpenAI-first whenever `BBM_API_BASE` points at a gateway: aggregators
-serve Claude and Gemini models on `/chat/completions` too, and that route
-accepts arbitrary ids without a provider file. Go native only when the
-endpoint is the vendor's own, or when the gateway rejects the OpenAI shape.
+Why OpenAI-first at a gateway: aggregators serve Claude and Gemini models
+on `/chat/completions` too, and that shape is the one with structured
+outputs, a session history and an auto-sized compact budget behind it. Go
+native only when the endpoint is the vendor's own, or when the gateway
+rejects the OpenAI shape.
 
 **Verify the name before the path.** `GET $ROOT/v1/models` (Bearer auth) is
 free on OpenAI-shaped endpoints and returns `{"data":[{"id":…}]}`. Check
@@ -141,37 +188,17 @@ return 404, and only the listing tells them apart. Some gateways add
 read `['openai', 'anthropic']`. When that field is there it answers the
 shape question outright; read it instead of guessing.
 
-## `--provider`: a named gateway (`cli.py:502-518`, `provider_loader.py`)
-
-For a non-OpenAI shape with a custom model id, this is the only route.
-`bbm_providers.json` in the working directory, or `~/.bbm/providers.json`:
-
-```json
-{"providers": {"mygw": {
-  "api_style": "claude",
-  "base_url": "https://api.example.com",
-  "env_key": "MY_GATEWAY_KEY",
-  "default_models": ["claude-haiku-4.5"]
-}}}
-```
-
-`api_style` ∈ `openai` | `claude` | `gemini` | `qwen`. Then
-`--provider mygw --model_list "$MODEL"` (mutually exclusive with `--model`).
-Claude and qwen gained `set_model_list` on 2026-08-07; on an older checkout
-those two api_styles die on an `AttributeError` and only the `default_models`
-path works.
-
 ## Capability caveats per route
 
-| route | translation | plan-mode classification |
-|---|---|---|
-| openai / gpt-* / xai | schema when the probe says `strict`, else delimiter | yes |
-| claude | delimiter (no structured-output work was done for it) | yes, via the prompt rung |
-| gemini | native schema | yes |
-| groq, litellm | delimiter | yes |
-| codex | delimiter, on a thread that is itself the context window | yes |
-| qwen-mt-*, customapi | translation only | **no** |
-| google, deepl, deeplfree, caiyun, tencentransmart | translation only | **no** |
+| route | translation | session context | plan-mode classification |
+|---|---|---|---|
+| `openai` (any host), groq | schema when the probe says `strict`, else delimiter | yes | yes |
+| `claude` | delimiter (no structured-output work was done for it) | yes | yes, via the prompt rung |
+| `codex` | one turn per unit, on a thread that is itself the context window | the thread | yes, via the prompt rung — the sidecar compiles no schema |
+| `gemini` | native schema | **no** — `--use_context session` is refused | yes |
+| `qwen`, `qwen-mt-*`, `customapi` | translation only | **no** | **no** |
+| `xai`, `orcarouter` | schema/delimiter as above | **no** — their `__init__` drops the context arguments | yes |
+| google, deepl, deeplfree, caiyun, tencentransmart | translation only | **no** | **no** |
 
 Classification capability does not gate *this* skill — `--plan-classify
 agent` makes no API call, you are the classifier. It matters only if someone
@@ -180,6 +207,9 @@ switches to `--plan-classify model`.
 `qwen-mt-*` and `customapi` are dedicated translation engines: their only
 channel translates whatever it is handed rather than answering it. They
 translate fine and cannot be asked a question.
+
+An unset `--temperature` still sends `1.0` on the `claude` and `gemini`
+routes; only the openai-shaped translator leaves it out of the request.
 
 ## What the run's own probe does later
 

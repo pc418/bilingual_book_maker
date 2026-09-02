@@ -10,7 +10,27 @@ user has said to use it**. Do not lint before asking.
 - The `user` template must contain the literal placeholder `{text}`.
   `{language}` is optional.
 - `.txt` becomes the user template as-is, same `{text}` rule.
-- `.md` is parsed as PromptDown.
+- `.md` is parsed as PromptDown, and only in its **block** form: a
+  `## Conversation` heading, then a line reading `**User:**`, then the
+  template. The pinned promptdown does not read the table form, and the
+  repo's own `prompt_md.prompt.md` sample is written in it — so that file
+  is a broken example, not a template to copy. A file it cannot read stops
+  the run with an error naming the file and the block form.
+
+```markdown
+# Translation Prompt
+
+## Developer Message
+
+You are a professional translator. Keep the register of the original.
+
+## Conversation
+
+**User:**
+Please translate the following text into {language}:
+
+{text}
+```
 
 Fix or report lint problems before the paid run. The CLI would reject the
 file at run start anyway, but a traceback after the user has already
