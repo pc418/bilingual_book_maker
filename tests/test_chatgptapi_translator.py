@@ -19,7 +19,7 @@ from openai import (
 
 from book_maker.structured import StructuredJSONFailed
 from book_maker.translator.capabilities import (
-    ROUTE_PROBE_MAX_TOKENS,
+    ROUTE_PROBE_PROMPT,
     CapabilityLedger,
     ModelUnavailable,
 )
@@ -1231,7 +1231,7 @@ def test_the_route_is_checked_at_the_first_paid_call():
 
     route, schema = create.call_args_list
     assert route.kwargs["model"] == "gpt-a"
-    assert route.kwargs["max_tokens"] == ROUTE_PROBE_MAX_TOKENS
+    assert "max_tokens" not in route.kwargs
     assert "response_format" not in route.kwargs
     # ...and the capability probe still runs on its own terms afterwards
     assert schema.kwargs["response_format"]["type"] == "json_schema"
@@ -1248,6 +1248,51 @@ def test_the_route_is_checked_once_per_run():
 
     # one route probe plus one capability probe, neither repeated per request
     assert create.call_count == 2
+
+
+def test_a_worker_clone_does_not_buy_the_check_again():
+    # parallel chapters translate through shallow copies of the translator
+    # (loader._clone_translator_for_context). Rebinding the state on one
+    # clone would leave every other worker to pay for the same probes.
+    from copy import copy
+
+    create = Mock(
+        side_effect=[
+            _completion("PONG"),
+            _completion('{"probe":"schema_ok"}'),
+            _completion('{"probe":"schema_ok"}'),
+        ]
+    )
+    translator = _routed(create)
+
+    first, second = copy(translator), copy(translator)
+    first._probe_verdict()
+    second._probe_verdict()
+
+    route_probes = [
+        c
+        for c in create.call_args_list
+        if c.kwargs["messages"][0]["content"] == ROUTE_PROBE_PROMPT
+    ]
+    assert len(route_probes) == 1
+    # and the original knows too, so a later paragraph on it pays nothing
+    assert translator._route_state["pending"] is None
+
+
+def test_a_refusal_reaches_a_clone_that_never_probed():
+    from copy import copy
+
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+    first, second = copy(translator), copy(translator)
+
+    with pytest.raises(ModelUnavailable):
+        first._probe_verdict()
+    with pytest.raises(ModelUnavailable):
+        second._probe_verdict()
+
+    # the second worker is told, not re-probed
+    assert create.call_count == 1
 
 
 def test_a_model_the_endpoint_will_not_serve_stops_the_run():

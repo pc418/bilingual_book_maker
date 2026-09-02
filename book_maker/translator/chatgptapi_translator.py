@@ -215,10 +215,12 @@ class ChatGPTAPI(Base):
     # the smallest window survives.
     _model_names = ()
     # The models this run was given and has not yet confirmed the endpoint
-    # will serve, plus the refusal if it turned out not to. `None` on both
-    # means nothing is owed: either the check has run, or no list was set.
-    _unverified_models = None
-    _route_failure = None
+    # will serve, plus the refusal if it turned out not to. It is one dict,
+    # not two attributes, because parallel workers each translate through a
+    # *shallow copy* of this object: rebinding an attribute would settle the
+    # question on one clone and leave the others to buy the same probes
+    # again. Mutating one shared dict settles it for all of them.
+    _route_state = None
     context_mode = "window"
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
@@ -328,26 +330,29 @@ class ChatGPTAPI(Base):
         re-probed: `get_translation` retries three times, and a model does not
         become available in between.
         """
+        state = self._route_state
+        if state is None:
+            return
         with self._api_lock:
-            if self._route_failure is not None:
-                raise self._route_failure
-            pending = self._unverified_models
+            if state["failure"] is not None:
+                raise state["failure"]
+            pending = state["pending"]
             if pending is None:
                 return
             # Cleared before the probe, not after: the endpoint is asked once
             # per run whatever it answers.
-            self._unverified_models = None
+            state["pending"] = None
 
             result = verify_model_routes(self.openai_client, pending)
             if not result["success"]:
                 listed = result["api_models"]
-                self._route_failure = ModelUnavailable(
+                state["failure"] = ModelUnavailable(
                     f"This endpoint served none of the models {pending}."
                     + (f" It lists {describe_listing(listed)}." if listed else "")
                     + " Check the model id, the API base, and your key's "
                     "model permissions."
                 )
-                raise self._route_failure
+                raise state["failure"]
 
             available = result["available_models"]
             if available == pending:
@@ -736,8 +741,17 @@ class ChatGPTAPI(Base):
         Only when there is a history to size: window mode never reads the
         budget, and the CLI has already said the flag is being ignored there,
         so a lookup that can end the run would contradict it.
+
+        The route check comes first here, and only here. Sizing asks the
+        endpoint about every model in play, so an id it will not serve would
+        end the run as "no context window reported" when the real answer is
+        that the model does not exist — and a list of two, one good, would
+        die on the bad one instead of narrowing to the good one. Everywhere
+        else the check stays lazy; a run that passes `0` has already asked
+        for a lookup before the first request.
         """
         if self.context_compact_at == 0 and self.session is not None:
+            self._ensure_models_routable()
             self._model_sized_budget()
 
     def _session_budget(self):
@@ -1255,8 +1269,8 @@ class ChatGPTAPI(Base):
         self.model_list = cycle(model_list)
         # Set the initial model so it is available before rotate_model() runs.
         self.model = model_list[0]
-        self._unverified_models = model_list
-        self._route_failure = None
+        # Shared by every clone made from here on (see _route_state).
+        self._route_state = {"pending": model_list, "failure": None}
 
     def batch_init(self, book_name):
         self.book_name = self.sanitize_book_name(book_name)

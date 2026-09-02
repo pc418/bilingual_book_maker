@@ -137,8 +137,11 @@ false negative twice over: gateways reject caps below their own floor
 (measured: `max_tokens must be greater than 2` on *every* model of one
 gateway), and OpenAI's own o-series/gpt-5 models reject `max_tokens`
 outright in favour of `max_completion_tokens`. A probe must test one thing.
-The repo's internal probe sends no cap for exactly this reason
-(`translator/capabilities.py::probe_structured_output`); match it. The reply is
+The repo's internal probes send no cap for exactly this reason
+(`translator/capabilities.py::probe_structured_output` and
+`probe_model_route`); match them. Measured 260902: a capped route probe
+against this fork's own default model came back "Unsupported parameter:
+'max_tokens' is not supported with this model", confirming nothing. The reply is
 a few tokens of "Hi!".
 
 **OpenAI shape** — the universal one. Most gateways serve every model they
@@ -192,13 +195,20 @@ serve Claude and Gemini models on `/chat/completions` too. Go native only
 when the endpoint is Anthropic's own, or when the gateway rejects the OpenAI
 shape.
 
-**Verify the name before the path.** `GET $ROOT/v1/models` (Bearer auth) is
-free on OpenAI-shaped endpoints and returns `{"data":[{"id":…}]}`. Check
-`$MODEL` is in that list *first*: a typo'd id and an unsupported path both
-return 404, and only the listing tells them apart. Some gateways add
-`supported_endpoint_types` per row — measured on one aggregator, every row
-read `['openai', 'anthropic']`. When that field is there it answers the
-shape question outright; read it instead of guessing.
+**The chat call is the verdict; the listing is only a hint.** `GET
+$ROOT/v1/models` (Bearer auth) is free on OpenAI-shaped endpoints and
+returns `{"data":[{"id":…}]}`, but it is not the authority on what the
+endpoint will serve: gateways routinely serve a model they do not list, or
+list it under another id, so a name missing from the listing is no reason
+to give up. Run the chat probe above; a reply is the answer. Fetch the
+listing when the probe fails, to tell a typo'd id from an unsupported path
+— both return 404, and only the listing separates them. The repo does the
+same thing internally (`translator/capabilities.py::probe_model_route`,
+run once at the first paid call), so what you check here is what the run
+checks. Some gateways add `supported_endpoint_types` per row — measured on
+one aggregator, every row read `['openai', 'anthropic']`. When that field
+is there it answers the shape question outright; read it instead of
+guessing.
 
 ## Capability caveats per route
 

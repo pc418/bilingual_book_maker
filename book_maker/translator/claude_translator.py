@@ -292,7 +292,7 @@ class Claude(Base):
         fallback.model_list = cycle([self.model])
         fallback.model = self.model
         fallback._model_names = [self.model]
-        fallback._unverified_models = [self.model]
+        fallback._route_state = {"pending": [self.model], "failure": None}
         # One history and one meter across the switch: the pairs the
         # anthropic shape collected go on being replayed, and the bar keeps
         # counting instead of freezing at the request that switched.

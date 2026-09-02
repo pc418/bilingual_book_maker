@@ -30,6 +30,8 @@ from openai import (
     UnprocessableEntityError,
 )
 from rich import print
+import re
+
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -114,13 +116,13 @@ STRUCTURED_PROBE_SCHEMA = {
 # Route probe. One tiny chat request per model, asking for a single word —
 # the cheapest question that can be put to a route. Nothing about the answer
 # is read: what is being established is that the endpoint served this model at
-# all, not what it is good at. No schema and no temperature, because a rung
-# refusal or a sampling refusal would let a second question fail the first. A
-# small cap is safe here in a way it is not for the structured probe: an
-# answer cut short still proves the endpoint routed the model, which is the
-# entire question.
+# all, not what it is good at. No schema, no temperature and no token cap,
+# because a probe must test one thing: every one of those is refused by some
+# model somewhere, and a refusal of the question is not an answer about the
+# model. The cap was the live proof of it — OpenAI's gpt-5 family rejects
+# `max_tokens` outright ("use max_completion_tokens instead"), so a capped
+# probe confirmed nothing about the fork's own default model.
 ROUTE_PROBE_PROMPT = "Reply with the single word: PONG."
-ROUTE_PROBE_MAX_TOKENS = 16
 
 # How many listed model ids an error message may carry. A gateway lists
 # hundreds; the listing is a hint under the refusal, not the finding.
@@ -132,6 +134,15 @@ LISTING_HINT_LIMIT = 12
 # connection, a parameter this particular model does not take — says nothing
 # about whether the model exists, and reporting one of those as a missing
 # model sends the user hunting for a typo that is not there.
+# A 400 that complains about a request field is never an answer about the
+# model, even when the sentence names the model too.
+PARAMETER_COMPLAINT_WORDS = (
+    "parameter",
+    "unsupported_parameter",
+    "unsupported value",
+    "invalid_request_error: unsupported",
+)
+
 MODEL_NOT_FOUND_PHRASES = (
     "model_not_found",
     "does not exist",
@@ -405,8 +416,29 @@ def names_missing_model(error, model):
     text = str(error).lower()
     if "model_not_found" in text:
         return True
+    # An endpoint that says which field it is complaining about has settled
+    # the question: `param: model` is about the model, `param: max_tokens` is
+    # not, however much the sentence goes on to name the model.
+    param = _named_param(text)
+    if param is not None:
+        return param == "model"
+    if any(word in text for word in PARAMETER_COMPLAINT_WORDS):
+        # "parameter 'max_tokens' does not exist for model 'gpt-5'" names the
+        # model and says "does not exist", and is not about the model at all.
+        return False
     named = bool(model) and model.lower() in text
     return named and any(phrase in text for phrase in MODEL_NOT_FOUND_PHRASES)
+
+
+def _named_param(text):
+    """The field an error blames, when it says so: `'param': 'max_tokens'`.
+
+    OpenAI-shaped errors carry the offending field beside the message. When
+    it is there it is the whole answer, and reading the prose instead is how
+    a parameter complaint gets mistaken for a missing model.
+    """
+    match = re.search(r"['\"]param['\"]:\s*['\"]([\w.\-\[\]]+)['\"]", text)
+    return match.group(1) if match else None
 
 
 def probe_model_route(client, model):
@@ -425,7 +457,6 @@ def probe_model_route(client, model):
         client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": ROUTE_PROBE_PROMPT}],
-            max_tokens=ROUTE_PROBE_MAX_TOKENS,
         )
     except Exception as e:
         if names_missing_model(e, model):
