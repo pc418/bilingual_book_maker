@@ -212,6 +212,14 @@ def resolve_endpoint(options):
         if route:
             model_names[0], options.api_base = route
             orcarouter_env_keys = (orcarouter.ENV_KEY,)
+            # the whole list rotates against that one gateway, so every entry
+            # goes through the same redirect: the translator dedupes by
+            # string, and `orcarouter` beside `orcarouter/auto` is one model
+            # named twice, which the endpoint's model check would reject
+            model_names = [
+                (orcarouter.resolve(name, options.api_base) or (name,))[0]
+                for name in model_names
+            ]
         if route or model_names[0].lower() in CODEX_MODEL_ALIASES:
             # settled from the route itself, so the provider's api_style
             # cannot answer a question the model name already answered

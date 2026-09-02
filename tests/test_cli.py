@@ -659,3 +659,37 @@ class TestProviderPrecedence:
         _, api_format, _ = resolve_endpoint(options)
 
         assert api_format == "openai"
+
+
+class TestOrcaRouterModelList:
+    """A rotation list at the gateway is a list of gateway model ids."""
+
+    def test_every_entry_is_redirected_once_the_list_selects_orcarouter(self):
+        # only the first entry used to be redirected, so the ordered dedupe
+        # downstream saw `orcarouter/auto` and `orcarouter` as two models and
+        # the endpoint's model check could reject the bare alias
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(model_list="orcarouter,orcarouter")
+        models, _, _ = resolve_endpoint(options)
+
+        assert models == ["orcarouter/auto", "orcarouter/auto"]
+
+    def test_ids_already_naming_the_gateway_are_left_as_written(self):
+        from book_maker.cli import resolve_endpoint
+        from book_maker.translator import orcarouter_translator as orcarouter
+
+        options = _options(model_list="orcarouter,orcarouter/openai/gpt-5-mini")
+        models, _, _ = resolve_endpoint(options)
+
+        assert models == ["orcarouter/auto", "orcarouter/openai/gpt-5-mini"]
+        assert options.api_base == orcarouter.API_BASE
+
+    def test_a_list_that_does_not_start_at_the_gateway_is_untouched(self):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(model_list="gpt-5-mini,orcarouter")
+        models, _, _ = resolve_endpoint(options)
+
+        assert models == ["gpt-5-mini", "orcarouter"]
+        assert options.api_base == ""
