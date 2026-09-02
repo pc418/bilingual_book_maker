@@ -1,5 +1,6 @@
 import itertools
 import re
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -15,6 +16,60 @@ from ..structured import (
 
 # Special delimiter for batch translation - UUID-based token unlikely to appear in any text
 BATCH_DELIMITER = "\n\n@@\n\n"
+
+
+def short_count(n):
+    """12345 -> '12.3k', 1234567 -> '1.23M': a progress bar has no room for digits."""
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{n / 1000:.1f}k"
+    return f"{n / 1_000_000:.2f}M"
+
+
+class UsageMeter:
+    """Tokens billed so far, summed over every request that reported them.
+
+    `cached` is the part of `prompt` the endpoint read back from its cache.
+    That is the number session mode lives on: a history that is re-read at
+    full price every request costs more than window mode, and nothing in
+    the output says so — only this does. It is shown on the progress bar
+    rather than judged: whether the ratio is worth it is the operator's
+    call, made while watching.
+    """
+
+    def __init__(self):
+        self.prompt = 0
+        self.completion = 0
+        self.cached = 0
+        self.requests = 0
+        self._lock = threading.Lock()
+
+    def note(self, prompt=0, completion=0, cached=0):
+        with self._lock:
+            self.prompt += prompt or 0
+            self.completion += completion or 0
+            self.cached += cached or 0
+            self.requests += 1
+
+    def postfix(self):
+        """What the progress bar shows — nothing until a request reported usage."""
+        if not self.requests:
+            return None
+        return {
+            "in": short_count(self.prompt),
+            "out": short_count(self.completion),
+            "cached": short_count(self.cached),
+        }
+
+    def summary(self):
+        if not self.requests:
+            return None
+        return (
+            f"tokens: in {short_count(self.prompt)}, out "
+            f"{short_count(self.completion)}, cached {short_count(self.cached)} "
+            f"({self.requests} request{'s' if self.requests != 1 else ''})"
+        )
 
 
 class AsyncTranslationUnsupported(NotImplementedError):
@@ -100,6 +155,15 @@ class Base(ABC):
         # needs: the worst a race costs is one repeated rejection, never a
         # wrong answer.
         self._rung_refusals = {}
+        # Filled by the translators that get usage back from the endpoint;
+        # the loader reads it for the progress bar and the closing line.
+        self.usage = UsageMeter()
+
+    def usage_postfix(self):
+        return self.usage.postfix()
+
+    def usage_summary(self):
+        return self.usage.summary()
 
     @abstractmethod
     def rotate_key(self):

@@ -83,11 +83,6 @@ class Claude(Base):
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
 
-    # How many requests to allow before concluding the endpoint is not billing
-    # cache reads. One miss is normal (nothing is cached yet), and short books
-    # should not be nagged.
-    CACHE_WARN_AFTER = 10
-
     # Compact attempts before giving up on a summary and starting clean. More
     # than one so a transient error does not cost the accumulated context;
     # bounded so a broken endpoint cannot grow the history forever.
@@ -122,11 +117,9 @@ class Claude(Base):
         no_context_compact=False,
         style_note=None,
         handoff_path=None,
-        ignore_cache_guard=False,
         **kwargs,
     ) -> None:
         super().__init__(key, language)
-        self.ignore_cache_guard = ignore_cache_guard
         base_url = _sdk_base_url(api_base)
         self.api_url = base_url or "https://api.anthropic.com"
         self.client = Anthropic(base_url=base_url, api_key=key, timeout=20)
@@ -160,9 +153,6 @@ class Claude(Base):
         self.handoff_path = Path(handoff_path) if handoff_path else None
         self._auto_budget = None
         self._window_asked = False
-        self._session_cache_warned = False
-        self._session_cache_seen = False
-        self._session_requests = 0
         self._compact_failures = 0
 
     # Both of these turn off exactly what session mode cannot afford, and both
@@ -299,33 +289,22 @@ class Claude(Base):
             return {}
         return {"cache_control": {"type": "ephemeral"}}
 
-    def _note_cache_usage(self, message):
-        """Warn once if session mode never gets a cache read billed back.
+    def _note_usage(self, message):
+        """Add what the endpoint billed for this request to the meter.
 
-        A gateway speaking the anthropic shape may drop `cache_control`
-        entirely. That is invisible in the output and only shows up on the
-        bill, so it has to be said out loud.
+        Anthropic's `input_tokens` leaves the cached part out, so the prompt
+        total is the three input counts together; `cache_read_input_tokens`
+        is the number a gateway that drops `cache_control` never reports.
         """
-        if (
-            self.session is None
-            or self._session_cache_warned
-            or self.ignore_cache_guard
-        ):
-            return
         usage = getattr(message, "usage", None)
-        if getattr(usage, "cache_read_input_tokens", 0):
-            self._session_cache_seen = True
+        if usage is None:
             return
-        self._session_requests += 1
-        if self._session_cache_seen or self._session_requests < self.CACHE_WARN_AFTER:
-            return
-        self._session_cache_warned = True
-        print(
-            "[bold yellow]Warning:[/bold yellow] this endpoint has not reported "
-            "a single cached prompt token after "
-            f"{self._session_requests} requests. Session mode assumes prompt "
-            "caching is billed through; without it the history is charged at "
-            "full price every request. Consider --use_context (window mode)."
+        read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        self.usage.note(
+            (getattr(usage, "input_tokens", 0) or 0) + read + written,
+            getattr(usage, "output_tokens", 0),
+            read,
         )
 
     def _session_budget(self):
@@ -429,6 +408,7 @@ class Claude(Base):
                 model=self.model,
                 **self._cache_kwargs(),
             )
+            self._note_usage(r)
             report_text = "".join(
                 block.text
                 for block in r.content
@@ -555,6 +535,7 @@ class Claude(Base):
             )
         except (BadRequestError, UnprocessableEntityError) as e:
             raise RungRejected(e) from e
+        self._note_usage(r)
         return "".join(
             block.text for block in r.content if getattr(block, "type", "") == "text"
         )
@@ -573,8 +554,8 @@ class Claude(Base):
             model=self.model,
             **self._cache_kwargs(),
         )
+        self._note_usage(r)
         t_text = r.content[0].text
-        self._note_cache_usage(r)
 
         if self.context_flag:
             self.save_context(text, t_text)

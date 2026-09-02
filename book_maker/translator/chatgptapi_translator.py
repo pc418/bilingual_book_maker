@@ -377,11 +377,9 @@ class ChatGPTAPI(Base):
         style_note=None,
         handoff_path=None,
         extra_body=None,
-        ignore_cache_guard=False,
         **kwargs,
     ) -> None:
         super().__init__(key, language)
-        self.ignore_cache_guard = ignore_cache_guard
         self.key_len = len(key.split(","))
         self.openai_client = OpenAI(api_key=next(self.keys), base_url=api_base)
         self.api_base = api_base
@@ -419,9 +417,6 @@ class ChatGPTAPI(Base):
         self._model_windows = {}
         self.style_note = style_note
         self.handoff_path = Path(handoff_path) if handoff_path else None
-        self._session_cache_warned = False
-        self._session_cache_seen = False
-        self._session_requests = 0
         self._compact_failures = 0
         if context_paragraph_limit > 0:
             # not set by user, use default
@@ -661,6 +656,7 @@ class ChatGPTAPI(Base):
             )
         except RUNG_REFUSAL_ERRORS as e:
             raise RungRejected(e) from e
+        self._note_usage(completion)
         return completion.choices[0].message.content
 
     def _json_schema_rung(self, prompt, schema, model):
@@ -831,6 +827,7 @@ class ChatGPTAPI(Base):
                 )
             completion = await create({})
 
+        self._note_usage(completion)
         translated = completion.choices[0].message.content or ""
         if self.context_flag:
             current_context = current_context.append(
@@ -934,9 +931,9 @@ class ChatGPTAPI(Base):
             # Answered with something that is not the schema.
             raise StructuredOutputUnsupported(str(e)) from e
 
-        # Take the cache reading before ruling on the message: session mode
-        # runs on this path, and the bill is the same whatever the answer says.
-        self._note_cache_usage(completion)
+        # Meter before ruling on the message: the bill is the same whatever
+        # the answer says.
+        self._note_usage(completion)
 
         message = completion.choices[0].message
         if getattr(message, "refusal", None):
@@ -949,51 +946,32 @@ class ChatGPTAPI(Base):
 
     def _plain_translation(self, text):
         completion = self.create_chat_completion(text)
-        self._note_cache_usage(completion)
+        self._note_usage(completion)
         content = completion.choices[0].message.content
         return content.encode("utf8").decode() if content else ""
 
     # ---- session mode -----------------------------------------------------
-
-    # How many requests to allow before concluding the endpoint is not billing
-    # cache reads. One miss is normal (nothing is cached yet), and short books
-    # should not be nagged.
-    CACHE_WARN_AFTER = 10
 
     # Compact attempts before giving up on a summary and starting clean. More
     # than one so a transient error does not cost the accumulated context;
     # bounded so a broken endpoint cannot grow the history forever.
     COMPACT_ATTEMPTS = 3
 
-    def _note_cache_usage(self, completion):
-        """Warn once if session mode never gets a cache read billed back.
+    def _note_usage(self, completion):
+        """Add what the endpoint billed for this request to the meter.
 
-        Without pass-through caching this mode re-reads the whole history at
-        full input price on every request — strictly worse than the window
-        mode it replaces. That is invisible in the output and only shows up on
-        the bill, so it has to be said out loud.
+        `cached_tokens` is what session mode is watched by: without
+        pass-through caching the history is re-read at full price every
+        request, and only this number says so.
         """
-        if (
-            self.session is None
-            or self._session_cache_warned
-            or self.ignore_cache_guard
-        ):
-            return
         usage = getattr(completion, "usage", None)
+        if usage is None:
+            return
         details = getattr(usage, "prompt_tokens_details", None)
-        if getattr(details, "cached_tokens", 0):
-            self._session_cache_seen = True
-            return
-        self._session_requests += 1
-        if self._session_cache_seen or self._session_requests < self.CACHE_WARN_AFTER:
-            return
-        self._session_cache_warned = True
-        print(
-            "[bold yellow]Warning:[/bold yellow] this endpoint has not reported "
-            "a single cached prompt token after "
-            f"{self._session_requests} requests. Session mode assumes prompt "
-            "caching is billed through; without it the history is charged at "
-            "full price every request. Consider --use_context (window mode)."
+        self.usage.note(
+            getattr(usage, "prompt_tokens", 0),
+            getattr(usage, "completion_tokens", 0),
+            getattr(details, "cached_tokens", 0),
         )
 
     def preflight(self):
@@ -1236,7 +1214,7 @@ class ChatGPTAPI(Base):
                 # but the plain path has no JSON to truncate — retranslate there
                 # rather than ending a multi-hour run over one paragraph.
                 # The truncated request was still billed, so it still counts.
-                self._note_cache_usage(getattr(e, "completion", None))
+                self._note_usage(getattr(e, "completion", None))
                 print(
                     "[yellow]ℹ structured answer was truncated; retranslating "
                     "this paragraph without a schema[/yellow]"
@@ -1471,7 +1449,7 @@ class ChatGPTAPI(Base):
         except (ValidationError, json.JSONDecodeError) as e:
             raise StructuredOutputUnsupported(str(e)) from e
 
-        self._note_cache_usage(completion)
+        self._note_usage(completion)
 
         message = completion.choices[0].message
         if getattr(message, "refusal", None):

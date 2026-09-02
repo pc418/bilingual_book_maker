@@ -1268,3 +1268,63 @@ def test_gateways_know_their_model_before_the_first_request():
     xai = XAIClient("sk-xai-test", "Chinese")
     assert xai.model == "grok-beta"
     assert xai._model_names == ("grok-beta",)
+
+
+# --------------------------------------------------------------------------
+# Usage meter: in/out/cached on the progress bar, replacing the cache guard
+# --------------------------------------------------------------------------
+
+
+def test_the_meter_sums_what_each_request_billed():
+    from types import SimpleNamespace
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+    t = ChatGPTAPI("k", "zh-hans")
+    assert t.usage_postfix() is None  # nothing reported yet: nothing shown
+    t._note_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=1200,
+                completion_tokens=300,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=1000),
+            )
+        )
+    )
+    t._note_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=800, completion_tokens=100, prompt_tokens_details=None
+            )
+        )
+    )
+    t._note_usage(SimpleNamespace(usage=None))  # an answer without usage
+    t._note_usage(None)  # a truncated answer that carried no completion
+    assert t.usage_postfix() == {"in": "2.0k", "out": "400", "cached": "1.0k"}
+    assert t.usage_summary() == "tokens: in 2.0k, out 400, cached 1.0k (2 requests)"
+
+
+def test_short_counts_fit_a_progress_bar():
+    from book_maker.translator.base_translator import short_count
+
+    assert short_count(0) == "0"
+    assert short_count(999) == "999"
+    assert short_count(12345) == "12.3k"
+    assert short_count(1_234_567) == "1.23M"
+
+
+def test_the_claude_meter_counts_cache_reads_inside_the_prompt_total():
+    from types import SimpleNamespace
+    from book_maker.translator.claude_translator import Claude
+
+    t = Claude("k", "zh-hans")
+    t._note_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                input_tokens=100,
+                output_tokens=50,
+                cache_read_input_tokens=900,
+                cache_creation_input_tokens=0,
+            )
+        )
+    )
+    assert t.usage_postfix() == {"in": "1.0k", "out": "50", "cached": "900"}

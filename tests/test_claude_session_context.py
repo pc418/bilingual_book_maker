@@ -164,23 +164,20 @@ class TestPromptCaching:
         t.translate("one")
         assert "cache_control" not in t.sent[0]
 
-    def test_it_warns_when_no_cache_read_is_ever_billed_back(self, capsys):
-        t = _translator(["一"] * 12)
-        for i in range(12):
+    def test_cache_reads_are_metered_not_judged(self):
+        # the guard that warned after ten uncached requests is gone; the
+        # loader pins in/out/cached on the bar and the operator decides
+        t = _translator(["一"] * 3, cache_read=64)
+        for i in range(3):
             t.translate(f"unit {i}")
-        assert "cache" in capsys.readouterr().out.lower()
+        assert t.usage.requests == 3 and t.usage.cached == 192
+        assert t.usage_postfix()["cached"] == "192"
 
-    def test_it_is_silent_when_cache_reads_are_reported(self, capsys):
-        t = _translator(["一"] * 12, cache_read=64)
-        for i in range(12):
+    def test_window_mode_is_metered_the_same_way(self):
+        t = _translator(["一"] * 3, context_mode="window")
+        for i in range(3):
             t.translate(f"unit {i}")
-        assert "cache" not in capsys.readouterr().out.lower()
-
-    def test_window_mode_is_never_nagged_about_caching(self, capsys):
-        t = _translator(["一"] * 12, context_mode="window")
-        for i in range(12):
-            t.translate(f"unit {i}")
-        assert "cache" not in capsys.readouterr().out.lower()
+        assert t.usage.requests == 3 and t.usage.cached == 0
 
 
 class TestCompact:

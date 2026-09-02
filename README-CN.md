@@ -340,10 +340,6 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
   仅 session 模式。完全不生成交接报告：历史达到预算后直接丢弃，下一个窗口从空开始，相当于 Codex 的 `/new`——比压缩更省，代价是接缝处的上下文连续性。
 
-- `--ignore-cache-guard`:
-
-  仅会话模式。当端点未报告缓存的提示词 token 时不再警告。用于会缓存但不报告的端点；此时历史按端点实际计费方式计费，由你自行负责。
-
 - `--temperature`:
 
   使用 `--temperature` 设置 `chatgptapi`/`gpt4`/`claude`模型的temperature值.

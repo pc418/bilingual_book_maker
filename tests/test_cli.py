@@ -833,24 +833,3 @@ def test_a_gateway_translator_keeps_the_session_it_was_asked_for():
         t = MODEL_DICT[name]("k", "zh-hans", context_flag=True, context_mode="session")
         assert t.session is not None, name
         assert t.api_base and t.openai_client.base_url is not None
-
-
-def test_ignore_cache_guard_reaches_the_translator_and_silences_it(capsys):
-    from types import SimpleNamespace
-    from book_maker.translator import MODEL_DICT
-
-    t = MODEL_DICT["openai"](
-        "k",
-        "zh-hans",
-        context_flag=True,
-        context_mode="session",
-        ignore_cache_guard=True,
-    )
-    uncached = SimpleNamespace(usage=SimpleNamespace(prompt_tokens_details=None))
-    for _ in range(t.CACHE_WARN_AFTER + 2):
-        t._note_cache_usage(uncached)
-    assert "cached prompt token" not in capsys.readouterr().out
-    t2 = MODEL_DICT["openai"]("k", "zh-hans", context_flag=True, context_mode="session")
-    for _ in range(t2.CACHE_WARN_AFTER + 2):
-        t2._note_cache_usage(uncached)
-    assert "cached prompt token" in capsys.readouterr().out
