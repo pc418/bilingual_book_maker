@@ -81,7 +81,9 @@ Do not write the entry for them from guesses:
 ```bash
 [ -f bbm_providers.json ] || cp .agents/skills/bbm-plan/assets/bbm_providers.example.json bbm_providers.json
 [ -f .env ]               || cp .agents/skills/bbm-plan/assets/env.example .env
-git check-ignore -q bbm_providers.json .env || printf 'bbm_providers.json\n.env\n' >> .git/info/exclude
+for f in bbm_providers.json .env; do   # one path per call: -q refuses two
+  git check-ignore -q "$f" || echo "$f" >> "$(git rev-parse --git-common-dir)/info/exclude"
+done                                    # common dir: a worktree's .git is a file
 ```
 
 Then tell them exactly what to edit and stop until they say it is done:
