@@ -489,3 +489,24 @@ def test_openai_without_a_model_list_fails_clean(tmp_path):
     assert proc.returncode == 1
     assert "Traceback" not in proc.stderr
     assert "--model_list" in " ".join(proc.stdout.split())
+
+
+def test_batch_is_refused_on_the_codex_route(tmp_path):
+    # codex has no Batch API; the run used to die partway through with
+    # AttributeError: batch_init, after plan quota had already been spent
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--batch")
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--batch" in flat
+    assert "Codex:" not in proc.stdout
+    assert "Traceback" not in proc.stderr
+
+
+def test_batch_use_is_refused_on_the_codex_route(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--batch-use")
+    assert proc.returncode == 1
+    assert "--batch" in " ".join(proc.stdout.split())

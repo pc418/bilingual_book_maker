@@ -657,6 +657,17 @@ So you are close to reaching the limit. You have to choose your own value, there
         )
         exit(1)
 
+    # Batch translation is OpenAI's Batch API. The codex route has no such
+    # thing, and reached it anyway: `AttributeError: batch_init` partway
+    # into a run that had already spent plan quota.
+    if route == "codex" and (options.batch_flag or options.batch_use_flag):
+        print(
+            "[bold red]Error: --batch / --batch-use are the OpenAI Batch "
+            "API, which the codex route does not have. Drop the flag, or "
+            "translate through an OpenAI-shaped route.[/bold red]"
+        )
+        exit(1)
+
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
     if options.book_from == "kobo":
