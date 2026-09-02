@@ -772,3 +772,41 @@ def test_an_auto_sized_budget_on_groq_never_asks_openai(tmp_path):
     assert proc.returncode == 1
     assert "--context-compact-at 0" in " ".join(proc.stdout.split())
     assert "Traceback" not in proc.stderr
+
+
+def test_a_misspelled_exclude_name_fails_loud_in_tag_mode_too(tmp_path):
+    # the gate lived inside the plan build, so a tag-mode run translated and
+    # paid for the document the user meant to skip
+    proc, _ = _run(
+        tmp_path,
+        "--exclude_filelist",
+        "titlepage.xhtm",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--exclude_filelist" in flat
+    assert "titlepage.xhtm" in flat
+    assert not (tmp_path / f"{BOOK.stem}_bilingual.epub").exists()
+
+
+def test_the_file_filter_gate_runs_before_any_model_setup(tmp_path):
+    # even in plan mode it ran after preflight, so a codex sidecar had
+    # already booted and printed its login line before the typo was caught
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "codex",
+        "--plan-classify",
+        "agent",
+        "--exclude_filelist",
+        "titlepage.xhtm",
+    )
+    assert proc.returncode == 1
+    assert "--exclude_filelist" in " ".join(proc.stdout.split())
+    assert "Codex:" not in proc.stdout

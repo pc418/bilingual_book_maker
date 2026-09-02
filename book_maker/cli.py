@@ -1055,6 +1055,11 @@ So you are close to reaching the limit. You have to choose your own value, there
         e.exclude_filelist = options.exclude_filelist
     if options.only_filelist:
         e.only_filelist = options.only_filelist
+    # Both lists name documents inside the book, which is already open. A
+    # typo is answerable here and nowhere cheaper — before any model setup,
+    # so a sidecar boot or a context-window lookup cannot precede it.
+    if hasattr(e, "check_file_filters"):
+        e.check_file_filters()
     if options.accumulated_num > 1:
         e.accumulated_num = options.accumulated_num
     if options.translation_color:

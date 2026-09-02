@@ -551,8 +551,6 @@ class EPUBBookLoader(BaseBookLoader):
         self._plan_css = BookCss(self.origin_book)
         self._plan_overrides = overrides
 
-        self._check_file_filters()
-
         if is_fixed_layout(self.origin_book):
             print(
                 "[bold yellow]warning: this is a fixed-layout (pre-paginated) "
@@ -838,14 +836,20 @@ class EPUBBookLoader(BaseBookLoader):
                 pending_env = env_name
         return " ".join(["python3", *parts])
 
-    def _check_file_filters(self):
+    def check_file_filters(self):
         """Every name in --only_filelist / --exclude_filelist must exist.
 
         A misspelled only-list name reached the coverage gate as "the plan
         selected no translatable text"; a misspelled exclude-list name
         reached nothing at all — the document the user meant to skip was
         translated and paid for, with no warning. Both are typos, and both
-        are cheap to catch before a single request.
+        are cheap to catch.
+
+        Called by the CLI as soon as the filters are set, which is before
+        any model setup: the answer needs the book and nothing else, so
+        there is no reason for a sidecar or a window lookup to happen first.
+        Tag mode needs it as much as plan mode — it was the only mode that
+        never ran it.
         """
         documents = sorted(
             item.file_name for item in self.origin_book.get_items_of_type(ITEM_DOCUMENT)
