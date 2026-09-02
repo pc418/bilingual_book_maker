@@ -173,6 +173,15 @@ def single_translation_schema(language):
     }
 
 
+# How long one request may hang before the SDK gives up on it, and how many
+# times the SDK retries on its own. The SDK's defaults (600 s, 3 tries) let a
+# router that accepts a request and never answers hold a run for half an
+# hour with nothing printed; a stall on a third-party gateway is what the
+# 260902 router test found, and 5 min × 2 tries is long enough for a
+# reasoning model's longest paragraph.
+REQUEST_LIMITS = {"timeout": 300.0, "max_retries": 1}
+
+
 class ChatGPTAPI(Base):
     DEFAULT_PROMPT = "Please help me to translate,`{text}` to {language}, please return only translated content not include the origin text"
 
@@ -218,7 +227,9 @@ class ChatGPTAPI(Base):
     ) -> None:
         super().__init__(key, language)
         self.key_len = len(key.split(","))
-        self.openai_client = OpenAI(api_key=next(self.keys), base_url=api_base)
+        self.openai_client = OpenAI(
+            api_key=next(self.keys), base_url=api_base, **REQUEST_LIMITS
+        )
         self.api_base = api_base
 
         self.prompt_template = (
@@ -439,7 +450,7 @@ class ChatGPTAPI(Base):
         return messages
 
     def _create_async_client(self, key):
-        return AsyncOpenAI(api_key=key, base_url=self.api_base)
+        return AsyncOpenAI(api_key=key, base_url=self.api_base, **REQUEST_LIMITS)
 
     def _get_async_client(self, key):
         cache_key = (self.api_base, key)

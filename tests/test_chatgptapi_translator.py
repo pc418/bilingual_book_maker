@@ -1318,3 +1318,15 @@ def test_with_prices_the_bar_shows_spent_instead_of_tokens():
     assert t.usage_summary().endswith(
         "; no price for gpt-5.6-terra in the provider entry, so spent is not shown"
     )
+
+
+def test_requests_have_a_timeout_shorter_than_the_sdk_default():
+    # router test 260902: a gateway that accepts a request and never answers
+    # held a run for the SDK's 600 s × 3 tries with nothing printed
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI, REQUEST_LIMITS
+
+    t = ChatGPTAPI("k", "zh-hans")
+    assert t.openai_client.timeout == REQUEST_LIMITS["timeout"] == 300.0
+    assert t.openai_client.max_retries == REQUEST_LIMITS["max_retries"] == 1
+    client = t._create_async_client("k")
+    assert client.timeout == 300.0 and client.max_retries == 1
