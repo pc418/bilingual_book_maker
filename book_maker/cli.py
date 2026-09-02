@@ -522,6 +522,14 @@ So you are close to reaching the limit. You have to choose your own value, there
         "empty instead of inheriting a summary",
     )
     parser.add_argument(
+        "--ignore-cache-guard",
+        dest="ignore_cache_guard",
+        action="store_true",
+        help="session mode only: do not warn or stop when the endpoint reports "
+        "no cached prompt tokens. For endpoints that cache but do not report "
+        "it; the history is then billed as the endpoint bills it, on you",
+    )
+    parser.add_argument(
         "--context_paragraph_limit",
         dest="context_paragraph_limit",
         type=int,
@@ -918,6 +926,7 @@ So you are close to reaching the limit. You have to choose your own value, there
             context_mode=options.context_mode,
             context_compact_at=options.context_compact_at,
             no_context_compact=options.no_context_compact,
+            ignore_cache_guard=options.ignore_cache_guard,
         )
     elif options.context_mode == "session":
         # txt, srt and pdf never hand context to the model, so a session

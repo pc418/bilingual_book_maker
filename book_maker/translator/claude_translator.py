@@ -122,9 +122,11 @@ class Claude(Base):
         no_context_compact=False,
         style_note=None,
         handoff_path=None,
+        ignore_cache_guard=False,
         **kwargs,
     ) -> None:
         super().__init__(key, language)
+        self.ignore_cache_guard = ignore_cache_guard
         base_url = _sdk_base_url(api_base)
         self.api_url = base_url or "https://api.anthropic.com"
         self.client = Anthropic(base_url=base_url, api_key=key, timeout=20)
@@ -304,7 +306,11 @@ class Claude(Base):
         entirely. That is invisible in the output and only shows up on the
         bill, so it has to be said out loud.
         """
-        if self.session is None or self._session_cache_warned:
+        if (
+            self.session is None
+            or self._session_cache_warned
+            or self.ignore_cache_guard
+        ):
             return
         usage = getattr(message, "usage", None)
         if getattr(usage, "cache_read_input_tokens", 0):

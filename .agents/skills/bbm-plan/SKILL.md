@@ -497,7 +497,7 @@ In a bilingual book the two counts should be close to 2:1.)
 | `handoff report failed (…); starting the next window` | one compact produced no report. Informational; translation continues |
 | `existing progress cache … starting fresh and overwriting it` | a run without `--resume` found an earlier run's cache. Expected after the smoke; if that cache was a real run's progress, stop and rerun with `--resume` |
 | `Structured batch translation failed after retries: Empty translation for non-empty paragraph(s) […]: batch alignment lost. Falling back to one-by-one translation` | one batch came back misaligned; its lines are re-translated one by one and nothing is dropped. Informational; that batch is paid twice |
-| `this endpoint has not reported a single cached prompt token after 10 requests` | on short units (verse) the first ten requests can sit under the endpoint's cache minimum, so this can be a false alarm — OpenAI's official endpoint does bill caching for `gpt-5.6-luna`. Judge it once the history is past ~1000 tokens; if it persists, drop to bare `--use_context` |
+| `this endpoint has not reported a single cached prompt token after 10 requests` | on short units (verse) the first ten requests can sit under the endpoint's cache minimum, so this can be a false alarm — OpenAI's official endpoint does bill caching for `gpt-5.6-luna`. Judge it once the history is past ~1000 tokens; if it persists, drop to bare `--use_context`, or pass `--ignore-cache-guard` when the user knows the endpoint caches without reporting it |
 
 Route caveats worth knowing before reading a diff of two runs: an unset
 `--temperature` still sends `1.0` on the anthropic and gemini routes, so

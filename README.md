@@ -394,6 +394,10 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
   Session mode only. Never ask for a handoff report. When the history reaches the budget it is dropped and the next window starts empty, like Codex's `/new` — cheaper than a compact, at the cost of continuity across the seam.
 
+- `--ignore-cache-guard`:
+
+  Session mode only. Do not warn or stop when the endpoint reports no cached prompt tokens. For an endpoint that caches but does not report it; the history is then billed however the endpoint bills it, and that is on you.
+
 - `--parallel-workers`:
 
   Use `--parallel-workers` to process EPUB chapters or Markdown batches/sections in

@@ -47,6 +47,7 @@ class MarkdownBookLoader(BaseBookLoader):
         context_mode="window",
         context_compact_at=None,
         no_context_compact=False,
+        ignore_cache_guard=False,
         temperature=1.0,
         source_lang="auto",
         parallel_workers=1,
@@ -63,6 +64,7 @@ class MarkdownBookLoader(BaseBookLoader):
             context_mode=context_mode,
             context_compact_at=context_compact_at,
             no_context_compact=no_context_compact,
+            ignore_cache_guard=ignore_cache_guard,
             handoff_path=handoff_path(md_name),
             **prompt_config_to_kwargs(prompt_config),
         )

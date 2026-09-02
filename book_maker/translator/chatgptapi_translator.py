@@ -377,9 +377,11 @@ class ChatGPTAPI(Base):
         style_note=None,
         handoff_path=None,
         extra_body=None,
+        ignore_cache_guard=False,
         **kwargs,
     ) -> None:
         super().__init__(key, language)
+        self.ignore_cache_guard = ignore_cache_guard
         self.key_len = len(key.split(","))
         self.openai_client = OpenAI(api_key=next(self.keys), base_url=api_base)
         self.api_base = api_base
@@ -971,7 +973,11 @@ class ChatGPTAPI(Base):
         mode it replaces. That is invisible in the output and only shows up on
         the bill, so it has to be said out loud.
         """
-        if self.session is None or self._session_cache_warned:
+        if (
+            self.session is None
+            or self._session_cache_warned
+            or self.ignore_cache_guard
+        ):
             return
         usage = getattr(completion, "usage", None)
         details = getattr(usage, "prompt_tokens_details", None)
