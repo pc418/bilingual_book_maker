@@ -849,3 +849,34 @@ def test_a_failed_final_write_exits_nonzero(tmp_path, monkeypatch):
     assert writes, "the failure must come from the final write, not earlier"
     assert excinfo.value.code == 1
     assert not output.exists()
+
+
+def test_the_bar_shows_usage_once_a_request_reported_it():
+    # the meter replaces the old "no cached token after 10 requests" guard:
+    # the operator watches cached= on the bar instead of being warned
+    from book_maker.loader.epub_loader import EPUBBookLoader
+
+    loader = EPUBBookLoader.__new__(EPUBBookLoader)
+
+    class Bar:
+        postfix = None
+
+        def set_postfix(self, postfix, refresh=True):
+            self.postfix = postfix
+
+    class Silent:
+        pass
+
+    loader.translate_model = Silent()  # a translator without a meter
+    bar = Bar()
+    loader._show_usage(bar)
+    assert bar.postfix is None and loader._usage_suffix() == ""
+
+    class Metered:
+        def usage_postfix(self):
+            return {"in": "2.0k", "out": "400", "cached": "1.0k"}
+
+    loader.translate_model = Metered()
+    loader._show_usage(bar)
+    assert bar.postfix == {"in": "2.0k", "out": "400", "cached": "1.0k"}
+    assert loader._usage_suffix() == " in=2.0k out=400 cached=1.0k"

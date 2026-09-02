@@ -992,6 +992,7 @@ class EPUBBookLoader(BaseBookLoader):
             )
             if pbar is not None:
                 pbar.update(n)
+                self._show_usage(pbar)
         return index
 
     def _insert_plan_translation(
@@ -1314,6 +1315,28 @@ class EPUBBookLoader(BaseBookLoader):
             if translation_style != "":
                 new_p["style"] = translation_style
             p.insert_after(new_p)
+
+    def _show_usage(self, pbar):
+        """Pin in/out/cached tokens on the bar, once a request reported them.
+
+        `cached` is the number session mode is watched by: a history read
+        back at full price every request shows up here and nowhere else.
+        """
+        postfix = getattr(self.translate_model, "usage_postfix", lambda: None)()
+        if postfix:
+            pbar.set_postfix(postfix, refresh=False)
+
+    def _usage_suffix(self):
+        postfix = getattr(self.translate_model, "usage_postfix", lambda: None)()
+        if not postfix:
+            return ""
+        return " " + " ".join(f"{k}={v}" for k, v in postfix.items())
+
+    def _print_usage(self):
+        """One closing line, printed even under --quiet: the bill is not noise."""
+        summary = getattr(self.translate_model, "usage_summary", lambda: None)()
+        if summary:
+            print(summary)
 
     def _process_paragraph(self, p, new_p, index, p_to_save_len, thread_safe=False):
         if self.resume and index < p_to_save_len:
@@ -1969,6 +1992,7 @@ class EPUBBookLoader(BaseBookLoader):
                     if self._process_paragraph_sentence_mode(p, soup):
                         index += 1
                         pbar.update(1)
+                        self._show_usage(pbar)
                         if not self.quiet:
                             print()
                         if self.is_test and index >= self.test_num:
@@ -1985,6 +2009,7 @@ class EPUBBookLoader(BaseBookLoader):
                             p_block, index, p_to_save_len, thread_safe=False
                         )
                         pbar.update(n)
+                        self._show_usage(pbar)
                         p_block = []
                         if not self.quiet:
                             print()
@@ -1995,6 +2020,7 @@ class EPUBBookLoader(BaseBookLoader):
                     if not self.quiet:
                         print()
                     pbar.update(1)
+                    self._show_usage(pbar)
 
                 if self.is_test and index >= self.test_num:
                     is_test_done = True
@@ -2006,6 +2032,7 @@ class EPUBBookLoader(BaseBookLoader):
                     p_block, index, p_to_save_len, thread_safe=False
                 )
                 pbar.update(n)
+                self._show_usage(pbar)
 
         if soup:
             item.content = soup.encode(encoding="utf-8")
@@ -2514,6 +2541,7 @@ class EPUBBookLoader(BaseBookLoader):
                             chapter_pbar.update(1)
                             chapter_pbar.set_postfix_str(
                                 f"Latest: {item.file_name[:20]}..."
+                                + self._usage_suffix()
                             )
 
                         except Exception as e:
@@ -2523,6 +2551,7 @@ class EPUBBookLoader(BaseBookLoader):
                             chapter_pbar.update(1)
 
                 chapter_pbar.close()
+                self._print_usage()
                 if failed_chapters:
                     # fail loud: a partial book must not masquerade as done
                     for file_name, error in failed_chapters:
@@ -2571,6 +2600,7 @@ class EPUBBookLoader(BaseBookLoader):
 
                 # Close progress bar
                 pbar.close()
+                self._print_usage()
 
                 if self.accumulated_num > 1:
                     name, _ = os.path.splitext(self.epub_name)

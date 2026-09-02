@@ -241,8 +241,27 @@ class Claude(Base):
             if not self._is_wrong_shape(e):
                 raise
             return self._switch_to_openai(e)._chat_completion(prompt, model)
+        self._note_usage(r)
         return "".join(
             block.text for block in r.content if getattr(block, "type", "") == "text"
+        )
+
+    def _note_usage(self, message):
+        """Add what the endpoint billed for this request to the meter.
+
+        Anthropic's `input_tokens` leaves the cached part out, so the prompt
+        total is the three input counts together; `cache_read_input_tokens`
+        is the number a gateway that drops `cache_control` never reports.
+        """
+        usage = getattr(message, "usage", None)
+        if usage is None:
+            return
+        read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        self.usage.note(
+            (getattr(usage, "input_tokens", 0) or 0) + read + written,
+            getattr(usage, "output_tokens", 0),
+            read,
         )
 
     def translate(self, text):
@@ -266,6 +285,7 @@ class Claude(Base):
             if not self._is_wrong_shape(e):
                 raise
             return self._switch_to_openai(e).translate(text)
+        self._note_usage(r)
         t_text = r.content[0].text
 
         if self.context_flag:
