@@ -195,6 +195,113 @@ def test_an_incompatible_flag_still_stops_an_explicit_plan(tmp_path):
         loader.make_bilingual_book()
 
 
+class ClassifyingModel(FakeModel):
+    """A translator that can also answer the plan's questions — and counts
+    how often it was asked, because the point of these tests is that it
+    was not."""
+
+    def __init__(self, key, language, **kwargs):
+        super().__init__(key, language, **kwargs)
+        ClassifyingModel.asked = 0
+
+    asked = 0
+
+    def supports_structured_json(self):
+        return True
+
+    def structured_json(self, prompt, schema, model=None, accept=None):
+        ClassifyingModel.asked += 1
+        return {
+            k: {"verdict": "translate", "content_type": "prose"}
+            for k in schema["schema"]["required"]
+        }
+
+
+def _tag_mode_run(tmp_path):
+    """A finished tag-mode run, leaving its checkpoint next to the book."""
+    from book_maker.loader.epub_loader import EPUBBookLoader
+
+    src = tmp_path / BOOK.name
+    shutil.copy(BOOK, src)
+    loader = EPUBBookLoader(
+        str(src), FakeModel, "dummy-key", resume=False, language="zh-hans"
+    )
+    loader.only_filelist = "index_split_004.html"
+    loader.is_test = True
+    loader.test_num = 2
+    loader.make_bilingual_book()
+    cache = src.parent / f".{src.stem}.temp.bin"
+    assert cache.exists(), "setup did not leave a tag-mode checkpoint"
+    return src, cache
+
+
+def _resumed_auto_loader(src, model_cls=ClassifyingModel):
+    from book_maker.loader.epub_loader import EPUBBookLoader
+
+    loader = EPUBBookLoader(
+        str(src), model_cls, "dummy-key", resume=True, language="zh-hans"
+    )
+    loader.plan_mode = True
+    loader.plan_auto = True
+    loader.plan_fallback_tags = "p"
+    loader.translate_tags = "auto"
+    loader.plan_classify = "model"
+    loader.only_filelist = "index_split_004.html"
+    loader.is_test = True
+    loader.test_num = 2
+    return loader
+
+
+def test_auto_resuming_a_tag_mode_cache_never_pays_for_a_plan(tmp_path, capsys):
+    # the plan would refuse this cache anyway, but only after classifying the
+    # whole book and writing a plan JSON. Under auto the answer is known
+    # before anything is spent.
+    src, _cache = _tag_mode_run(tmp_path)
+    capsys.readouterr()
+
+    loader = _resumed_auto_loader(src)
+    loader.make_bilingual_book()
+    out = " ".join(capsys.readouterr().out.split())
+
+    assert "plan mode skipped (resuming a tag-mode run)" in out
+    assert ClassifyingModel.asked == 0
+    assert not (src.parent / (src.stem + "_plan.json")).exists()
+    assert not loader.plan_mode
+    assert loader.translate_tags == "p"
+    assert (src.parent / (src.stem + "_bilingual.epub")).exists()
+
+
+def test_auto_resuming_a_plan_mode_cache_still_plans(tmp_path, capsys):
+    # the guard is about *tag-mode* caches; a plan-mode checkpoint carries a
+    # fingerprint and is exactly what plan mode knows how to resume
+    from book_maker.loader.epub_loader import EPUBBookLoader
+
+    src = tmp_path / BOOK.name
+    shutil.copy(BOOK, src)
+    first = EPUBBookLoader(
+        str(src), ClassifyingModel, "dummy-key", resume=False, language="zh-hans"
+    )
+    first.plan_mode = True
+    first.plan_auto = True
+    first.translate_tags = "auto"
+    first.plan_classify = "model"
+    first.only_filelist = "index_split_004.html"
+    first.is_test = True
+    first.test_num = 2
+    first.make_bilingual_book()
+    assert first._resume_plan_fingerprint is None and first._plan_fingerprint
+    capsys.readouterr()
+
+    resumed = _resumed_auto_loader(src)
+    assert resumed._resume_plan_fingerprint is not None
+    resumed.make_bilingual_book()
+    out = " ".join(capsys.readouterr().out.split())
+
+    assert "plan mode skipped" not in out
+    assert resumed.plan_mode
+    assert (src.parent / (src.stem + "_plan.json")).exists()
+
+
 # ------------------------------------------------------------ the whole CLI
 
 

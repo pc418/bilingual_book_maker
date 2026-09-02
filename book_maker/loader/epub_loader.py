@@ -481,6 +481,18 @@ class EPUBBookLoader(BaseBookLoader):
         active = [flag for flag, on in incompatible.items() if on]
         return ", ".join(active)
 
+    def _is_tag_mode_checkpoint(self):
+        """A loaded resume cache whose slots index tags, not plan units.
+
+        Tag-mode checkpoints carry no plan fingerprint (see `_save_progress`),
+        and their slots are positions in a p-tag sequence: replaying them
+        against a plan's unit list would pair translations with unrelated
+        units.
+        """
+        return bool(
+            self.resume and self.p_to_save and self._resume_plan_fingerprint is None
+        )
+
     def _skip_plan_mode(self, reason):
         """Give up the plan and translate the tag selection instead.
 
@@ -524,6 +536,13 @@ class EPUBBookLoader(BaseBookLoader):
                 "note: plan mode batches poetry windows itself; "
                 "--accumulated_num is ignored"
             )
+        # The plan would refuse this cache anyway (see _prepare_translation_plan),
+        # but only after the classifier has been paid for and a plan JSON
+        # written. Under auto the answer is already known here: the cache is
+        # the run the user is resuming, so finish it the way it started.
+        if self.plan_auto and self._is_tag_mode_checkpoint():
+            self._skip_plan_mode("resuming a tag-mode run")
+            return False
         try:
             self._prepare_translation_plan()
         except (SystemExit, Exception) as err:
@@ -681,7 +700,7 @@ class EPUBBookLoader(BaseBookLoader):
                 f"start over, or restore the previous settings.[/bold red]"
             )
             raise SystemExit(1)
-        if self.resume and self.p_to_save and self._resume_plan_fingerprint is None:
+        if self._is_tag_mode_checkpoint():
             # a legacy list-format cache (tag-mode run): its slots index a
             # p-tag sequence, not this plan's unit list — positionally
             # meaningless here, and replaying it would pair units with
