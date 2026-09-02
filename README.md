@@ -174,6 +174,15 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
         "base_url": "https://api.siliconflow.cn/v1",
         "default_models": ["Qwen/Qwen2.5-72B-Instruct"],
         "env_key": "BBM_SILICONFLOW_API_KEY"
+      },
+      "openai": {
+        "api_style": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "default_models": ["gpt-5.6-luna"],
+        "env_key": "OPENAI_API_KEY",
+        "prices": {
+          "gpt-5.6-luna": {"input": 0.20, "output": 1.20, "cached_input": 0.02}
+        }
       }
     }
   }
@@ -187,6 +196,8 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   | `base_url` | No | API endpoint URL. Falls back to the api_style's default |
   | `default_models` | No | Default model list. Required if `--model_list` is not provided |
   | `env_key` | No | Environment variable name for API key. Required if `--api_key` is not provided |
+  | `prices` | No | `{"<model id>": {"input": …, "output": …, "cached_input": …}}`, each a price per million tokens. With a price for every model the run uses, the progress bar shows what was spent (`spent=$0.012`) instead of token counts, and the closing line gives both. `cached_input` left out means cache reads cost the input price. A model without a price puts the bar back on tokens and the closing line names it |
+  | `currency` | No | Code for the prices, default `USD`. `USD`, `EUR`, `GBP`, `CNY`, `JPY` get their symbol; anything else is printed as `0.500 CHF` |
 
   Priority: project-level `./bbm_providers.json` overrides global `~/.bbm/providers.json`.
 

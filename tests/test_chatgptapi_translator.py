@@ -1248,3 +1248,73 @@ def test_the_claude_meter_counts_cache_reads_inside_the_prompt_total():
         )
     )
     assert t.usage_postfix() == {"in": "1.0k", "out": "50", "cached": "900"}
+
+
+def test_the_price_table_finds_a_model_by_id_router_tail_or_prefix():
+    from book_maker.translator.base_translator import PriceTable
+
+    table = PriceTable(
+        {"gpt-5.6-luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02}}
+    )
+    assert table.price_for("gpt-5.6-luna")["output"] == 1.2
+    assert table.price_for("openai/gpt-5.6-luna")["output"] == 1.2
+    assert table.price_for("gpt-5.6-luna-2026-07-30")["output"] == 1.2
+    assert table.price_for("gpt-5.6-terra") is None
+    assert table.price_for(None) is None
+
+
+def test_a_request_is_costed_with_cache_reads_at_their_own_rate():
+    from book_maker.translator.base_translator import PriceTable
+
+    table = PriceTable(
+        {"luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02}}, "USD"
+    )
+    # 1M prompt of which 500k cached, 100k completion
+    assert table.cost("luna", 1_000_000, 100_000, 500_000) == pytest.approx(
+        0.5 * 0.2 + 0.5 * 0.02 + 0.1 * 1.2
+    )
+    # no cached_input: cache reads cost the input price, the conservative reading
+    flat = PriceTable({"m": {"input": 1.0, "output": 2.0}})
+    assert flat.cost("m", 1_000_000, 0, 1_000_000) == pytest.approx(1.0)
+    assert table.money(0.00123) == "$0.0012"
+    assert table.money(0.123) == "$0.123"
+    assert table.money(12.3456) == "$12.35"
+    assert PriceTable({}, "CNY").money(0.5) == "¥0.500"
+    assert PriceTable({}, "CHF").money(0.5) == "0.500 CHF"
+
+
+def test_with_prices_the_bar_shows_spent_instead_of_tokens():
+    from types import SimpleNamespace
+    from book_maker.translator.base_translator import PriceTable
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+    t = ChatGPTAPI("k", "zh-hans")
+    t.model = "gpt-5.6-luna"
+    t.usage.prices = PriceTable(
+        {"gpt-5.6-luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02}}
+    )
+    t._note_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=1_000_000,
+                completion_tokens=100_000,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=500_000),
+            )
+        )
+    )
+    assert t.usage_postfix() == {"spent": "$0.230"}
+    assert t.usage_summary().startswith("spent $0.230 — tokens: in 1.00M, out 100.0k")
+
+    # the classifier asked another model: priced by the id *it* asked for
+    t._note_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=10, completion_tokens=1, prompt_tokens_details=None
+            )
+        ),
+        "gpt-5.6-terra",
+    )
+    assert t.usage_postfix() == {"in": "1.00M", "out": "100.0k", "cached": "500.0k"}
+    assert t.usage_summary().endswith(
+        "; no price for gpt-5.6-terra in the provider entry, so spent is not shown"
+    )

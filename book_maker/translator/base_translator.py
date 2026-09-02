@@ -27,8 +27,64 @@ def short_count(n):
     return f"{n / 1_000_000:.2f}M"
 
 
+CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£", "CNY": "¥", "JPY": "¥"}
+
+
+class PriceTable:
+    """A provider entry's `prices`: what a model charges per million tokens.
+
+    Looked up by the model id the run asked for: exactly, then by the part
+    after a router's `vendor/` prefix, then by the longest listed id the
+    model's name starts with — so `gpt-5.6-luna-2026-07-30` is priced as
+    `gpt-5.6-luna`. A model none of that finds has no price, and the meter
+    says so instead of guessing.
+    """
+
+    def __init__(self, prices, currency="USD"):
+        self.prices = dict(prices or {})
+        self.currency = currency or "USD"
+
+    def price_for(self, model):
+        if not model:
+            return None
+        if model in self.prices:
+            return self.prices[model]
+        tail = model.rsplit("/", 1)[-1]
+        if tail in self.prices:
+            return self.prices[tail]
+        prefixes = [key for key in self.prices if model.startswith(key)]
+        if prefixes:
+            return self.prices[max(prefixes, key=len)]
+        return None
+
+    def cost(self, model, prompt=0, completion=0, cached=0):
+        """What one request cost, or None when its model has no price."""
+        price = self.price_for(model)
+        if price is None:
+            return None
+        cached = min(cached or 0, prompt or 0)
+        cached_rate = price.get("cached_input", price["input"])
+        return (
+            (prompt - cached) * price["input"]
+            + cached * cached_rate
+            + (completion or 0) * price["output"]
+        ) / 1_000_000
+
+    def money(self, amount):
+        symbol = CURRENCY_SYMBOLS.get(self.currency.upper())
+        digits = 4 if amount < 0.01 else 3 if amount < 1 else 2
+        figure = f"{amount:.{digits}f}"
+        return f"{symbol}{figure}" if symbol else f"{figure} {self.currency}"
+
+
 class UsageMeter:
     """Tokens billed so far, summed over every request that reported them.
+
+    With a `PriceTable` in `prices` the meter also keeps what those tokens
+    cost, and shows that instead: a number the operator can weigh against
+    the book. A request for a model the table does not price makes the
+    cost unknowable, so the display falls back to tokens and the summary
+    names the model.
 
     `cached` is the part of `prompt` the endpoint read back from its cache.
     That is the number session mode lives on: a history that is re-read at
@@ -43,19 +99,33 @@ class UsageMeter:
         self.completion = 0
         self.cached = 0
         self.requests = 0
+        self.prices = None
+        self.spent = 0.0
+        self.unpriced = set()
         self._lock = threading.Lock()
 
-    def note(self, prompt=0, completion=0, cached=0):
+    def note(self, prompt=0, completion=0, cached=0, model=None):
         with self._lock:
             self.prompt += prompt or 0
             self.completion += completion or 0
             self.cached += cached or 0
             self.requests += 1
+            if self.prices is not None:
+                cost = self.prices.cost(model, prompt, completion, cached)
+                if cost is None:
+                    self.unpriced.add(model or "(unnamed model)")
+                else:
+                    self.spent += cost
+
+    def _priced(self):
+        return self.prices is not None and not self.unpriced
 
     def postfix(self):
         """What the progress bar shows — nothing until a request reported usage."""
         if not self.requests:
             return None
+        if self._priced():
+            return {"spent": self.prices.money(self.spent)}
         return {
             "in": short_count(self.prompt),
             "out": short_count(self.completion),
@@ -65,11 +135,20 @@ class UsageMeter:
     def summary(self):
         if not self.requests:
             return None
-        return (
-            f"tokens: in {short_count(self.prompt)}, out "
+        tokens = (
+            f"in {short_count(self.prompt)}, out "
             f"{short_count(self.completion)}, cached {short_count(self.cached)} "
             f"({self.requests} request{'s' if self.requests != 1 else ''})"
         )
+        if self._priced():
+            return f"spent {self.prices.money(self.spent)} — tokens: {tokens}"
+        line = f"tokens: {tokens}"
+        if self.unpriced:
+            line += (
+                f"; no price for {', '.join(sorted(self.unpriced))} in the "
+                f"provider entry, so spent is not shown"
+            )
+        return line
 
 
 class AsyncTranslationUnsupported(NotImplementedError):

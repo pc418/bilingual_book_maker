@@ -241,12 +241,12 @@ class Claude(Base):
             if not self._is_wrong_shape(e):
                 raise
             return self._switch_to_openai(e)._chat_completion(prompt, model)
-        self._note_usage(r)
+        self._note_usage(r, model)
         return "".join(
             block.text for block in r.content if getattr(block, "type", "") == "text"
         )
 
-    def _note_usage(self, message):
+    def _note_usage(self, message, model=None):
         """Add what the endpoint billed for this request to the meter.
 
         Anthropic's `input_tokens` leaves the cached part out, so the prompt
@@ -262,6 +262,7 @@ class Claude(Base):
             (getattr(usage, "input_tokens", 0) or 0) + read + written,
             getattr(usage, "output_tokens", 0),
             read,
+            model=model or self.model,
         )
 
     def translate(self, text):

@@ -92,7 +92,13 @@ Then tell them exactly what to edit and stop until they say it is done:
   `default_models` (the exact id the endpoint spells) and `env_key`; delete
   the `FILL-ME` entry if unused. The file holds no secrets — `env_key`
   only names a variable. The shape is `{"providers": {NAME: {...}}}`;
-  `api_style` is `openai`, `claude`, `gemini` or `qwen`.
+  `api_style` is `openai`, `claude`, `gemini` or `qwen`. Optional
+  `prices` (`{"<model id>": {"input", "output", "cached_input"}}`, per
+  million tokens, `currency` default USD) turns the bar's token counts
+  into `spent=$0.012` and the closing line into the amount plus the
+  tokens; the example carries gpt-5.6-luna's list price. Ask the user
+  for the price when they care about the bill — a model without one
+  puts the bar back on tokens and the closing line names it.
 - `.env`: the variable `env_key` names, with the key as its value.
 
 A bare key with no entry gets the same treatment: the example file's
