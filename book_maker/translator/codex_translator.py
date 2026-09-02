@@ -25,7 +25,12 @@ from threading import Lock
 from rich import print
 from rich.markup import escape
 
-from ..codex_client import CodexAppServer, CodexError, CodexTurnFailed
+from ..codex_client import (
+    CodexAppServer,
+    CodexError,
+    CodexQuotaExhausted,
+    CodexTurnFailed,
+)
 from ..session_context import (
     HandoffReport,
     compact_budget_for,
@@ -218,7 +223,17 @@ class Codex(Base):
         if seconds <= 0:
             return True  # already past it; just retry
         if seconds > MAX_WAIT_SECONDS:
-            return False
+            # A weekly limit. Sitting it out is not an option, so the run
+            # ends here — but it ends saying when the allowance comes back,
+            # which is the one fact needed to decide when to rerun.
+            when = datetime.fromtimestamp(limits.blocking_reset).strftime(
+                "%Y-%m-%d %H:%M"
+            )
+            raise CodexQuotaExhausted(
+                f"the Codex plan allowance is spent and does not reset until "
+                f"{when} ({seconds / 3600:.0f} h away), which is too long to "
+                f"wait out. Progress is saved; rerun with --resume after then."
+            )
         when = datetime.fromtimestamp(limits.blocking_reset).strftime("%Y-%m-%d %H:%M")
         print(
             f"[bold yellow]Codex quota spent.[/bold yellow] Waiting "

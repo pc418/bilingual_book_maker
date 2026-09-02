@@ -122,6 +122,16 @@ class CodexTurnFailed(CodexError):
     """A turn failed, timed out, or produced no assistant message."""
 
 
+class CodexQuotaExhausted(CodexError):
+    """The plan allowance is spent and its reset is too far off to sit out.
+
+    Its message names when the limit clears, so the run reports it and
+    stops rather than printing a traceback about a turn that failed.
+    """
+
+    user_facing = True
+
+
 # Only this one clears with time. The credit/usage-limit variants are not
 # windowed, so waiting for a reset would hang forever.
 WINDOWED_LIMIT = "rate_limit_reached"

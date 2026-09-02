@@ -368,11 +368,16 @@ class TestQuotaExhaustion:
         assert t.slept == []
 
     def test_an_absurdly_distant_reset_is_not_waited_out(self):
+        # it ends the run instead — saying when the allowance comes back,
+        # which is the fact needed to decide when to rerun
+        from book_maker.codex_client import CodexQuotaExhausted
+
         t = self._codex_at(
             now=0, limits=self._limits(resets_at=60 * 60 * 24 * 7), fail_times=1
         )
-        with pytest.raises(CodexTurnFailed):
+        with pytest.raises(CodexQuotaExhausted) as stop:
             t.translate("text", needprint=False)
+        assert "does not reset until" in str(stop.value)
         assert t.slept == []
 
     def test_a_failure_with_quota_left_is_not_treated_as_exhaustion(self):
@@ -693,3 +698,43 @@ class TestQuiet:
         t.quiet = True
         t.preflight()
         assert "5% of your Codex window remains" in capsys.readouterr().out
+
+
+class TestWeeklyLimit:
+    """A 5-hour window is waited out; a weekly one cannot be. What used to
+    happen then was a raw `turn failed` traceback with no reset time."""
+
+    def _spent(self, resets_at):
+        return RateLimits(
+            used_percent=100,
+            resets_at=resets_at,
+            reached_type="rate_limit_reached",
+            plan_type="plus",
+        )
+
+    def test_a_reset_too_far_off_stops_the_run_and_names_the_time(self):
+        from book_maker.codex_client import CodexQuotaExhausted
+
+        now = 1788055986
+        t = _codex(["一"], limits=self._spent(now + 5 * 24 * 3600))
+        t._now = lambda: now
+        with pytest.raises(CodexQuotaExhausted) as stop:
+            t.translate("one")
+        assert "does not reset until" in str(stop.value)
+        assert "--resume" in str(stop.value)
+
+    def test_the_stop_is_reported_without_a_traceback(self):
+        from book_maker.codex_client import CodexQuotaExhausted
+
+        # the loader prints the message instead of a traceback for anything
+        # that says its message is the whole explanation
+        assert CodexQuotaExhausted("x").user_facing is True
+
+    def test_a_reset_within_reach_is_still_waited_out(self):
+        now = 1788055986
+        t = _codex(["一"], limits=self._spent(now + 600))
+        t._now = lambda: now
+        slept = []
+        t._sleep = slept.append
+        assert t.translate("one") == "一"
+        assert slept and slept[0] > 0

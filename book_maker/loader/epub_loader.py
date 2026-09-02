@@ -2684,7 +2684,11 @@ class EPUBBookLoader(BaseBookLoader):
         except Exception as e:
             # Handle connection errors gracefully
             error_msg = str(e)
-            if "Connection" in error_msg or "connection" in error_msg:
+            if getattr(e, "user_facing", False):
+                # The message is the whole explanation — a traceback on top
+                # of it only buries what the reader needs.
+                print(f"[bold red]{escape(error_msg)}[/bold red]")
+            elif "Connection" in error_msg or "connection" in error_msg:
                 print(
                     f"[bold red]Translation failed: Connection error - {error_msg}[/bold red]"
                 )
