@@ -41,14 +41,8 @@ class TestOpenAIPresets:
     @pytest.mark.parametrize(
         "alias,model",
         [
-            ("chatgptapi", "gpt-3.5-turbo"),
-            ("gpt4", "gpt-4"),
             ("gpt4omini", "gpt-4o-mini"),
             ("gpt4o", "gpt-4o"),
-            ("gpt5mini", "gpt-5-mini"),
-            ("o1preview", "o1-preview"),
-            ("o1", "o1"),
-            ("o1mini", "o1-mini"),
             ("o3mini", "o3-mini"),
         ],
     )
@@ -57,11 +51,26 @@ class TestOpenAIPresets:
         # quietly move a run onto a model the user never asked for
         assert rewrite("--model", alias) == ["--model", model]
 
+    @pytest.mark.parametrize("alias", ["openai", "chatgptapi"])
+    def test_a_route_alias_carries_no_model(self, alias):
+        # both named the OpenAI route, which is the default; the format's own
+        # default model must survive, not a retired preset
+        assert rewrite("--model", alias) == []
+        assert "default" in notices("--model", alias)
+
     def test_the_openai_alias_keeps_the_users_model_list(self):
         assert rewrite("--model", "openai", "--model_list", "yi-34b") == [
             "--model_list",
             "yi-34b",
         ]
+
+    @pytest.mark.parametrize("alias", ["gpt4", "gpt5mini", "o1", "o1mini", "o1preview"])
+    def test_a_retired_alias_travels_as_a_model_id(self, alias):
+        # it names a model the endpoint no longer serves; the model check
+        # says which one, instead of this layer rewriting it to another
+        # retired id and saying nothing
+        assert rewrite("--model", alias) == ["--model", alias]
+        assert notices("--model", alias) == ""
 
     def test_a_real_model_id_passes_through_untouched(self):
         # --model now names an actual model; only the old aliases translate
@@ -76,7 +85,7 @@ class TestOpenAIPresets:
         ]
 
     def test_an_explicit_model_list_wins_over_the_preset_default(self):
-        assert rewrite("--model", "gpt4", "--model_list", "gpt-4.1") == [
+        assert rewrite("--model", "gpt4o", "--model_list", "gpt-4.1") == [
             "--model_list",
             "gpt-4.1",
         ]
@@ -314,8 +323,8 @@ class TestFaithfulness:
 
 class TestNotices:
     def test_each_rewrite_states_its_replacement(self):
-        text = notices("--model", "gpt4", "--openai_key", "sk")
-        assert "--model gpt4 is now --model gpt-4" in text
+        text = notices("--model", "gpt4o", "--openai_key", "sk")
+        assert "--model gpt4o is now --model gpt-4o" in text
         assert "--openai_key" in text and "--key" in text
 
     def test_a_secret_is_never_echoed(self):
@@ -329,7 +338,7 @@ class TestNotices:
         assert "--api_base" in text  # says the user's own was kept
 
     def test_a_fully_superseded_translation_says_so(self):
-        text = notices("--model", "gpt4", "--model_list", "gpt-4.1")
+        text = notices("--model", "gpt4o", "--model_list", "gpt-4.1")
         assert "--model_list" in text
 
     def test_a_legacy_flag_without_a_value_explains_itself(self):

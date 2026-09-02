@@ -26,17 +26,21 @@ from book_maker.provider_loader import DASHSCOPE_BASE, GEMINI_BASE
 
 # Legacy `--model` value -> what it becomes. `fmt` is an --api_format,
 # `base` an --api_base, `model` the head of that alias's old preset list.
+# Only the aliases whose model is still served are kept. The rest —
+# `gpt4`, `gpt5mini`, `o1`, `o1mini`, `o1preview` — named models the
+# endpoint has retired, so translating them bought a command that parsed
+# and then failed at the model check anyway. Unlisted values travel
+# verbatim as model ids, and that same check names them.
 _OPENAI_PRESETS = {
-    "chatgptapi": "gpt-3.5-turbo",
-    "gpt4": "gpt-4",
     "gpt4omini": "gpt-4o-mini",
     "gpt4o": "gpt-4o",
-    "gpt5mini": "gpt-5-mini",
-    "o1preview": "o1-preview",
-    "o1": "o1",
-    "o1mini": "o1-mini",
     "o3mini": "o3-mini",
 }
+
+# Aliases that named the OpenAI route rather than a model. They carry no
+# model at all now: the openai format has its own default, and injecting a
+# retired preset here would override it.
+_DEFAULT_MODEL_ALIASES = ("openai", "chatgptapi")
 
 # Vendors whose native wrapper was removed because they serve an
 # OpenAI-compatible endpoint. Reaching them is now a base URL.
@@ -223,8 +227,12 @@ def translate_legacy_argv(argv):
         if alias in _OPENAI_PRESETS:
             model = _OPENAI_PRESETS[alias]
             route_source = f"--model {alias}"
-        elif alias == "openai":
-            notices.append("--model openai is now the default; just --model_list")
+        elif alias in _DEFAULT_MODEL_ALIASES:
+            notices.append(
+                f"--model {alias} named the OpenAI route, which is now the "
+                f"default; the format's own default model runs unless "
+                f"--model names one"
+            )
             route_source = None
         elif alias == "claude":
             # the bare alias was a stand-in for a default model

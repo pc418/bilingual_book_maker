@@ -194,7 +194,8 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 | 旧写法 | 改写为 |
 |---|---|
-| `--model chatgptapi` / `gpt4` / `gpt4o` / `gpt4omini` / `gpt5mini` / `o1` / `o1mini` / `o1preview` / `o3mini` | `--model <对应模型>` |
+| `--model gpt4o` / `gpt4omini` / `o3mini` | `--model <对应模型>` |
+| `--model chatgptapi` / `openai` | 直接去掉：openai 格式本就是默认，需要指定模型时用 `--model` |
 | `--model openai --model_list X` | `--model_list X` |
 | `--model claude` | `--model claude-haiku-4-5-20251001` |
 | 具体的 `claude-*` ID | 保持不变，anthropic 格式由 ID 推断 |
@@ -218,9 +219,12 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 - 模型 ID 取自**旧的**预设列表，保证改写后跑的还是原来那个模型，而不是悄悄换成
   更新的模型。其中部分模型现已下线，接口自身的模型校验会明确报错。
 - 不属于旧别名的 `--model` 值会原样传递：它们就是模型 ID，这也是现在的常态。
-- 没有任何别名会改变**实际使用的模型**。两个与真实 ID 重叠的情况：`o1` 改写后
-  仍是 `o1`；`qwen-mt-turbo` / `qwen-mt-plus` 会额外补上百炼的接口地址——那是
-  唯一提供这两个模型的地方——你自己写的 `--api_base` 优先。
+- 没有任何别名会改变**实际使用的模型**。`qwen-mt-turbo` / `qwen-mt-plus` 会额外
+  补上百炼的接口地址——那是唯一提供这两个模型的地方——你自己写的 `--api_base`
+  优先。
+- 指向已下线模型的别名（`gpt4`、`gpt5mini`、`o1`、`o1mini`、`o1preview`）已移除：
+  它们现在原样作为模型 ID 传递，由接口的模型校验直接点名——同样是失败，但更早，
+  且报错更清楚。
 
 ## 使用说明
 
@@ -235,16 +239,10 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
   | 模型 | Key 来源 | 说明 |
   |------|---------|------|
-  | `chatgptapi` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-3.5-turbo，自动检测 API 可用模型 |
-  | `gpt4` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4 系列，自动在可用变体间负载均衡 |
   | `gpt4omini` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4o-mini |
   | `gpt4o` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4o |
-  | `gpt5mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-5-mini |
-  | `o1preview` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-preview |
-  | `o1` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1 |
-  | `o1mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-mini |
   | `o3mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o3-mini |
-  | `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | **必须配合 `--model_list`**，可使用任意 OpenAI 兼容模型 |
+  | `chatgptapi` / `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | 就是默认的 openai 路由，本身不带模型：不写 `--model` 就跑 `gpt-5.6-luna` |
   | `codex` | 无需 key —— `codex login`（Codex CLI） | 走本地 `codex app-server` 侧车，消耗 ChatGPT/Codex 套餐额度 |
   | `claude` 及已列出的 `claude-*` ID | `--claude_key` / `BBM_CLAUDE_API_KEY` | 只接受 `--help` 展示的精确内置值；未列出的 ID 需使用 `--provider` 或 `openai` 路由 |
   | `gemini` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Flash，支持 `--model_list` 自定义 |
@@ -389,8 +387,9 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 - `--temperature`:
 
-  使用 `--temperature` 设置 `chatgptapi`/`gpt4`/`claude`模型的temperature值.
-  如 `--temperature 0.7`.
+  采样温度，仅对接受该参数的格式有效：anthropic 格式总是发送；openai 格式在温度
+  等于接口默认值、或模型拒绝显式温度（gpt-5.x 与 o 系列）时不发送；codex 格式没有
+  这个设置，会直接忽略。如 `--temperature 0.7`.
 
 - `--block_size`:
 
