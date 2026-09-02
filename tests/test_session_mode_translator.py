@@ -920,6 +920,39 @@ class TestAutoBudgetAcrossModels:
             t._session_budget()
         assert "mystery" in str(stop.value)
 
+    def test_a_model_the_endpoint_will_not_serve_is_dropped_before_sizing(self):
+        """Preflight sizes the models in play, so it settles the route first.
+
+        Otherwise `--model_list good,ghost --context-compact-at 0` dies as
+        "no context window reported for ghost" when the real answer is that
+        the endpoint has no such model — and a list with one good model in it
+        would not run at all.
+        """
+        t = self._with_windows(
+            {"good": SimpleNamespace(id="good", context_length=100_000)}
+        )
+
+        from openai import NotFoundError
+
+        def route(**kwargs):
+            if kwargs["model"] == "ghost":
+                raise NotFoundError(
+                    "no such model",
+                    response=Mock(status_code=404, headers={}),
+                    body=None,
+                )
+            return _completion("PONG")
+
+        t.openai_client.chat.completions.create = Mock(side_effect=route)
+        t.openai_client.models.list = Mock(side_effect=RuntimeError("no listing"))
+        t.set_model_list(["good", "ghost"])
+
+        t.preflight()
+
+        assert t._model_names == ["good"]
+        assert t.model == "good"
+        assert t._session_budget() == 90_000
+
     def test_each_model_is_looked_up_once(self):
         t = self._with_windows({"a": SimpleNamespace(id="a", context_length=10_000)})
         t.model = "a"

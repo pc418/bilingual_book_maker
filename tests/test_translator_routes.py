@@ -197,11 +197,9 @@ class TestAnthropicFallback:
         with patch("book_maker.translator.chatgptapi_translator.OpenAI"):
             fallback = translator._build_openai_fallback()
 
-        assert fallback._unverified_models == ["claude-sonnet-4-6"]
+        assert fallback._route_state["pending"] == ["claude-sonnet-4-6"]
 
     def test_the_switch_costs_one_route_check_and_claims_no_missing_model(self, capsys):
-        from book_maker.translator.capabilities import ROUTE_PROBE_MAX_TOKENS
-
         translator = self._claude(self._not_found())
         translator.model = "claude-sonnet-4-6"
         create = Mock(
@@ -225,9 +223,16 @@ class TestAnthropicFallback:
 
         first = create.call_args_list[0].kwargs
         assert first["model"] == "claude-sonnet-4-6"
-        assert first["max_tokens"] == ROUTE_PROBE_MAX_TOKENS
-        # probed once for the whole run, not once per paragraph
-        assert sum("max_tokens" in c.kwargs for c in create.call_args_list) == 1
+        # the route check is the one request carrying neither a schema nor a
+        # translation: probed once for the whole run, not once per paragraph
+        from book_maker.translator.capabilities import ROUTE_PROBE_PROMPT
+
+        route_checks = [
+            c
+            for c in create.call_args_list
+            if c.kwargs["messages"][0]["content"] == ROUTE_PROBE_PROMPT
+        ]
+        assert len(route_checks) == 1
         assert "does not serve" not in capsys.readouterr().out
 
 

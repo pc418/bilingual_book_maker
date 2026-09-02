@@ -26,7 +26,6 @@ from openai import (
 
 from book_maker.translator.capabilities import (
     CONTEXT_WINDOW_LOOKUP_ATTEMPTS,
-    ROUTE_PROBE_MAX_TOKENS,
     STRUCTURED_FAILURE_THRESHOLD,
     CapabilityLedger,
     ContextWindowUnknown,
@@ -298,7 +297,7 @@ class TestRouteProbe:
     replacement — one tiny request, and a listing kept only as a hint.
     """
 
-    def test_the_probe_is_one_short_capped_request(self):
+    def test_the_probe_asks_one_thing_and_sets_nothing_else(self):
         create = Mock(return_value=_completion("PONG"))
 
         probe_model_route(_route_client(create), "test-model")
@@ -307,11 +306,15 @@ class TestRouteProbe:
         assert request["model"] == "test-model"
         assert len(request["messages"]) == 1
         assert request["messages"][0]["role"] == "user"
-        assert request["max_tokens"] == ROUTE_PROBE_MAX_TOKENS
-        # This asks whether the endpoint routes a model and nothing else: a
-        # schema or a temperature would let a second question fail the first.
+        # This asks whether the endpoint routes a model and nothing else. A
+        # schema, a temperature or a token cap would each let a second
+        # question fail the first — the cap measurably so: OpenAI's gpt-5
+        # family rejects max_tokens outright, so a capped probe confirmed
+        # nothing about this fork's own default model.
         assert "response_format" not in request
         assert "temperature" not in request
+        assert "max_tokens" not in request
+        assert "max_completion_tokens" not in request
 
     def test_a_model_the_endpoint_answers_for_is_usable(self):
         # The answer's content is never read: what was asked is whether the
@@ -342,6 +345,49 @@ class TestRouteProbe:
         )
 
         with pytest.raises(ModelUnavailable, match="ghost"):
+            probe_model_route(_route_client(create), "ghost")
+
+    def test_a_parameter_400_that_says_does_not_exist_is_still_not_the_model(self):
+        # "Parameter 'max_tokens' does not exist for model 'gpt-5'" names the
+        # model *and* carries a not-found phrase, and is about neither: the
+        # field the endpoint blames settles it, and where it does not say,
+        # the word "parameter" does.
+        create = Mock(
+            side_effect=_api_error(
+                BadRequestError,
+                400,
+                "Parameter 'max_tokens' does not exist for model 'gpt-5'",
+            )
+        )
+
+        with pytest.raises(BadRequestError):
+            probe_model_route(_route_client(create), "gpt-5")
+
+    def test_the_field_the_endpoint_blames_outranks_the_prose(self):
+        # an OpenAI-shaped error carries `'param': 'max_tokens'` beside the
+        # message; reading the prose instead is how a parameter complaint
+        # gets mistaken for a missing model
+        create = Mock(
+            side_effect=_api_error(
+                BadRequestError,
+                400,
+                "{'message': \"no such model 'gpt-5'\", 'param': 'max_tokens'}",
+            )
+        )
+
+        with pytest.raises(BadRequestError):
+            probe_model_route(_route_client(create), "gpt-5")
+
+    def test_a_param_of_model_is_the_model(self):
+        create = Mock(
+            side_effect=_api_error(
+                BadRequestError,
+                400,
+                "{'message': 'unsupported', 'param': 'model'}",
+            )
+        )
+
+        with pytest.raises(ModelUnavailable):
             probe_model_route(_route_client(create), "ghost")
 
     def test_a_400_about_a_parameter_is_not_a_missing_model(self):
