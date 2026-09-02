@@ -47,7 +47,8 @@ sections after it provide additional notes for selected workflows.
 | `--temperature FLOAT` | Sampling temperature; default `1.0`. |
 | `--use_context [window\|session]` | Send earlier paragraphs as context. Bare or `window`: re-send the last few source/translation pairs (the long-standing behaviour). `session`: one append-only history, re-read at the endpoint's prompt-cache rate. |
 | `--context_paragraph_limit N` | Window mode only: context history limit. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
-| `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`. `2500` is the cheapest setting; `8000` costs 0.5-1.1x what window mode costs and carries several times the context. |
+| `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`. `2500` is the cheapest setting; `8000` costs 0.5-1.1x what window mode costs and carries several times the context. `0` sizes the budget from the model's own context window (90% of it, and of the smallest one when several models are in play), asked once before the first paid request; an endpoint that cannot report a window ends the run instead of guessing, and only OpenAI-shaped endpoints can be asked at all. |
+| `--no-context-compact` | Session mode only: never buy a handoff report. The window still rolls over at the budget, but the next one starts empty instead of inheriting a summary. |
 | `--accumulated_num N` | EPUB token/character accumulation and SRT subtitle-block character batching (capped at 512 for SRT); ignored in EPUB plan mode. |
 | `--batch_size N` | Aggregated unit count for loaders that support it. |
 | `--block_size N` | Merge paragraphs into delimiter-translated blocks. |
