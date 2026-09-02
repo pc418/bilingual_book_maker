@@ -14,6 +14,13 @@ class liteLLM(ChatGPTAPI):
     # Routed through litellm's own completion(), not self.openai_client.
     SUPPORTS_STRUCTURED_OUTPUTS = False
 
+    # Its `create_chat_completion` carries context as its own `self.context`
+    # summary string, never the message history `create_context_messages()`
+    # builds — so neither the session history nor a parallel clone's window
+    # would reach the request.
+    SUPPORTS_SESSION_CONTEXT = False
+    SUPPORTS_PARALLEL_CONTEXT = False
+
     def _chat_completion(self, prompt, model=None):
         """Classification through litellm, for the same reason as translation.
 

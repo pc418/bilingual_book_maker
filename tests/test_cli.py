@@ -719,3 +719,56 @@ def test_the_old_mode_name_is_not_advertised():
     proc = _cli("--help")
     assert "{none,all,model,agent}" in " ".join(proc.stdout.split())
     assert "'most'" not in proc.stdout
+
+
+def test_groq_declares_no_context_support():
+    # GroqClient overrides create_chat_completion and builds its messages
+    # from the prompt template alone, so create_context_messages() — and
+    # every history it would carry — is never reached. Its window lookup
+    # would also go through self.openai_client, which for Groq means a Groq
+    # key sent to api.openai.com.
+    from book_maker.translator.groq_translator import GroqClient
+    from book_maker.translator.litellm_translator import liteLLM
+
+    for cls in (GroqClient, liteLLM):
+        assert not cls.SUPPORTS_SESSION_CONTEXT, cls.__name__
+        assert not cls.SUPPORTS_PARALLEL_CONTEXT, cls.__name__
+
+
+def test_session_context_is_refused_on_groq(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "groq",
+        "--model_list",
+        "llama3-8b-8192",
+        "--use_context",
+        "session",
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--use_context session" in flat
+    assert "groq" in flat
+
+
+def test_an_auto_sized_budget_on_groq_never_asks_openai(tmp_path):
+    # the lookup would carry a Groq key to api.openai.com; the route-level
+    # refusal lands before any client is built
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "groq",
+        "--model_list",
+        "llama3-8b-8192",
+        "--context-compact-at",
+        "0",
+    )
+    assert proc.returncode == 1
+    assert "--context-compact-at 0" in " ".join(proc.stdout.split())
+    assert "Traceback" not in proc.stderr

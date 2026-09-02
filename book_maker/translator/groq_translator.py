@@ -16,6 +16,16 @@ class GroqClient(ChatGPTAPI):
     # would send the capability request to OpenAI with a Groq key.
     SUPPORTS_STRUCTURED_OUTPUTS = False
 
+    # `create_chat_completion` below builds its messages from the prompt
+    # template alone, so `create_context_messages()` — and every history it
+    # would carry — is never reached. Accepting either flag would take a
+    # setting the user paid attention to and send nothing. The window lookup
+    # behind `--context-compact-at 0` has the same problem in reverse: it
+    # reads `self.openai_client`, which here means a Groq key sent to
+    # api.openai.com.
+    SUPPORTS_SESSION_CONTEXT = False
+    SUPPORTS_PARALLEL_CONTEXT = False
+
     def _chat_completion(self, prompt, model=None):
         """Classification through Groq's own client.
 
