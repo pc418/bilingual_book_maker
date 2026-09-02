@@ -44,7 +44,7 @@ import tempfile
 # order, count, or text), or the row contract itself: resume caches are
 # positional over the unit list, and a plan JSON written under a different
 # partition names rows that no longer exist.
-PLAN_SCHEMA_VERSION = 4
+PLAN_SCHEMA_VERSION = 5
 
 # Evidence carried per row. Enough that an agent (or a person) can rule on a
 # signature without unzipping the book; capped because the JSON is read into
@@ -55,11 +55,27 @@ SAMPLE_MAX_CHARS = 80
 VALID_ACTIONS = frozenset(["translate", "skip"])
 # "all" is --plan-classify all: the mode decided the rule, nobody looked at
 # the samples. Distinct from "user" on purpose — a hand-edited row and a
-# translate-everything run must not read the same afterwards.
-# An "all" row is overwritable: a later model or agent run reverts it to
-# null before deciding (plan.py, build_ledger), so it never biases them.
+# translate-everything run must not read the same afterwards. It is also the
+# one provenance that does not stick: a rebuilt ledger reopens those rows to
+# null so this run's decider rules on them fresh, while "user", "agent" and
+# "llm" rows are carried forward (see plan.py, build_ledger).
 VALID_DECIDED_BY = frozenset(["llm", "agent", "user", "all"])
 VALID_SCOPES = ("block", "inline")
+
+# Fields a classifier actually judges. A matching signature key says only
+# that the same tag/classes occurred; it does not say the occurrences, their
+# share of the selected book, or the examples shown to the decider are still
+# the same.
+EVIDENCE_FIELDS = (
+    "scope",
+    "units",
+    "chars",
+    "pct",
+    "mean_chars",
+    "samples",
+    "conditional_css",
+    "parents",
+)
 
 
 class PlanLedgerError(ValueError):
@@ -197,13 +213,16 @@ def split_key(key):
 class Ledger:
     """Every signature in a book, with its evidence and its verdict."""
 
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, meta=None):
         # insertion-ordered; build() sorts by -chars before handing over
         self.rows = dict(rows or {})
-        # keys whose prior decision this run set back to null (an "all"
-        # row met by a model or agent run); the plan file must be rewritten
-        # or the handoff points at rows that still look decided
-        self.reopened = set()
+        self.meta = dict(meta or {})
+        # keys whose prior decision this run set back to null (an "all" row
+        # met by a model or agent run, or a row whose evidence moved); the
+        # plan file must be rewritten or the handoff points at rows that
+        # still look decided
+        self.reopened_keys = set()
+        self.settings_changed = False
         # inline key -> every block key it was seen inside. The row's own
         # "parents" is capped at three for whoever reads the file; a
         # disposition asks whether *any* block carrying this text survived,
@@ -330,6 +349,20 @@ class Ledger:
         row = self.rows.get(key)
         if row is not None:
             row["disposition"] = disposition
+
+    def reopen_decisions(self):
+        """Clear judgments whose planning context is no longer current."""
+        for key, row in self.rows.items():
+            if any(
+                row.get(field) is not None
+                for field in ("action", "decided_by", "content_type")
+            ):
+                self.reopened_keys.add(key)
+            row["action"] = None
+            row["decided_by"] = None
+            row["content_type"] = None
+            row["disposition"] = None
+        return self.reopened_keys
 
     def require_decided(self, path):
         """Refuse to translate while any question is unanswered — or while any
@@ -493,4 +526,9 @@ class Ledger:
                 f"Fix them in that file, or delete it and rerun to regenerate a "
                 f"fresh plan."
             )
-        return cls(rows)
+        return cls(rows, meta={k: v for k, v in data.items() if k != "signatures"})
+
+
+def same_evidence(current, prior):
+    """Whether a prior verdict was made from exactly the current evidence."""
+    return all(current.get(field) == prior.get(field) for field in EVIDENCE_FIELDS)

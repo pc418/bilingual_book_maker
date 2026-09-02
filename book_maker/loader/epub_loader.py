@@ -1,4 +1,5 @@
 import builtins
+import difflib
 import hashlib
 import json
 import os
@@ -29,6 +30,9 @@ from book_maker.utils import num_tokens_from_text, prompt_config_to_kwargs
 
 from .base_loader import BaseBookLoader
 from .helper import (
+    language_tag,
+    stamp_translation,
+    restamp_language,
     EPUBBookLoaderHelper,
     append_inline_translation,
     backfill_toc_hrefs,
@@ -53,6 +57,7 @@ from .plan import (
     is_simple_owner,
     load_plan_overrides,
     partition_file,
+    planning_settings,
 )
 from .classify import (
     PlanClassifyError,
@@ -62,6 +67,56 @@ from .classify import (
     decide_everything,
     mode_policy,
 )
+
+# Every key-bearing CLI flag, and the environment variable it falls back to
+# when it is absent. The rerun line printed at a plan handoff is rebuilt from
+# argv, so a key typed on the command line would otherwise be echoed to the
+# terminal, written into whatever log the run is piped to, and pasted whole
+# into an agent session — three copies of a secret, on a run that spends
+# nothing and looks harmless. Naming the variable rather than masking with
+# `***` keeps the printed command runnable for anyone who exports it.
+KEY_FLAG_ENV = {
+    "--openai_key": "BBM_OPENAI_API_KEY",
+    "--caiyun_key": "BBM_CAIYUN_API_KEY",
+    "--deepl_key": "BBM_DEEPL_API_KEY",
+    "--claude_key": "BBM_CLAUDE_API_KEY",
+    "--gemini_key": "BBM_GOOGLE_GEMINI_KEY",
+    "--groq_key": "BBM_GROQ_API_KEY",
+    "--xai_key": "BBM_XAI_API_KEY",
+    "--orcarouter_key": "BBM_ORCAROUTER_API_KEY",
+    "--qwen_key": "BBM_QWEN_API_KEY",
+    # --api_key belongs to --provider, whose key variable is named by the
+    # provider entry rather than fixed here; the generic name is a variable
+    # the user exports, which is all the placeholder has to be.
+    "--api_key": "BBM_API_KEY",
+    # This fork's one key flag. Which variable would have supplied it depends
+    # on the endpoint (FORMAT_ENV_KEYS in cli.py) and a provider entry may
+    # name its own, so the placeholder is the fallback every format accepts.
+    "--key": "BBM_API_KEY",
+}
+
+
+def _key_flag_env(flag):
+    """The env var standing in for `flag`'s value, or None if it carries no key.
+
+    Exact spellings are not enough: argparse accepts any unambiguous
+    abbreviation of a long option, so `--openai_k sk-...` is a perfectly valid
+    invocation that an exact lookup would print back verbatim. Anything that
+    prefixes a key flag is therefore treated as that flag. A prefix matching
+    several of them is ambiguous and argparse would have rejected the command,
+    but it is still redacted — a secret must not reach the terminal on the
+    strength of an argument the parser refused.
+    """
+    env_name = KEY_FLAG_ENV.get(flag)
+    if env_name is not None:
+        return env_name
+    if not flag.startswith("--") or len(flag) < 3:
+        return None
+    matches = {env for f, env in KEY_FLAG_ENV.items() if f.startswith(flag)}
+    if len(matches) == 1:
+        return matches.pop()
+    return "BBM_API_KEY" if matches else None
+
 
 # Inline elements that mean something without holding text: a link target,
 # an image, a line break. Emptying a wrapper is a reason to delete it; these
@@ -102,7 +157,38 @@ class ChapterTranslationPlan:
     jobs: list[TranslationJob]
 
 
+def check_file_filters_against(book, only_filelist, exclude_filelist):
+    """Every name in --only_filelist / --exclude_filelist must be in `book`.
+
+    Shared by the loader and the plan dry run, which has no loader: the
+    answer needs the book and nothing else.
+    """
+    documents = sorted(item.file_name for item in book.get_items_of_type(ITEM_DOCUMENT))
+    known = set(documents)
+    for flag, raw in (
+        ("--only_filelist", only_filelist),
+        ("--exclude_filelist", exclude_filelist),
+    ):
+        unknown = [f for f in raw.split(",") if f and f not in known]
+        if not unknown:
+            continue
+        lines = [
+            f"[bold red]{flag} names {len(unknown)} document(s) this book "
+            f"does not have: {', '.join(unknown)}.[/bold red]"
+        ]
+        for name in unknown:
+            near = difflib.get_close_matches(name, documents, n=3, cutoff=0.5)
+            if near:
+                lines.append(f"  {name} — did you mean: {', '.join(near)}?")
+        lines.append(f"  the book's documents: {', '.join(documents)}")
+        print("\n".join(lines))
+        raise SystemExit(1)
+
+
 class EPUBBookLoader(BaseBookLoader):
+    # what `lang=` may carry for the target language; None stamps nothing
+    language_tag = None
+
     CHECKPOINT_VERSION = 3
     CHECKPOINT_ORDER = "document"
 
@@ -130,6 +216,8 @@ class EPUBBookLoader(BaseBookLoader):
     ):
         self.epub_name = epub_name
         self.language = language
+        # what `lang=` may carry for that language, or None when nothing may
+        self.language_tag = language_tag(language)
         self.new_epub = epub.EpubBook()
         self.translate_model = model(
             key,
@@ -159,6 +247,7 @@ class EPUBBookLoader(BaseBookLoader):
             self.accumulated_num,
             self.translation_style,
             self.context_flag,
+            language=self.language,
         )
         self.retranslate = None
         self.exclude_filelist = ""
@@ -255,6 +344,16 @@ class EPUBBookLoader(BaseBookLoader):
         self.bin_path = f"{Path(epub_name).parent}/.{Path(epub_name).stem}.temp.bin"
         if self.resume:
             self.load_state()
+        elif os.path.exists(self.bin_path):
+            # Overwriting is the documented behaviour; doing it silently is
+            # not. A run that meant to continue has one flag to add. Worded
+            # as a prospect: a plan gate or a filter typo may still end the
+            # run before the first save touches the file.
+            print(
+                f"[yellow]existing progress cache {self.bin_path} is ignored "
+                f"and will be overwritten once translation starts; pass "
+                f"--resume to continue it instead[/yellow]"
+            )
 
     @staticmethod
     def _is_special_text(text):
@@ -577,7 +676,19 @@ class EPUBBookLoader(BaseBookLoader):
         overrides = None
         saved_ledger = None
         if plan_existed:
-            saved_ledger, overrides = load_plan_overrides(plan_path, self.epub_name)
+            only = {f for f in self.only_filelist.split(",") if f}
+            exclude = {f for f in self.exclude_filelist.split(",") if f}
+            expected_settings = planning_settings(
+                self._exclude_tags_tuple(),
+                self.poetry_group_size,
+                only,
+                exclude,
+            )
+            saved_ledger, overrides = load_plan_overrides(
+                plan_path,
+                self.epub_name,
+                expected_settings=expected_settings,
+            )
             if overrides:
                 print(
                     f"Applying {len(overrides)} signature override(s) from {plan_path}"
@@ -611,7 +722,7 @@ class EPUBBookLoader(BaseBookLoader):
 
         # The ledger carries every question this book asks, plus whatever a
         # previous run already answered.
-        ledger = plan.build_ledger(decisions=saved_ledger)
+        ledger = plan.build_ledger(decisions=saved_ledger, overrides=overrides)
         plan_written = False
         # A plan answers the questions the book asked when it was written.
         # Change the file filters or the excluded tags and the book asks
@@ -621,6 +732,7 @@ class EPUBBookLoader(BaseBookLoader):
         if saved_ledger is not None:
             added = set(ledger.rows) - set(saved_ledger.rows)
             dropped = set(saved_ledger.rows) - set(ledger.rows)
+        reopened = set(ledger.reopened_keys)
         if policy.name == "all":
             # "all" answers every question the same way, on purpose and out
             # loud — see classify/all.py for why that is not a default.
@@ -727,24 +839,29 @@ class EPUBBookLoader(BaseBookLoader):
                 f"plan written to {plan_path} with {len(undecided)} "
                 f"undecided signature(s) (null actions must be resolved)"
             )
-        elif added or ledger.reopened:
-            # The rewrite carries every existing decision forward (they were
-            # merged into this ledger before anything was applied), so the
-            # only rows it changes are the ones that had nowhere to live and
-            # the "all" rows this run's decider is asked about again.
+        elif added or reopened or ledger.settings_changed:
+            # `dropped` alone is deliberately not a trigger: a row can vanish
+            # without the settings moving only because *this run's own* skip
+            # overrides re-shaped the partition, and rewriting then deletes
+            # decisions the user would need again the moment the skip is
+            # reverted. A settings change that drops rows still rewrites,
+            # through `settings_changed`.
             plan.save_json(plan_path, book_path=self.epub_name, ledger=ledger)
             changes = []
             if added:
-                changes.append(
-                    f"{len(added)} signature(s) this run's settings introduced "
-                    f"now have rows to decide"
+                changes.append(f"{len(added)} added")
+            if dropped:
+                changes.append(f"{len(dropped)} dropped")
+            if reopened:
+                reason = (
+                    "planning settings changed"
+                    if ledger.settings_changed
+                    else "occurrence evidence changed"
                 )
-            if ledger.reopened:
-                changes.append(
-                    f"{len(ledger.reopened)} row(s) decided by --plan-classify "
-                    f"all are open again for this run's decider"
-                )
-            print(f"{plan_path} updated: {'; '.join(changes)}")
+                changes.append(f"{len(reopened)} decision(s) reopened ({reason})")
+            elif ledger.settings_changed:
+                changes.append("planning settings refreshed")
+            print(f"{plan_path} updated: {', '.join(changes)}")
             if dropped:
                 print(
                     f"[bold yellow]{len(dropped)} decided signature(s) no "
@@ -754,6 +871,16 @@ class EPUBBookLoader(BaseBookLoader):
                     f"[/bold yellow]"
                 )
         else:
+            if dropped:
+                # kept in the file, not dropped from it: the rows are still
+                # there with their verdicts, and reverting the skip that
+                # re-shaped the partition brings their signatures back.
+                print(
+                    f"[bold yellow]{len(dropped)} decided signature(s) do not "
+                    f"occur in this run's partition and were left untouched in "
+                    f"{plan_path}: {', '.join(sorted(dropped)[:5])}."
+                    f"[/bold yellow]"
+                )
             # never overwrite for its own sake: the file may carry
             # user-edited decisions (and load_plan_overrides already verified
             # its hash)
@@ -774,6 +901,10 @@ class EPUBBookLoader(BaseBookLoader):
             # nobody answered, and the greedy all-translate shortcut must not
             # be reachable by simply rerunning the command. A rerun finds the
             # (edited) plan and goes straight through.
+            # The exit code separates this stop from that rerun's success —
+            # agent mode reaches both from one command line, so a caller that
+            # only saw 0 could not tell a handed-off book from a translated
+            # one. See PLAN_HANDOFF_EXIT_CODE.
             # builtins.print, not rich: this block is meant to be copied, and
             # rich would hard-wrap the paths and the rerun command mid-token.
             builtins.print(
@@ -827,10 +958,48 @@ class EPUBBookLoader(BaseBookLoader):
 
         Reconstructed from argv so the printed instructions name the user's
         actual invocation (their book, their model, their language) — a
-        generic example would have to be translated back by hand.
+        generic example would have to be translated back by hand. Keys are
+        the one thing not reproduced verbatim: see KEY_FLAG_ENV.
         """
-        parts = [shlex.quote(a) for a in sys.argv]
+        parts = []
+        # Set once a bare key flag is seen, so the value that follows it in
+        # the next argv entry is replaced instead of quoted.
+        pending_env = None
+        for arg in sys.argv:
+            if pending_env is not None:
+                parts.append(f'"${pending_env}"')
+                pending_env = None
+                continue
+            flag, joined, _value = arg.partition("=")
+            env_name = _key_flag_env(flag)
+            if env_name is None:
+                parts.append(shlex.quote(arg))
+            elif joined:
+                # `--openai_key=sk-…`: the key never becomes its own entry
+                parts.append(f'{flag}="${env_name}"')
+            else:
+                parts.append(shlex.quote(arg))
+                pending_env = env_name
         return " ".join(["python3", *parts])
+
+    def check_file_filters(self):
+        """Every name in --only_filelist / --exclude_filelist must exist.
+
+        A misspelled only-list name reached the coverage gate as "the plan
+        selected no translatable text"; a misspelled exclude-list name
+        reached nothing at all — the document the user meant to skip was
+        translated and paid for, with no warning. Both are typos, and both
+        are cheap to catch.
+
+        Called by the CLI as soon as the filters are set, which is before
+        any model setup: the answer needs the book and nothing else, so
+        there is no reason for a sidecar or a window lookup to happen first.
+        Tag mode needs it as much as plan mode — it was the only mode that
+        never ran it.
+        """
+        check_file_filters_against(
+            self.origin_book, self.only_filelist, self.exclude_filelist
+        )
 
     def _build_partitioned_plan(self):
         """The plan is built from the same cached partitions the processing
@@ -850,7 +1019,11 @@ class EPUBBookLoader(BaseBookLoader):
                 continue
             files.append(self._plan_partition(item)[1])
         return TranslationPlan(
-            files, self._exclude_tags_tuple(), self.poetry_group_size
+            files,
+            self._exclude_tags_tuple(),
+            self.poetry_group_size,
+            only_files=only,
+            exclude_files=exclude,
         )
 
     def _classify_plan(self, ledger, plan, plan_path):
@@ -1038,9 +1211,13 @@ class EPUBBookLoader(BaseBookLoader):
                     ruby.name = "span"
                 else:
                     ruby.unwrap()
-            self._write_single_translation(unit, t_text)
+            self._write_single_translation(
+                unit, t_text, translation_style, language=self.language_tag
+            )
         elif has_restricted_content_model(unit.element):
-            self._append_inline_translation(unit, t_text, translation_style)
+            self._append_inline_translation(
+                unit, t_text, translation_style, language=self.language_tag
+            )
         elif unit.resolver is not None and (
             # A clone carries *all* of the owner's text, so it is only a
             # translation of this unit when this unit is the whole owner.
@@ -1051,14 +1228,16 @@ class EPUBBookLoader(BaseBookLoader):
             unit.owner_runs > 1
             or not is_simple_owner(unit.element, unit.resolver)
         ):
-            self._insert_anchored_translation(unit, t_text, translation_style)
+            self._insert_anchored_translation(
+                unit, t_text, translation_style, language=self.language_tag
+            )
         else:
             self._insert_trans_preserving_tags(
                 unit.element, t_text, translation_style, False
             )
 
     @staticmethod
-    def _append_inline_translation(unit, t_text, translation_style=""):
+    def _append_inline_translation(unit, t_text, translation_style="", language=None):
         """Put the translation *inside* the element it belongs to.
 
         Same rule as `helper.append_inline_translation` — the containers that
@@ -1074,6 +1253,7 @@ class EPUBBookLoader(BaseBookLoader):
         if translation_style:
             span["style"] = translation_style
         span.string = f" {t_text}"
+        stamp_translation(span, unit.element, language)
         unit.nodes[-1].insert_after(span)
 
     @staticmethod
@@ -1091,7 +1271,7 @@ class EPUBBookLoader(BaseBookLoader):
         }
 
     @staticmethod
-    def _insert_anchored_translation(unit, t_text, translation_style=""):
+    def _insert_anchored_translation(unit, t_text, translation_style="", language=None):
         """Append a translation next to the run it translates.
 
         For owners that cannot be cloned — a wrapper holding nested blocks,
@@ -1108,13 +1288,17 @@ class EPUBBookLoader(BaseBookLoader):
         the hazard `_write_single_translation` documents.
         """
         tail = inline_subtree_root(unit.nodes[-1], unit.resolver)
-        if EPUBBookLoader._markup_covers_run(tail, {id(n) for n in unit.nodes}):
+        if tail.name != "ruby" and EPUBBookLoader._markup_covers_run(
+            tail, {id(n) for n in unit.nodes}
+        ):
             span = copy(tail)
+            restamp_language(span, language)
             span.clear()
             # a translated copy is a second rendering, not a second anchor
             strip_duplicate_ids(span)
         else:
             span = make_tag("span")
+            stamp_translation(span, unit.element, language)
         if translation_style:
             span["style"] = translation_style
         span.string = t_text
@@ -1125,7 +1309,7 @@ class EPUBBookLoader(BaseBookLoader):
         line_break.insert_after(span)
 
     @staticmethod
-    def _write_single_translation(unit, t_text):
+    def _write_single_translation(unit, t_text, translation_style="", language=None):
         """Put a segment's translation where the segment was.
 
         The translation replaces the first owned node *only when the markup
@@ -1138,6 +1322,9 @@ class EPUBBookLoader(BaseBookLoader):
         Emptied inline wrappers are then removed. Keeping them would leave
         `<a href="…"></a>` husks — an unclickable link is not preservation.
         """
+        translation = EPUBBookLoader._styled_translation(t_text, translation_style)
+        # a bare string has nowhere to carry a tag; a styled <span> does
+        stamp_translation(translation, unit.element, language)
         container = unit.nodes[0]
         if unit.resolver is not None:
             container = inline_subtree_root(unit.nodes[0], unit.resolver)
@@ -1148,7 +1335,7 @@ class EPUBBookLoader(BaseBookLoader):
             # rubies would survive as <ruby></ruby> — a file epubcheck
             # rejects (RSC-005 "element ruby incomplete", 53 on kusamakura).
             emptied = EPUBBookLoader._collect_wrappers(unit.nodes[1:], unit.element)
-            unit.nodes[0].replace_with(NavigableString(t_text))
+            unit.nodes[0].replace_with(translation)
             for node in unit.nodes[1:]:
                 node.extract()
             EPUBBookLoader._remove_emptied_wrappers(emptied)
@@ -1158,10 +1345,25 @@ class EPUBBookLoader(BaseBookLoader):
         # only wrappers *we* empty are ours to remove: an already-empty
         # <a id="…"> is a link target the book still needs
         emptied = EPUBBookLoader._collect_wrappers(unit.nodes, unit.element)
-        anchor.insert_before(NavigableString(t_text))
+        anchor.insert_before(translation)
         for node in unit.nodes:
             node.extract()
         EPUBBookLoader._remove_emptied_wrappers(emptied)
+
+    @staticmethod
+    def _styled_translation(t_text, translation_style=""):
+        """The translated text as it goes into the document.
+
+        A style declaration has to hang on an element, so asking for one
+        turns the string into a <span>. Without one it stays a string: a
+        wrapper no book asked for is markup the original did not have.
+        """
+        if not translation_style:
+            return NavigableString(t_text)
+        span = make_tag("span")
+        span["style"] = translation_style
+        span.string = t_text
+        return span
 
     @staticmethod
     def _collect_wrappers(nodes, stop):
@@ -1183,7 +1385,11 @@ class EPUBBookLoader(BaseBookLoader):
         for element in reversed(emptied):
             if element.parent is None or element.attrs is None:
                 continue  # already detached with an enclosing wrapper
-            if element.name in _KEEP_WHEN_EMPTY or element.get("id"):
+            if (
+                element.name in _KEEP_WHEN_EMPTY
+                or element.get("id")
+                or (element.name == "a" and element.get("name"))
+            ):
                 continue
             if element.find(string=True) is not None:
                 continue
@@ -1191,7 +1397,11 @@ class EPUBBookLoader(BaseBookLoader):
             # <span><a id="ch1">Chapter One</a></span> is how a heading marks
             # itself, and deleting the wrapper takes with it the anchor every
             # cross-reference in the book points at.
-            if element.find(list(_KEEP_WHEN_EMPTY)) or element.find(attrs={"id": True}):
+            if (
+                element.find(list(_KEEP_WHEN_EMPTY))
+                or element.find(attrs={"id": True})
+                or element.find("a", attrs={"name": True})
+            ):
                 continue
             # extract, not decompose: decompose clears the state of every
             # descendant, and a later run in the same document may still
@@ -1296,14 +1506,17 @@ class EPUBBookLoader(BaseBookLoader):
             for code_tag in code_placeholders:
                 temp_p.append(copy(code_tag))
 
-            # Replace original content
+            # Replace original content: the element now holds the translation
             p.clear()
             for content in temp_p.contents:
                 p.append(copy(content))
+            restamp_language(p, self.language_tag)
         else:
             # Bilingual mode: keep original paragraph with code, add translation after
             if has_restricted_content_model(p):
-                append_inline_translation(p, translated_text, translation_style)
+                append_inline_translation(
+                    p, translated_text, translation_style, self.language_tag
+                )
                 return
             new_p = copy(p)
             # Remove code tags from translation
@@ -1313,6 +1526,7 @@ class EPUBBookLoader(BaseBookLoader):
             new_p.string = translated_text
             # a translated copy is a second rendering, not a second anchor
             strip_duplicate_ids(new_p)
+            restamp_language(new_p, self.language_tag)
             if translation_style != "":
                 new_p["style"] = translation_style
             p.insert_after(new_p)
@@ -1323,21 +1537,33 @@ class EPUBBookLoader(BaseBookLoader):
         `cached` is the number session mode is watched by: a history read
         back at full price every request shows up here and nowhere else.
         """
-        postfix = getattr(self.translate_model, "usage_postfix", lambda: None)()
-        if postfix:
-            pbar.set_postfix(postfix, refresh=False)
+        try:
+            postfix = self._usage_postfix()
+            if postfix:
+                pbar.set_postfix(postfix, refresh=False)
+        except Exception:
+            pass  # a readout; never a reason to stop the run it decorates
+
+    def _usage_postfix(self):
+        return getattr(self.translate_model, "usage_postfix", lambda: None)()
 
     def _usage_suffix(self):
-        postfix = getattr(self.translate_model, "usage_postfix", lambda: None)()
-        if not postfix:
+        try:
+            postfix = self._usage_postfix()
+            if not postfix:
+                return ""
+            return " " + " ".join(f"{k}={v}" for k, v in postfix.items())
+        except Exception:
             return ""
-        return " " + " ".join(f"{k}={v}" for k, v in postfix.items())
 
     def _print_usage(self):
         """One closing line, printed even under --quiet: the bill is not noise."""
-        summary = getattr(self.translate_model, "usage_summary", lambda: None)()
-        if summary:
-            print(summary)
+        try:
+            summary = getattr(self.translate_model, "usage_summary", lambda: None)()
+            if summary:
+                print(summary)
+        except Exception:
+            pass
 
     def _process_paragraph(self, p, new_p, index, p_to_save_len, thread_safe=False):
         if self.resume and index < p_to_save_len:
@@ -2409,6 +2635,7 @@ class EPUBBookLoader(BaseBookLoader):
             self.accumulated_num,
             self.translation_style,
             self.context_flag,
+            language=self.language,
         )
 
         # Check for fatal errors before starting
@@ -2617,11 +2844,18 @@ class EPUBBookLoader(BaseBookLoader):
                 print("you can resume it next time")
                 self._save_progress()
                 self._save_temp_book()
-            sys.exit(0)
+            # A halted run has no finished book. 0 told every caller — a
+            # script, a shell, an agent — that it did, and the shell's own
+            # code for a process killed by SIGINT is 130.
+            sys.exit(130)
         except Exception as e:
             # Handle connection errors gracefully
             error_msg = str(e)
-            if "Connection" in error_msg or "connection" in error_msg:
+            if getattr(e, "user_facing", False):
+                # The message is the whole explanation — a traceback on top
+                # of it only buries what the reader needs.
+                print(f"[bold red]{escape(error_msg)}[/bold red]")
+            elif "Connection" in error_msg or "connection" in error_msg:
                 print(
                     f"[bold red]Translation failed: Connection error - {error_msg}[/bold red]"
                 )

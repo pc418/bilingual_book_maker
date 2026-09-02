@@ -370,8 +370,12 @@ def test_explicit_none_says_nothing_and_plans_nothing(tmp_path):
 
 
 def test_agent_mode_is_untouched_and_unprobed(tmp_path):
+    from book_maker.loader.classify import PLAN_HANDOFF_EXIT_CODE
+
     proc, plan = _cli(tmp_path, "--plan-classify", "agent", BBM_FAKE_PROBE="strict")
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # the handoff has its own exit code: 0 is what a finished translation
+    # returns, and a caller could not tell the two apart
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE, proc.stdout + proc.stderr
     assert "plan mode:" not in proc.stdout
     assert "probe asked" not in proc.stdout
     assert plan.exists()

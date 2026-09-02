@@ -9,6 +9,8 @@ from bs4.element import Tag
 from ebooklib import epub
 from lxml import etree
 
+from book_maker.utils import TO_LANGUAGE_CODE
+
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -155,7 +157,7 @@ def translation_host(element):
     return element
 
 
-def append_inline_translation(element, text, translation_style=""):
+def append_inline_translation(element, text, translation_style="", language=None):
     """Put the translation *inside* the element it belongs to.
 
     Some containers accept exactly one of a thing: an EPUB 3 navigation
@@ -172,6 +174,7 @@ def append_inline_translation(element, text, translation_style=""):
     if translation_style:
         span["style"] = translation_style
     span.string = text
+    stamp_translation(span, element, language)
     host = translation_host(element)
     # can_be_empty_element makes bs4 serialize the void form <br/>; a bare
     # Tag("br") comes out as the pair <br></br>, which an HTML5 parser
@@ -198,14 +201,77 @@ def strip_duplicate_ids(element):
     return element
 
 
+LANG_ATTRS = ("xml:lang", "lang")
+# a language tag as `lang=` accepts one: "zh-hans", "ja", "pt-BR"
+LANGUAGE_TAG = re.compile(r"[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*")
+
+
+def language_tag(language):
+    """The tag `lang=` may carry for a --language value, or None.
+
+    The CLI hands loaders the prompt wording — "simplified chinese" — which
+    is what the model is asked for, not a language tag; written into
+    `xml:lang` it is a value validators reject. A wording the table knows
+    becomes its code; a value it does not know is kept only when it already
+    reads as a tag, and anything else stamps nothing.
+    """
+    if not language or not isinstance(language, str):
+        return None
+    value = language.strip()
+    if not value:
+        return None
+    known = TO_LANGUAGE_CODE.get(value.lower())
+    if known:
+        return known
+    if LANGUAGE_TAG.fullmatch(value):
+        return value
+    return None
+
+
+def stamp_translation(node, source, language):
+    """A translation node the loader made declares its language as its source did.
+
+    A bare <span> inside `<p lang="de">` reads as German. Only the attributes
+    the source element itself carries are set, the rule `restamp_language`
+    follows for clones: a book that declares no languages gets no new ones.
+    """
+    if not language or not isinstance(node, Tag) or not isinstance(source, Tag):
+        return node
+    for attr in LANG_ATTRS:
+        if attr in source.attrs:
+            node[attr] = language
+    return node
+
+
+def restamp_language(element, language):
+    """A translated copy is in the target language, whatever its source said.
+
+    Only attributes the original carried are touched: a sibling that never
+    declared a language keeps not declaring one.
+    """
+    if not language or not isinstance(element, Tag):
+        return element
+    for attr in LANG_ATTRS:
+        if attr in element.attrs:
+            element[attr] = language
+    return element
+
+
 class EPUBBookLoaderHelper:
     def __init__(
-        self, translate_model, accumulated_num, translation_style, context_flag
+        self,
+        translate_model,
+        accumulated_num,
+        translation_style,
+        context_flag,
+        language=None,
     ):
         self.translate_model = translate_model
         self.accumulated_num = accumulated_num
         self.translation_style = translation_style
         self.context_flag = context_flag
+        # the prompt wording comes in; what `lang=` accepts goes on the copy
+        self.language = language_tag(language)
 
     def insert_trans(self, p, text, translation_style="", single_translate=False):
         if text is None:
@@ -218,7 +284,7 @@ class EPUBBookLoaderHelper:
         if not single_translate and has_restricted_content_model(p):
             # single-translate extracts the original, so it never creates
             # the second sibling this rule exists to prevent
-            append_inline_translation(p, text, translation_style)
+            append_inline_translation(p, text, translation_style, self.language)
             return
         new_p = copy(p)
         new_p.string = text
@@ -232,6 +298,7 @@ class EPUBBookLoaderHelper:
             # it points at. When the original is extracted there is no
             # duplicate, so single-translate keeps its ids.
             strip_duplicate_ids(new_p)
+        restamp_language(new_p, self.language)
         p.insert_after(new_p)
         if single_translate:
             p.extract()

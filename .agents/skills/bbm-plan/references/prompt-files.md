@@ -10,13 +10,30 @@ user has said to use it**. Do not lint before asking.
 - The `user` template must contain the literal placeholder `{text}`.
   `{language}` is optional.
 - `.txt` becomes the user template as-is, same `{text}` rule.
-- `.md` is parsed as PromptDown, pinned at 1.1.6. Write the conversation in
-  the **block** form — a `## Conversation` section whose turns open with
-  `**User:**` on its own line. The older `| Role | Content |` table form
-  parses to an empty conversation under this pin, and the load then fails
-  for having no user message. Only the system (or developer) message and the
-  first user turn are read, so a `.md` prompt cannot carry a `style` — put
-  that instruction in a `.json` file, or fold it into the system message.
+- `.md` is parsed as PromptDown, pinned at 1.1.6, and only in its **block**
+  form: a `## Conversation` section whose turns open with `**User:**` on its
+  own line. The older `| Role | Content |` table form parses to an empty
+  conversation under this pin, and the load then fails with an error naming
+  the file and the block form. The repo's own `prompt_md.prompt.md` sample
+  is written in the table form — a broken example, not a template to copy.
+  Only the system (or developer) message and the first user turn are read,
+  so a `.md` prompt cannot carry a `style` — put that instruction in a
+  `.json` file, or fold it into the system message.
+
+```markdown
+# Translation Prompt
+
+## Developer Message
+
+You are a professional translator. Keep the register of the original.
+
+## Conversation
+
+**User:**
+Please translate the following text into {language}:
+
+{text}
+```
 
 Fix or report lint problems before the paid run. The CLI would reject the
 file at run start anyway, but a traceback after the user has already

@@ -29,6 +29,7 @@ import pytest
 from bs4 import BeautifulSoup as bs
 from ebooklib import ITEM_DOCUMENT, epub
 
+from book_maker.loader.classify import PLAN_HANDOFF_EXIT_CODE
 from book_maker.loader.ledger import Ledger
 from book_maker.loader.plan import build_plan, file_segment_hazards, file_sha256
 
@@ -340,7 +341,7 @@ def test_round_trip_produces_a_valid_book(book_name, single, tmp_path):
     loader.plan_classify = "agent"
     with pytest.raises(SystemExit) as stop:
         loader.make_bilingual_book()
-    assert stop.value.code == 0
+    assert stop.value.code == PLAN_HANDOFF_EXIT_CODE
     _load_plan_answers(loader)
 
     runner = EPUBBookLoader(

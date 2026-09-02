@@ -27,6 +27,20 @@ def short_count(n):
     return f"{n / 1_000_000:.2f}M"
 
 
+def _count(value):
+    """A token count as an int; anything a gateway sends that is not one is 0.
+
+    The meter is a readout: a field reported as a string, None or a nested
+    object costs the number on the bar, never the run.
+    """
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£", "CNY": "¥", "JPY": "¥"}
 
 
@@ -105,10 +119,11 @@ class UsageMeter:
         self._lock = threading.Lock()
 
     def note(self, prompt=0, completion=0, cached=0, model=None):
+        prompt, completion, cached = _count(prompt), _count(completion), _count(cached)
         with self._lock:
-            self.prompt += prompt or 0
-            self.completion += completion or 0
-            self.cached += cached or 0
+            self.prompt += prompt
+            self.completion += completion
+            self.cached += cached
             self.requests += 1
             if self.prices is not None:
                 cost = self.prices.cost(model, prompt, completion, cached)
@@ -192,6 +207,35 @@ class BatchTranslationResult:
 class Base(ABC):
     # Default values for fatal error handling - subclasses can override
     TRANSLATION_ERROR_MARKER = None
+
+    # Does this format implement `--use_context session` — one append-only
+    # history, compacted into a handoff report at --context-compact-at? A
+    # format that does not gets the flag refused rather than accepting it
+    # and translating as if it had never been passed. The same answer
+    # settles `--context-compact-at 0`, whose auto-sizing lives beside the
+    # history it sizes.
+    SUPPORTS_SESSION_CONTEXT = False
+
+    # Does this format survive `--parallel-workers` with `--use_context`?
+    # Each worker is handed a clone carrying its own chapter context, which
+    # a format that keeps no re-sendable window cannot provide.
+    SUPPORTS_PARALLEL_CONTEXT = False
+
+    # Whether a system message can be borrowed for the length of one request.
+    # False where it is not sent per request at all: the codex route folds it
+    # into a thread's base instructions when the thread opens, and the thread
+    # outlives the window, so a batch system message set there would not
+    # describe one group of paragraphs — it would tell every later unit to
+    # come back in "@@"-separated segments. Those routes carry the batch
+    # contract in the prompt instead, which does ride with the request.
+    BATCH_SYS_MSG_PER_REQUEST = True
+
+    # Whether a batch's context is recorded as one pair per line. Window-style
+    # context wants that, for the reason `_do_batch_translate` gives. A history
+    # replayed verbatim wants the opposite: a grouped request was one exchange,
+    # and recording it as several pairs leaves the history no longer matching
+    # what was sent, which is a broken cache prefix.
+    BATCH_CONTEXT_PER_LINE = True
 
     # Refusals of one rung, by one model, before we stop offering it.
     RUNG_REFUSAL_THRESHOLD = 2
@@ -499,23 +543,37 @@ class Base(ABC):
         # store a single entry full of "@@" markers and evict three real
         # paragraphs of context. Suppress it here; save per pair on success,
         # the way the structured batch path already does.
+        #
+        # A history that is replayed verbatim rather than windowed wants the
+        # joined exchange saved exactly as it was sent, and says so through
+        # BATCH_CONTEXT_PER_LINE; there translate() is left to do its own
+        # saving and nothing is suppressed.
         context_flag = getattr(self, "context_flag", False)
+        per_line = context_flag and self.BATCH_CONTEXT_PER_LINE
 
         try:
             # Set batch values
             setattr(self, prompt_attr, batch_prompt)
-            if batch_sys_msg and hasattr(self, sys_msg_attr):
+            if (
+                batch_sys_msg
+                and self.BATCH_SYS_MSG_PER_REQUEST
+                and hasattr(self, sys_msg_attr)
+            ):
                 setattr(self, sys_msg_attr, batch_sys_msg)
-            if context_flag:
+            if per_line:
                 self.context_flag = False
 
             translated_text = translate_func(batch_text)
         finally:
             # Restore original values
             setattr(self, prompt_attr, original_prompt)
-            if original_sys_msg is not None and hasattr(self, sys_msg_attr):
+            # Restored even when it was None. A translator that carries no
+            # system message of its own — codex, whose voice lives in the
+            # thread instructions — would otherwise keep the batch one, and
+            # describe "@@"-separated segments to every later request.
+            if hasattr(self, sys_msg_attr):
                 setattr(self, sys_msg_attr, original_sys_msg)
-            if context_flag:
+            if per_line:
                 self.context_flag = True
 
         # Handle None or empty response
@@ -546,7 +604,7 @@ class Base(ABC):
             # pair — no extra bookkeeping needed on this path
             return [translate_func(t) for t in stripped_texts]
 
-        if context_flag:
+        if per_line:
             for original, translated in zip(text_list, translated_paragraphs):
                 self.save_context(str(original).strip(), translated)
 

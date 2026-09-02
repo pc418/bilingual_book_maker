@@ -607,6 +607,7 @@ def test_batch_success_returns_paragraphs():
 
 
 # --------------------------------------------------------------------------
+
 # Item 6: temperature must not be forced onto models that only accept their
 # default, and a temperature 400 must not be blamed on the JSON schema
 # --------------------------------------------------------------------------
@@ -1330,3 +1331,34 @@ def test_requests_have_a_timeout_shorter_than_the_sdk_default():
     assert t.openai_client.max_retries == REQUEST_LIMITS["max_retries"] == 1
     client = t._create_async_client("k")
     assert client.timeout == 300.0 and client.max_retries == 1
+
+
+def test_an_odd_usage_record_never_stops_a_request():
+    """The meter is a readout, not a gate: a gateway that reports tokens as
+    strings, as None, or through an object whose attributes raise must cost
+    the operator the number on the bar and nothing else."""
+    from types import SimpleNamespace
+    from book_maker.translator.base_translator import UsageMeter
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+    from book_maker.translator.claude_translator import Claude
+
+    meter = UsageMeter()
+    meter.note("12", None, object())  # strings and junk are not summed, not fatal
+    meter.note(3.0, 2, 1)
+    assert (meter.prompt, meter.completion, meter.cached, meter.requests) == (
+        15,
+        2,
+        1,
+        2,
+    )
+
+    class Exploding:
+        @property
+        def usage(self):
+            raise RuntimeError("gateway shaped this one strangely")
+
+    for t in (ChatGPTAPI("k", "zh-hans"), Claude("k", "zh-hans")):
+        t._note_usage(Exploding())
+        assert t.usage_postfix() is None
+        t._note_usage(SimpleNamespace(usage={"prompt_tokens": 5}))  # a dict
+        assert t.usage_postfix() == {"in": "0", "out": "0", "cached": "0"}

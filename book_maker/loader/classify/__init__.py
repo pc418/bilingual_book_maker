@@ -32,6 +32,16 @@ from .all import decide_everything
 
 MODES = ("all", "model", "agent")
 
+# "The plan was written, nothing was translated, rerun to translate." Its own
+# code because the alternatives both lie to a script: 0 is what a finished
+# translation returns, and agent mode reaches one or the other from the very
+# same command line, so a caller reading 0 cannot tell a handed-off book from
+# a translated one. A failure code would be the opposite lie — the handoff is
+# the mode working as designed, and nothing needs fixing before the rerun.
+# 3 keeps clear of 1 (this project's failures) and of 2 (argparse's usage
+# error), and no other path here returns it.
+PLAN_HANDOFF_EXIT_CODE = 3
+
 
 @dataclass(frozen=True)
 class ModePolicy:
@@ -52,14 +62,17 @@ class ModePolicy:
     # Write one? "all" asks nothing, so it has no questions to persist.
     writes_plan_file: bool
     # Exit code when the run stops to hand rows to a person or an agent.
-    # For "agent" that stop *is* the job, so it is a success.
+    # For "agent" that stop *is* the job, so it reports the handoff rather
+    # than a failure. For the others it is a failure: they were asked to
+    # settle the rows themselves and did not, so nothing but a fix will get
+    # the book translated.
     handoff_exit_code: int
 
 
 MODE_POLICY = {
     "all": ModePolicy("all", False, False, 1),
     "model": ModePolicy("model", True, True, 1),
-    "agent": ModePolicy("agent", True, True, 0),
+    "agent": ModePolicy("agent", True, True, PLAN_HANDOFF_EXIT_CODE),
 }
 
 
@@ -83,6 +96,7 @@ def mode_policy(name):
 __all__ = [
     "MODES",
     "MODE_POLICY",
+    "PLAN_HANDOFF_EXIT_CODE",
     "ModePolicy",
     "PlanClassifyError",
     "PlanClassifyFatal",
