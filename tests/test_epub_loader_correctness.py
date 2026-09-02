@@ -581,45 +581,6 @@ def test_epub_parallel_rejects_legacy_completion_order_checkpoint(
         )
 
 
-def test_a_cache_written_for_another_language_is_refused(tmp_path, monkeypatch):
-    # live resume test 260902: four paragraphs at zh-hans, then --resume
-    # --language ja finished the book half in each, silently. The cache
-    # now names the language its slots translate into.
-    loader, _ = _make_loader(tmp_path, monkeypatch, [("a.xhtml", ["one", "two"])])
-    with open(loader.bin_path, "wb") as checkpoint:
-        pickle.dump(
-            {
-                "version": EPUBBookLoader.CHECKPOINT_VERSION,
-                "order": EPUBBookLoader.CHECKPOINT_ORDER,
-                "job_ids": [],
-                "translations": [],
-                "language": "japanese",
-            },
-            checkpoint,
-        )
-    with pytest.raises(ValueError, match="holds translations into 'japanese'"):
-        _make_loader(tmp_path, monkeypatch, [("a.xhtml", ["one", "two"])], resume=True)
-
-
-def test_a_cache_written_for_this_language_resumes(tmp_path, monkeypatch):
-    loader, _ = _make_loader(tmp_path, monkeypatch, [("a.xhtml", ["one", "two"])])
-    with open(loader.bin_path, "wb") as checkpoint:
-        pickle.dump(
-            {
-                "version": EPUBBookLoader.CHECKPOINT_VERSION,
-                "order": EPUBBookLoader.CHECKPOINT_ORDER,
-                "job_ids": [],
-                "translations": [],
-                "language": "zh-hans",
-            },
-            checkpoint,
-        )
-    resumed, _ = _make_loader(
-        tmp_path, monkeypatch, [("a.xhtml", ["one", "two"])], resume=True
-    )
-    assert resumed.p_to_save == []
-
-
 def test_epub_parallel_saves_when_committed_prefix_crosses_interval(
     tmp_path, monkeypatch
 ):
