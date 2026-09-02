@@ -121,6 +121,7 @@ class Claude(Base):
     session = None
     handoff_path = None
     context_compact_at = None
+    no_context_compact = False
     context_mode = "window"
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
@@ -139,6 +140,7 @@ class Claude(Base):
         context_paragraph_limit=5,
         context_mode="window",
         context_compact_at=None,
+        no_context_compact=False,
         style_note=None,
         handoff_path=None,
         **kwargs,
@@ -179,6 +181,7 @@ class Claude(Base):
             else None
         )
         self.context_compact_at = context_compact_at
+        self.no_context_compact = no_context_compact
         self.style_note = style_note
         self.handoff_path = Path(handoff_path) if handoff_path else None
         self._compact_failures = 0
@@ -279,6 +282,7 @@ class Claude(Base):
             context_paragraph_limit=self.context_paragraph_limit,
             context_mode=self.context_mode,
             context_compact_at=self.context_compact_at,
+            no_context_compact=self.no_context_compact,
         )
         # Straight assignment rather than set_model_list: the model is already
         # chosen, and re-validating it would spend requests mid-run.
@@ -393,7 +397,25 @@ class Claude(Base):
         self.session.append(self._user_content(text), t_text)
         if not self.session.should_compact(self._session_budget()):
             return
-        self._compact_session()
+        if self.no_context_compact:
+            self._start_empty_window()
+        else:
+            self._compact_session()
+
+    def _start_empty_window(self):
+        """Roll over with no handoff report, because the user asked for none.
+
+        Continuity across the seam is what the report buys, and
+        `--no-context-compact` declines to buy it — so this is a plain reset,
+        not a cheaper summary.
+        """
+        self.session.reset(seed="")
+        if self.quiet:
+            return
+        print(
+            f"[bold cyan]— context window {self.session.windows}, started "
+            f"empty (--no-context-compact) —[/bold cyan]"
+        )
 
     def _compact_session(self):
         """Ask for a handoff report, then start the next window seeded with it.

@@ -62,15 +62,27 @@ class TestCompactBudgetFlag:
         with pytest.raises(SystemExit):
             _parse("--context-compact-at", "lots")
 
-    def test_rejects_zero_and_negative_budgets(self):
-        """0 disables compaction outright; a negative one is meaningless."""
-        for value in ("0", "-1"):
-            with pytest.raises(SystemExit):
-                _parse("--context-compact-at", value)
+    def test_zero_is_the_auto_sentinel(self):
+        """0 no longer means "no budget": it asks the model for its own window."""
+        assert _parse("--context-compact-at", "0").context_compact_at == 0
+
+    def test_rejects_a_negative_budget(self):
+        with pytest.raises(SystemExit):
+            _parse("--context-compact-at", "-1")
 
     def test_rejects_a_budget_too_small_to_hold_a_paragraph(self):
         with pytest.raises(SystemExit):
             _parse("--context-compact-at", "50")
+
+
+class TestNoContextCompactFlag:
+    """`--no-context-compact`: keep the seam, drop the report it pays for."""
+
+    def test_defaults_off(self):
+        assert _parse().no_context_compact is False
+
+    def test_can_be_enabled(self):
+        assert _parse("--no-context-compact").no_context_compact is True
 
 
 class TestGlossaryFlags:
@@ -88,7 +100,8 @@ class TestGlossaryFlags:
 
 
 class TestSessionOnlyWarnings:
-    """`--context-compact-at` and `--glossary-auto` need a context window.
+    """`--context-compact-at`, `--no-context-compact` and `--glossary-auto`
+    all need a context window.
 
     Session mode is one. So is the codex format, whose thread *is* the window
     and which compacts whether or not --use_context was passed — warning there
@@ -113,6 +126,14 @@ class TestSessionOnlyWarnings:
             except BaseException:
                 pass
         return capsys.readouterr().out
+
+    def test_warns_for_no_context_compact_outside_session(self, capsys, tmp_path):
+        book = tmp_path / "b.epub"
+        book.write_bytes(b"not really an epub")
+        out = self._warnings(
+            capsys, "--no-context-compact", "--api_format", "google", book=str(book)
+        )
+        assert "--no-context-compact only applies" in out
 
     def test_warns_for_a_plain_openai_run(self, capsys, tmp_path):
         book = tmp_path / "b.epub"

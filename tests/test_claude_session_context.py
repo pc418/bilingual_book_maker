@@ -573,3 +573,41 @@ class TestFallbackKeepsTheSession:
         assert fb.context_compact_at == 4321
         assert fb.usage is t.usage
         assert [m["content"] for m in fb.session.messages()][-1] == "一"
+
+
+class TestCompactionDisabled:
+    """`--no-context-compact` rolls the window over with no summary at all."""
+
+    def _disabled(self, path):
+        return _translator(
+            ["译文", "译文"],
+            context_compact_at=10,
+            no_context_compact=True,
+            handoff_path=path,
+        )
+
+    def test_it_rolls_over_without_a_handoff_turn(self, tmp_path):
+        t = self._disabled(tmp_path / "h.md")
+        t.translate("a" * 200)
+        t.translate("b" * 200)
+        assert len(t.sent) == 2, "a handoff report was bought after all"
+
+    def test_the_next_window_starts_empty(self, tmp_path):
+        t = self._disabled(tmp_path / "h.md")
+        t.translate("a" * 200)
+        t.translate("b" * 200)
+        assert _prefix(t.sent[1]) == []
+
+    def test_it_writes_no_handoff_file(self, tmp_path):
+        path = tmp_path / "h.md"
+        t = self._disabled(path)
+        t.translate("a" * 200)
+        t.translate("b" * 200)
+        assert not path.exists()
+
+    def test_without_the_flag_the_report_is_still_bought(self, tmp_path):
+        t = _translator(
+            ["译文", "Summary."], context_compact_at=10, handoff_path=tmp_path / "h.md"
+        )
+        t.translate("a" * 200)
+        assert HANDOFF_MARKER in t.sent[-1]["messages"][-1]["content"]
