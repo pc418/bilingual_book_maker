@@ -112,8 +112,8 @@ whole command verbatim and argparse echoes it back on any mistyped flag,
 so `--key` lands in the terminal, the log and the transcript. The entry's
 `env_key` (or `$BBM_API_KEY`) is read when `--key` is absent, which is why
 this skill never passes it. The old per-vendor flags (`--openai_key`, …)
-and `--api_key` still parse and are rewritten to `--key` with a printed
-notice. If a key ever does reach the terminal, say so at once and tell the
+still parse and are rewritten to `--key` with a printed notice; `--api_key`
+is simply the same flag as `--key` and says nothing. If a key ever does reach the terminal, say so at once and tell the
 user to rotate it.
 
 ## 1. Intake — what else to ask for
