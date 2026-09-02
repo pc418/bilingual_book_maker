@@ -1356,6 +1356,8 @@ class TranslationPlan:
                     # its rows are not decisions to carry forward. Leave them
                     # null so this run's decider (model or agent) rules on
                     # them fresh, with no prior verdict to lean on.
+                    if prior.get("action") is not None:
+                        ledger.reopened.add(key)
                     continue
                 row["action"] = prior.get("action")
                 row["decided_by"] = prior.get("decided_by")

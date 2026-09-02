@@ -2842,3 +2842,29 @@ class TestAllRowsReopen:
         note = ledger.rows["block:p.note"]
         assert (note["action"], note["decided_by"]) == ("skip", "user")
         assert ledger.undecided_keys() == ["block:p.body"]
+        # and the reopening is recorded, so the plan file gets rewritten
+        assert ledger.reopened == {"block:p.body"}
+
+    def test_a_reopened_all_row_is_written_back_before_the_handoff(self, tmp_path):
+        # agent mode on a plan whose rows an earlier `all` run decided: the
+        # file must show them null again, or the handoff points at rows
+        # that look decided and every rerun repeats the same handoff
+        setup, src = _make_loader(tmp_path, FakeModel)
+        setup.only_filelist = "index_split_004.html"
+        plan_path = _write_decided_plan(setup)
+        data = json.loads(plan_path.read_text())
+        for row in data["signatures"]:
+            row["decided_by"] = "all"
+            row["content_type"] = "unclassified"
+        plan_path.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        from book_maker.loader.classify import mode_policy
+
+        assert stop.value.code == mode_policy("agent").handoff_exit_code
+        after = json.loads(plan_path.read_text())
+        assert all(row["action"] is None for row in after["signatures"])
