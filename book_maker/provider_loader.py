@@ -102,6 +102,12 @@ def validate_provider(name, provider):
         raise ValueError(f"provider {name!r}: default_models must be a list of strings")
     if not models:
         raise ValueError(f"provider {name!r}: default_models must not be empty")
+    if not all(m.strip() for m in models):
+        # the CLI strips a blank name away and then falls back to its own
+        # default model, so the entry would silently not be honored
+        raise ValueError(
+            f"provider {name!r}: default_models must not contain a blank name"
+        )
 
 
 def get_provider(name):
