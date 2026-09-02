@@ -2809,6 +2809,15 @@ class EPUBBookLoader(BaseBookLoader):
                 state["job_ids"]
             ) != len(state["translations"]):
                 raise ValueError("Invalid EPUB resume checkpoint job identities")
+            written_for = state.get("language")
+            if written_for and written_for != self.language:
+                raise ValueError(
+                    f"The resume cache {self.bin_path} holds translations into "
+                    f"{written_for!r}; this run asks for {self.language!r}. "
+                    f"Continuing would finish the book half in each. Rerun "
+                    f"with the language the cache was written for, or delete "
+                    f"it to start over."
+                )
             self.p_to_save = state["translations"]
             self._checkpoint_job_ids = state["job_ids"]
             self._last_saved_progress = len(self.p_to_save)
@@ -2890,6 +2899,9 @@ class EPUBBookLoader(BaseBookLoader):
                 "order": self.CHECKPOINT_ORDER,
                 "job_ids": completed_job_ids,
                 "translations": self.p_to_save,
+                # the slots are translations *into* this language; a resume
+                # under another one would finish the book half in each
+                "language": self.language,
             }
             if self._plan_mode and self._plan_fingerprint:
                 # job ids bind the slots to the book's text; the plan
