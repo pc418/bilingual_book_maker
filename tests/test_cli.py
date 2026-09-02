@@ -510,3 +510,19 @@ def test_batch_use_is_refused_on_the_codex_route(tmp_path):
     proc = _cli("--book_name", str(src), "--model", "codex", "--batch-use")
     assert proc.returncode == 1
     assert "--batch" in " ".join(proc.stdout.split())
+
+
+def test_a_resumed_codex_run_says_continuity_restarts(tmp_path):
+    # the thread is the only context this route has and it dies with the
+    # process; <book>_handoff.md is written but never read back
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--resume")
+    assert "new thread" in " ".join(proc.stdout.split())
+
+
+def test_a_codex_run_without_resume_says_nothing_about_threads(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--batch")
+    assert "new thread" not in proc.stdout

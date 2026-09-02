@@ -668,6 +668,16 @@ So you are close to reaching the limit. You have to choose your own value, there
         )
         exit(1)
 
+    # A codex run's context is the thread, and a thread does not survive
+    # the process. The handoff report on disk is written, never read back.
+    if route == "codex" and options.resume:
+        print(
+            "[bold yellow]Note:[/bold yellow] a resumed codex run starts a "
+            "new thread. Nothing already translated is paid for again, but "
+            "the earlier thread's terminology and register are not carried "
+            "into it."
+        )
+
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
     if options.book_from == "kobo":
