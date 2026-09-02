@@ -56,6 +56,8 @@ VALID_ACTIONS = frozenset(["translate", "skip"])
 # "all" is --plan-classify all: the mode decided the rule, nobody looked at
 # the samples. Distinct from "user" on purpose — a hand-edited row and a
 # translate-everything run must not read the same afterwards.
+# An "all" row is overwritable: a later model or agent run reverts it to
+# null before deciding (plan.py, build_ledger), so it never biases them.
 VALID_DECIDED_BY = frozenset(["llm", "agent", "user", "all"])
 VALID_SCOPES = ("block", "inline")
 

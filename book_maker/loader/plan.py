@@ -1351,6 +1351,12 @@ class TranslationPlan:
                 prior = decisions.rows.get(key)
                 if prior is None:
                     continue
+                if prior.get("decided_by") == "all":
+                    # `--plan-classify all` ruled by policy, not by looking:
+                    # its rows are not decisions to carry forward. Leave them
+                    # null so this run's decider (model or agent) rules on
+                    # them fresh, with no prior verdict to lean on.
+                    continue
                 row["action"] = prior.get("action")
                 row["decided_by"] = prior.get("decided_by")
                 row["content_type"] = prior.get("content_type")
