@@ -367,9 +367,12 @@ def compact_budget(value):
     """argparse type for --context-compact-at: a usable budget, or 0 for auto.
 
     `0` means "size it from the model": the translator asks the endpoint for
-    the model's context window and compacts at 90% of it, and stops the run
-    when the endpoint cannot answer — a default there would be a guess about
-    the one model nobody could size.
+    the model's context window and compacts at 90% of it. What silence means
+    is the route's to say. On the openai route it ends the run, because
+    `/v1/models` is a static record and a miss will not become a hit later.
+    The anthropic route (a gateway may serve the shape without the field)
+    and the codex route (the sidecar only learns a window after a turn has
+    spent tokens) announce the miss and fall back to the default.
     """
     try:
         budget = int(value)
@@ -762,8 +765,10 @@ So you are close to reaching the limit. You have to choose your own value, there
         "before it is compacted into a translator handoff report. Default: "
         "8000, which costs about what window mode costs for several times "
         "the context; 2500 is the cheapest setting on most endpoints. 0 "
-        "sizes the budget from the model's own context window (90%% of it) "
-        "and stops the run when the endpoint cannot report one",
+        "sizes the budget from the model's own context window (90%% of it), "
+        "on the routes that have a model to ask about. What a miss costs "
+        "differs: the openai route stops rather than guess, the anthropic "
+        "and codex routes say so and use the default",
     )
     parser.add_argument(
         "--no-context-compact",
@@ -1001,16 +1006,18 @@ def main():
         exit(1)
 
     # Sizing the budget from the model's own window is something the route
-    # has to be able to *ask*: an OpenAI-shaped endpoint answers from its
-    # model record, and nothing else here does. `0` on the others meant "no
-    # budget at all", silently, which is a compact per paragraph.
+    # has to be able to *ask*: an OpenAI-shaped endpoint and an anthropic one
+    # answer from their model record, the codex sidecar reports it on a usage
+    # push, and the machine-translation engines have no model to ask about.
+    # `0` on those meant "no budget at all", silently, which is a compact per
+    # paragraph.
     if options.context_compact_at == 0 and not getattr(
         translate_model, "SUPPORTS_AUTO_COMPACT_BUDGET", False
     ):
         print(
             f"[bold red]Error: --context-compact-at 0 sizes the budget from "
-            f"the model's own context window, and only an OpenAI-shaped "
-            f"endpoint can be asked for one. The {api_format} format needs a "
+            f"the model's own context window, and only a route with a model "
+            f"to ask about can answer that. The {api_format} format needs a "
             f"number instead.[/bold red]"
         )
         exit(1)
