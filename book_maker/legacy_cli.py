@@ -202,6 +202,10 @@ def translate_legacy_argv(argv):
     preferred = _ALIAS_KEY_FLAG.get(alias)
     if alias.startswith("claude"):
         preferred = "--claude_key"
+    elif alias.startswith("orcarouter/"):
+        # `orcarouter/<id>` addresses the same gateway as the bare alias, and
+        # the exact-name map above cannot list every model id it serves
+        preferred = "--orcarouter_key"
     key_flag = next((f for f in (preferred,) + _KEY_FLAGS if f and f in legacy), None)
     if key_flag:
         rest = ["--key", legacy[key_flag]] + rest

@@ -362,3 +362,18 @@ class TestOrcaRouter:
         assert "K-secret" not in notices(
             "--model", "orcarouter", "--orcarouter_key", "K-secret"
         )
+
+    def test_a_prefixed_model_id_takes_the_orcarouter_key(self):
+        # two keys on one command: the gateway being addressed must get its
+        # own, not whichever key flag the generic search reaches first
+        assert flags(
+            "--model",
+            "orcarouter/openai/gpt-5-mini",
+            "--openai_key",
+            "K-openai",
+            "--orcarouter_key",
+            "K-orca",
+        ) == {
+            "--key": "K-orca",
+            "--model": "orcarouter/openai/gpt-5-mini",
+        }

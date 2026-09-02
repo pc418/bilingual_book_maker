@@ -81,6 +81,13 @@ class TestValidation:
         with pytest.raises(ValueError, match="default_models"):
             validate_provider("bad", {"api_style": "openai", "default_models": models})
 
+    @pytest.mark.parametrize("models", [[" "], ["a", ""], ["", "b"]])
+    def test_a_blank_model_name_is_refused(self, models):
+        # the CLI strips these away and then falls back to its own default,
+        # so a book would be billed to a model the entry never named
+        with pytest.raises(ValueError, match="default_models"):
+            validate_provider("bad", {"api_style": "openai", "default_models": models})
+
     def test_an_entry_that_is_not_an_object_is_refused(self):
         with pytest.raises(ValueError, match="must be a JSON object"):
             validate_provider("bad", "not a dict")
