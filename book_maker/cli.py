@@ -484,9 +484,13 @@ def build_parser():
         default=None,
         metavar="MODEL",
         help="model id, exactly as the endpoint names it (e.g. gpt-5-mini, "
-        "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Old alias "
-        "values are translated to their model with a note. Defaults to "
-        "gpt-5.6-luna on the openai format; the anthropic format needs an id",
+        "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Two values "
+        "name a route instead of a model: 'codex' translates on a ChatGPT "
+        "subscription through the Codex CLI, and 'orcarouter' (or "
+        "orcarouter/<id>) sends the run to the OrcaRouter endpoint. Old "
+        "alias values are translated to their model with a note. Defaults "
+        "to gpt-5.6-luna on the openai format; the anthropic format needs "
+        "an id",
     )
     parser.add_argument(
         "--api_format",
@@ -646,7 +650,13 @@ def build_parser():
         dest="prompt_arg",
         type=str,
         metavar="PROMPT_ARG",
-        help="used for customizing the prompt. It can be the prompt template string, or a path to the template file. The valid placeholders are `{text}` and `{language}`.",
+        help="customize the prompt: a template string, a JSON string, or a "
+        "path to a .json, .txt or .md file (.md is read as PromptDown). The "
+        "JSON keys are `user` (the template, required, and it must contain "
+        "`{text}`; `{language}` is substituted too), `system`, and `style` "
+        "(a note on register and voice, handed on verbatim to every window "
+        "in session mode). A bare string or a .txt file is the `user` "
+        "template.",
     )
     parser.add_argument(
         "--accumulated_num",
@@ -760,8 +770,11 @@ So you are close to reaching the limit. You have to choose your own value, there
         "--temperature",
         type=float,
         default=1.0,
-        help="sampling temperature. Not sent when it equals the API default, "
-        "and dropped for models that reject an explicit one",
+        help="sampling temperature, on the formats that take one. The "
+        "anthropic format always sends it; the openai format leaves it out "
+        "when it equals the API default and when the model rejects an "
+        "explicit one (gpt-5.x, the o-series); the codex format has no "
+        "such setting and ignores it",
     )
     parser.add_argument(
         "--source_lang",
@@ -800,7 +813,12 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="parallel_workers",
         type=int,
         default=1,
-        help="Number of parallel workers for EPUB chapters or Markdown batches/sections. Use 2-4 for better performance. Default: 1",
+        help="translate several EPUB chapters (or Markdown batches and "
+        "sections) at once; 2-4 is the useful range. Default: 1. Refused "
+        "with --use_context session, whose one history cannot be shared, "
+        "and on the codex format, whose one thread cannot. Note that a "
+        "parallel run cannot be stopped promptly: every chapter is "
+        "dispatched before the first one finishes",
     )
     parser.add_argument(
         "--extra_body",
