@@ -448,3 +448,44 @@ def test_correctly_spelled_file_filters_still_plan(tmp_path):
     )
     assert proc.returncode == PLAN_HANDOFF_EXIT_CODE, proc.stdout + proc.stderr
     assert plan.exists()
+
+
+def test_model_list_on_codex_is_refused_before_the_sidecar_starts(tmp_path):
+    # the refusal used to arrive after preflight had already booted a codex
+    # sidecar twice — work for an answer the command line alone gives
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name", str(src), "--model", "codex", "--model_list", "gpt-5.6-luna"
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--model_list" in flat
+    # the sidecar was never reached: preflight used to boot it twice and
+    # print its login line before this refusal
+    assert "Codex:" not in proc.stdout
+    assert "Traceback" not in proc.stderr
+
+
+def test_model_list_refusal_does_not_need_a_book(tmp_path):
+    # nothing about this answer depends on the book, the key or the endpoint
+    proc = _cli(
+        "--book_name",
+        "no-such-book.epub",
+        "--model",
+        "codex",
+        "--model_list",
+        "gpt-5.6-luna",
+    )
+    assert proc.returncode == 1
+    assert "--model_list" in " ".join(proc.stdout.split())
+
+
+def test_openai_without_a_model_list_fails_clean(tmp_path):
+    # it used to raise ValueError: an 11-line traceback for a missing flag
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "openai", "--openai_key", "sk-test")
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "--model_list" in " ".join(proc.stdout.split())

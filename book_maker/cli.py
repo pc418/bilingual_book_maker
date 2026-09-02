@@ -632,6 +632,31 @@ So you are close to reaching the limit. You have to choose your own value, there
             )
             exit(1)
 
+    # --model_list travels to the translator only on the routes that read
+    # it; every other --model runs its own preset discovery and would drop
+    # the user's explicit choice. Both halves are decided by the command
+    # line alone, so they are refused here — before a key is read, a book is
+    # parsed, or a codex sidecar is started.
+    route = options.model or (None if options.provider else "chatgptapi")
+    if route in ("openai", "groq") and not options.model_list:
+        print(
+            f"[bold red]Error: --model {route} carries no model list of its "
+            f"own; name the model ids with --model_list. For a preset set "
+            f"use --model chatgptapi, gpt4, gpt4omini or gpt5mini.[/bold red]"
+        )
+        exit(1)
+    if (
+        options.model_list
+        and not options.provider
+        and route not in ("openai", "groq", "gemini")
+    ):
+        print(
+            f"[bold red]Error: --model_list is only honored by --model openai, "
+            f"groq or gemini (or a --provider); --model {route} uses "
+            f"its own preset models and would silently ignore it.[/bold red]"
+        )
+        exit(1)
+
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
     if options.book_from == "kobo":
@@ -992,32 +1017,19 @@ So you are close to reaching the limit. You have to choose your own value, there
         if not options.api_base:
             raise ValueError("`api_base` must be provided when using `deployment_id`")
         e.translate_model.set_deployment_id(options.deployment_id)
-    # Check the sidecar is up and signed in before parsing a book: a login
-    # prompt after ten minutes of work is the wrong time to find out.
+    # Check the sidecar is up and signed in before the first paid turn: a
+    # login prompt after ten minutes of translating is the wrong time to
+    # find out. Every refusal that needs no sidecar has already run.
     if hasattr(e.translate_model, "preflight"):
         e.translate_model.preflight()
+    # The refusals live at the top of main(); what is left here is the part
+    # that has to talk to the endpoint.
     if options.model in ("openai", "groq"):
-        # Currently only supports `openai` when you also have --model_list set
-        if options.model_list:
-            try:
-                e.translate_model.set_model_list(options.model_list.split(","))
-            except Exception as ex:
-                print(f"[red]Error: {ex}[/red]")
-                exit(1)
-        else:
-            raise ValueError(
-                "When using `openai` model, you must also provide `--model_list`. For default model sets use `--model chatgptapi` or `--model gpt4` or `--model gpt4omini` or `--model gpt5mini`",
-            )
-    elif options.model_list and options.model != "gemini" and not options.provider:
-        # every other --model value runs its own preset model discovery and
-        # would silently drop the explicit model choice — the worst outcome
-        # for a user pointing at a proxy that only serves that model
-        print(
-            f"[bold red]Error: --model_list is only honored by --model openai, "
-            f"groq or gemini (or a --provider); --model {options.model} uses "
-            f"its own preset models and would silently ignore it.[/bold red]"
-        )
-        exit(1)
+        try:
+            e.translate_model.set_model_list(options.model_list.split(","))
+        except Exception as ex:
+            print(f"[red]Error: {ex}[/red]")
+            exit(1)
     # TODO refactor, quick fix for gpt4 model
     if options.model == "chatgptapi":
         if options.ollama_model:
