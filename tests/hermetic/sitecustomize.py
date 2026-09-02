@@ -66,7 +66,16 @@ class OfflineLLM(OfflineTranslator):
         # which side of `--plan-classify auto` it is testing. The echo lets a
         # test assert the probe was *not* made.
         print("probe asked")
-        return os.environ.get("BBM_FAKE_PROBE") or False
+        verdict = os.environ.get("BBM_FAKE_PROBE") or False
+        if verdict == "unavailable":
+            # Asking for the verdict is also what confirms the endpoint will
+            # serve the model, so this is where that refusal reaches the CLI.
+            from book_maker.translator.capabilities import ModelUnavailable
+
+            raise ModelUnavailable(
+                "This endpoint served none of the models ['ghost-model']."
+            )
+        return verdict
 
     def supports_structured_json(self):
         return True

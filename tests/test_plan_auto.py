@@ -437,3 +437,17 @@ class TestARefusedModelIsNotASchemaVerdict:
         mode, reason = resolve_plan_mode("epub", "openai", False, probe)
         assert mode == "none"
         assert "connection reset" in reason
+
+
+def test_a_model_the_endpoint_refuses_is_one_line_not_a_traceback(tmp_path):
+    # asking for the verdict is also what confirms the endpoint serves the
+    # model, so a refusal arrives on the plan-auto path; it is the whole
+    # explanation and must not be buried under a stack
+    proc, plan = _cli(
+        tmp_path, "--test", "--test_num", "1", BBM_FAKE_PROBE="unavailable"
+    )
+    assert proc.returncode == 1
+    out = proc.stdout + proc.stderr
+    assert "served none of the models" in " ".join(out.split())
+    assert "Traceback" not in out
+    assert not plan.exists()
