@@ -1,19 +1,27 @@
-"""Pin every prompt this feature sends.
+"""Pin every prompt this feature sends, and keep the reviewable copy in step.
 
-The literals below are the prompt text itself. A prompt edit therefore shows up
-as a diff of the literal, next to the change that caused it, which is the point:
-these strings are the feature's actual behaviour, and they are the easiest thing
-in it to change by accident and the hardest to notice.
+Two guards, because they fail in different places.
 
-Updating this file in the same commit as a prompt change is intended, not
-friction to route around.
+`EXPECTED` below is the prompt text itself, hard-coded. It is tracked, so it
+runs everywhere including CI, and any edit to a prompt shows up as a diff of
+the literal a reviewer can read side by side with the change. Revising a
+prompt is meant to update this file in the same commit — that is the point,
+not friction to route around.
+
+The second guard checks docs/260829-refactor-PROMPTS_FOR_REVIEW.md, where the
+wording gets read and argued about. That file is a dated docs/ note and
+.gitignore keeps it local, so this half skips on a clean checkout.
 """
+
+from pathlib import Path
 
 import pytest
 
 from book_maker.session_context import HandoffReport, handoff_prompt
 from book_maker.translator.chatgptapi_translator import ChatGPTAPI
 from book_maker.translator.codex_translator import BASE_INSTRUCTIONS
+
+DOC = Path(__file__).resolve().parents[1] / "docs/260829-refactor-PROMPTS_FOR_REVIEW.md"
 
 _PREAMBLE = (
     "Context is compacting. Summarize content you translated so far in your "
@@ -55,11 +63,6 @@ EXPECTED = {
         "translator left this handoff report; keep names, terminology and "
         "register consistent with it.\n\n<SUMMARY>",
     ),
-    "default translation prompt": (
-        ChatGPTAPI.DEFAULT_PROMPT,
-        "Please help me to translate,`{text}` to {language}, please return "
-        "only translated content not include the origin text",
-    ),
     # A codex turn is an agent turn by default. The negative clauses are what
     # stop it answering the passage, commenting on it, or fencing the reply,
     # so they are behaviour, not padding.
@@ -73,6 +76,11 @@ EXPECTED = {
         "it. Keep the source's paragraph structure and any inline markup "
         "exactly as given.",
     ),
+    "default translation prompt": (
+        ChatGPTAPI.DEFAULT_PROMPT,
+        "Please help me to translate,`{text}` to {language}, please return "
+        "only translated content not include the origin text",
+    ),
 }
 
 
@@ -82,3 +90,38 @@ def test_the_prompt_is_what_this_file_says_it_is(label):
     commit. Read the diff of both together before approving it."""
     actual, expected = EXPECTED[label]
     assert actual == expected
+
+
+# ---- the reviewable copy, checked only where it exists ---------------------
+
+
+def _doc_text() -> str:
+    if not DOC.exists():
+        # A dated docs/ note, kept local by .gitignore, so a clean checkout
+        # has nothing to check against. The literals above are what pins the
+        # prompts in CI; this half pins the copy humans revise.
+        pytest.skip(f"{DOC.name} is not in this checkout (local-only doc)")
+    # Paragraph wrapping in the file must not matter, only the wording.
+    return " ".join(DOC.read_text(encoding="utf-8").split())
+
+
+@pytest.mark.parametrize("label", sorted(EXPECTED))
+def test_every_prompt_appears_in_the_reviewable_copy(label):
+    haystack = _doc_text()
+    prompt, _ = EXPECTED[label]
+    for chunk in [c for c in prompt.split("\n\n") if c.strip()]:
+        needle = " ".join(chunk.split())
+        assert needle in haystack, (
+            f"{label}: this text is sent to the model but is not in "
+            f"{DOC.name}:\n  {needle[:120]}..."
+        )
+
+
+def test_the_doc_points_at_the_modules_that_hold_each_prompt():
+    text = _doc_text()
+    for module in (
+        "book_maker/session_context.py",
+        "book_maker/translator/codex_translator.py",
+        "book_maker/translator/chatgptapi_translator.py",
+    ):
+        assert module in text, f"{DOC.name} does not say where {module} prompts live"

@@ -3,7 +3,7 @@ import threading
 import time
 from itertools import cycle
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -18,6 +18,11 @@ from openai import (
 )
 
 from book_maker.structured import StructuredJSONFailed
+from book_maker.translator.capabilities import (
+    ROUTE_PROBE_PROMPT,
+    CapabilityLedger,
+    ModelUnavailable,
+)
 from book_maker.translator.chatgptapi_translator import (
     ChatGPTAPI,
     StructuredOutputUnsupported,
@@ -28,7 +33,6 @@ from book_maker.translator.chatgptapi_translator import (
     single_translation_model,
     single_translation_schema,
 )
-from book_maker.translator.groq_translator import GroqClient
 
 # Every translator built by `_translator` uses this language, so the structured
 # fields are named after it.
@@ -85,11 +89,7 @@ def _translator(create=None, parse=None, cls=ChatGPTAPI):
     translator.prompt_template = ChatGPTAPI.DEFAULT_PROMPT
     translator.language = "Chinese"
     translator._api_lock = threading.Lock()
-    translator._structured_lock = threading.RLock()
-    translator._structured_support = {}
-    translator._temperature_unsupported = {}
-    translator._structured_failures = {}
-    translator._probe_deferred = set()
+    translator.capabilities = CapabilityLedger()
     translator._rung_refusals = {}
     translator.openai_client = SimpleNamespace(
         chat=SimpleNamespace(
@@ -111,7 +111,7 @@ def test_probe_asks_for_non_json_while_pinning_the_schema():
     create = Mock(return_value=_completion('{"probe":"schema_ok"}'))
     translator = _translator(create=create)
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
     request = create.call_args.kwargs
     # The prompt must fight the schema: a relaying proxy yields plain text.
@@ -129,7 +129,7 @@ def test_probe_sends_no_temperature_and_no_token_cap():
     create = Mock(return_value=_completion('{"probe":"schema_ok"}'))
     translator = _translator(create=create)
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
     request = create.call_args.kwargs
     assert "temperature" not in request
@@ -143,9 +143,9 @@ def test_probe_accepts_exact_constrained_value():
         create=Mock(return_value=_completion('{"probe":"schema_ok"}'))
     )
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 def test_probe_records_shape_when_values_are_ignored():
@@ -154,9 +154,9 @@ def test_probe_records_shape_when_values_are_ignored():
         create=Mock(return_value=_completion('{"probe":"ignored"}'))
     )
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
-    assert translator._structured_support["test-model"] == "shape"
+    assert translator.capabilities.verdicts["test-model"] == "shape"
 
 
 @pytest.mark.parametrize("verdict", ["shape", "json", False])
@@ -165,14 +165,14 @@ def test_only_a_strict_endpoint_gets_a_schema_for_translation(verdict):
     # endpoint that ignores values would drop that pin (#544), which is
     # worse than the delimiter method stating the language in the prompt
     translator = _translator()
-    translator._structured_support["test-model"] = verdict
+    translator.capabilities.verdicts["test-model"] = verdict
 
     assert translator._ensure_structured_support() is False
 
 
 def test_strict_endpoints_get_a_schema_for_translation():
     translator = _translator()
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     assert translator._ensure_structured_support() is True
 
@@ -194,7 +194,7 @@ def test_the_verdict_only_picks_where_classification_starts(verdict, entry):
     job. The verdict just saves a request by starting at the right rung.
     """
     translator = _translator()
-    translator._structured_support["test-model"] = verdict
+    translator.capabilities.verdicts["test-model"] = verdict
 
     rungs = translator.structured_rungs("classify", {"schema": {}})
 
@@ -233,9 +233,9 @@ def test_shape_endpoint_translates_via_delimiter_but_classifies_structured():
 def test_probe_rejects_servers_that_produce_no_json(content):
     translator = _translator(create=Mock(return_value=_completion(content)))
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
-    assert translator._structured_support["test-model"] is False
+    assert translator.capabilities.verdicts["test-model"] is False
 
 
 @pytest.mark.parametrize(
@@ -255,9 +255,9 @@ def test_probe_grades_json_mode_apart_from_prose(content):
     """
     translator = _translator(create=Mock(return_value=_completion(content)))
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
-    assert translator._structured_support["test-model"] == "json"
+    assert translator.capabilities.verdicts["test-model"] == "json"
 
 
 def test_probe_rejects_truncated_probe_response():
@@ -267,9 +267,9 @@ def test_probe_rejects_truncated_probe_response():
         )
     )
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
-    assert translator._structured_support["test-model"] is False
+    assert translator.capabilities.verdicts["test-model"] is False
 
 
 # --------------------------------------------------------------------------
@@ -280,9 +280,9 @@ def test_probe_rejects_truncated_probe_response():
 def test_probe_treats_bad_request_as_no_schema_support():
     translator = _translator(create=Mock(side_effect=_api_error(BadRequestError, 400)))
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
-    assert translator._structured_support["test-model"] is False
+    assert translator.capabilities.verdicts["test-model"] is False
 
 
 @pytest.mark.parametrize(
@@ -297,9 +297,9 @@ def test_probe_reraises_permanent_endpoint_errors(error):
     translator = _translator(create=Mock(side_effect=error))
 
     with pytest.raises(type(error)):
-        translator._test_structured_outputs()
+        translator._probe_verdict()
 
-    assert translator._structured_support == {}
+    assert translator.capabilities.verdicts == {}
 
 
 @pytest.mark.parametrize(
@@ -319,7 +319,7 @@ def test_probe_defers_on_a_router_outage_instead_of_ending_the_run(error):
     translator = _translator(create=Mock(side_effect=error))
 
     assert translator._ensure_structured_support() is False
-    assert translator._structured_support == {}  # nothing learned, nothing cached
+    assert translator.capabilities.verdicts == {}  # nothing learned, nothing cached
 
 
 def test_deferred_probe_is_retried_on_the_next_paragraph():
@@ -354,9 +354,9 @@ def test_probe_falls_back_on_ambiguous_server_error():
 
     translator = _translator(create=Mock(side_effect=WeirdServerError("boom")))
 
-    translator._test_structured_outputs()
+    translator._probe_verdict()
 
-    assert translator._structured_support["test-model"] is False
+    assert translator.capabilities.verdicts["test-model"] is False
 
 
 # --------------------------------------------------------------------------
@@ -375,7 +375,7 @@ def test_support_is_cached_per_model():
     translator.model = "other-model"
     translator._ensure_structured_support()
     assert create.call_count == 2
-    assert set(translator._structured_support) == {"test-model", "other-model"}
+    assert set(translator.capabilities.verdicts) == {"test-model", "other-model"}
 
 
 def test_concurrent_workers_probe_a_model_only_once():
@@ -405,7 +405,7 @@ def test_concurrent_workers_probe_a_model_only_once():
 def test_single_translation_returns_parsed_field():
     parse = Mock(return_value=_parsed_completion(parsed=_single("你好")))
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     assert translator.get_translation("hello") == "你好"
     assert parse.call_args.kwargs["response_format"] is single_translation_model(
@@ -426,7 +426,7 @@ def test_truncated_response_raises_instead_of_leaking_json_fragment():
         )
     )
     translator = _translator(parse=Mock(side_effect=error))
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     with pytest.raises(LengthFinishReasonError):
         translator._structured_single_translation("hello")
@@ -448,12 +448,12 @@ def test_truncation_retranslates_plainly_instead_of_ending_the_run():
     )
     create = Mock(return_value=_completion("完整的翻譯"))
     translator = _translator(create=create, parse=Mock(side_effect=error))
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     assert translator.get_translation("hello") == "完整的翻譯"
     assert create.call_count == 1
     # Truncation is a token-budget accident, not a capability answer.
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 def test_refusal_raises_its_own_exception():
@@ -462,7 +462,7 @@ def test_refusal_raises_its_own_exception():
     translator = _translator(
         parse=Mock(return_value=_parsed_completion(refusal="nope"))
     )
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     with pytest.raises(StructuredRefusal, match="nope"):
         translator._structured_single_translation("hello")
@@ -477,13 +477,13 @@ def test_refusal_retranslates_plainly_instead_of_ending_the_run():
         create=create,
         parse=Mock(return_value=_parsed_completion(refusal="I cannot help")),
     )
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     assert translator.get_translation("hello") == "完整的翻譯"
     assert create.call_count == 1
     # A refusal says nothing about schema support: demoting on it would cost
     # the rest of the book its structured mode after two paragraphs.
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 def test_batch_refusal_is_not_retried_before_falling_back():
@@ -492,7 +492,7 @@ def test_batch_refusal_is_not_retried_before_falling_back():
     parse = Mock(return_value=_parsed_completion(refusal="nope"))
     create = Mock(return_value=_completion("plain"))
     translator = _translator(create=create, parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     assert translator._do_structured_batch_translate(["a", "b"]) == ["plain"] * 2
 
@@ -501,7 +501,7 @@ def test_batch_refusal_is_not_retried_before_falling_back():
         c for c in parse.call_args_list if c.kwargs["response_format"] is batch_model
     ]
     assert len(batch_calls) == 1
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 # --------------------------------------------------------------------------
@@ -513,15 +513,15 @@ def test_single_path_demotes_and_retries_plainly_when_schema_is_ignored():
     parse = Mock(side_effect=StructuredOutputUnsupported("server ignored schema"))
     create = Mock(return_value=_completion("plain translation"))
     translator = _translator(create=create, parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     # First failure falls back for this paragraph but keeps structured mode on:
     # one garbled proxy answer must not cost a whole book its schema support.
     assert translator.get_translation("hello") == "plain translation"
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
     assert translator.get_translation("hello") == "plain translation"
-    assert translator._structured_support["test-model"] is False
+    assert translator.capabilities.verdicts["test-model"] is False
 
     assert parse.call_count == 2
     assert create.call_count == 2
@@ -536,32 +536,32 @@ def test_a_working_structured_call_clears_the_failure_streak():
         ]
     )
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     translator.get_translation("a")  # streak 1
     assert translator.get_translation("b") == "你好"  # streak reset
     translator.get_translation("c")  # streak 1 again, not 2
 
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 def test_batch_path_demotes_without_burning_retries():
     parse = Mock(side_effect=StructuredOutputUnsupported("server ignored schema"))
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
     translator.translate = Mock(side_effect=lambda text, _=True: f"t:{text}")
 
     assert translator._do_structured_batch_translate(["a", "b"]) == ["t:a", "t:b"]
     assert translator._do_structured_batch_translate(["a", "b"]) == ["t:a", "t:b"]
 
     assert parse.call_count == 2  # one attempt each, not 3 tenacity attempts
-    assert translator._structured_support["test-model"] is False
+    assert translator.capabilities.verdicts["test-model"] is False
 
 
 def test_batch_length_mismatch_is_retried_then_falls_back_one_by_one():
     parse = Mock(return_value=_parsed_completion(parsed=_batch(["only one"])))
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
     translator.translate = Mock(side_effect=lambda text, _=True: f"t:{text}")
 
     result = translator._do_structured_batch_translate(["a", "b"])
@@ -569,7 +569,7 @@ def test_batch_length_mismatch_is_retried_then_falls_back_one_by_one():
     assert result == ["t:a", "t:b"]
     assert parse.call_count == 3  # a model error, not a capability answer
     # A count mismatch says nothing about schema support.
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 def test_batch_empty_slot_for_nonempty_input_is_retried_then_falls_back():
@@ -578,14 +578,14 @@ def test_batch_empty_slot_for_nonempty_input_is_retried_then_falls_back():
     # must treat that pad as the model error it is, not accept the window.
     parse = Mock(return_value=_parsed_completion(parsed=_batch(["5a+5b merged", ""])))
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
     translator.translate = Mock(side_effect=lambda text, _=True: f"t:{text}")
 
     result = translator._do_structured_batch_translate(["5a", "5b"])
 
     assert result == ["t:5a", "t:5b"]
     assert parse.call_count == 3  # a model error, not a capability answer
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 def test_batch_empty_output_for_empty_input_is_accepted():
@@ -593,7 +593,7 @@ def test_batch_empty_output_for_empty_input_is_accepted():
     # an empty slot mirroring an empty input is well-formed output
     parse = Mock(return_value=_parsed_completion(parsed=_batch(["一", ""])))
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     assert translator._do_structured_batch_translate(["a", "  "]) == ["一", ""]
     assert parse.call_count == 1
@@ -602,28 +602,12 @@ def test_batch_empty_output_for_empty_input_is_accepted():
 def test_batch_success_returns_paragraphs():
     parse = Mock(return_value=_parsed_completion(parsed=_batch(["一", "二"])))
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     assert translator._do_structured_batch_translate(["a", "b"]) == ["一", "二"]
     request = parse.call_args.kwargs
     assert request["response_format"] is batch_translation_model(LANGUAGE)
     assert json.loads  # payload is built by the SDK, not hand-rolled
-
-
-# --------------------------------------------------------------------------
-# Subclasses that do not route through openai_client must not be probed
-# --------------------------------------------------------------------------
-
-
-def test_groq_never_probes_for_structured_outputs():
-    create = Mock(return_value=_completion("plain"))
-    translator = _translator(create=create, cls=GroqClient)
-
-    translator._ensure_structured_support()
-
-    assert GroqClient.SUPPORTS_STRUCTURED_OUTPUTS is False
-    assert translator._structured_support["test-model"] is False
-    assert create.call_count == 0
 
 
 # --------------------------------------------------------------------------
@@ -651,6 +635,23 @@ def test_orcarouter_honors_custom_api_base():
     assert translator.openai_client.base_url == "http://proxy.local/v1/"
 
 
+def test_orcarouter_route_is_still_checked_at_the_first_paid_call():
+    # the class names its model in __init__ rather than through
+    # set_model_list, and the route check must not be skipped for that
+    from book_maker.translator.orcarouter_translator import OrcaRouterTranslator
+
+    translator = OrcaRouterTranslator("sk-orca-test", "Chinese")
+    with patch(
+        "book_maker.translator.chatgptapi_translator.verify_model_routes",
+        return_value={"success": True, "available_models": ["orcarouter/auto"]},
+    ) as verify:
+        translator._ensure_models_routable()
+        translator._ensure_models_routable()
+
+    verify.assert_called_once()
+    assert verify.call_args.args[1] == ["orcarouter/auto"]
+
+
 # --------------------------------------------------------------------------
 # Item 6: temperature must not be forced onto models that only accept their
 # default, and a temperature 400 must not be blamed on the JSON schema
@@ -663,7 +664,7 @@ def test_default_temperature_is_not_sent():
     parse = Mock(return_value=_parsed_completion(parsed=_single("你好")))
     translator = _translator(parse=parse)
     translator.temperature = 1.0
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     translator._structured_single_translation("hello")
 
@@ -674,7 +675,7 @@ def test_explicit_temperature_is_sent():
     parse = Mock(return_value=_parsed_completion(parsed=_single("你好")))
     translator = _translator(parse=parse)
     translator.temperature = 0.1
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     translator._structured_single_translation("hello")
 
@@ -706,12 +707,12 @@ def test_temperature_rejection_retries_once_without_it_and_is_cached():
     )
     translator = _translator(parse=parse)
     translator.temperature = 0.1
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     assert translator._structured_single_translation("hello") == "你好"
     assert parse.call_count == 2
     assert "temperature" not in parse.call_args.kwargs
-    assert translator._temperature_unsupported["test-model"] is True
+    assert translator.capabilities.temperature_unsupported["test-model"] is True
 
     # Cached: the second translation never sends it again.
     translator._structured_single_translation("world")
@@ -729,11 +730,11 @@ def test_temperature_rejection_does_not_demote_structured_outputs():
     )
     translator = _translator(parse=parse)
     translator.temperature = 0.1
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     translator._structured_single_translation("hello")
 
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 def test_schema_rejection_is_still_a_capability_answer():
@@ -743,7 +744,7 @@ def test_schema_rejection_is_still_a_capability_answer():
         )
     )
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     with pytest.raises(StructuredOutputUnsupported):
         translator._structured_single_translation("hello")
@@ -754,20 +755,20 @@ def test_unrelated_bad_request_is_not_blamed_on_the_schema():
         side_effect=_api_error(BadRequestError, 400, "context length exceeded")
     )
     translator = _translator(parse=parse)
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     with pytest.raises(BadRequestError):
         translator._structured_single_translation("hello")
 
     # Still enabled: the model never said anything about schemas.
-    assert translator._structured_support["test-model"] == "strict"
+    assert translator.capabilities.verdicts["test-model"] == "strict"
 
 
 def test_batch_path_applies_the_same_temperature_rule():
     parse = Mock(return_value=_parsed_completion(parsed=_batch(["一", "二"])))
     translator = _translator(parse=parse)
     translator.temperature = 1.0
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     translator._do_structured_batch_translate(["a", "b"])
 
@@ -777,7 +778,7 @@ def test_batch_path_applies_the_same_temperature_rule():
 def test_temperature_support_is_tracked_per_model():
     translator = _translator()
     translator.temperature = 0.1
-    translator._temperature_unsupported["test-model"] = True
+    translator.capabilities.temperature_unsupported["test-model"] = True
 
     assert translator._sampling_kwargs() == {}
     assert translator._sampling_kwargs("other-model") == {"temperature": 0.1}
@@ -787,7 +788,7 @@ def test_batch_api_body_omits_default_temperature():
     translator = _translator()
     translator.temperature = 1.0
     translator.batch_model = "batch-model"
-    translator._structured_support["batch-model"] = False
+    translator.capabilities.verdicts["batch-model"] = False
     translator.create_batch_context_messages = Mock(return_value=[])
     translator.custom_id = Mock(return_value="id-1")
 
@@ -928,7 +929,7 @@ def test_batch_request_pins_the_language_schema():
     translator.custom_id = lambda index: f"id-{index}"
     translator.context_flag = False
     # the probe store holds verdicts now, and translation requires "strict"
-    translator._structured_support["test-model"] = "strict"
+    translator.capabilities.verdicts["test-model"] = "strict"
 
     body = translator.make_batch_request(0, "hello")["body"]
 
@@ -950,18 +951,6 @@ def test_structured_batch_prompt_ends_on_the_target_language():
 # --------------------------------------------------------------------------
 # Unrelated probe, kept from before
 # --------------------------------------------------------------------------
-
-
-def test_model_validation_probe_uses_model_defaults():
-    create = Mock(return_value=_completion("ok"))
-    translator = _translator(create=create)
-
-    translator._validate_model_with_test("test-model", "Test")
-
-    request = create.call_args.kwargs
-    assert request["model"] == "test-model"
-    assert request["max_tokens"] == 10
-    assert "temperature" not in request
 
 
 # --------------------------------------------------------------------------
@@ -1028,7 +1017,7 @@ def test_structured_json_targets_the_requested_model():
 def _delimiter_translator(joined_translation):
     translator = _translator(create=Mock(return_value=_completion(joined_translation)))
     # no structured support -> translate_list takes the delimiter path
-    translator._structured_support["test-model"] = False
+    translator.capabilities.verdicts["test-model"] = False
     translator.context_flag = True
     translator.context_paragraph_limit = 5
     return translator
@@ -1225,49 +1214,243 @@ def test_json_extraction_survives_fences_and_prose(reply, expected):
     assert ChatGPTAPI._extract_json_object(reply) == expected
 
 
-def _model_list_translator(api_models):
-    """A translator whose only live surface is the endpoint's model listing."""
-    translator = _translator()
-    translator.deployment_id = None
-    translator._fetch_api_models_with_retry = Mock(return_value=api_models)
+def test_the_model_list_rotates_in_the_order_it_was_given():
+    # a set() pass here made the first model depend on hash order, so the
+    # same command could start on a different model between runs
+    translator = ChatGPTAPI.__new__(ChatGPTAPI)
+
+    translator.set_model_list(["gpt-b", "gpt-a", " gpt-b ", "", "gpt-c"])
+
+    assert translator.model == "gpt-b"
+    assert [next(translator.model_list) for _ in range(4)] == [
+        "gpt-b",
+        "gpt-a",
+        "gpt-c",
+        "gpt-b",
+    ]
+
+
+# --------------------------------------------------------------------------
+# The route probe: which models this endpoint serves, asked lazily
+# --------------------------------------------------------------------------
+
+
+def _no_listing():
+    """An endpoint with `/chat/completions` and nothing else."""
+    return SimpleNamespace(list=Mock(side_effect=_api_error(NotFoundError, 404)))
+
+
+def _routed(create, models=("gpt-a",), listing=None):
+    """A translator whose `--model_list` has been recorded but not yet checked."""
+    translator = _translator(create=create)
+    translator.openai_client.models = listing or _no_listing()
+    translator.set_model_list(list(models))
     return translator
 
 
-def test_model_list_keeps_the_order_it_was_given():
-    # --model_list a,b names a first on purpose: the first id is what the
-    # structured-output probe grades and what the compact budget keys on.
-    # Deduplicating through a set made that a coin flip between runs.
-    translator = _model_list_translator(["b-model", "a-model", "c-model"])
+def test_set_model_list_asks_the_endpoint_nothing():
+    # the list is recorded, not verified: a run that never translates
+    # (--plan-dry-run, the agent handoff) must not pay a startup round trip
+    create = Mock()
+    listing = _no_listing()
+    translator = _routed(create, models=["gpt-a", "gpt-b"], listing=listing)
 
-    translator.set_model_list(["a-model", "b-model", "a-model"])
-
-    assert translator._model_names == ["a-model", "b-model"]
-    assert translator.model == "a-model"
-
-
-def test_model_list_order_survives_an_endpoint_missing_one_model():
-    # the surviving ids keep the user's order, not the endpoint's listing order
-    translator = _model_list_translator(["c-model", "b-model", "a-model"])
-
-    translator.set_model_list(["a-model", "gone", "b-model"])
-
-    assert translator._model_names == ["a-model", "b-model"]
-    assert translator.model == "a-model"
+    assert create.call_count == 0
+    assert listing.list.call_count == 0
+    assert translator.model == "gpt-a"
+    assert translator._model_names == ["gpt-a", "gpt-b"]
 
 
-def test_gateways_know_their_model_before_the_first_request():
-    # Codex review 2 on #553: `preflight` sizes an auto compact budget from
-    # every model in play before any request rotates one in; the gateways
-    # used to leave `model` None and `_model_names` empty until then
-    from book_maker.translator.orcarouter_translator import OrcaRouterTranslator
-    from book_maker.translator.xai_translator import XAIClient
+def test_the_route_is_checked_at_the_first_paid_call():
+    create = Mock(
+        side_effect=[_completion("PONG"), _completion('{"probe":"schema_ok"}')]
+    )
+    translator = _routed(create)
 
-    orca = OrcaRouterTranslator("sk-orca-test", "Chinese")
-    assert orca.model == "orcarouter/auto"
-    assert orca._model_names == ("orcarouter/auto",)
-    xai = XAIClient("sk-xai-test", "Chinese")
-    assert xai.model == "grok-beta"
-    assert xai._model_names == ("grok-beta",)
+    assert create.call_count == 0
+    translator._probe_verdict()
+
+    route, schema = create.call_args_list
+    assert route.kwargs["model"] == "gpt-a"
+    assert "max_tokens" not in route.kwargs
+    assert "response_format" not in route.kwargs
+    # ...and the capability probe still runs on its own terms afterwards
+    assert schema.kwargs["response_format"]["type"] == "json_schema"
+
+
+def test_the_route_is_checked_once_per_run():
+    create = Mock(
+        side_effect=[_completion("PONG"), _completion('{"probe":"schema_ok"}')]
+    )
+    translator = _routed(create)
+
+    for _ in range(4):
+        translator._probe_verdict()
+
+    # one route probe plus one capability probe, neither repeated per request
+    assert create.call_count == 2
+
+
+def test_a_worker_clone_does_not_buy_the_check_again():
+    # parallel chapters translate through shallow copies of the translator
+    # (loader._clone_translator_for_context). Rebinding the state on one
+    # clone would leave every other worker to pay for the same probes.
+    from copy import copy
+
+    create = Mock(
+        side_effect=[
+            _completion("PONG"),
+            _completion('{"probe":"schema_ok"}'),
+            _completion('{"probe":"schema_ok"}'),
+        ]
+    )
+    translator = _routed(create)
+
+    first, second = copy(translator), copy(translator)
+    first._probe_verdict()
+    second._probe_verdict()
+
+    route_probes = [
+        c
+        for c in create.call_args_list
+        if c.kwargs["messages"][0]["content"] == ROUTE_PROBE_PROMPT
+    ]
+    assert len(route_probes) == 1
+    # and the original knows too, so a later paragraph on it pays nothing
+    assert translator._route_state["pending"] is None
+
+
+def test_a_refusal_reaches_a_clone_that_never_probed():
+    from copy import copy
+
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+    first, second = copy(translator), copy(translator)
+
+    with pytest.raises(ModelUnavailable):
+        first._probe_verdict()
+    with pytest.raises(ModelUnavailable):
+        second._probe_verdict()
+
+    # the second worker is told, not re-probed
+    assert create.call_count == 1
+
+
+def test_a_model_the_endpoint_will_not_serve_stops_the_run():
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    with pytest.raises(ModelUnavailable, match="ghost"):
+        translator._probe_verdict()
+
+
+def test_the_refusal_is_the_message_a_reader_gets_not_a_traceback():
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    with pytest.raises(ModelUnavailable) as caught:
+        translator._probe_verdict()
+
+    assert caught.value.user_facing is True
+
+
+def test_a_route_refusal_is_not_re_probed_by_every_retry():
+    # get_translation is wrapped in three tenacity attempts; a fatal answer
+    # about the model must cost one request, not one per attempt
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    for _ in range(3):
+        with pytest.raises(ModelUnavailable):
+            translator._probe_verdict()
+
+    assert create.call_count == 1
+
+
+def test_the_check_narrows_the_list_to_the_models_that_answer():
+    create = Mock(
+        side_effect=[
+            _completion("PONG"),
+            _api_error(NotFoundError, 404, "no such model"),
+            _completion("PONG"),
+            _completion('{"probe":"schema_ok"}'),
+        ]
+    )
+    translator = _routed(create, models=["gpt-a", "ghost", "gpt-c"])
+
+    translator._probe_verdict()
+
+    assert translator._model_names == ["gpt-a", "gpt-c"]
+    # rotation keeps the order the user typed, minus what the endpoint refused
+    assert [next(translator.model_list) for _ in range(3)] == [
+        "gpt-a",
+        "gpt-c",
+        "gpt-a",
+    ]
+
+
+def test_a_refused_current_model_is_replaced_by_one_that_answers():
+    create = Mock(
+        side_effect=[
+            _api_error(NotFoundError, 404, "no such model"),
+            _completion("PONG"),
+            _completion('{"probe":"schema_ok"}'),
+        ]
+    )
+    translator = _routed(create, models=["ghost", "gpt-c"])
+    assert translator.model == "ghost"
+
+    translator._probe_verdict()
+
+    assert translator.model == "gpt-c"
+    # the capability probe asked about the survivor, not the refused model
+    assert create.call_args_list[-1].kwargs["model"] == "gpt-c"
+
+
+def test_a_model_the_endpoint_serves_but_does_not_list_is_kept():
+    # the listing is the wrong authority: gateways serve models they do not
+    # list, and the old gate refused them before they were ever tried
+    listing = SimpleNamespace(model_dump=lambda: {"data": [{"id": "something-else"}]})
+    create = Mock(
+        side_effect=[_completion("PONG"), _completion('{"probe":"schema_ok"}')]
+    )
+    translator = _routed(
+        create, models=["unlisted"], listing=SimpleNamespace(list=lambda: listing)
+    )
+
+    translator._probe_verdict()
+
+    assert translator._model_names == ["unlisted"]
+
+
+def test_the_batch_path_checks_the_route_too():
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    with pytest.raises(ModelUnavailable):
+        translator.translate_list(["one", "two"])
+
+
+def test_the_classification_path_checks_the_route_too():
+    create = Mock(side_effect=_api_error(NotFoundError, 404, "no such model"))
+    translator = _routed(create, models=["ghost"])
+
+    with pytest.raises(ModelUnavailable):
+        translator.structured_json("classify", {"schema": {}})
+
+
+def test_a_transport_failure_never_reads_as_a_missing_model(capsys):
+    create = Mock(
+        side_effect=[
+            APIConnectionError(request=httpx.Request("POST", "https://x/v1")),
+            _completion('{"probe":"schema_ok"}'),
+        ]
+    )
+    translator = _routed(create, models=["gpt-a"])
+
+    assert translator._probe_verdict() == "strict"
+    out = capsys.readouterr().out
+    assert "does not serve" not in out
 
 
 # --------------------------------------------------------------------------
@@ -1328,6 +1511,88 @@ def test_the_claude_meter_counts_cache_reads_inside_the_prompt_total():
         )
     )
     assert t.usage_postfix() == {"in": "1.0k", "out": "50", "cached": "900"}
+
+
+def test_the_price_table_finds_a_model_by_id_router_tail_or_prefix():
+    from book_maker.translator.base_translator import PriceTable
+
+    table = PriceTable(
+        {"gpt-5.6-luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02}}
+    )
+    assert table.price_for("gpt-5.6-luna")["output"] == 1.2
+    assert table.price_for("openai/gpt-5.6-luna")["output"] == 1.2
+    assert table.price_for("gpt-5.6-luna-2026-07-30")["output"] == 1.2
+    assert table.price_for("gpt-5.6-terra") is None
+    assert table.price_for(None) is None
+
+
+def test_a_request_is_costed_with_cache_reads_at_their_own_rate():
+    from book_maker.translator.base_translator import PriceTable
+
+    table = PriceTable(
+        {"luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02}}, "USD"
+    )
+    # 1M prompt of which 500k cached, 100k completion
+    assert table.cost("luna", 1_000_000, 100_000, 500_000) == pytest.approx(
+        0.5 * 0.2 + 0.5 * 0.02 + 0.1 * 1.2
+    )
+    # no cached_input: cache reads cost the input price, the conservative reading
+    flat = PriceTable({"m": {"input": 1.0, "output": 2.0}})
+    assert flat.cost("m", 1_000_000, 0, 1_000_000) == pytest.approx(1.0)
+    assert table.money(0.00123) == "$0.0012"
+    assert table.money(0.123) == "$0.123"
+    assert table.money(12.3456) == "$12.35"
+    assert PriceTable({}, "CNY").money(0.5) == "¥0.500"
+    assert PriceTable({}, "CHF").money(0.5) == "0.500 CHF"
+
+
+def test_with_prices_the_bar_shows_spent_instead_of_tokens():
+    from types import SimpleNamespace
+    from book_maker.translator.base_translator import PriceTable
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+    t = ChatGPTAPI("k", "zh-hans")
+    t.model = "gpt-5.6-luna"
+    t.usage.prices = PriceTable(
+        {"gpt-5.6-luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02}}
+    )
+    t._note_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=1_000_000,
+                completion_tokens=100_000,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=500_000),
+            )
+        )
+    )
+    assert t.usage_postfix() == {"spent": "$0.230"}
+    assert t.usage_summary().startswith("spent $0.230 — tokens: in 1.00M, out 100.0k")
+
+    # the classifier asked another model: priced by the id *it* asked for
+    t._note_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=10, completion_tokens=1, prompt_tokens_details=None
+            )
+        ),
+        "gpt-5.6-terra",
+    )
+    assert t.usage_postfix() == {"in": "1.00M", "out": "100.0k", "cached": "500.0k"}
+    assert t.usage_summary().endswith(
+        "; no price for gpt-5.6-terra in the provider entry, so spent is not shown"
+    )
+
+
+def test_requests_have_a_timeout_shorter_than_the_sdk_default():
+    # router test 260902: a gateway that accepts a request and never answers
+    # held a run for the SDK's 600 s × 3 tries with nothing printed
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI, REQUEST_LIMITS
+
+    t = ChatGPTAPI("k", "zh-hans")
+    assert t.openai_client.timeout == REQUEST_LIMITS["timeout"] == 300.0
+    assert t.openai_client.max_retries == REQUEST_LIMITS["max_retries"] == 1
+    client = t._create_async_client("k")
+    assert client.timeout == 300.0 and client.max_retries == 1
 
 
 def test_an_odd_usage_record_never_stops_a_request():

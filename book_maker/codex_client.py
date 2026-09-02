@@ -259,6 +259,8 @@ class CodexAppServer:
         self._reader = None
         self._stopped = False
         self._rate_limits = None
+        # Per thread, not per server: one sidecar serves the book thread and
+        # the question thread plan classification runs on.
         self._model_context_windows = {}
 
     # ---- lifecycle --------------------------------------------------------
@@ -569,11 +571,20 @@ class CodexAppServer:
         different models with different windows. `modelContextWindow` is
         nullable in the protocol and absent on older sidecars, so a push
         without one leaves what is known alone rather than unsetting it.
+
+        `True` is an `int` in Python and JSON `true` deserializes to one, so
+        the type check is stricter than it looks: a window of 1 would yield a
+        budget of 0 and compact after every paragraph.
         """
         params = message.get("params") or {}
         thread_id = params.get("threadId")
         window = (params.get("tokenUsage") or {}).get("modelContextWindow")
-        if thread_id and isinstance(window, int) and window > 0:
+        if (
+            thread_id
+            and not isinstance(window, bool)
+            and isinstance(window, int)
+            and window > 0
+        ):
             self._model_context_windows[thread_id] = window
 
     def latest_model_context_window(self, thread_id=None):

@@ -4,6 +4,7 @@ import pytest
 
 from book_maker.session_context import handoff_prompt
 from book_maker.codex_client import CodexLoginRequired, CodexTurnFailed, RateLimits
+from book_maker.translator import FORMAT_DICT, LLM_FORMATS
 from book_maker.translator.codex_translator import DEFAULT_MODEL, Codex
 
 
@@ -15,6 +16,9 @@ class FakeServer:
         self.turns = []
         self.threads = []
         self.closed = False
+        # What `latest_model_context_window` answers: a per-thread override
+        # first, then the server-wide default. `--context-compact-at 0` is
+        # the only caller.
         self.model_context_window = None
         self.thread_windows = {}
         self._limits = (
@@ -66,6 +70,14 @@ def _codex(answers=None, limits=None, **kwargs):
     translator = Codex(key="", language="Chinese", server=server, **kwargs)
     translator.server = server
     return translator
+
+
+class TestRegistration:
+    def test_registered_as_a_format(self):
+        assert FORMAT_DICT["codex"] is Codex
+
+    def test_counts_as_a_model_bearing_format(self):
+        assert "codex" in LLM_FORMATS
 
 
 class TestPreflight:
@@ -467,14 +479,20 @@ class TestFixedStyle:
 
 
 class TestModelAlias:
-    """`--model codex` selects the provider through MODEL_DICT."""
+    """`--model codex` names the format; upstream spells it this way too."""
 
-    def test_codex_is_registered_under_its_own_name(self):
-        from book_maker.translator import MODEL_DICT
+    def test_the_alias_selects_the_codex_format(self):
+        from book_maker.cli import infer_api_format
 
-        assert MODEL_DICT["codex"] is Codex
+        assert infer_api_format(None, "codex") == "codex"
 
-    def test_the_name_is_not_sent_on_as_a_model_id(self):
+    def test_the_alias_wins_over_an_api_base(self):
+        """codex is not an endpoint, so a base URL cannot imply otherwise."""
+        from book_maker.cli import infer_api_format
+
+        assert infer_api_format("https://api.openai.com/v1", "codex") == "codex"
+
+    def test_the_alias_is_not_sent_as_a_model_id(self):
         t = _codex(["一"])
         t.set_model_list(["codex"])
         t.translate("one", needprint=False)
@@ -485,6 +503,12 @@ class TestModelAlias:
         t.set_model_list(["gpt-5.6-sol"])
         t.translate("one", needprint=False)
         assert t.server.threads[0]["model"] == "gpt-5.6-sol"
+
+    def test_other_models_are_unaffected(self):
+        from book_maker.cli import infer_api_format
+
+        assert infer_api_format(None, "gpt-5-mini") == "openai"
+        assert infer_api_format(None, "claude-sonnet-4-6") == "anthropic"
 
 
 class TestQuestionThread:
@@ -592,34 +616,6 @@ class TestQuestionThread:
         assert len(t.server.threads) == 2
 
 
-class TestCompactionDisabled:
-    """`--no-context-compact`: open a fresh thread, never buy a report."""
-
-    def test_it_starts_a_new_thread_without_a_handoff_turn(self, tmp_path):
-        t = _codex(
-            ["译文"] * 40,
-            context_compact_at=100,
-            no_context_compact=True,
-            handoff_path=tmp_path / "h.md",
-        )
-        for _ in range(4):
-            t.translate("x" * 400)
-        assert len(t.server.threads) > 1, "the thread was never rolled over"
-        assert not any(
-            turn["text"].startswith(handoff_prompt()[:40]) for turn in t.server.turns
-        ), "a handoff report was requested with compaction disabled"
-        assert not (tmp_path / "h.md").exists()
-
-    def test_the_next_thread_is_seeded_with_nothing(self):
-        t = _codex(["译文"] * 40, context_compact_at=100, no_context_compact=True)
-        for _ in range(4):
-            t.translate("x" * 400)
-        assert all(
-            not (thread["base_instructions"] or "").count("handoff")
-            for thread in t.server.threads
-        )
-
-
 class TestAutoCompactBudget:
     """`--context-compact-at 0`: 0.9x the window the sidecar reports."""
 
@@ -637,28 +633,55 @@ class TestAutoCompactBudget:
         assert t._budget() == DEFAULT_COMPACT_BUDGET
         assert "context window" in capsys.readouterr().out
 
+    def test_the_fallback_notice_is_said_once(self, capsys):
+        t = _codex(["译文"], context_compact_at=0)
+        t.server.model_context_window = None
+        for _ in range(3):
+            t._budget()
+        assert capsys.readouterr().out.count("has not reported") == 1
+
     def test_a_given_budget_is_left_alone(self):
         t = _codex(["译文"], context_compact_at=4321)
         assert t._budget() == 4321
 
+    def test_no_budget_flag_asks_nothing(self):
+        from book_maker.session_context import DEFAULT_COMPACT_BUDGET
+
+        t = _codex(["译文"])
+        t.server.model_context_window = 10_000
+        assert t._budget() == DEFAULT_COMPACT_BUDGET
+
     def test_another_thread_s_window_is_not_borrowed(self):
         """Plan classification runs on its own thread, maybe another model."""
+        from book_maker.session_context import DEFAULT_COMPACT_BUDGET
+
         t = _codex(["译文"], context_compact_at=0)
         t.translate("x" * 200)
         t.server.thread_windows = {"th-classifier": 8_000}
         t.server.model_context_window = None
-        from book_maker.session_context import DEFAULT_COMPACT_BUDGET
-
         assert t._budget() == DEFAULT_COMPACT_BUDGET
 
     def test_a_window_reported_late_is_still_picked_up(self):
-        t = _codex(["译文"] * 4, context_compact_at=0)
         from book_maker.session_context import DEFAULT_COMPACT_BUDGET
 
+        t = _codex(["译文"] * 4, context_compact_at=0)
         assert t._budget() == DEFAULT_COMPACT_BUDGET
         t.translate("x" * 200)
         t.server.thread_windows = {t._thread_id: 10_000}
         assert t._budget() == 9_000
+
+    def test_the_answer_is_kept_once_it_arrives(self):
+        """The seam must not move under a thread that has accumulated turns."""
+        t = _codex(["译文"] * 4, context_compact_at=0)
+        t.translate("x" * 200)
+        t.server.thread_windows = {t._thread_id: 10_000}
+        assert t._budget() == 9_000
+        t.server.thread_windows = {}
+        t.server.model_context_window = None
+        assert t._budget() == 9_000
+
+    def test_the_route_declares_it_can_be_asked(self):
+        assert Codex.SUPPORTS_AUTO_COMPACT_BUDGET is True
 
 
 class TestQuiet:
@@ -763,3 +786,39 @@ class TestQuotaMessageDoesNotOverpromise:
         assert "Progress is saved" not in message
         assert "--resume" in message
         assert "does not reset until" in message
+
+
+class TestCompactionDisabled:
+    """`--no-context-compact`: open a fresh thread, never buy a report."""
+
+    def test_it_starts_a_new_thread_without_a_handoff_turn(self, tmp_path):
+        t = _codex(
+            ["译文"] * 40,
+            context_compact_at=100,
+            no_context_compact=True,
+            handoff_path=tmp_path / "h.md",
+        )
+        for _ in range(4):
+            t.translate("x" * 400)
+        assert len(t.server.threads) > 1, "the thread was never rolled over"
+        assert not any(
+            turn["text"].startswith(handoff_prompt()[:40]) for turn in t.server.turns
+        ), "a handoff report was requested with compaction disabled"
+        assert not (tmp_path / "h.md").exists()
+
+    def test_the_next_thread_is_seeded_with_nothing(self):
+        t = _codex(["译文"] * 40, context_compact_at=100, no_context_compact=True)
+        for _ in range(4):
+            t.translate("x" * 400)
+        assert all(
+            not (thread["base_instructions"] or "").count("handoff")
+            for thread in t.server.threads
+        )
+
+    def test_without_the_flag_the_thread_is_still_compacted(self):
+        t = _codex(["译文"] * 40, context_compact_at=100)
+        for _ in range(4):
+            t.translate("x" * 400)
+        assert any(
+            turn["text"].startswith(handoff_prompt()[:40]) for turn in t.server.turns
+        ), "a budget must still buy the handoff report"

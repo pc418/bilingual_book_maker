@@ -462,44 +462,6 @@ class TestOversizedHistoryDoesNotWedge:
         assert t.session.messages(), "a rate limit cost the accumulated context"
 
 
-class TestCompactionDisabled:
-    """`--no-context-compact` rolls the window over with no summary at all."""
-
-    def test_it_rolls_over_without_a_handoff_turn(self, tmp_path):
-        t = _translator(
-            ["译文", "译文"],
-            context_compact_at=10,
-            no_context_compact=True,
-            handoff_path=tmp_path / "h.md",
-        )
-        t.translate("a" * 200)
-        t.translate("b" * 200)
-        assert len(t.sent) == 2
-
-    def test_the_next_window_starts_empty(self, tmp_path):
-        t = _translator(
-            ["译文", "译文"],
-            context_compact_at=10,
-            no_context_compact=True,
-            handoff_path=tmp_path / "h.md",
-        )
-        t.translate("a" * 200)
-        t.translate("b" * 200)
-        assert _prefix(t.sent[1]) == []
-
-    def test_it_writes_no_handoff_file(self, tmp_path):
-        path = tmp_path / "h.md"
-        t = _translator(
-            ["译文", "译文"],
-            context_compact_at=10,
-            no_context_compact=True,
-            handoff_path=path,
-        )
-        t.translate("a" * 200)
-        t.translate("b" * 200)
-        assert not path.exists()
-
-
 class TestAutoCompactBudget:
     """`--context-compact-at 0` sizes the window from the model's own."""
 
@@ -526,6 +488,14 @@ class TestAutoCompactBudget:
         assert t._session_budget() == 8000
         assert "404" in capsys.readouterr().out
 
+    def test_a_bracketed_error_does_not_crash_the_notice(self, capsys):
+        """rich would read `[Errno 2]` as markup and raise out of a fallback
+        whose whole point is that it does not end the run."""
+        t = _translator(context_compact_at=0, window=None)
+        t.client.models.retrieve = Mock(side_effect=OSError("[Errno 2] gone"))
+        assert t._session_budget() == 8000
+        assert "[Errno 2]" in capsys.readouterr().out
+
     def test_an_absurd_window_is_refused(self):
         t = _translator(context_compact_at=0, window=99)
         assert t._session_budget() == 8000
@@ -539,6 +509,9 @@ class TestAutoCompactBudget:
     def test_an_explicit_budget_asks_nothing(self):
         t = _translator(context_compact_at=2500, window=None)
         assert t._session_budget() == 2500
+
+    def test_the_route_declares_it_can_be_asked(self):
+        assert Claude.SUPPORTS_AUTO_COMPACT_BUDGET is True
 
 
 class TestCompactIsVisible:
@@ -644,3 +617,41 @@ class TestLoaderWiring:
     def test_bare_use_context_still_means_window_mode(self, tmp_path):
         loader = self._loader(tmp_path, context_mode="window")
         assert loader.translate_model.session is None
+
+
+class TestCompactionDisabled:
+    """`--no-context-compact` rolls the window over with no summary at all."""
+
+    def _disabled(self, path):
+        return _translator(
+            ["译文", "译文"],
+            context_compact_at=10,
+            no_context_compact=True,
+            handoff_path=path,
+        )
+
+    def test_it_rolls_over_without_a_handoff_turn(self, tmp_path):
+        t = self._disabled(tmp_path / "h.md")
+        t.translate("a" * 200)
+        t.translate("b" * 200)
+        assert len(t.sent) == 2, "a handoff report was bought after all"
+
+    def test_the_next_window_starts_empty(self, tmp_path):
+        t = self._disabled(tmp_path / "h.md")
+        t.translate("a" * 200)
+        t.translate("b" * 200)
+        assert _prefix(t.sent[1]) == []
+
+    def test_it_writes_no_handoff_file(self, tmp_path):
+        path = tmp_path / "h.md"
+        t = self._disabled(path)
+        t.translate("a" * 200)
+        t.translate("b" * 200)
+        assert not path.exists()
+
+    def test_without_the_flag_the_report_is_still_bought(self, tmp_path):
+        t = _translator(
+            ["译文", "Summary."], context_compact_at=10, handoff_path=tmp_path / "h.md"
+        )
+        t.translate("a" * 200)
+        assert HANDOFF_MARKER in t.sent[-1]["messages"][-1]["content"]

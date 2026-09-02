@@ -13,21 +13,61 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制�
 
 ## 快速开始
 
-本地放了一个 `test_books/animal_farm.epub` 给大家测试
+本地放了一个 `test_books/animal_farm.epub` 给大家测试，`--test` 只翻开头几段。
 
 ```shell
-pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --openai_key ${openai_key} --test
-或
-pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} --test
+pip install -r requirements.txt      # 或：pip install -U bbook_maker
+```
+
+最省事的办法是 provider 文件：复制示例，填上你的接口，导出一次 key，之后每条命令
+只写 provider 的名字。
+
+```shell
+cp bbm_providers.example.json bbm_providers.json
+# 按你的接口改 base_url、default_models、env_key
+export OPENAI_API_KEY=sk-...
+python3 make_book.py --book_name test_books/animal_farm.epub --provider openai --test
+```
+
+也可以直接写参数：
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub \
+  --key sk-... --model gpt-5.6-luna --test
+```
+
+想用 ChatGPT 订阅额度而不是 API 余额：装上
+[Codex CLI](https://developers.openai.com/codex/cli)，执行一次 `codex login`，
+然后传 `--model codex`。不需要 key，也不需要接口地址。这条路线上整个 thread 就是
+上下文，所以 `--use_context` 没有作用；不写 `--plan-classify` 就是 tag 模式。
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
 ```
 
 ## 翻译服务
 
-- 使用 `--openai_key` 指定 OpenAI API key，如果有多个可以用英文逗号分隔(xxx,xxx,xxx)，可以减少接口调用次数限制带来的错误。
-  或者，指定环境变量 `BBM_OPENAI_API_KEY` 来略过这个选项。
-- 默认用了 [GPT-3.5-turbo](https://openai.com/blog/introducing-chatgpt-and-whisper-apis) 模型，也就是 ChatGPT 正在使用的模型。
+只要接口说的是 OpenAI 或 Anthropic 的 API，就能用。用三个参数指定它：`--api_base`
+（用官方地址时可以省略）、`--key`，以及接口自己使用的模型 ID `--model`，比如默认的
+`gpt-5.6-luna`、`claude-sonnet-4-6`、`deepseek-chat`。`--api_format` 用来选机器翻译引擎
+（`google`、`caiyun`、`deepl`、`deeplfree`、`tencent`、`customapi`）和 `codex`；
+`--provider` 按名字使用 `bbm_providers.json` 里保存的接口。旧的预设名和 key 参数
+（`--model gpt4o`、`--model gemini`、`--openai_key`……）仍然可用，运行时会被改写并
+打印一行说明，见[从旧参数迁移](./docs/migration.md)。
+
+- **任何 OpenAI 兼容接口**只需要三样东西：`--api_base`（以 `/v1` 结尾的地址）、
+  `--key`，以及按接口拼写的 `--model`。用 OpenAI 官方地址时省略 `--api_base`，
+  用默认模型 `gpt-5.6-luna` 时省略 `--model`。
+- provider 条目就是这三样东西写下来一次。`bbm_providers.example.json` 里已经写好了
+  下面每家厂商的条目（Gemini、Qwen、xAI、Groq、OrcaRouter、Ollama、DeepSeek、
+  SiliconFlow、OpenRouter）：复制成 `bbm_providers.json`，导出条目里写的 key 变量，
+  `--provider gemini` 跑的就是 Gemini 那条示例命令。
+- `--key` 可以写多个 key，英文逗号分隔，轮换使用，用来绕开单 key 的速率限制。
+  不写这个参数时，依次读取 `$BBM_API_KEY` 和该格式自己的变量（`$OPENAI_API_KEY`、
+  `$ANTHROPIC_API_KEY`），所以 key 不必出现在命令行上。
+- `--model_list` 写多个模型，英文逗号分隔，轮流使用。
+- `--use_context` 把前文和每一段一起发给模型，让人名和语气保持一致。选哪种模式见
+  下面该参数的条目。
 
 * DeepL
 
@@ -42,56 +82,55 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   使用 DeepL free
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model deeplfree
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format deeplfree
   ```
 
 * Claude
 
-  使用 [Claude](https://console.anthropic.com/docs) 模型进行翻译
+  `claude-*` 的模型 ID 会自动选中 anthropic 格式。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model claude --claude_key ${claude_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --model claude-sonnet-4-6 --key ${claude_key}
   ```
 
 * 谷歌翻译
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model google
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format google
   ```
 
 * 彩云小译
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model caiyun --caiyun_key ${caiyun_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format caiyun --key ${caiyun_key}
   ```
 
 * Gemini
 
+  通过 Gemini 的 OpenAI 兼容接口使用，模型 ID 任选。
+
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model gemini --gemini_key ${gemini_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
   ```
 
 * Qwen
 
-  使用 [Qwen](https://www.aliyun.com/product/dashscope) 模型进行翻译，支持 qwen-mt-turbo 和 qwen-mt-plus 模型。
-
-  使用 `--source_lang` 指定源语言，留空为自动检测。
+  [Qwen-MT](https://www.aliyun.com/product/dashscope) 翻译模型：`qwen-mt-turbo` 更快更便宜，`qwen-mt-plus` 质量更高。两者都走百炼的 OpenAI 兼容接口。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --qwen_key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
-  python3 make_book.py --book_name test_books/animal_farm.epub --qwen_key ${qwen_key} --model qwen-mt-plus --language "Japanese" --source_lang "English"
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
   ```
 
 * 腾讯交互翻译
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model tencentransmart
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format tencent
   ```
 
 * [xAI](https://x.ai)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model xai --xai_key ${xai_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-beta
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -101,16 +140,15 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   并管控每个工具调用，无需改任何应用代码。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --orcarouter_key ${orcarouter_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
 * [Ollama](https://github.com/ollama/ollama)
 
-  使用 [Ollama](https://github.com/ollama/ollama) 自托管模型进行翻译。
-  如果 ollama server 不运行在本地，使用 `--api_base http://x.x.x.x:port/v1` 指向 ollama server 地址
+  Ollama 是本机上的一个 OpenAI 兼容接口，本机地址不需要 key。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --ollama_model ${ollama_model_name}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base http://localhost:11434/v1 --model ${ollama_model_name}
   ```
 
 * [Groq](https://console.groq.com/keys)
@@ -118,15 +156,15 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   GroqCloud 当前支持的模型可以查看[Supported Models](https://console.groq.com/docs/models)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --groq_key [your_key] --model groq --model_list llama3-8b-8192
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.groq.com/openai/v1 --key [your_key] --model llama-3.3-70b-versatile
   ```
 
 * [Codex](https://developers.openai.com/codex/cli)
 
   使用 ChatGPT/Codex 套餐额度翻译，而不是 API credits。需要安装
   [Codex CLI](https://developers.openai.com/codex/cli) 并执行一次 `codex login`——会话由
-  `codex app-server` 侧车进程管理，因此不需要 key。`--model_list` 可选，默认
-  `gpt-5.6-luna`。整本书只开一个 thread 并复用，到达 `--context-compact-at` 时压缩；
+  `codex app-server` 侧车进程管理，因此不需要 key。`--model codex` 跑的是
+  `gpt-5.6-luna`，要换模型写 `--api_format codex --model <id>`。整本书只开一个 thread 并复用，到达 `--context-compact-at` 时压缩；
   侧车运行在沙箱中，shell、MCP 服务器、浏览和 hooks 全部关闭。
 
   ```shell
@@ -135,7 +173,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 * 自定义 API Provider
 
-  内置模型不满足需求时，可以通过 JSON 配置文件自定义 provider。不需要改代码，就能使用任何 OpenAI 兼容的 API（DeepSeek、SiliconFlow、本地代理等）。
+  常用的接口适合写进 provider 文件，而不是每次敲在命令行上。任何 OpenAI 兼容或 Anthropic 的 API（DeepSeek、SiliconFlow、本地代理）都可以作为一个条目。
 
   在当前目录创建 `bbm_providers.json`（全局配置放在 `~/.bbm/providers.json`）：
 
@@ -162,14 +200,16 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
   | 字段 | 必填 | 说明 |
   |------|------|------|
-  | `api_style` | 是 | 翻译器接口风格。支持：`openai`、`claude`、`gemini`、`qwen` |
-  | `base_url` | 否 | API 地址。不填则使用该 api_style 的默认地址 |
+  | `api_style` | 是 | `openai` 或 `anthropic` |
+  | `base_url` | 否 | 接口地址。不填就是该格式的官方地址 |
   | `default_models` | 否 | 默认模型列表。不填则必须通过 `--model_list` 指定 |
   | `env_key` | 否 | 读取 API key 的环境变量名。不填则必须通过 `--api_key` 传入 |
 
   优先级：项目级 `./bbm_providers.json` 覆盖全局 `~/.bbm/providers.json`。
 
-  `--provider` 和 `--model` 互斥，不能同时使用。
+  自带的 `bbm_providers.example.json` 里有上面每家厂商的条目，复制过去留下你用的即可。
+
+  `--model` 指定该 provider 下的模型；不写就用 `default_models` 的第一个。
 
   ```shell
   python3 make_book.py --provider deepseek --api_key sk-xxx --book_name test_books/animal_farm.epub
@@ -189,36 +229,17 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--model`:
 
-  指定翻译模型。默认：`chatgptapi`。各模型值及其行为：
+  接口所用的模型 ID（`gpt-5.6-luna`、`claude-sonnet-4-6`、`deepseek-chat`）。openai 格式下默认 `gpt-5.6-luna`。有两个值表示路线而不是模型：`codex`（通过 Codex CLI 使用 ChatGPT 套餐）和 `orcarouter`（OrcaRouter 网关，key 读取 `BBM_ORCAROUTER_API_KEY`）。旧的预设值仍然可以写，会被改写成真实模型 ID 并打印说明，对照表见[从旧参数迁移](./docs/migration.md)。其他任何接口：`--api_base <url> --key <key> --model <id>`，或一条 `--provider` 配置（见「自定义 API Provider」章节）。
 
-  | 模型 | Key 来源 | 说明 |
-  |------|---------|------|
-  | `chatgptapi` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-3.5-turbo，自动检测 API 可用模型 |
-  | `gpt4` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4 系列，自动在可用变体间负载均衡 |
-  | `gpt4omini` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4o-mini |
-  | `gpt4o` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-4o |
-  | `gpt5mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | GPT-5-mini |
-  | `o1preview` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-preview |
-  | `o1` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1 |
-  | `o1mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o1-mini |
-  | `o3mini` | `--openai_key` / `BBM_OPENAI_API_KEY` | o3-mini |
-  | `openai` | `--openai_key` / `BBM_OPENAI_API_KEY` | **必须配合 `--model_list`**，可使用任意 OpenAI 兼容模型 |
-  | `codex` | 无需 key —— `codex login`（Codex CLI） | 走本地 `codex app-server` 侧车，消耗 ChatGPT/Codex 套餐额度 |
-  | `claude` 及已列出的 `claude-*` ID | `--claude_key` / `BBM_CLAUDE_API_KEY` | 只接受 `--help` 展示的精确内置值；未列出的 ID 需使用 `--provider` 或 `openai` 路由 |
-  | `gemini` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Flash，支持 `--model_list` 自定义 |
-  | `geminipro` | `--gemini_key` / `BBM_GOOGLE_GEMINI_KEY` | Gemini Pro |
-  | `groq` | `--groq_key` / `BBM_GROQ_API_KEY` | **必须配合 `--model_list`** |
-  | `xai` | `--xai_key` / `BBM_XAI_API_KEY` | Grok |
-  | `qwen-mt-turbo` | `--qwen_key` / `BBM_QWEN_API_KEY` | 通义千问快速翻译模型 |
-  | `qwen-mt-plus` | `--qwen_key` / `BBM_QWEN_API_KEY` | 通义千问高质量翻译模型 |
-  | `google` | 无需 key | 免费谷歌翻译 |
-  | `caiyun` | `--caiyun_key` / `BBM_CAIYUN_API_KEY` | 彩云小译 |
-  | `deepl` | `--deepl_key` / `BBM_DEEPL_API_KEY` | DeepL（付费） |
-  | `deeplfree` | 无需 key | DeepL 免费版 |
-  | `tencentransmart` | 无需 key | 腾讯交互翻译，免费 |
-  | `customapi` | `--custom_api` / `BBM_CUSTOM_API` | 自定义翻译 API |
+- `--key`:
 
-  上表未列出的 OpenAI 兼容 API，请使用 `--provider`（见「自定义 API Provider」章节）。
+  接口的 API key。多个 key 用英文逗号分隔会轮换使用，绕开单 key 限流。不写时依次读取 `$BBM_API_KEY`，再读取该格式自己的变量：`$OPENAI_API_KEY`、`$ANTHROPIC_API_KEY`、`$BBM_CAIYUN_API_KEY`、`$BBM_DEEPL_API_KEY`。旧的各家 key 参数（`--openai_key` 等）仍然可用。`--api_key` 是同一个参数的旧名字。
+
+- `--api_format`:
+
+  接口说的 API：`openai`（默认）、`anthropic`、`codex`，或机器翻译引擎 `google`、`caiyun`、`deepl`、`deeplfree`、`tencent`、`customapi`。省略时自动推断：`anthropic.com` 的地址，或没写 `--api_base` 且模型 ID 含 `claude`，视为 `anthropic`；其余为 `openai`。推断不对或要选引擎时才需要写。
+
+- `--source_lang`: 源语言，只有需要显式声明的接口才用（目前只有 `--api_format customapi`），默认自动检测。
 
 - `--test`:
 
@@ -242,7 +263,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
   手动中断后，加入命令可以从之前中断的位置继续执行。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model google --resume
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format google --resume
   ```
 
 - `--translate-tags`
@@ -253,8 +274,9 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
   取值决定由谁判断哪些标签签名值得翻译：
 
-  - `none`（默认）：不建计划，照常翻译 `--translate-tags` 选中的标签。
-  - `most`：翻译整个分区，不做分类。
+  - `auto`（默认）：是 epub、且端点经校验会严格应用 JSON Schema 时，按 `model` 建计划。否则，以及计划建不成时，照常翻译 `--translate-tags` 选中的标签。
+  - `none`：不建计划，照常翻译 `--translate-tags` 选中的标签。
+  - `all`：翻译整个分区，不做分类。（旧名 `most` 仍可用，会打印一行说明。）
   - `model`：先让一个 LLM 裁决不确定的签名（标题、正文主干和诗歌分组不会被问到），然后继续翻译。可用 `--plan-classify-model X` 指定分类用的模型——指定了就意味着此模式，且分类失败会中止而不是回退。
   - `agent`：不调用 API。写出计划 JSON，打印一段可以粘贴进 coding-agent 会话（Claude Code、Codex 等）的指引，然后**在翻译前停下**。改完 action 后重跑同一条命令即可翻译。
 
@@ -326,24 +348,33 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--use_context session`:
 
-  `--use_context` 还可以带一个模式值。裸写 `--use_context`（等同 `--use_context window`）即上面描述的行为；`--use_context session` 改为维护一份只追加的历史记录，支持提示缓存的端点会以缓存价重新读取它，因此上下文可以增长到整章的长度，花费反而低于 window 模式发送几个段落。历史达到压缩预算时，模型会被要求写一份交接报告，用于播种下一个窗口，并追加到 `<book>_handoff.md`。若端点从不返回缓存 token 数，会打印警告——没有缓存时该模式比 window 模式更贵。
+  `--use_context` 还可以带一个模式值，选哪个取决于端点怎么计费。**端点对缓存的
+  提示 token 收更低的价时，用 `--use_context session`**，OpenAI 和 Anthropic 的官方
+  端点都是这样。否则用裸写的 `--use_context`（window 模式）。session 模式维护一份
+  只追加的历史，每次按缓存价重读，所以上下文可以长到整章，花费反而低于 window 模式
+  发几个段落。没有缓存时，同一份历史每个请求都按原价重读。历史达到压缩预算时，模型
+  写一份交接报告，用来播种下一个窗口，并追加到 `<book>_handoff.md`。看进度条上的
+  `cached=`：十几个请求之后仍是 0，说明端点没有缓存，改用 window 模式。
 
 - `--context-compact-at`:
 
-  仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。默认 `8000`，最小值 `500`；传 `0` 表示按模型自身的上下文窗口自动取值。
-
-  `--context-compact-at 0` 会向端点查询该模型的上下文窗口，并在其 90% 处压缩。端点之间并不一致——OpenRouter 这类网关会给出窗口大小，OpenAI 的 `/models` 不会——查不到时会打印说明并回退到默认值。
+  仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。默认 `8000`，最小值 `500`。
 
   在 `8000` 下，整体花费约为 window 模式的 0.5–1.1 倍，但携带数倍的上下文——具体比例取决于端点对缓存输入的计价。若更在意成本，`--context-compact-at 2500` 最省钱（约 0.4–0.5 倍）。
 
+  `--context-compact-at 0` 改为按模型的上下文窗口定预算：取窗口的 90%，`--model_list` 写了多个模型时取其中最小的窗口。openai、anthropic、codex 三条路线都支持；机器翻译引擎没有模型可问，必须给具体数字。
+
+  问不到窗口时，各路线的做法不同。openai 路线在第一次付费请求前就停下：它的 `/v1/models` 答案不会变，而默认预算等于对那个谁也量不出的模型瞎猜。anthropic 路线（网关可能提供该 API 却不报 `max_input_tokens`）和 codex 路线（sidecar 要等一轮对话花掉 token 后才报窗口）打印一行说明，用默认预算；codex 之后会继续问，直到 sidecar 给出答案。
+
 - `--no-context-compact`:
 
-  仅 session 模式。完全不生成交接报告：历史达到预算后直接丢弃，下一个窗口从空开始，相当于 Codex 的 `/new`——比压缩更省，代价是接缝处的上下文连续性。
+  仅 session 模式。跳过交接报告：历史仍在达到预算时滚动，但下一个窗口从空白开始，不继承摘要。更省钱，代价是接缝处的连续性。
 
 - `--temperature`:
 
-  使用 `--temperature` 设置 `chatgptapi`/`gpt4`/`claude`模型的temperature值.
-  如 `--temperature 0.7`.
+  采样温度，只对接受它的格式有效。anthropic 格式总是发送。openai 格式在温度等于
+  接口默认值时不发送，模型拒绝显式温度（gpt-5.x 和 o 系列）时也不发送。codex 格式
+  没有这个设置，直接忽略。如 `--temperature 0.7`。
 
 - `--block_size`:
 
@@ -377,10 +408,6 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
   使用 ChatGPT Batch API 的两阶段 EPUB 流程。先用 `--batch` 提交任务，再以
   `--batch-use` 重跑以等待并使用结果。二者都与计划模式不兼容。
-
-- `--interval`:
-
-  Gemini 请求间隔秒数，默认 `0.01`；其他模型路由不会使用此参数。
 
 - `--parallel-workers`:
 
@@ -418,11 +445,11 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--provider`:
 
-  使用 `bbm_providers.json` 中定义的自定义 provider。与 `--model` 互斥。详见上方「自定义 API Provider」章节。
+  使用 `bbm_providers.json` 中定义的 provider：它的 `base_url`、`api_style`、`default_models`、`env_key` 分别填入 `--api_base`、`--api_format`、`--model` 和 key。你自己写的参数优先。详见上方「自定义 API Provider」章节。
 
 - `--api_key`:
 
-  自定义 provider 的 API key（与 `--provider` 配合使用）。也可通过配置文件中的 `env_key` 字段指定环境变量。
+  与 `--key` 是同一个参数，只是旧名字。两种写法都不打印提示。
 
 ### 示范用例
 
@@ -430,28 +457,28 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 ```shell
 # 如果你想快速测一下
-python3 make_book.py --book_name test_books/animal_farm.epub --openai_key ${openai_key} --test
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --test
 
 # 或翻译完整本书
-python3 make_book.py --book_name test_books/animal_farm.epub --openai_key ${openai_key} --language zh-hans
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --language zh-hans
 
-# Or translate the whole book using Gemini
-python3 make_book.py --book_name test_books/animal_farm.epub --gemini_key ${gemini_key} --model gemini
+# 通过 Gemini 的 OpenAI 兼容接口翻译整本书
+python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
 
-# 指定环境变量来略过 --openai_key
+# 指定环境变量来略过 --key
 export OPENAI_API_KEY=${your_api_key}
 
 # Use the DeepL model with Japanese
-python3 make_book.py --book_name test_books/animal_farm.epub --model deepl --deepl_key ${deepl_key} --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --api_format deepl --key ${deepl_key} --language ja
 
 # Use the Claude model with Japanese
-python3 make_book.py --book_name test_books/animal_farm.epub --model claude --claude_key ${claude_key} --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --model claude-sonnet-4-6 --key ${claude_key} --language ja
 
 # Use the CustomAPI model with Japanese
-python3 make_book.py --book_name test_books/animal_farm.epub --model customapi --custom_api ${custom_api} --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --api_format customapi --api_base ${custom_api} --language ja
 
 # 使用自定义 provider（如 DeepSeek）
-python3 make_book.py --book_name test_books/animal_farm.epub --provider deepseek --api_key sk-xxx --language ja
+python3 make_book.py --book_name test_books/animal_farm.epub --provider deepseek --language ja
 
 # Translate contents in <div> and <p>
 python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags div,p
@@ -475,18 +502,18 @@ python3 make_book.py --book_name test_books/the_little_prince.txt --test --batch
 # 使用彩云小译翻译(彩云api目前只支持: 简体中文 <-> 英文， 简体中文 <-> 日语)
 # 彩云提供了测试token（3975l6lr5pcbvidl6jl2）
 # 你可以参考这个教程申请自己的token (https://bobtranslate.com/service/translate/caiyun.html)
-python3 make_book.py --model caiyun --caiyun_key 3975l6lr5pcbvidl6jl2 --book_name test_books/animal_farm.epub
-# 可以在环境变量中设置BBM_CAIYUN_API_KEY，略过--openai_key
+python3 make_book.py --api_format caiyun --key 3975l6lr5pcbvidl6jl2 --book_name test_books/animal_farm.epub
+# 可以在环境变量中设置BBM_CAIYUN_API_KEY，略过--key
 export BBM_CAIYUN_API_KEY=${your_api_key}
 ```
 
 更加小白的示例
 
 ```shell
-python3 make_book.py --book_name 'animal_farm.epub' --openai_key sk-XXXXX --api_base 'https://xxxxx/v1'
+python3 make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --api_base 'https://xxxxx/v1'
 
 # 有可能你不需要 python3 而是python
-python make_book.py --book_name 'animal_farm.epub' --openai_key sk-XXXXX --api_base 'https://xxxxx/v1'
+python make_book.py --book_name 'animal_farm.epub' --key sk-XXXXX --api_base 'https://xxxxx/v1'
 ```
 
 [演示视频](https://www.bilibili.com/video/BV1XX4y1d75D/?t=0h07m08s)
@@ -495,10 +522,10 @@ python make_book.py --book_name 'animal_farm.epub' --openai_key sk-XXXXX --api_b
 使用 Azure OpenAI service
 
 ```shell
-python3 make_book.py --book_name 'animal_farm.epub' --openai_key XXXXX --api_base 'https://example-endpoint.openai.azure.com' --deployment_id 'deployment-name'
+python3 make_book.py --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model 'deployment-name'
 
 # Or python3 is not in your PATH
-python make_book.py --book_name 'animal_farm.epub' --openai_key XXXXX --api_base 'https://example-endpoint.openai.azure.com' --deployment_id 'deployment-name'
+python make_book.py --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model 'deployment-name'
 ```
 
 ## 注意

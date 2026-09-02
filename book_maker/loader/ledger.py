@@ -53,10 +53,12 @@ SIGNATURE_SAMPLE_CAP = 5
 SAMPLE_MAX_CHARS = 80
 
 VALID_ACTIONS = frozenset(["translate", "skip"])
-# "all" is --plan-classify all: the mode decided, nobody ruled. It is the
-# one provenance that does not stick — a rebuilt ledger reopens those rows
-# so the run's own decider rules on them, while "user", "agent" and "llm"
-# rows are carried forward (see plan.py, build_ledger).
+# "all" is --plan-classify all: the mode decided the rule, nobody looked at
+# the samples. Distinct from "user" on purpose — a hand-edited row and a
+# translate-everything run must not read the same afterwards. It is also the
+# one provenance that does not stick: a rebuilt ledger reopens those rows to
+# null so this run's decider rules on them fresh, while "user", "agent" and
+# "llm" rows are carried forward (see plan.py, build_ledger).
 VALID_DECIDED_BY = frozenset(["llm", "agent", "user", "all"])
 VALID_SCOPES = ("block", "inline")
 
@@ -215,6 +217,10 @@ class Ledger:
         # insertion-ordered; build() sorts by -chars before handing over
         self.rows = dict(rows or {})
         self.meta = dict(meta or {})
+        # keys whose prior decision this run set back to null (an "all" row
+        # met by a model or agent run, or a row whose evidence moved); the
+        # plan file must be rewritten or the handoff points at rows that
+        # still look decided
         self.reopened_keys = set()
         self.settings_changed = False
         # inline key -> every block key it was seen inside. The row's own

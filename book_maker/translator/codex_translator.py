@@ -59,15 +59,9 @@ BATCH_PROMPT = "{text}"
 # threshold is about the user's 5-hour window, not about tokens.
 QUOTA_WARN_PERCENT = 90
 
-# --context-compact-at 0 compacts at 90% of the model's window, leaving room
-# for the tail the thread still has to carry: the fresh paragraph, its
-# translation, and the handoff turn itself.
-
-# The model a codex run translates with when --model_list names none. Naming
-# one keeps that choice here rather than leaving it to whatever the user's
-# codex config happens to default to, and it is the name the window and
-# compaction notices report. It does not decide the compact budget:
-# compact_budget_for() returns the same figure for every model.
+# Used when --model is omitted. Naming one beats letting Codex pick: the
+# compact budget is looked up by model id, so an unknown default would fall
+# back to the conservative 8000 instead of this model's own 17000.
 DEFAULT_MODEL = "gpt-5.6-luna"
 
 # A minute past the reset, because the server's clock and ours are not the
@@ -93,6 +87,11 @@ class Codex(Base):
     # The thread is the history: a turn is appended to it and the window
     # rolls over into a handoff turn like any other session route.
     SUPPORTS_SESSION_CONTEXT = True
+
+    # The sidecar reports the model's window on every token-usage push, so
+    # `--context-compact-at 0` has something to size from here — late, and
+    # per thread, but it arrives. See `_model_sized_budget`.
+    SUPPORTS_AUTO_COMPACT_BUDGET = True
 
     # A turn carries no system message of its own; `prompt_sys_msg` is read
     # once, when a thread opens, and the thread outlives any one window.
@@ -125,6 +124,8 @@ class Codex(Base):
         self.model_list = None
         self.context_compact_at = context_compact_at
         self.no_context_compact = no_context_compact
+        # `--context-compact-at 0` state: kept once the sidecar answers, so
+        # the compaction seam does not move under an accumulated thread.
         self._auto_budget = None
         self._window_notice_shown = False
         self.handoff_path = Path(handoff_path) if handoff_path else None
@@ -438,8 +439,7 @@ class Codex(Base):
         # per-worker buffers to hand out. Letting workers overlap would
         # interleave unrelated chapters into one thread, lose window-token
         # updates to races, and let a compact swap the thread mid-turn.
-        # `--parallel-workers` therefore buys nothing here, which is why the
-        # CLI refuses the pairing rather than letting a run discover it.
+        # `--parallel-workers` therefore buys nothing here, and the CLI says so.
         with self._turn_lock:
             thread_id = self._ensure_thread()
 

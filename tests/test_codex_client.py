@@ -652,6 +652,18 @@ class TestModelContextWindow:
             server.run_turn(thread_id, "text")
             assert server.latest_model_context_window() is None
 
+    def test_a_boolean_is_not_a_window(self):
+        """JSON `true` deserializes to an int in Python; 0.9 x True is 0."""
+        server = _server(
+            notifications_for={
+                "turn/start": [_token_usage(window=True), _turn_completed()]
+            }
+        )
+        with server.start():
+            thread_id = server.start_thread(model="gpt-5.6-luna")
+            server.run_turn(thread_id, "text")
+            assert server.latest_model_context_window() is None
+
     def test_a_window_is_kept_per_thread(self):
         """A question thread can run a different model than the book does."""
         server = _server(
@@ -668,3 +680,12 @@ class TestModelContextWindow:
             server.run_turn(thread_id, "text")
             assert server.latest_model_context_window("th-1") == 400_000
             assert server.latest_model_context_window("th-classifier") == 8_000
+
+    def test_an_unknown_thread_is_not_answered_from_another(self):
+        server = _server(
+            notifications_for={"turn/start": [_token_usage(), _turn_completed()]}
+        )
+        with server.start():
+            thread_id = server.start_thread(model="gpt-5.6-luna")
+            server.run_turn(thread_id, "text")
+            assert server.latest_model_context_window("th-classifier") is None

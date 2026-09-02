@@ -25,7 +25,7 @@ from rich import print
 from rich.markup import escape
 from tqdm import tqdm
 
-from book_maker.session_context import SessionHistory, handoff_path
+from book_maker.session_context import handoff_path
 from book_maker.utils import num_tokens_from_text, prompt_config_to_kwargs
 
 from .base_loader import BaseBookLoader
@@ -89,6 +89,10 @@ KEY_FLAG_ENV = {
     # provider entry rather than fixed here; the generic name is a variable
     # the user exports, which is all the placeholder has to be.
     "--api_key": "BBM_API_KEY",
+    # This fork's one key flag. Which variable would have supplied it depends
+    # on the endpoint (FORMAT_ENV_KEYS in cli.py) and a provider entry may
+    # name its own, so the placeholder is the fallback every format accepts.
+    "--key": "BBM_API_KEY",
 }
 
 
@@ -253,6 +257,12 @@ class EPUBBookLoader(BaseBookLoader):
         # is the switch; translate_tags is additionally set to "auto" so the
         # tag-selection paths keep their established no-match behavior.
         self.plan_mode = False
+        # plan mode entered by --plan-classify auto rather than asked for. The
+        # user asked for a translated book, not for a plan, so every plan
+        # failure degrades to the tag-mode run they would have got anyway;
+        # an explicit --plan-classify still fails loud.
+        self.plan_auto = False
+        self.plan_fallback_tags = "p"
         self.plan_min_coverage = 0.5
         self.poetry_group_size = 8
         # "none" = no plan mode, the CLI's default. A caller that turns plan
@@ -558,6 +568,93 @@ class EPUBBookLoader(BaseBookLoader):
     def _exclude_tags_tuple(self):
         return tuple(t for t in self.exclude_translate_tags.split(",") if t)
 
+    def _plan_mode_conflict(self):
+        """The flags whose meaning the plan would contradict, if any."""
+        incompatible = {
+            "--retranslate": self.retranslate,
+            "--batch/--batch-use": self.batch_flag or self.batch_use_flag,
+            "--sentence_mode": self.sentence_mode,
+        }
+        active = [flag for flag, on in incompatible.items() if on]
+        return ", ".join(active)
+
+    def _is_tag_mode_checkpoint(self):
+        """A loaded resume cache whose slots index tags, not plan units.
+
+        Tag-mode checkpoints carry no plan fingerprint (see `_save_progress`),
+        and their slots are positions in a p-tag sequence: replaying them
+        against a plan's unit list would pair translations with unrelated
+        units.
+        """
+        return bool(
+            self.resume and self.p_to_save and self._resume_plan_fingerprint is None
+        )
+
+    def _skip_plan_mode(self, reason):
+        """Give up the plan and translate the tag selection instead.
+
+        Only reachable when the plan was entered automatically: an asked-for
+        plan that cannot be built is a failure, but an offered one is just an
+        offer, and the book the user asked for still translates without it.
+        """
+        print(
+            f"[bold yellow]plan mode skipped ({reason}); translating the "
+            f"--translate-tags {self.plan_fallback_tags} selection "
+            f"instead[/bold yellow]"
+        )
+        self.plan_mode = False
+        self.translate_tags = self.plan_fallback_tags
+        self._plan_fingerprint = None
+        self._plan_partitions.clear()
+
+    def _enter_plan_mode(self):
+        """Run plan mode's gates and build the plan.
+
+        Returns False when an automatic plan gave way to tag mode; anything
+        that stops an explicitly requested plan is re-raised untouched.
+        """
+        conflict = self._plan_mode_conflict()
+        if conflict:
+            if self.plan_auto:
+                self._skip_plan_mode(f"not compatible with {conflict}")
+                return False
+            print(
+                f"[bold red]plan mode (--plan-classify) is not compatible "
+                f"with {conflict}[/bold red]"
+            )
+            raise SystemExit(1)
+        if self.allow_navigable_strings:
+            print(
+                "note: --allow_navigable_strings is redundant in plan mode "
+                "(every text node is already accounted for); ignoring it"
+            )
+        if self.accumulated_num > 1:
+            print(
+                "note: plan mode batches short units itself; "
+                "--accumulated_num is ignored here — pass --plan-classify none "
+                "for tag-mode batching"
+            )
+        # The plan would refuse this cache anyway (see _prepare_translation_plan),
+        # but only after the classifier has been paid for and a plan JSON
+        # written. Under auto the answer is already known here: the cache is
+        # the run the user is resuming, so finish it the way it started.
+        if self.plan_auto and self._is_tag_mode_checkpoint():
+            self._skip_plan_mode("resuming a tag-mode run")
+            return False
+        try:
+            self._prepare_translation_plan()
+        except (SystemExit, Exception) as err:
+            if not self.plan_auto:
+                raise
+            # Every plan failure already printed what went wrong; this line
+            # says what happens next. SystemExit carries a code, not a
+            # message, so it names the step instead.
+            lines = [] if isinstance(err, SystemExit) else str(err).strip().splitlines()
+            detail = escape(lines[0]) if lines else ""
+            self._skip_plan_mode(detail or "the plan could not be built, see above")
+            return False
+        return True
+
     def _prepare_translation_plan(self):
         """Build the coverage-complete plan; fail loud below the coverage gate."""
         name, _ = os.path.splitext(self.epub_name)
@@ -714,7 +811,7 @@ class EPUBBookLoader(BaseBookLoader):
                 f"start over, or restore the previous settings.[/bold red]"
             )
             raise SystemExit(1)
-        if self.resume and self.p_to_save and self._resume_plan_fingerprint is None:
+        if self._is_tag_mode_checkpoint():
             # a legacy list-format cache (tag-mode run): its slots index a
             # p-tag sequence, not this plan's unit list — positionally
             # meaningless here, and replaying it would pair units with
@@ -2325,7 +2422,9 @@ class EPUBBookLoader(BaseBookLoader):
         context state is fresh.
 
         Sequential runs keep the shared instance: there the accumulation is
-        in reading order and worth having.
+        in reading order and worth having. Session mode never arrives here:
+        one history is the context and workers cannot share it, so the
+        pairing is refused on the command line.
         """
         if self.parallel_workers <= 1 or not getattr(
             self.translate_model, "context_flag", False
@@ -2334,12 +2433,6 @@ class EPUBBookLoader(BaseBookLoader):
         clone = copy(self.translate_model)
         clone.context_list = []
         clone.context_translated_list = []
-        if getattr(clone, "session", None) is not None:
-            # Session mode keeps one append-only history, and a shallow copy
-            # would leave every worker appending to the same one: chapters
-            # interleave, and the byte-stable prefix the mode is built on is
-            # gone. Each worker gets its own window instead.
-            clone.session = SessionHistory()
         if hasattr(clone, "create_convo"):
             # gemini keeps context in its chat object, not the lists above —
             # a shallow copy would share one convo across chapters (a thread
@@ -2547,29 +2640,7 @@ class EPUBBookLoader(BaseBookLoader):
             return
 
         if self._plan_mode:
-            incompatible = {
-                "--retranslate": self.retranslate,
-                "--batch/--batch-use": self.batch_flag or self.batch_use_flag,
-                "--sentence_mode": self.sentence_mode,
-            }
-            active = [flag for flag, on in incompatible.items() if on]
-            if active:
-                print(
-                    f"[bold red]plan mode (--plan-classify) is not compatible "
-                    f"with {', '.join(active)}[/bold red]"
-                )
-                raise SystemExit(1)
-            if self.allow_navigable_strings:
-                print(
-                    "note: --allow_navigable_strings is redundant in plan mode "
-                    "(every text node is already accounted for); ignoring it"
-                )
-            if self.accumulated_num > 1:
-                print(
-                    "note: plan mode batches poetry windows itself; "
-                    "--accumulated_num is ignored"
-                )
-            self._prepare_translation_plan()
+            self._enter_plan_mode()
 
         self.batch_init_then_wait()
         new_book = self._make_new_book(self.origin_book)

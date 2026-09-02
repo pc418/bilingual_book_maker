@@ -783,7 +783,6 @@ def _make_loader(tmp_path, model_cls, book=ANIMAL_FARM):
     # a programmatic caller must pick a mode (the loader's own default is
     # "none", no plan mode); tests that exercise the plan JSON set "agent"
     loader.plan_classify = "all"
-    loader.plan_classify = "all"
     return loader, src
 
 
@@ -2679,6 +2678,27 @@ class TestClassifyPaging:
         }
 
 
+class TestAllMode:
+    """`all` decides every row itself, and says so on every row."""
+
+    def test_every_row_is_decided_and_attributed_to_the_mode(self):
+        from book_maker.loader.classify import decide_everything
+
+        ledger = _ledger([("block", "p", ["prose"]), ("block", "h1", ["HEAD"])])
+        assert decide_everything(ledger) == 2
+        assert not ledger.undecided_keys()
+        assert {r["decided_by"] for r in ledger.rows.values()} == {"all"}
+        # nobody looked at the samples, so nothing may claim to have named them
+        assert {r["content_type"] for r in ledger.rows.values()} == {"unclassified"}
+
+    def test_a_hand_decided_row_is_still_the_users(self, tmp_path):
+        # "all" is a new decider name, not a replacement: a plan JSON edited
+        # by a person still says "user", and still loads.
+        ledger = _ledger([("block", "p", ["prose"])])
+        ledger.decide("block:p", "skip", "user", "running head")
+        assert ledger.rows["block:p"]["decided_by"] == "user"
+
+
 class TestModePolicy:
     """What each mode does with the plan *file* is a table, not a condition
     repeated wherever the loader happens to branch on the mode's name."""
@@ -3016,6 +3036,13 @@ class TestRerunCommandRedaction:
             assert key not in command
         assert command.count("$BBM_OPENAI_API_KEY") == 1
 
+    def test_this_forks_own_key_flag_is_redacted(self):
+        # --key is the one key flag the endpoint surface has; the per-vendor
+        # names above still appear in the argv of a legacy command line
+        command = self._rerun(["make_book.py", "--key", "sk-live-secret"])
+        assert "sk-live-secret" not in command
+        assert command == 'python3 make_book.py --key "$BBM_API_KEY"'
+
     def test_a_run_with_no_key_is_unchanged(self):
         argv = ["make_book.py", "--book_name", "b.epub", "--model", "chatgptapi"]
         assert self._rerun(argv) == "python3 " + " ".join(argv)
@@ -3165,6 +3192,64 @@ class TestNumericSignatureSuffix:
         parent = fp.inline_rows[0]["parent_key"]
         assert parent in ledger.rows
         assert parent == fp.units[0].key
+
+
+class TestAllRowsReopen:
+    def test_prior_all_rows_revert_to_null_while_user_rows_are_kept(self):
+        """`--plan-classify all` decided by policy, not by looking, so its
+        rows are not carried into the next run: a model or agent run sees
+        them null, with no prior verdict to lean on. A person's ruling is a
+        decision and stays."""
+        from book_maker.loader.plan import TranslationPlan, partition_soup
+
+        soup = bs(
+            '<body><p class="body">Prose here.</p>'
+            '<p class="note">A note by the editor.</p></body>',
+            "html.parser",
+        )
+        fp = partition_soup(soup, _make_resolver(""), "x.html")
+        plan = TranslationPlan([fp], (), 8)
+
+        prior = plan.build_ledger()
+        prior.decide("block:p.body", "translate", "all", "unclassified")
+        prior.decide("block:p.note", "skip", "user", "editorial note")
+
+        ledger = plan.build_ledger(decisions=prior)
+        body = ledger.rows["block:p.body"]
+        assert (body["action"], body["decided_by"], body["content_type"]) == (
+            None,
+            None,
+            None,
+        )
+        note = ledger.rows["block:p.note"]
+        assert (note["action"], note["decided_by"]) == ("skip", "user")
+        assert ledger.undecided_keys() == ["block:p.body"]
+        # and the reopening is recorded, so the plan file gets rewritten
+        assert ledger.reopened_keys == {"block:p.body"}
+
+    def test_a_reopened_all_row_is_written_back_before_the_handoff(self, tmp_path):
+        # agent mode on a plan whose rows an earlier `all` run decided: the
+        # file must show them null again, or the handoff points at rows
+        # that look decided and every rerun repeats the same handoff
+        setup, src = _make_loader(tmp_path, FakeModel)
+        setup.only_filelist = "index_split_004.html"
+        plan_path = _write_decided_plan(setup)
+        data = json.loads(plan_path.read_text())
+        for row in data["signatures"]:
+            row["decided_by"] = "all"
+            row["content_type"] = "unclassified"
+        plan_path.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        from book_maker.loader.classify import mode_policy
+
+        assert stop.value.code == mode_policy("agent").handoff_exit_code
+        after = json.loads(plan_path.read_text())
+        assert all(row["action"] is None for row in after["signatures"])
 
 
 class TestOperatorFindings:

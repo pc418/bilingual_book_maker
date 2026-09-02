@@ -16,7 +16,6 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 from anthropic import BadRequestError as AnthropicBadRequest
-from google.genai import errors as genai_errors
 
 from book_maker.structured import (
     RungRejected,
@@ -27,9 +26,8 @@ from book_maker.structured import (
     unwrap_schema_echo,
 )
 from book_maker.translator.base_translator import Base
+from book_maker.translator.capabilities import CapabilityLedger
 from book_maker.translator.claude_translator import Claude, _sdk_base_url
-from book_maker.translator.gemini_translator import Gemini, _openapi_schema
-from book_maker.translator.groq_translator import GroqClient
 from book_maker.loader.classify.model import (
     PAGE_SIZE,
     PlanClassifyError,
@@ -510,106 +508,20 @@ class TestClaudeWiring:
             claude._chat_completion("classify this")
 
 
-class TestGeminiWiring:
-    def test_the_schema_is_converted_to_geminis_dialect(self):
-        cands = [{"key": key_of("p.header"), "units": 9, "chars": 81, "samples": ["G"]}]
-        converted = _openapi_schema(build_schema(cands))
+class TestModelListAcrossFormats:
+    """Every LLM format must accept `--model_list`.
 
-        assert converted["type"] == "OBJECT"
-        # gemini's dialect has neither of these and 400s on both
-        assert "additionalProperties" not in json.dumps(converted)
-        assert "strict" not in converted
-        verdict = converted["properties"][key_of("p.header")]["properties"]["verdict"]
-        assert verdict["type"] == "STRING"
-        assert verdict["enum"] == ["translate", "skip", "unsure"]
-
-    def _gemini(self, generate_content):
-        gemini = Gemini.__new__(Gemini)
-        Base.__init__(gemini, "k", "zh-hans")
-        gemini.model = "gemini-3-flash"
-        gemini.convo = SimpleNamespace(
-            send_message=Mock(side_effect=AssertionError("used the translation chat"))
-        )
-        gemini.client = SimpleNamespace(
-            models=SimpleNamespace(generate_content=generate_content)
-        )
-        return gemini
-
-    def test_classification_never_enters_the_translation_conversation(self):
-        # self.convo carries context for the paragraphs still to come; a
-        # classification question and its answer must not become part of it
-        generate = Mock(
-            return_value=SimpleNamespace(text='{"p.h": {"verdict": "skip"}}')
-        )
-        gemini = self._gemini(generate)
-
-        gemini._chat_completion("classify this")
-
-        assert generate.call_args.kwargs["contents"] == "classify this"
-
-    def test_the_native_rung_comes_first_and_the_prompt_rung_backs_it(self):
-        gemini = self._gemini(Mock())
-        names = [name for name, _ in gemini.structured_rungs("q", {"schema": {}})]
-        assert names == ["response_schema", "prompt"]
-
-    def test_a_rejected_schema_descends_but_a_dead_key_does_not(self):
-        class _Err(genai_errors.ClientError):
-            def __init__(self, code):
-                Exception.__init__(self, f"{code}")
-                self.code = code
-
-        gemini = self._gemini(Mock(side_effect=_Err(400)))
-        with pytest.raises(RungRejected):
-            gemini._chat_completion("q")
-
-        gemini = self._gemini(Mock(side_effect=_Err(403)))
-        with pytest.raises(genai_errors.ClientError):
-            gemini._chat_completion("q")
-
-
-class TestGroqWiring:
-    def test_classification_does_not_go_to_openai_with_a_groq_key(self):
-        # inherited from ChatGPTAPI, structured_json would have posted to
-        # self.openai_client — which for groq is api.openai.com
-        groq = GroqClient.__new__(GroqClient)
-        Base.__init__(groq, "groq-key", "zh-hans")
-        groq.model = "llama3-8b-8192"
-        groq.openai_client = SimpleNamespace(
-            chat=SimpleNamespace(
-                completions=SimpleNamespace(
-                    create=Mock(side_effect=AssertionError("wrong client"))
-                )
-            )
-        )
-        groq._structured_support = {"llama3-8b-8192": False}
-        groq._structured_lock = threading.RLock()
-
-        with patch("book_maker.translator.groq_translator.Groq") as client:
-            client.return_value.chat.completions.create.return_value = SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content='{"a": 1}'))]
-            )
-            assert groq.structured_json("classify", {"schema": {}}) == {"a": 1}
-
-        # and no probe was sent either: SUPPORTS_STRUCTURED_OUTPUTS is False
-        assert [name for name, _ in groq.structured_rungs("q", {})] == ["prompt"]
-
-
-class TestProviderModelList:
-    """`--provider` calls set_model_list on every api_style (cli.py:881-890).
-
-    Two of the four did not have one, so a provider config with
-    `api_style: "claude"` or `"qwen"` died on an AttributeError — which is
-    also the only route by which a gateway's own model id can reach those
-    classes, since `--model` is limited to MODEL_DICT keys.
+    It is now the only way a model is named at all, so a format whose class
+    lacks the method cannot be used from the CLI.
     """
 
-    def test_every_supported_api_style_accepts_a_model_list(self):
-        from book_maker.provider_loader import SUPPORTED_API_STYLES
+    def test_every_llm_format_accepts_a_model_list(self):
+        from book_maker.translator import FORMAT_DICT, LLM_FORMATS
 
         missing = [
-            style
-            for style, cls in SUPPORTED_API_STYLES.items()
-            if not hasattr(cls, "set_model_list")
+            fmt
+            for fmt in LLM_FORMATS
+            if not hasattr(FORMAT_DICT[fmt], "set_model_list")
         ]
         assert missing == []
 
@@ -710,40 +622,3 @@ class TestRungRetirement:
             with pytest.raises(StructuredJSONFailed):
                 llm.structured_json("q", build_schema([]))
         assert llm._rung_refusals.get("fake-llm", {}) == {}
-
-
-class TestQwenConfiguration:
-    """Qwen-MT cannot classify, but it must still be configured correctly."""
-
-    def test_the_model_survives_construction(self):
-        # `self.model = self.set_qwen_model(model)` assigned the setter's
-        # return over the value it had just set; every request went out with
-        # model=None
-        from book_maker.translator.qwen_translator import QwenTranslator
-
-        qwen = QwenTranslator(key="k", language="zh-hans", model="qwen-mt-plus")
-        assert qwen.model == "qwen-mt-plus"
-        assert qwen.terminology == [] and qwen.domain_hint == ""
-
-    def test_an_unknown_model_is_refused_not_substituted(self):
-        from book_maker.translator.qwen_translator import QwenTranslator
-
-        qwen = QwenTranslator(key="k", language="zh-hans")
-        with pytest.raises(ValueError, match="qwen-mt-turbo"):
-            qwen.set_model_list(["qwen-mt-ultra"])
-        # billing a whole book to a model the user did not choose is not a
-        # recovery from a typo
-        assert qwen.model == "qwen-mt-turbo"
-
-    def test_the_qwen_alias_can_load_its_key(self):
-        # cli.py matched only "qwen-", so the bare "qwen" choice — which is a
-        # MODEL_DICT key — always got an empty API key
-        import re
-
-        from book_maker.translator import MODEL_DICT
-
-        source = (
-            pathlib.Path(__file__).parent.parent / "book_maker" / "cli.py"
-        ).read_text()
-        assert 'options.model.startswith("qwen")' in source
-        assert "qwen" in MODEL_DICT

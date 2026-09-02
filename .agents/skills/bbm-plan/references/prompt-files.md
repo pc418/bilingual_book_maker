@@ -5,17 +5,20 @@ user has said to use it**. Do not lint before asking.
 
 ## The contract (`book_maker/cli.py:parse_prompt_arg`)
 
-- `.json`: an object with **only** the keys `user` (required) and `system`
-  (optional). Any other key is rejected outright.
+- `.json`: an object with **only** the keys `user` (required), `system` and
+  `style` (both optional). Any other key is rejected outright.
 - The `user` template must contain the literal placeholder `{text}`.
   `{language}` is optional.
 - `.txt` becomes the user template as-is, same `{text}` rule.
-- `.md` is parsed as PromptDown, and only in its **block** form: a
-  `## Conversation` heading, then a line reading `**User:**`, then the
-  template. The pinned promptdown does not read the table form, and the
-  repo's own `prompt_md.prompt.md` sample is written in it — so that file
-  is a broken example, not a template to copy. A file it cannot read stops
-  the run with an error naming the file and the block form.
+- `.md` is parsed as PromptDown (pinned at 1.1.6), and only in its **block**
+  form: a `## Conversation` section whose turns open with `**User:**` on its
+  own line. The older `| Role | Content |` table form parses to an empty
+  conversation, and the load fails with an error naming the file and the
+  block form. The repo's own `prompt_md.prompt.md` sample is written in the
+  table form: a broken example, not a template to copy. Only the system (or
+  developer) message and the first user turn are read, so a `.md` prompt
+  cannot carry a `style`; put that in a `.json` file or in the system
+  message.
 
 ```markdown
 # Translation Prompt

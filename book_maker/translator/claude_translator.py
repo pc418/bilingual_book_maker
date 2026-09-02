@@ -1,15 +1,18 @@
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from rich import print
 from rich.markup import escape
-from anthropic import Anthropic, BadRequestError, UnprocessableEntityError
+from anthropic import (
+    Anthropic,
+    APIStatusError,
+    BadRequestError,
+    UnprocessableEntityError,
+)
 
 from .base_translator import Base
-from .chatgptapi_translator import (
-    MAX_USABLE_CONTEXT_WINDOW,
-    MIN_USABLE_CONTEXT_WINDOW,
-)
+from .capabilities import detect_context_window
 from ..config import config
 from ..session_context import (
     HandoffReport,
@@ -58,18 +61,25 @@ def _history_too_long(reason) -> bool:
 
 
 def _sdk_base_url(api_base):
-    """Trim a trailing `/v1` the SDK is going to add back.
+    """Trim the request path the SDK is going to add back.
 
-    `Anthropic(base_url=...)` appends `/v1/messages` itself, so an api_base
-    copied from an OpenAI-shaped gateway (`https://host/v1`) produces
-    `/v1/v1/messages` and a 403 whose text — "HTTP node only allows access to
-    inference API paths" — points nowhere near the cause.
+    `Anthropic(base_url=...)` appends `/v1/messages` itself, so a URL copied
+    from a gateway's docs (`https://host/v1`, or the whole
+    `https://host/v1/messages`) produces `/v1/v1/messages` and a 403 whose
+    text — "HTTP node only allows access to inference API paths" — points
+    nowhere near the cause.
     """
     if not api_base:
         return None
-    base = api_base.rstrip("/")
+    base = api_base.strip().rstrip("/")
+    trimmed = False
+    if base.endswith("/messages"):
+        base = base[: -len("/messages")].rstrip("/")
+        trimmed = True
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
+        trimmed = True
+    if trimmed:
         print(f"[dim]using anthropic base_url {base} (the SDK adds /v1)[/dim]")
     return base
 
@@ -82,6 +92,10 @@ class Claude(Base):
 
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
+    # Anthropic's `/v1/models` record carries `max_input_tokens`, so this
+    # route can be asked what window the model has. Unlike the openai route,
+    # a miss here is not fatal: see `_learn_context_window`.
+    SUPPORTS_AUTO_COMPACT_BUDGET = True
 
     # Compact attempts before giving up on a summary and starting clean. More
     # than one so a transient error does not cost the accumulated context;
@@ -97,6 +111,10 @@ class Claude(Base):
     context_compact_at = None
     no_context_compact = False
     context_mode = "window"
+    # `--context-compact-at 0` state: the lookup happens once per run, and
+    # `None` afterwards means "asked, and the endpoint had no usable answer".
+    _auto_budget = None
+    _window_asked = False
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
     quiet = False
@@ -122,7 +140,8 @@ class Claude(Base):
         super().__init__(key, language)
         base_url = _sdk_base_url(api_base)
         self.api_url = base_url or "https://api.anthropic.com"
-        self.client = Anthropic(base_url=base_url, api_key=key, timeout=20)
+        # One key, not the whole comma-separated list; rotate_key advances it.
+        self.client = Anthropic(base_url=base_url, api_key=next(self.keys), timeout=20)
         self.model = "claude-haiku-4-5-20251001"  # default it for now
         self.language = language
         self.prompt_template = prompt_template or self.DEFAULT_PROMPT
@@ -189,19 +208,19 @@ class Claude(Base):
         return self.session is None
 
     def rotate_key(self):
-        pass
+        """Advance to the next key, as the comma-separated form promises.
 
-    def set_claude_model(self, model_name):
-        self.model = model_name
+        `Anthropic.api_key` is writable, so this needs no new client. Without
+        it a multi-key run sent the literal string "a,b" as the credential
+        and failed authentication.
+        """
+        self.client.api_key = next(self.keys)
 
     def set_model_list(self, model_list):
-        """The `--model_list` surface, so `--provider` can reach this class.
+        """Take the model to use. Any id the endpoint serves is accepted.
 
-        `--model` is limited to MODEL_DICT keys, so a gateway's own id
-        (`claude-haiku-4.5`) could not otherwise reach the anthropic shape at
-        all; cli.py calls this for every `--provider`, and its absence here
-        was an AttributeError. Claude has no model rotation, so the first
-        entry wins — announced, not silently.
+        Claude has no model rotation, so when several are named the first
+        wins — announced, not silently.
         """
         models = [m.strip() for m in model_list if m and m.strip()]
         if not models:
@@ -212,6 +231,24 @@ class Claude(Base):
                 f"'{models[0]}' and ignoring {len(models) - 1} more[/yellow]"
             )
         self.model = models[0]
+
+    def _explain_wrong_shape(self, error):
+        """Re-raise `error`, naming the fix when a gateway does not serve this shape.
+
+        A 404 or 405 from a host other than Anthropic's own usually means the
+        endpoint speaks the OpenAI shape only. On api.anthropic.com a 404 is
+        about the model, so it is passed through untouched.
+        """
+        host = (urlparse(self.api_url).hostname or "").lower()
+        status = getattr(error, "status_code", None)
+        official = host == "anthropic.com" or host.endswith(".anthropic.com")
+        if official or status not in (404, 405):
+            raise error
+        raise RuntimeError(
+            f"{self.api_url} does not answer the anthropic shape at "
+            f"/v1/messages ({error}). If it is an OpenAI-compatible endpoint, "
+            f"pass --api_format openai."
+        ) from error
 
     def _user_content(self, text):
         """The user message for one unit.
@@ -289,7 +326,7 @@ class Claude(Base):
             return {}
         return {"cache_control": {"type": "ephemeral"}}
 
-    def _note_usage(self, message):
+    def _note_usage(self, message, model=None):
         """Add what the endpoint billed for this request to the meter.
 
         Anthropic's `input_tokens` leaves the cached part out, so the prompt
@@ -306,6 +343,7 @@ class Claude(Base):
                 (getattr(usage, "input_tokens", 0) or 0) + read + written,
                 getattr(usage, "output_tokens", 0),
                 read,
+                model=model or self.model,
             )
         except Exception:
             # a readout, not a gate: a usage record shaped strangely by a
@@ -344,25 +382,19 @@ class Claude(Base):
         a reason to end a run that has a default budget to fall back on, so
         every outcome here is announced rather than raised — a budget the user
         did not ask for is worth one line.
+
         """
         default = compact_budget_for(self.model)
         try:
-            record = self.client.models.retrieve(self.model)
+            window = detect_context_window(self.client, self.model)
         except Exception as e:
             print(
                 f"[yellow]ℹ could not ask this endpoint for {self.model}'s "
-                f"context window ({e}); compacting at the default {default} "
-                f"instead[/yellow]"
+                f"context window ({escape(str(e))}); compacting at the default "
+                f"{default} instead[/yellow]"
             )
             return None
-        window = getattr(record, "max_input_tokens", None)
-        # `True` is an `int` in Python and would yield a budget of 0 — no
-        # rollover at all — so the type check is stricter than it looks.
-        if (
-            isinstance(window, bool)
-            or not isinstance(window, int)
-            or not MIN_USABLE_CONTEXT_WINDOW <= window <= MAX_USABLE_CONTEXT_WINDOW
-        ):
+        if window is None:
             print(
                 f"[yellow]ℹ this endpoint does not report a usable context "
                 f"window for {self.model}; compacting at the default "
@@ -540,7 +572,9 @@ class Claude(Base):
             )
         except (BadRequestError, UnprocessableEntityError) as e:
             raise RungRejected(e) from e
-        self._note_usage(r)
+        except APIStatusError as e:
+            self._explain_wrong_shape(e)
+        self._note_usage(r, model)
         return "".join(
             block.text for block in r.content if getattr(block, "type", "") == "text"
         )
@@ -551,14 +585,17 @@ class Claude(Base):
         # Create messages with context
         messages = self.create_messages(text, self.create_context_messages())
 
-        r = self.client.messages.create(
-            max_tokens=4096,
-            messages=messages,
-            system=self.prompt_sys_msg,
-            temperature=self.temperature,
-            model=self.model,
-            **self._cache_kwargs(),
-        )
+        try:
+            r = self.client.messages.create(
+                max_tokens=4096,
+                messages=messages,
+                system=self.prompt_sys_msg,
+                temperature=self.temperature,
+                model=self.model,
+                **self._cache_kwargs(),
+            )
+        except APIStatusError as e:
+            self._explain_wrong_shape(e)
         self._note_usage(r)
         t_text = r.content[0].text
 

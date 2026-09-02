@@ -30,8 +30,8 @@ sections after it provide additional notes for selected workflows.
 
 | Option | Purpose |
 |---|---|
-| `--plan-dry-run` | Build/report a free EPUB plan and exit. |
-| `--plan-classify {none,all,model,agent}` | Select no plan, greedy plan, model triage, or coding-agent triage. (`most` is the old name for `all` and still parses.) |
+| `--plan-dry-run` | Build and print the EPUB plan, write `<book>_plan.json` with every `action` still `null`, and exit. No credentials needed. |
+| `--plan-classify {auto,none,all,model,agent}` | No plan, the whole partition, model triage, or coding-agent triage. Default `auto`: model triage on an epub whose endpoint is verified to apply a strict JSON schema, tag mode otherwise. |
 | `--plan-classify-model MODEL` | Classification model; implies model mode and conflicts with `all`/`agent`. |
 | `--plan-min-coverage FRACTION` | Fail if selected planned text is below this fraction; default `0.5`. |
 | `--poetry-group-size N` | Maximum verse lines per planned translation request; default `8`. |
@@ -43,45 +43,57 @@ sections after it provide additional notes for selected workflows.
 | `--test` | Translate only a preview sample. |
 | `--test_num N` | Number of test units; default `10`. |
 | `--resume` | Continue from the loader's saved checkpoint. |
-| `--prompt VALUE_OR_FILE` | User/system prompt template; the user template requires `{text}`. |
+| `--prompt VALUE_OR_FILE` | Prompt config: `user` (must contain `{text}`), `system`, and `style`. A `style` goes into every request and verbatim into each handoff report. On the `codex` format `system` is appended to the built-in instructions. |
 | `--temperature FLOAT` | Sampling temperature; default `1.0`. |
-| `--use_context [window\|session]` | Send earlier paragraphs as context. Bare or `window`: re-send the last few source/translation pairs (the long-standing behaviour). `session`: one append-only history, re-read at the endpoint's prompt-cache rate and compacted into a handoff report. |
-| `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`. `2500` is the cheapest setting. `0` sizes it from the model's reported context window (90% of it), or says so and uses the default. |
-| `--no-context-compact` | Session mode only: never ask for a handoff report. At the budget the history is dropped and the next window starts empty. |
-| `--context_paragraph_limit N` | Context history limit used with `--use_context`. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
+| `--use_context [window\|session]` | Send earlier paragraphs as context. Bare or `window`: re-send the last few source/translation pairs (the long-standing behaviour). `session`: one append-only history, re-read at the endpoint's prompt-cache rate. |
+| `--context_paragraph_limit N` | Window mode only: context history limit. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
+| `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`; `2500` is the cheapest setting. `0` sizes the budget from the model's context window (90% of it, of the smallest window when several models are in play) on the openai, anthropic and codex routes. When the window cannot be read, the openai route stops; the other two say so and use the default. |
+| `--no-context-compact` | Session mode only: skip the handoff report. The window still rolls over at the budget, but the next one starts empty. |
 | `--accumulated_num N` | EPUB token/character accumulation and SRT subtitle-block character batching (capped at 512 for SRT); ignored in EPUB plan mode. |
 | `--batch_size N` | Aggregated unit count for loaders that support it. |
 | `--block_size N` | Merge paragraphs into delimiter-translated blocks. |
 | `--sentence_mode` | Translate EPUB paragraphs sentence by sentence; incompatible with plan mode. |
-| `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. |
+| `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. Refused with `--use_context session` (one history) and on the `codex` format (one thread). |
 | `--batch` | Submit an EPUB ChatGPT Batch API job; incompatible with plan mode. |
 | `--batch-use` | Consume a previously submitted batch job; incompatible with plan mode. |
-| `--interval SECONDS` | Gemini request interval; default `0.01`. |
-| `--extra_body JSON` | Extra request fields for ChatGPT/OpenAI-derived request paths (including OpenAI-style custom providers and xAI); other translators such as Claude, Gemini, Qwen, and Groq ignore it. |
+| `--extra_body JSON` | Extra request fields for the `openai` route; other formats ignore it and say so. |
 | `--quiet` | Suppress EPUB progress bars and paragraph echoes, not reports/errors. |
 | `--proxy URL` | Set HTTP/HTTPS proxy environment variables for the run. |
 
-### Model routing and credentials
+### Endpoint and credentials
+
+A route is an endpoint, not a model name.
 
 | Option | Purpose |
 |---|---|
-| `--model MODEL` / `-m MODEL` | Built-in translator route. Mutually exclusive with `--provider`. |
-| `--model_list IDS` | Exact comma-separated IDs for OpenAI, Groq, Gemini, or a custom provider. |
-| `--provider NAME` | Provider from project/global `bbm_providers.json`; conflicts with `--model`. |
-| `--api_key KEY` | Custom-provider key; prefer its configured environment variable. |
-| `--api_base URL` | Override the selected translator endpoint. |
-| `--deployment_id ID` | Azure OpenAI deployment; also requires `--api_base`. |
-| `--ollama_model MODEL` | Ollama model; defaults its endpoint to `http://localhost:11434/v1`. |
-| `--openai_key KEY` | OpenAI-compatible key; prefer `BBM_OPENAI_API_KEY`. |
-| `--claude_key KEY` | Anthropic key; prefer `BBM_CLAUDE_API_KEY`. |
-| `--gemini_key KEY` | Gemini key; prefer `BBM_GOOGLE_GEMINI_KEY`. |
-| `--groq_key KEY` | Groq key; prefer `BBM_GROQ_API_KEY`. |
-| `--xai_key KEY` | xAI key; prefer `BBM_XAI_API_KEY`. |
-| `--orcarouter_key KEY` | OrcaRouter key; prefer `BBM_ORCAROUTER_API_KEY`. |
-| `--qwen_key KEY` | Qwen key; prefer `BBM_QWEN_API_KEY`. |
-| `--deepl_key KEY` | DeepL key; prefer `BBM_DEEPL_API_KEY`. |
-| `--caiyun_key KEY` | Caiyun key; prefer `BBM_CAIYUN_API_KEY`. |
-| `--custom_api VALUE` | Legacy custom translator API; prefer `BBM_CUSTOM_API`. |
+| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Defaults to `gpt-5.6-luna` on the `openai` format; the `anthropic` format needs one. Old alias values are rewritten with a note. |
+| `--api_base URL` | The endpoint. Defaults to the format's official host. A pasted `…/v1/chat/completions` or a trailing slash is trimmed. |
+| `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's own variable. |
+| `--api_format FORMAT` | The API the endpoint speaks: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id. |
+| `--model codex` | The Codex CLI sidecar on a ChatGPT plan, the same as `--api_format codex`. It runs `gpt-5.6-luna`; `--api_format codex --model <id>` names another (the sidecar also offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.2`). |
+| `--model orcarouter` | The OrcaRouter gateway and its smart-routing model `orcarouter/auto`. Needs no `--api_base`; one you pass wins. The key comes from `BBM_ORCAROUTER_API_KEY`. Not a legacy alias: nothing is rewritten. |
+| `--model_list IDS` | Several model ids to rotate across, comma-separated. A single model belongs in `--model`; naming a model in both flags is an error. |
+| `--source_lang LANG` | Source language, for endpoints that want it stated; default `auto`. |
+| `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name. Its `base_url`, `api_style` (`openai` or `anthropic`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Flags you pass yourself win. |
+
+A gateway that serves Claude models speaks the OpenAI shape, and a gateway
+`--api_base` is taken to be that shape. The anthropic format is inferred only
+on Anthropic's own host, or from a `claude` model id with no `--api_base`. A
+gateway asked for the anthropic shape it does not serve answers 404, and the
+run stops naming `--api_format openai` as the fix.
+
+Key lookup order: `--key` (`--api_key` is the same flag), then `BBM_API_KEY`,
+then `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` /
+`BBM_DEEPL_API_KEY` depending on the format. Endpoints on localhost need no
+key.
+
+The old `--model` preset names, the per-vendor `--*_key` flags,
+`--ollama_model`, `--deployment_id` and `--interval` are no longer in the
+parser, but old command lines still run: `book_maker/legacy_cli.py` rewrites
+them into the flags above before the run starts and prints each rewrite. The
+table is in [Migrating from the old flags](migration.md). The old
+per-vendor key variables (`BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, …) are
+still read for the route that used them.
 
 Do not put secrets directly on a shared command line. Environment variables are safer for
 agent and CI use. The CLI does **not** load `.env` files itself: export the variables first,
@@ -94,11 +106,11 @@ or source a local git-ignored file before running, for example
 Use this option to preview the result if you haven't paid for the service or just want to test. Note that there is a limit and it may take some time.
 
 ```sh
-bbook_maker --book_name test_books/Lex_Fridman_episode_322.srt --openai_key ${openai_key}  --test
+bbook_maker --book_name test_books/Lex_Fridman_episode_322.srt --key ${openai_key} --model gpt-5-mini  --test
 ```
 
 ```sh
-bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key}  --test --language zh-hans
+bbook_maker --book_name test_books/animal_farm.epub --key ${openai_key} --model gpt-5-mini  --test --language zh-hans
 ```
 
 `--test_num <TEST_NUM>`<br>
@@ -156,18 +168,15 @@ Use this option to specify proxy server for internet access. Enter a string such
 
 If you want to change api_base like using Cloudflare Workers, use this option to support it.<br>
 
-    bbook_maker --book_name 'animal_farm.epub' --openai_key sk-XXXXX --api_base 'https://xxxxx/v1'
+    bbook_maker --book_name 'animal_farm.epub' --key sk-XXXXX --model gpt-5-mini --api_base 'https://xxxxx/v1'
 **Note: the api url should be '`https://xxxx/v1`'. Quotation marks are required.**
 
 ## Microsoft Azure Endpoints
-`--api_base <API_BASE_URL>` `--deployment_id <DEPLOYMENT_ID>`<br>
 
-You can use the api endpoint provided from Microsoft.
+Azure has no flag of its own. Point `--api_base` at the deployment's
+OpenAI-compatible URL and name the deployment in `--model`:
 
-
-    bbook_maker --book_name 'animal_farm.epub' --openai_key XXXXX --api_base 'https://example-endpoint.openai.azure.com' --deployment_id 'deployment-name'
-
-**Note : Current only support chatgptapi model for deployment_id. And `api_base` must be provided when using `deployment_id`. You can check [here](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/create-resource?pivots=web-portal) for more information about `deployment_id`.**
+    bbook_maker --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model 'deployment-name'
 
 ## Batch size (txt only)
 `--batch_size`<br>

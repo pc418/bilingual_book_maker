@@ -41,19 +41,18 @@ seen = []
 for f in (pathlib.Path("bbm_providers.json"), pathlib.Path.home()/".bbm"/"providers.json"):
     if f.is_file():
         for name, e in json.load(open(f)).get("providers", {}).items():
-            key = e.get("env_key")
-            state = ("set" if os.environ.get(key) else "UNSET") if key else "no env_key"
+            key = e.get("env_key") or "BBM_API_KEY"
             seen.append(f"{name}: {e.get('api_style')} {e.get('base_url','(default host)')} "
-                        f"model={(e.get('default_models') or ['(none)'])[0]} {key}={state}")
+                        f"model={(e.get('default_models') or ['(none)'])[0]} {key}={'set' if os.environ.get(key) else 'UNSET'}")
 print("\n".join(seen) or "no provider entries")
-for v in ("OPENAI_API_KEY", "BBM_OPENAI_API_KEY", "ANTHROPIC_API_KEY", "BBM_CLAUDE_API_KEY"):
+for v in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "BBM_API_KEY", "BBM_ORCAROUTER_API_KEY"):
     print(v, "set" if os.environ.get(v) else "unset")
 EOF
 command -v codex >/dev/null && codex login status 2>&1 | head -1 || echo "codex: not installed"
 ```
 
-That prints every provider entry with whether the key it names is present,
-the four conventional key variables, and whether the codex CLI is signed in
+That prints every provider entry and whether its key is set, the four
+conventional key variables, and whether the codex CLI is signed in
 (`Logged in using ChatGPT`). Then ask **one** question that covers the
 route, the model and the prompt file together — the user answers once:
 
@@ -66,15 +65,14 @@ Read the answer into the `ROUTE` array every later step uses:
 
 | the user picks | `ROUTE` | format |
 |---|---|---|
-| a provider entry `NAME` | `(--provider NAME)` — add `--model_list "$MODEL"` only if they named a different model | the entry's `api_style`: `openai` → openai, `claude` → anthropic |
+| a provider entry `NAME` | `(--provider NAME)` — add `--model "$MODEL"` only if they named a different one | the entry's `api_style`: `openai` → openai, `anthropic` (`claude` in older files) → anthropic |
 | a bare `OPENAI_API_KEY` | `(--provider openai)` after step 0b | openai |
-| a bare Anthropic key | `(--provider anthropic)` after step 0b | anthropic |
+| a bare `ANTHROPIC_API_KEY` | `(--provider anthropic)` after step 0b | anthropic |
+| `BBM_ORCAROUTER_API_KEY` | `(--model orcarouter)` | openai |
 | codex, signed in | `(--model codex)` — §1c, nothing else to set up | codex |
 
-`--provider` and `--model` are mutually exclusive, so a provider route
-names its model in `--model_list`, never in `--model`. The route decides the
-**default flag set** (§1d). Say the choice back in one line with the format
-it implies.
+The route decides the **default flag set** (§1d). Say the choice back in
+one line with the format it implies.
 
 ### 0b. Nothing usable yet, or a bare key with no entry — hand over the file
 
@@ -84,7 +82,9 @@ Do not write the entry for them from guesses:
 ```bash
 [ -f bbm_providers.json ] || cp .agents/skills/bbm-plan/assets/bbm_providers.example.json bbm_providers.json
 [ -f .env ]               || cp .agents/skills/bbm-plan/assets/env.example .env
-git check-ignore -q bbm_providers.json .env || printf 'bbm_providers.json\n.env\n' >> .git/info/exclude
+for f in bbm_providers.json .env; do   # one path per call: -q refuses two
+  git check-ignore -q "$f" || echo "$f" >> "$(git rev-parse --git-common-dir)/info/exclude"
+done                                    # common dir: a worktree's .git is a file
 ```
 
 Then tell them exactly what to edit and stop until they say it is done:
@@ -93,21 +93,31 @@ Then tell them exactly what to edit and stop until they say it is done:
   `default_models` (the exact id the endpoint spells) and `env_key`; delete
   the `FILL-ME` entry if unused. The file holds no secrets — `env_key`
   only names a variable. The shape is `{"providers": {NAME: {...}}}`;
-  `api_style` is `openai`, `claude`, `gemini` or `qwen`.
+  `api_style` is `openai` or `anthropic`; a vendor such as Gemini is
+  `openai` plus its `base_url`, and the example file ships those entries.
+  An optional
+  `prices` block (`{"<model id>": {"input", "output", "cached_input"}}`,
+  per million tokens; `currency` defaults to USD) makes the progress bar
+  show `spent=$0.012` instead of token counts, and the closing line show
+  both. The example carries gpt-5.6-luna's list price. Ask for the price
+  when the user cares about the bill; a model without one puts the bar
+  back on tokens, and the closing line names it.
 - `.env`: the variable `env_key` names, with the key as its value.
 
 A bare key with no entry gets the same treatment: the example file's
 `openai` / `anthropic` entries already point at the vendor hosts and read
 the conventional variable, so nothing needs editing beyond deleting the
-others — or pointing `env_key` at the variable the key is already in.
-Rerun the probe afterwards; it should now show the entry with its key `set`.
+others. Rerun the probe afterwards; it should now show the entry with its
+key `set`.
 
-**Keys never go on the command line.** The handoff block reprints the whole
-command verbatim and argparse answers a mistyped flag by echoing the whole
-command line back, so `--api_key` (or `--openai_key`) lands in the
-terminal, the log and the transcript. The entry's `env_key` is read when
-`--api_key` is absent, which is why this skill never passes it. If a key
-ever does reach the terminal, say so at once and tell the user to rotate it.
+**Keys never go on the command line.** The handoff block reprints the
+whole command, and argparse echoes it back on any mistyped flag, so a
+`--key` would land in the terminal, the log and the transcript. The entry's
+`env_key` (or `$BBM_API_KEY`) is read when `--key` is absent, which is why
+this skill never passes it. The old per-vendor flags (`--openai_key`, …)
+still parse and are rewritten to `--key` with a notice; `--api_key` is the
+same flag as `--key`. If a key ever does reach the terminal, say so at once
+and tell the user to rotate it.
 
 ## 1. Intake — what else to ask for
 
@@ -183,22 +193,24 @@ itself is rejected by its own provider.
 
 ## 1c. The codex route — a subscription, not an endpoint
 
-`--model codex` is neither a model id nor a host: the run drives a local
-`codex app-server` sidecar and spends the user's ChatGPT/Codex plan
-allowance instead of API credits. **Step 1b does not apply** — there is
-nothing to curl, and no key to resolve.
+`--model codex` and `--api_format codex` are the same thing, and neither
+names a model or a host: the run drives a local `codex app-server` sidecar
+and spends the user's ChatGPT/Codex plan allowance instead of API credits.
+**Step 1b does not apply**: there is nothing to curl and no key to resolve.
 
 ```bash
 python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
   --plan-classify agent
 ```
 
-- **The translating model is not selectable here.** `--model_list` is
-  rejected outright with `--model codex`, so the sidecar's own default is
-  what translates. Do not offer the user a choice of model on this route.
-- **No key flag, no `--api_base`.** Run `codex login` once beforehand; the
-  run checks the sidecar is up and signed in before the first paid turn and
-  reports how much of the 5-hour window is left.
+- **`--model codex` runs `gpt-5.6-luna`.** To name another model, spell
+  the route as `--api_format codex --model "$MODEL"`, and offer only ids
+  the user's plan lists.
+- **No `--key`, no `--api_base`.** Run `codex login` once beforehand. The
+  run checks that the sidecar is up and signed in before parsing the book,
+  and reports how much of the 5-hour window is left.
+- **`--parallel-workers` is refused here.** Turns serialize on one thread,
+  so there is nothing to gain.
 - **The sidecar is stripped before any book text reaches it.** Startup
   disables shell and exec, hooks, plugins and apps, browser and computer
   use, web search, and every MCP server the user's codex config declares —
@@ -228,8 +240,8 @@ legal alternatives.
 
 | format | `ROUTE` | `CONTEXT` | why |
 |---|---|---|---|
-| openai (`api_style: openai`) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
-| anthropic (`api_style: claude`) | `(--provider NAME)` | `(--use_context session)` | the same history, and this route keeps it |
+| openai (any OpenAI-shaped entry, `orcarouter`) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
+| anthropic (`api_style: anthropic`) | `(--provider NAME)` | `(--use_context session)` | the same history, and this route keeps it |
 | codex | `(--model codex)` | `()` | the thread is the context; a context flag has nothing to add to it |
 
 Common to all three, per step: `--plan-classify agent` always; the smoke
@@ -241,11 +253,9 @@ Nothing from the "Never pass in plan mode" list, ever.
 Run the base command once. It partitions the whole book, writes
 `<book>_plan.json`, prints a handoff block, and exits without translating.
 
-**Not strictly offline on a provider route**: the models named in the entry
-are verified against the endpoint before the plan is built (a `GET /models`,
-and on an endpoint that serves no listing, one small completion per model).
-So an unreachable gateway kills the planning run before it starts, and the
-step is free only in the sense that no book text is translated.
+**Offline on every route.** Nothing is asked of the endpoint until the
+first paid request, so a wrong model id or a dead gateway surfaces at the
+smoke, not here.
 
 What the report gives you, and what each part is for:
 
@@ -352,17 +362,19 @@ so you can honour a request without guessing at legal values.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--provider` | a name in `bbm_providers.json` (working directory) or `~/.bbm/providers.json` | **the route, §0** | the codex route, which uses `--model codex` instead. The entry supplies the base URL, the shape, the model(s) and the key variable in one word; an unknown name is an error naming both files. Mutually exclusive with `--model` |
-| `--model` | a registered name — argparse rejects anything else, so an arbitrary model id cannot go here | **unset** — the entry is the route | the user wants their ChatGPT plan spent: `--model codex`, §1c |
-| `--model_list` | comma-separated ids, rotated across | the entry's `default_models` | the user names a different model, or wants several rotated to spread rate limits. Each id keeps its own prompt cache, so rotating re-pays the session history at full price on every switch. Rejected outright with `--model codex` |
-| `--api_key` | one key, or several comma-separated to rotate | **never passed** — the entry's `env_key` is read from the environment | never inside this skill; a key on the command line is echoed back by argparse on any mistyped flag (§0b) |
-| `--api_base` | endpoint URL | *unset* — the entry's `base_url` | the entry is wrong and you are proving a corrected one from §1b before writing it into the file. OpenAI shape wants `…/v1`; anthropic shape wants the bare host |
+| `--model` | any model id the endpoint uses, verbatim; or `codex`; or `orcarouter` | the entry's `default_models`; unset on the openai format means `gpt-5.6-luna` | the user names a different model, wants their ChatGPT plan spent (`codex`, §1c), or wants the OrcaRouter gateway, which `--model orcarouter` reaches with no `--api_base` |
+| `--model_list` | several ids, comma-separated | *unset*; one model goes in `--model` | rate limits force rotation. Naming a model in both flags is an error. Each id keeps its own prompt cache, so every switch re-pays the `--use_context session` history at full price |
+| `--key` | one key, or several comma-separated to rotate past rate limits | **never passed**; the entry's `env_key` (then `$BBM_API_KEY`, then `$OPENAI_API_KEY` / `$ANTHROPIC_API_KEY`) is read from the environment | never; omit on the `codex` route too |
+| `--api_format` | `openai`, `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi` | *unset*; inferred from `--api_base`, then from the model id | step 1b proved the guess wrong. The machine-translation formats cannot answer a question, so they are translation-only |
+| `--api_base` | endpoint URL | *unset*; the entry's `base_url` | a gateway, proxy or local server. The OpenAI shape wants `…/v1`; the anthropic shape wants the bare host |
+| `--provider` | a name from `bbm_providers.json` (repo root) or `~/.bbm/providers.json` | **the route, step 0** | the endpoint is an entry there: one word supplies `--api_base`, `--api_format`, the model(s) and the key variable. Explicit flags still win, so `--model` may ride along. An unknown name is an error naming both files |
+| `--proxy` | `http://127.0.0.1:7890`-style | *unset* | the user is behind one |
 
 ### Plan mode
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--plan-classify` | `none`, `all`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
+| `--plan-classify` | `auto`, `none`, `all`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
 | `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it) |
 | `--exclude-translate-tags` | comma-separated tags; `""` excludes nothing | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
@@ -371,27 +383,31 @@ so you can honour a request without guessing at legal values.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--use_context` | bare/`window`, `session` | **`session`** on openai and anthropic; **nothing** on codex, where the thread is the context | the progress bar's `cached=` count is still 0 after a dozen requests — the endpoint is not caching, so session mode re-reads the history at full price; drop to bare `--use_context`, which re-sends the last few pairs instead. The bar shows `in= out= cached=` tokens live and the run ends with one `tokens:` line; under `--quiet` only the line. On a `gemini` or `qwen` provider entry `session` is refused outright: those routes never implemented it |
-| `--context-compact-at` | an estimated-token budget (≥500), or `0` | **unset → 8000** | the user asks for a longer window (raise it) or the cheapest run (the recipe below). `0` sizes the budget from the model's own context window: the run asks the endpoint for every model in play before translating anything, and stops there if it cannot answer for one of them. A route with no session history refuses `0` outright. **Needs `--use_context session`** on an API route — without it the flag is accepted and does nothing. On `codex` it applies unconditionally |
-| `--no-context-compact` | on/off | **off** | the user asks for the cheapest run: `--use_context session --context-compact-at 3000 --no-context-compact` pays for no handoff turn at all, because the window rolls over empty at ~3000 tokens. The cost is the continuity this workflow exists for — every rollover forgets the book so far |
+| `--use_context` | bare/`window`, `session` | **`session`** on openai and anthropic; **nothing** on codex, where the thread is the context | the progress bar's `cached=` count is still 0 after a dozen requests: the endpoint is not caching, and session mode re-reads the history at full price. Drop to bare `--use_context`, which re-sends the last few pairs. Drop to it too when a run must go parallel, where `session` is refused. The bar shows `in= out= cached=` live (`spent=` when the entry carries `prices`, §0b) and the run ends with one closing line; under `--quiet` only the line |
+| `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window (raise it). **Needs `--use_context session`** on an API route; without it the flag is accepted and does nothing. On `codex` it always applies |
+| `--context_paragraph_limit` | integer | *unset* (the translator uses 3) | window mode only, when the user wants a different number of pairs re-sent |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
+| `--temperature` | float | *unset* | output is erratic; lower it and re-smoke. The openai format leaves an unset value out of the request and retries once without it if the model rejects one; the anthropic route sends `1.0` on every call; codex ignores it |
 
 ### Output form
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | *(bilingual)* | — | **bilingual: translation added beside the original** | — |
-| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced |
+| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced. `--translation_style` still applies |
 | `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"`. It is the whole declaration block, so it replaces `--translation_color` rather than merging with it (the run says so) |
+| `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS. Passing both: `--translation_style` wins, and the run says the colour was lost |
 
 ### Scope and run control
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames, OPF-relative (`s04.xhtml`, not `EPUB/s04.xhtml`) | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. A name the book does not have fails loud on either list, before anything is paid for. **An only-list wins outright**: pass both and the exclude-list is unreachable |
+| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames, **OPF-relative** (`s04.xhtml`, not `EPUB/s04.xhtml`) | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. A name the book does not have fails loud on either list, before anything is paid for. **An only-list wins outright**: pass both and the exclude-list is unreachable |
 | `--test` / `--test_num` | flag + integer | **`--test --test_num 8`** at the smoke step only | poetry-heavy books: ~20, once you have confirmed the first N units are body text |
-| `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print. It does not reach a `gemini` route's own lines (those are retries and errors, which print anyway), and the parallel-run banners print whatever you pass |
-| `--resume` | on/off | **on for the full run, once a cache exists** | never off after a crash — replay is positional and fingerprint-guarded. On a first run with no `.<book>.temp.bin` it raises an uncaught traceback, so do not add it to the smoke |
+| `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
+| `--resume` | on/off | **on for the full run, once a cache exists** | never off after a crash — replay is positional and fingerprint-guarded. On a first run with no `.<book>.temp.bin` it raises an uncaught traceback, so do not add it to the smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
+| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock matters more than consistency. Then drop to bare `--use_context`: **`--use_context session` is refused with it** (one history, which workers cannot share), and window context is per chapter anyway, so continuity stops at every chapter boundary. **Never on `codex`** (below) |
+| `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
 
 ### Never pass in plan mode
 
@@ -401,22 +417,29 @@ so you can honour a request without guessing at legal values.
   writes has every `action` still `null` and there is no agent handoff
   block to work from. The base command writes the same plan *and* hands
   off.
+- `--accumulated_num` and `--allow_navigable_strings` — both explicitly
+  ignored; a non-1 `accumulated_num` also disables the interrupt-save path.
 - `--batch` / `--batch-use`, `--retranslate`, `--sentence_mode` —
   **refused** in plan mode: the run prints which flag and exits 1.
   `--batch` is also refused on the codex route, which has no batch API.
-- `--block_size` — it re-cuts text the plan has already partitioned.
-- `--parallel-workers` — on `codex` it shreds the one thread the route's
-  whole context lives in (measured: 225 document switches in 416 turns) and
-  buys no speed, because turns serialize anyway; with `--use_context` it is
-  refused on every route that keeps no per-chapter context. Even where it
-  runs, each worker starts from an empty history, so consistency stops at
-  every chapter boundary.
+- `--block_size` / `--batch_size` — they re-cut text the plan has already
+  partitioned.
+- `--parallel-workers` on `codex`: one thread is the whole context, and
+  turns serialize anyway. Refused on the command line.
+- `--parallel-workers` with `--use_context session`, on any route: one
+  history is the whole context, and a worker cannot share it. Refused on
+  the command line.
 
 ## Halt / resume — safe by construction
 
 - **Progress saves after every chapter** and on interrupt or crash. To halt
   a background run: `kill -INT <pid>`; even SIGKILL loses at most the
   current chapter.
+- **SIGINT does not halt a `--parallel-workers` run promptly.** Every
+  chapter is dispatched up front, so the process exits only after all of
+  them finish (measured: a signal at 20/70 chapters still translated
+  70/70). Checkpoints stay correct; only the stopping fails. Say so before
+  a big parallel run, and use SIGKILL when a run must stop now.
 - **A halted run exits 130**, a finished one 0, the agent handoff 3, and
   every refusal 1. Read the code, not the log, when a background run ends.
 - **Resume = rerun the identical command with `--resume`.** Same book, same
@@ -465,10 +488,6 @@ early and one late chapter.
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
 | codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints (everything, unless `--accumulated_num` was raised); rerun with `--resume` after the time it names |
 | `handoff report failed (…); starting the next window` | one compact produced no report. Informational; translation continues |
-
-Route caveats worth knowing before reading a diff of two runs: an unset
-`--temperature` still sends `1.0` on the anthropic and gemini routes, so
-"the API default" there is 1.0, not whatever the vendor would have chosen.
 
 ## Reference files
 

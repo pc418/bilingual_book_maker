@@ -1,17 +1,226 @@
 import argparse
 import json
 import os
+import sys
 from os import environ as env
 from pathlib import Path
+from urllib.parse import urlparse
 
 from rich import print
 from rich.markup import escape
 
 from book_maker.loader import BOOK_LOADER_DICT
+from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
-from book_maker.translator import MODEL_DICT
-from book_maker.provider_loader import get_provider, get_translator_class
+from book_maker.provider_loader import resolve_provider
+from book_maker.translator import FORMAT_DICT, LLM_FORMATS, ROUTE_DICT
+from book_maker.translator.base_translator import PriceTable
+from book_maker.translator.capabilities import ModelUnavailable
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
+
+# Where each format looks for a key when --key is absent. $BBM_API_KEY is the
+# one this project asks for; the rest are the variables people already have
+# exported for that vendor.
+FORMAT_ENV_KEYS = {
+    "openai": ("BBM_API_KEY", "OPENAI_API_KEY", "BBM_OPENAI_API_KEY"),
+    "anthropic": ("BBM_API_KEY", "ANTHROPIC_API_KEY", "BBM_CLAUDE_API_KEY"),
+    "caiyun": ("BBM_API_KEY", "BBM_CAIYUN_API_KEY"),
+    "deepl": ("BBM_API_KEY", "BBM_DEEPL_API_KEY"),
+}
+
+# Formats that will not work at all without a credential. The others are
+# public endpoints (google, deeplfree, tencent) or carry their own address
+# instead of a key (customapi).
+FORMATS_REQUIRING_KEY = ("openai", "anthropic", "caiyun", "deepl")
+
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal")
+
+# The loaders that actually forward context settings into the translator. The
+# others accept `context_flag` and drop it, so a session budget passed with
+# them would silently do nothing.
+CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
+
+# LLM formats that can resolve a model on their own, so --model is optional.
+MODEL_OPTIONAL_FORMATS = ("codex",)
+
+# The model a format falls back to when the command names none. Only the
+# openai format has an obvious one; the anthropic format asks for an id.
+DEFAULT_MODELS = {"openai": "gpt-5.6-luna"}
+
+# `--model codex` selects the format rather than a model id. The sidecar then
+# picks its own default, exactly as `--api_format codex` with no --model does.
+CODEX_MODEL_ALIASES = ("codex",)
+
+
+def infer_api_format(api_base, model=""):
+    """Which wire format the endpoint speaks, guessed from host then model.
+
+    The host is the stronger signal: a gateway serves Claude models over the
+    OpenAI shape too. Only without an endpoint does the model id decide, and
+    there `claude` or `anthropic` in it means Anthropic. `--api_format`
+    overrides both.
+    """
+    name = (model or "").strip().lower()
+    # `codex` is a sidecar, not an endpoint, so no --api_base can imply it.
+    if name in CODEX_MODEL_ALIASES:
+        return "codex"
+    if api_base:
+        host = (urlparse(api_base).hostname or "").lower()
+        official = host == "anthropic.com" or host.endswith(".anthropic.com")
+        return "anthropic" if official else "openai"
+    if "claude" in name or "anthropic" in name:
+        return "anthropic"
+    return "openai"
+
+
+# Endpoint paths people paste in along with the base. The SDKs build these
+# themselves, so a base carrying one produces /v1/chat/completions/chat/completions.
+_ENDPOINT_SUFFIXES = ("/chat/completions", "/messages", "/completions")
+
+
+def normalize_api_base(api_base, api_format):
+    """Trim a pasted request path off `--api_base`.
+
+    Copying the URL out of a provider's docs or a curl line is the common
+    way to get this flag, and those URLs end at the endpoint rather than the
+    base. Trailing slashes go too, so `.../v1/` and `.../v1` are one thing.
+
+    Only for the SDK-backed formats, which build the request path themselves.
+    `customapi` posts to this URL verbatim, so a path is the address, not
+    noise to strip.
+    """
+    if not api_base or api_format not in LLM_FORMATS:
+        return api_base
+    base = api_base.strip().rstrip("/")
+    for suffix in _ENDPOINT_SUFFIXES:
+        if base.lower().endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    return base
+
+
+def is_local_endpoint(api_base):
+    if not api_base:
+        return False
+    return (urlparse(api_base).hostname or "").lower() in LOCAL_HOSTS
+
+
+def resolve_api_key(api_format, explicit_key, api_base, extra_env_keys=()):
+    """The key to use, or a loud failure naming where one was looked for.
+
+    `extra_env_keys` carries the variables an old command line implies — a
+    translated `--model groq` still authenticates from BBM_GROQ_API_KEY.
+    They come first: they name the endpoint being called, so with both
+    OPENAI_API_KEY and BBM_GROQ_API_KEY exported, a groq command must not
+    hand the OpenAI key to Groq.
+    """
+    env_names = tuple(extra_env_keys) + FORMAT_ENV_KEYS.get(
+        api_format, ("BBM_API_KEY",)
+    )
+    key = explicit_key or next((env[n] for n in env_names if env.get(n)), "")
+    if key:
+        return key
+
+    # A server on this machine is not authenticating anyone, but the OpenAI
+    # SDK refuses to construct without some string.
+    if is_local_endpoint(api_base):
+        return "local"
+
+    if api_format in FORMATS_REQUIRING_KEY:
+        raise SystemExit(
+            f"No API key for the {api_format} endpoint. Pass --key, or set "
+            f"one of: {', '.join(env_names)}."
+        )
+    return ""
+
+
+def apply_provider(options):
+    """Fill in the endpoint flags `--provider` covers, and name its key variable.
+
+    Only what the command left out: a provider is a shorthand for flags, so
+    every flag actually typed outranks it. Returns the variables to consult
+    for the key, ahead of the format's conventional ones — the entry names
+    the endpoint being called, so its own variable is the right one.
+    """
+    if not options.provider:
+        return ()
+    try:
+        route = resolve_provider(options.provider)
+    except ValueError as err:
+        raise SystemExit(str(err))
+    options.api_format = options.api_format or route.api_format
+    options.api_base = options.api_base or route.api_base
+    # Prices are the entry's to know and the meter's to apply; they ride
+    # on the options until the translator exists.
+    options.price_table = (
+        PriceTable(route.prices, route.currency) if route.prices else None
+    )
+    if route.models and not options.model and not options.model_list:
+        # One model belongs in --model; several rotate, first one first.
+        if len(route.models) == 1:
+            options.model = route.models[0]
+        else:
+            options.model_list = ",".join(route.models)
+    return (route.env_key,) if route.env_key else ()
+
+
+def named_models(options):
+    """The models the command names, in the order it named them."""
+    return [
+        name.strip()
+        for name in (
+            options.model_list.split(",")
+            if options.model_list
+            else [options.model or ""]
+        )
+        if name.strip()
+    ]
+
+
+def resolve_endpoint(options):
+    """`(model names, api format, key variables)` for this command.
+
+    `options.api_base` is left holding the address the run will use.
+
+    Order matters: `--provider` is shorthand for flags the command left out,
+    so it is applied only after everything the command itself said — a route
+    the model name selected included.
+    """
+    # A model may be named once, in either flag. Accepting both would leave
+    # two answers to "which model is this run using".
+    if options.model and options.model_list:
+        raise SystemExit(
+            "Name the model once: --model for a single model, --model_list "
+            "only to rotate across several."
+        )
+    model_names = named_models(options)
+
+    # A model name that selects a route says where the request goes, so a
+    # provider entry must not capture it. `--model orcarouter` is upstream's
+    # OrcaRouter route: its class carries the gateway's address and its
+    # smart-routing model, and the key comes from BBM_ORCAROUTER_API_KEY.
+    if len(model_names) == 1 and model_names[0].lower() in ROUTE_DICT:
+        options.api_base = normalize_api_base(options.api_base, "openai")
+        return [model_names[0].lower()], "openai", ("BBM_ORCAROUTER_API_KEY",)
+    if model_names and model_names[0].lower() in CODEX_MODEL_ALIASES:
+        # settled from the route itself, so the provider's api_style
+        # cannot answer a question the model name already answered
+        options.api_format = options.api_format or infer_api_format(
+            options.api_base, model_names[0]
+        )
+
+    provider_env_keys = apply_provider(options)
+    if not model_names:
+        # the entry names the models when the command named none
+        model_names = named_models(options)
+
+    api_format = options.api_format or infer_api_format(
+        options.api_base, model_names[0] if model_names else ""
+    )
+    options.api_base = normalize_api_base(options.api_base, api_format)
+    if not model_names and api_format in DEFAULT_MODELS:
+        model_names = [DEFAULT_MODELS[api_format]]
+    return model_names, api_format, provider_env_keys
 
 
 def get_book_type(book_name):
@@ -115,8 +324,10 @@ def parse_prompt_arg(prompt_arg):
     if "user" not in prompt:
         raise ValueError("prompt must contain the key of `user`")
 
-    if (prompt.keys() - {"user", "system"}) != set():
-        raise ValueError("prompt can only contain the keys of `user` and `system`")
+    if (prompt.keys() - {"user", "system", "style"}) != set():
+        raise ValueError(
+            "prompt can only contain the keys of `user`, `system` and `style`"
+        )
 
     print("prompt config:", prompt)
     return prompt
@@ -131,8 +342,9 @@ def compact_budget(value):
     """argparse type for --context-compact-at: a usable budget, or 0 for auto.
 
     `0` means "size it from the model": the translator asks the endpoint for
-    the model's context window and compacts at 90% of it, falling back to the
-    default when nothing is reported.
+    the model's context window and compacts at 90% of it. What a miss means
+    is the route's call: the openai route ends the run, the anthropic and
+    codex routes say so and use the default.
     """
     try:
         budget = int(value)
@@ -159,15 +371,51 @@ def resolve_context_mode(options):
     return (mode is not None), mode
 
 
-# The loaders that actually forward context settings into the translator. The
-# others accept `context_flag` and drop it, so a session budget passed with
-# them would silently do nothing.
-CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
+# The plan is built from LLM verdicts on a pinned JSON Schema, so it is only
+# worth entering automatically where the schema is known to be applied. That
+# is established by the capability probe, which speaks the OpenAI wire format
+# and grades one endpoint; every other route (anthropic, google, deepl, codex,
+# ...) has no such verdict to offer and stays in tag mode.
+PLAN_AUTO_FORMAT = "openai"
 
 
-def main():
-    translate_model_list = list(MODEL_DICT.keys())
-    parser = argparse.ArgumentParser()
+def resolve_plan_mode(book_type, api_format, translate_tags_given, probe):
+    """What `--plan-classify auto` means for this run: `(mode, reason)`.
+
+    `mode` is "model" (plan the book) or "none" (translate the
+    `--translate-tags` selection); `reason` is the one line the run prints
+    about it. `probe` is called — at most once, and only when its answer can
+    still change the outcome — for the endpoint's graded schema support; None
+    means this translator has no probe.
+    """
+    if book_type != "epub":
+        return "none", f"plan mode needs an epub; this is a {book_type} book"
+    if translate_tags_given:
+        return "none", "--translate-tags names what to translate"
+    if api_format != PLAN_AUTO_FORMAT:
+        return "none", f"the {api_format} route has no JSON-schema verdict"
+    if probe is None:
+        return "none", "this endpoint offers no JSON-schema verdict"
+    try:
+        verdict = probe()
+    except ModelUnavailable:
+        raise  # no model to fall back to; the message names it
+    except Exception as e:
+        # tag mode still works; the endpoint's trouble surfaces at the first
+        # translation request
+        return "none", f"the JSON-schema probe failed: {e}"
+    if verdict != "strict":
+        return "none", (
+            f"the endpoint does not verify a strict JSON schema "
+            f"({verdict or 'no schema support'})"
+        )
+    return "model", "endpoint verified strict JSON schema"
+
+
+def build_parser():
+    translate_format_list = list(FORMAT_DICT.keys())
+    # No prefix abbreviation: `--model` must not resolve to `--model_list`.
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument(
         "--book_name",
         dest="book_name",
@@ -188,81 +436,18 @@ def main():
         type=str,
         help="Path of e-reader device",
     )
-    ########## KEYS ##########
+    ########## ENDPOINT ##########
     parser.add_argument(
-        "--openai_key",
-        dest="openai_key",
+        "--key",
+        "--api_key",
+        dest="key",
         type=str,
         default="",
-        help="OpenAI api key,if you have more than one key, please use comma"
-        " to split them to go beyond the rate limits",
+        help="API key for the endpoint (--api_key is the same flag). Several "
+        "comma-separated keys are rotated to go beyond per-key rate limits. "
+        "Falls back to $BBM_API_KEY, then to the format's conventional "
+        "variable ($OPENAI_API_KEY, $ANTHROPIC_API_KEY)",
     )
-    parser.add_argument(
-        "--caiyun_key",
-        dest="caiyun_key",
-        type=str,
-        help="you can apply caiyun key from here (https://dashboard.caiyunapp.com/user/sign_in/)",
-    )
-    parser.add_argument(
-        "--deepl_key",
-        dest="deepl_key",
-        type=str,
-        help="you can apply deepl key from here (https://rapidapi.com/splintPRO/api/dpl-translator",
-    )
-    parser.add_argument(
-        "--claude_key",
-        dest="claude_key",
-        type=str,
-        help="you can find claude key from here (https://console.anthropic.com/account/keys)",
-    )
-
-    parser.add_argument(
-        "--custom_api",
-        dest="custom_api",
-        type=str,
-        help="you should build your own translation api",
-    )
-
-    # for Google Gemini
-    parser.add_argument(
-        "--gemini_key",
-        dest="gemini_key",
-        type=str,
-        help="You can get Gemini Key from  https://makersuite.google.com/app/apikey",
-    )
-
-    # for Groq
-    parser.add_argument(
-        "--groq_key",
-        dest="groq_key",
-        type=str,
-        help="You can get Groq Key from  https://console.groq.com/keys",
-    )
-
-    # for xAI
-    parser.add_argument(
-        "--xai_key",
-        dest="xai_key",
-        type=str,
-        help="You can get xAI Key from  https://console.x.ai/",
-    )
-
-    # for OrcaRouter
-    parser.add_argument(
-        "--orcarouter_key",
-        dest="orcarouter_key",
-        type=str,
-        help="You can get OrcaRouter Key from  https://www.orcarouter.ai",
-    )
-
-    # for Qwen
-    parser.add_argument(
-        "--qwen_key",
-        dest="qwen_key",
-        type=str,
-        help="You can get Qwen Key from  https://bailian.console.aliyun.com/?tab=model#/api-key",
-    )
-
     parser.add_argument(
         "--test",
         dest="test",
@@ -282,17 +467,25 @@ def main():
         dest="model",
         type=str,
         default=None,
-        choices=translate_model_list,  # support DeepL later
         metavar="MODEL",
-        help="model to use, available: {%(choices)s}",
+        help="model id, exactly as the endpoint names it (e.g. gpt-5-mini, "
+        "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Two values "
+        "name a route instead of a model: 'codex' translates on a ChatGPT "
+        "subscription through the Codex CLI, and 'orcarouter' sends the run "
+        "to the OrcaRouter gateway. Old alias values are translated to their "
+        "model with a note. Defaults to gpt-5.6-luna on the openai format; "
+        "the anthropic format needs an id",
     )
     parser.add_argument(
-        "--ollama_model",
-        dest="ollama_model",
+        "--api_format",
+        dest="api_format",
         type=str,
-        default="",
-        metavar="MODEL",
-        help="use ollama",
+        default=None,
+        choices=translate_format_list,
+        metavar="FORMAT",
+        help="wire format the endpoint speaks, available: {%(choices)s}. "
+        "Inferred from --api_base when omitted (anthropic hosts -> anthropic, "
+        "everything else -> openai)",
     )
     parser.add_argument(
         "--language",
@@ -317,19 +510,25 @@ def main():
         default="",
         help="use proxy like http://127.0.0.1:7890",
     )
-    parser.add_argument(
-        "--deployment_id",
-        dest="deployment_id",
-        type=str,
-        help="the deployment name you chose when you deployed the model",
-    )
-    # args to change api_base
+    # The endpoint. Everything else about the route is inferred from it.
     parser.add_argument(
         "--api_base",
         metavar="API_BASE_URL",
         dest="api_base",
         type=str,
-        help="specify base url other than the OpenAI's official API address",
+        help="endpoint to translate against, e.g. https://api.openai.com/v1, "
+        "https://api.anthropic.com, a gateway, or http://localhost:11434/v1 "
+        "for ollama. Defaults to the format's official host",
+    )
+    parser.add_argument(
+        "--provider",
+        dest="provider",
+        type=str,
+        default="",
+        help="named endpoint from bbm_providers.json (this directory) or "
+        "~/.bbm/providers.json: its base_url, api_style, default_models and "
+        "env_key stand in for --api_base, --api_format, --model and the key. "
+        "Anything you pass explicitly wins",
     )
     parser.add_argument(
         "--exclude_filelist",
@@ -349,7 +548,9 @@ def main():
         "--translate-tags",
         dest="translate_tags",
         type=str,
-        default="p",
+        # None, not "p": a typed selection opts out of the automatic plan,
+        # even `--translate-tags p`. Normalized to "p" after parsing.
+        default=None,
         help="which tags to translate, example --translate-tags p,blockquote "
         "(default: p). Ignored in plan mode — see --plan-classify",
     )
@@ -381,14 +582,18 @@ def main():
     parser.add_argument(
         "--plan-classify",
         dest="plan_classify",
-        # "most" was this mode's name and still parses; it is left out of
-        # the metavar so --help documents one name, not two.
-        choices=["none", "all", "most", "model", "agent"],
-        metavar="{none,all,model,agent}",
-        default="none",
+        # "most" is the old name of "all", still parsed and mapped in main()
+        # with a notice; the metavar keeps it out of --help.
+        choices=["auto", "none", "all", "model", "agent", "most"],
+        metavar="{auto,none,all,model,agent}",
+        default="auto",
         help="coverage-complete plan mode (epub only): partition the whole "
         "book, then decide which tag signatures are worth translating. "
-        "'none' (default): no plan — translate the --translate-tags "
+        "'auto' (default): plan the book as 'model' when it is an epub and "
+        "the endpoint is verified to apply a strict JSON schema, otherwise "
+        "translate the --translate-tags selection; a plan that cannot be "
+        "completed falls back to that selection too. "
+        "'none': no plan — translate the --translate-tags "
         "selection as usual. "
         "'all': translate the whole partition, no classification, no plan "
         "file. "
@@ -426,7 +631,13 @@ def main():
         dest="prompt_arg",
         type=str,
         metavar="PROMPT_ARG",
-        help="used for customizing the prompt. It can be the prompt template string, or a path to the template file. The valid placeholders are `{text}` and `{language}`.",
+        help="customize the prompt: a template string, a JSON string, or a "
+        "path to a .json, .txt or .md file (.md is read as PromptDown). The "
+        "JSON keys are `user` (the template, required, and it must contain "
+        "`{text}`; `{language}` is substituted too), `system`, and `style` "
+        "(a note on register and voice, handed on verbatim to every window "
+        "in session mode). A bare string or a .txt file is the `user` "
+        "template.",
     )
     parser.add_argument(
         "--accumulated_num",
@@ -511,7 +722,9 @@ So you are close to reaching the limit. You have to choose your own value, there
         "8000, which costs about what window mode costs for several times "
         "the context; 2500 is the cheapest setting on most endpoints. 0 "
         "sizes the budget from the model's own context window (90%% of it), "
-        "and says so and uses the default when the endpoint reports none",
+        "on the routes that have a model to ask about. What a miss costs "
+        "differs: the openai route stops rather than guess, the anthropic "
+        "and codex routes say so and use the default",
     )
     parser.add_argument(
         "--no-context-compact",
@@ -526,19 +739,23 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="context_paragraph_limit",
         type=int,
         default=0,
-        help="if use --use_context, set context paragraph limit",
+        help="window mode only: how many paragraph pairs to re-send",
     )
     parser.add_argument(
         "--temperature",
         type=float,
         default=1.0,
-        help="temperature parameter for `chatgptapi`/`gpt4`/`gpt4omini`/`gpt4o`/`gpt5mini`/`claude`/`gemini`",
+        help="sampling temperature, on the formats that take one. The "
+        "anthropic format always sends it; the openai format leaves it out "
+        "when it equals the API default and when the model rejects an "
+        "explicit one (gpt-5.x, the o-series); the codex format has no "
+        "such setting and ignores it",
     )
     parser.add_argument(
         "--source_lang",
         type=str,
         default="auto",
-        help="source language for translation models like `qwen` (default: auto-detect)",
+        help="source language, for endpoints that want it stated (default: auto-detect)",
     )
     parser.add_argument(
         "--block_size",
@@ -550,7 +767,9 @@ So you are close to reaching the limit. You have to choose your own value, there
         "--model_list",
         type=str,
         dest="model_list",
-        help="Rather than using preset model lists, specify exact model IDs as a comma-separated list. Supported with --model openai, groq, or gemini, and with --provider",
+        help="several model IDs to rotate across, comma-separated, to spread "
+        "rate limits. Kept for compatibility with older commands; a single "
+        "model belongs in --model",
     )
     parser.add_argument(
         "--batch",
@@ -565,17 +784,16 @@ So you are close to reaching the limit. You have to choose your own value, there
         help="Use pre-generated batch translations to create files. Run with --batch first before using this option",
     )
     parser.add_argument(
-        "--interval",
-        type=float,
-        default=0.01,
-        help="Request interval in seconds (e.g., 0.1 for 100ms). Currently only supported for Gemini models. Default: 0.01",
-    )
-    parser.add_argument(
         "--parallel-workers",
         dest="parallel_workers",
         type=int,
         default=1,
-        help="Number of parallel workers for EPUB chapters or Markdown batches/sections. Use 2-4 for better performance. Default: 1",
+        help="translate several EPUB chapters (or Markdown batches and "
+        "sections) at once; 2-4 is the useful range. Default: 1. Refused "
+        "with --use_context session, whose one history cannot be shared, "
+        "and on the codex format, whose one thread cannot. Note that a "
+        "parallel run cannot be stopped promptly: every chapter is "
+        "dispatched before the first one finishes",
     )
     parser.add_argument(
         "--extra_body",
@@ -592,100 +810,30 @@ So you are close to reaching the limit. You have to choose your own value, there
         "(for log files and non-interactive runs; reports and errors still "
         "print). Currently epub only.",
     )
-    parser.add_argument(
-        "--provider",
-        dest="provider",
-        type=str,
-        help="Use a custom provider defined in bbm_providers.json (mutually exclusive with --model)",
-    )
-    parser.add_argument(
-        "--api_key",
-        dest="api_key",
-        type=str,
-        default="",
-        help="API key for custom providers (used with --provider)",
-    )
+    return parser
 
-    options = parser.parse_args()
+
+def parse_args(argv):
+    return build_parser().parse_args(argv)
+
+
+def main():
+    # Old command lines are rewritten into the endpoint surface before the
+    # parser sees them; see book_maker/legacy_cli.py.
+    legacy = translate_legacy_argv(sys.argv[1:])
+    for notice in legacy.notices:
+        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
+
+    options = parse_args(legacy.argv)
     options.context_flag, options.context_mode = resolve_context_mode(options)
-
-    # The mode was called "most" until it was renamed for being read as
-    # "most of the book". Scripts that say it keep working.
+    # A named tag selection is an opt-out from the automatic plan; the
+    # parser's None is the only way to tell one from the "p" default.
+    translate_tags_given = options.translate_tags is not None
+    if not translate_tags_given:
+        options.translate_tags = "p"
     if options.plan_classify == "most":
-        print("note: --plan-classify most is now --plan-classify all")
+        print("[yellow]--plan-classify most is now --plan-classify all[/yellow]")
         options.plan_classify = "all"
-
-    if options.provider and options.model:
-        parser.error("--provider and --model are mutually exclusive")
-
-    # Two pairings of --parallel-workers have never been shown to work, and a
-    # paid book-length run is the wrong place to discover that. Refused here,
-    # before a key is read or a sidecar is started.
-    if options.parallel_workers > 1:
-        if options.model == "codex":
-            print(
-                "[bold red]Error:[/bold red] --parallel-workers is not "
-                "supported with --model codex. Codex serializes every turn "
-                "onto one thread, so there is no speed-up to win, and the run "
-                "fails partway through instead of translating. Drop "
-                "--parallel-workers."
-            )
-            exit(1)
-        if options.context_mode == "session":
-            print(
-                "[bold red]Error:[/bold red] --parallel-workers is not "
-                "supported with --use_context session. Each worker would "
-                "carry a session history of its own, and what that does to a "
-                "translation has never been tested. Drop --parallel-workers, "
-                "or drop --use_context session for this run."
-            )
-            exit(1)
-
-    # --model_list travels to the translator only on the routes that read
-    # it; every other --model runs its own preset discovery and would drop
-    # the user's explicit choice. Both halves are decided by the command
-    # line alone, so they are refused here — before a key is read, a book is
-    # parsed, or a codex sidecar is started.
-    route = options.model or (None if options.provider else "chatgptapi")
-    if route in ("openai", "groq") and not options.model_list:
-        print(
-            f"[bold red]Error: --model {route} carries no model list of its "
-            f"own; name the model ids with --model_list. For a preset set "
-            f"use --model chatgptapi, gpt4, gpt4omini or gpt5mini.[/bold red]"
-        )
-        exit(1)
-    if (
-        options.model_list
-        and not options.provider
-        and route not in ("openai", "groq", "gemini")
-    ):
-        print(
-            f"[bold red]Error: --model_list is only honored by --model openai, "
-            f"groq or gemini (or a --provider); --model {route} uses "
-            f"its own preset models and would silently ignore it.[/bold red]"
-        )
-        exit(1)
-
-    # Batch translation is OpenAI's Batch API. The codex route has no such
-    # thing, and reached it anyway: `AttributeError: batch_init` partway
-    # into a run that had already spent plan quota.
-    if route == "codex" and (options.batch_flag or options.batch_use_flag):
-        print(
-            "[bold red]Error: --batch / --batch-use are the OpenAI Batch "
-            "API, which the codex route does not have. Drop the flag, or "
-            "translate through an OpenAI-shaped route.[/bold red]"
-        )
-        exit(1)
-
-    # A codex run's context is the thread, and a thread does not survive
-    # the process. The handoff report on disk is written, never read back.
-    if route == "codex" and options.resume:
-        print(
-            "[bold yellow]Note:[/bold yellow] a resumed codex run starts a "
-            "new thread. Nothing already translated is paid for again, but "
-            "the earlier thread's terminology and register are not carried "
-            "into it."
-        )
 
     # Kobo mode supplies the source book itself. Resolve it before validating
     # --book_name so users do not need a meaningless placeholder file.
@@ -767,16 +915,24 @@ So you are close to reaching the limit. You have to choose your own value, there
         os.environ["http_proxy"] = PROXY
         os.environ["https_proxy"] = PROXY
 
-    provider_cfg = None
-    if options.provider:
-        provider_cfg = get_provider(options.provider)
-        translate_model = get_translator_class(provider_cfg["api_style"])
-    elif options.model:
-        translate_model = MODEL_DICT.get(options.model)
-    else:
-        translate_model = MODEL_DICT.get("chatgptapi")
-        options.model = "chatgptapi"
-    assert translate_model is not None, "unsupported model"
+    model_names, api_format, endpoint_env_keys = resolve_endpoint(options)
+    route = ROUTE_DICT.get(model_names[0]) if len(model_names) == 1 else None
+    translate_model = route or FORMAT_DICT.get(api_format)
+    assert translate_model is not None, f"unsupported api format: {api_format}"
+
+    # Refusals the endpoint alone decides, before a key is read, a book is
+    # parsed or the codex sidecar is started.
+
+    # Batch translation is OpenAI's Batch API. The codex format has no such
+    # thing, and reached it anyway: `AttributeError: batch_init` partway into
+    # a run that had already spent plan quota.
+    if api_format == "codex" and (options.batch_flag or options.batch_use_flag):
+        print(
+            "[bold red]Error: --batch / --batch-use are the OpenAI Batch "
+            "API, which the codex format does not have. Drop the flag, or "
+            "translate through an OpenAI-shaped endpoint.[/bold red]"
+        )
+        exit(1)
 
     # A format that does not implement session mode used to accept the flag
     # and translate as though it had never been passed — the run cost more
@@ -786,17 +942,50 @@ So you are close to reaching the limit. You have to choose your own value, there
     ):
         print(
             f"[bold red]Error: --use_context session is not implemented for "
-            f"the {options.provider or options.model} route; it would be "
-            f"accepted and ignored. Use bare --use_context for a re-sent "
-            f"window of paragraph pairs.[/bold red]"
+            f"the {api_format} format; it would be accepted and ignored. Use "
+            f"bare --use_context for a re-sent window of paragraph "
+            f"pairs.[/bold red]"
+        )
+        exit(1)
+
+    # Only a route with a model to ask about can size the budget from its
+    # window; `0` on the others meant no budget at all, a compact per paragraph.
+    if options.context_compact_at == 0 and not getattr(
+        translate_model, "SUPPORTS_AUTO_COMPACT_BUDGET", False
+    ):
+        print(
+            f"[bold red]Error: --context-compact-at 0 sizes the budget from "
+            f"the model's own context window, and only a route with a model "
+            f"to ask about can answer that. The {api_format} format needs a "
+            f"number instead.[/bold red]"
+        )
+        exit(1)
+
+    # One codex thread is the route's whole context; workers would interleave
+    # chapters into it.
+    if options.parallel_workers > 1 and api_format == "codex":
+        print(
+            "[bold red]Error: --parallel-workers is not supported on the codex "
+            "format: one thread is the context, and workers would interleave "
+            "chapters into it. Drop --parallel-workers.[/bold red]"
+        )
+        exit(1)
+
+    # Session mode is one growing history. Workers cannot share it, and one
+    # each is window mode at session prices.
+    if options.parallel_workers > 1 and options.context_mode == "session":
+        print(
+            "[bold red]Error: --parallel-workers is not supported with "
+            "--use_context session: one history is the context, and a worker "
+            "cannot share it. Use bare --use_context to keep the workers, or "
+            "drop --parallel-workers to keep the session.[/bold red]"
         )
         exit(1)
 
     # Parallel workers each get a clone carrying their own chapter context.
-    # A route that keeps no re-sendable window has nothing to clone, and the
+    # A format that keeps no re-sendable window has nothing to clone, and the
     # run died reading a context attribute it never set — after the chapters
-    # were already dispatched. (Codex and session mode are refused earlier,
-    # on the command line alone.)
+    # were already dispatched.
     if (
         options.parallel_workers > 1
         and options.context_mode is not None
@@ -804,96 +993,41 @@ So you are close to reaching the limit. You have to choose your own value, there
     ):
         print(
             f"[bold red]Error: --parallel-workers is not supported with "
-            f"--use_context on the {options.provider or options.model} "
-            f"route, which keeps no per-chapter context for a worker to "
-            f"carry. Drop --parallel-workers, or drop --use_context for "
-            f"this run.[/bold red]"
+            f"--use_context on the {api_format} format, which keeps no "
+            f"per-chapter context for a worker to carry. Drop "
+            f"--parallel-workers, or drop --use_context for this "
+            f"run.[/bold red]"
         )
         exit(1)
 
-    # Sizing the budget from the model's own window is part of the session
-    # machinery: a route with no history to size has nothing to answer with,
-    # and 0 there meant "no budget at all", silently.
-    if options.context_compact_at == 0 and not getattr(
-        translate_model, "SUPPORTS_SESSION_CONTEXT", False
-    ):
+    # A codex run's context is the thread, and a thread does not survive the
+    # process. The handoff report on disk is written, never read back.
+    if api_format == "codex" and options.resume:
         print(
-            f"[bold red]Error: --context-compact-at 0 sizes the budget from "
-            f"the model's own context window, which only the routes that "
-            f"keep a session history can ask for (openai, claude, codex). "
-            f"The {options.provider or options.model} route needs a number."
-            f"[/bold red]"
+            "[bold yellow]Note:[/bold yellow] a resumed codex run starts a "
+            "new thread. Nothing already translated is paid for again, but "
+            "the earlier thread's terminology and register are not carried "
+            "into it."
         )
-        exit(1)
-    API_KEY = ""
-    if options.model in [
-        "openai",
-        "chatgptapi",
-        "gpt4",
-        "gpt4omini",
-        "gpt4o",
-        "gpt5mini",
-        "o1preview",
-        "o1",
-        "o1mini",
-        "o3mini",
-    ]:
-        if OPENAI_API_KEY := (
-            options.openai_key
-            or env.get(
-                "OPENAI_API_KEY",
-            )  # XXX: for backward compatibility, deprecate soon
-            or env.get(
-                "BBM_OPENAI_API_KEY",
-            )  # suggest adding `BBM_` prefix for all the bilingual_book_maker ENVs.
+    API_KEY = resolve_api_key(
+        api_format,
+        options.key,
+        options.api_base,
+        endpoint_env_keys + legacy.env_keys,
+    )
+
+    # Compaction flags act on a session history, or on the codex thread,
+    # which is always one. Anywhere else they do nothing, and say so.
+    if options.context_mode != "session" and api_format != "codex":
+        for flag, value in (
+            ("--context-compact-at", options.context_compact_at),
+            ("--no-context-compact", options.no_context_compact),
         ):
-            API_KEY = OPENAI_API_KEY
-            # patch
-        elif options.ollama_model:
-            # any string is ok, can't be empty
-            API_KEY = "ollama"
-        else:
-            raise Exception(
-                "OpenAI API key not provided, please google how to obtain it",
-            )
-    elif options.model == "caiyun":
-        API_KEY = options.caiyun_key or env.get("BBM_CAIYUN_API_KEY")
-        if not API_KEY:
-            raise Exception("Please provide caiyun key")
-    elif options.model == "deepl":
-        API_KEY = options.deepl_key or env.get("BBM_DEEPL_API_KEY")
-        if not API_KEY:
-            raise Exception("Please provide deepl key")
-    elif options.model and options.model.startswith("claude"):
-        API_KEY = options.claude_key or env.get("BBM_CLAUDE_API_KEY")
-        if not API_KEY:
-            raise Exception("Please provide claude key")
-    elif options.model == "customapi":
-        API_KEY = options.custom_api or env.get("BBM_CUSTOM_API")
-        if not API_KEY:
-            raise Exception("Please provide custom translate api")
-    elif options.model in ["gemini", "geminipro"]:
-        API_KEY = options.gemini_key or env.get("BBM_GOOGLE_GEMINI_KEY")
-    elif options.model == "groq":
-        API_KEY = options.groq_key or env.get("BBM_GROQ_API_KEY")
-    elif options.model == "xai":
-        API_KEY = options.xai_key or env.get("BBM_XAI_API_KEY")
-    elif options.model == "orcarouter":
-        API_KEY = options.orcarouter_key or env.get("BBM_ORCAROUTER_API_KEY")
-        if not API_KEY:
-            raise Exception("Please provide orcarouter key")
-    elif options.model and options.model.startswith("qwen"):
-        # "qwen" itself is a MODEL_DICT choice; matching only "qwen-" left it
-        # with an empty key, so the documented alias could never authenticate.
-        API_KEY = options.qwen_key or env.get("BBM_QWEN_API_KEY")
-    elif options.provider:
-        env_key_name = provider_cfg.get("env_key", "") if provider_cfg else ""
-        API_KEY = options.api_key or (env.get(env_key_name) if env_key_name else "")
-        if not API_KEY:
-            hint = f" or set {env_key_name}" if env_key_name else ""
-            raise Exception(f"Please provide API key via --api_key{hint}")
-    else:
-        API_KEY = ""
+            if value:
+                print(
+                    f"[bold yellow]Warning:[/bold yellow] {flag} only applies "
+                    f"to --use_context session; ignoring it."
+                )
 
     book_type = get_book_type(options.book_name)
     support_type_list = list(BOOK_LOADER_DICT.keys())
@@ -909,15 +1043,8 @@ So you are close to reaching the limit. You have to choose your own value, there
         # use the value for prompt
         language = LANGUAGES.get(language, language)
 
-    # change api_base for issue #42
+    # None lets each SDK use its own official host.
     model_api_base = options.api_base
-
-    if options.ollama_model and not model_api_base:
-        # ollama default api_base
-        model_api_base = "http://localhost:11434/v1"
-
-    if options.provider and provider_cfg and not model_api_base:
-        model_api_base = provider_cfg.get("base_url")
 
     loader_kwargs = {}
     if book_type in CONTEXT_AWARE_BOOK_TYPES:
@@ -954,33 +1081,18 @@ So you are close to reaching the limit. You have to choose your own value, there
         parallel_workers=options.parallel_workers,
         **loader_kwargs,
     )
+    price_table = getattr(options, "price_table", None)
+    if price_table is not None and hasattr(e.translate_model, "usage"):
+        # the bar shows what was spent instead of token counts
+        e.translate_model.usage.prices = price_table
     # Parse and set extra_body only on request paths that consume it. Setting
     # an arbitrary attribute on the other translators used to print success
     # and then silently drop the fields.
     if options.extra_body:
-        openai_models = {
-            "openai",
-            "chatgptapi",
-            "gpt4",
-            "gpt4omini",
-            "gpt4o",
-            "gpt5mini",
-            "o1preview",
-            "o1",
-            "o1mini",
-            "o3mini",
-            "xai",
-            "orcarouter",
-        }
-        supports_extra_body = options.model in openai_models or (
-            options.provider
-            and provider_cfg
-            and provider_cfg.get("api_style") == "openai"
-        )
-        if not supports_extra_body:
+        if api_format != "openai":
             print(
                 f"[bold yellow]Warning:[/bold yellow] --extra_body is ignored "
-                f"by the selected {options.model or options.provider} route"
+                f"by the {api_format} route"
             )
         else:
             try:
@@ -999,7 +1111,13 @@ So you are close to reaching the limit. You have to choose your own value, there
     # model mode; asking for it alongside a no-classification mode is a
     # contradiction, not a preference to resolve silently.
     classify_mode = options.plan_classify
+    # 'auto' is settled last, by the endpoint's probe; tag mode until then
+    plan_auto = classify_mode == "auto"
+    if plan_auto:
+        classify_mode = "none"
     if options.plan_classify_model:
+        # naming a classifier is naming the mode it belongs to
+        plan_auto = False
         if classify_mode in ("all", "agent"):
             reason = (
                 "agent mode makes no API call"
@@ -1090,57 +1208,36 @@ So you are close to reaching the limit. You have to choose your own value, there
     # Note: Default block_size is now 1 (delimiter-based translation) for better quality
     if options.retranslate:
         e.retranslate = options.retranslate
-    if options.deployment_id:
-        # only work for ChatGPT api for now
-        # later maybe support others
-        assert options.model in [
-            "chatgptapi",
-            "gpt4",
-            "gpt4omini",
-            "gpt4o",
-            "gpt5mini",
-            "o1",
-            "o1preview",
-            "o1mini",
-            "o3mini",
-        ], "only support chatgptapi for deployment_id"
-        if not options.api_base:
-            raise ValueError("`api_base` must be provided when using `deployment_id`")
-        e.translate_model.set_deployment_id(options.deployment_id)
-    # The refusals live at the top of main(); what is left here is the part
-    # that has to talk to the endpoint.
-    if options.model in ("openai", "groq"):
-        try:
-            e.translate_model.set_model_list(options.model_list.split(","))
-        except Exception as ex:
-            print(f"[red]Error: {ex}[/red]")
-            exit(1)
-    # TODO refactor, quick fix for gpt4 model
-    if options.model == "chatgptapi":
-        if options.ollama_model:
-            e.translate_model.set_gpt35_models(ollama_model=options.ollama_model)
-        else:
-            e.translate_model.set_gpt35_models()
-    if options.model == "gpt4":
-        e.translate_model.set_gpt4_models()
-    if options.model == "gpt4omini":
-        e.translate_model.set_gpt4omini_models()
-    if options.model == "gpt4o":
-        e.translate_model.set_gpt4o_models()
-    if options.model == "gpt5mini":
-        e.translate_model.set_gpt5mini_models()
-    if options.model == "o1preview":
-        e.translate_model.set_o1preview_models()
-    if options.model == "o1":
-        e.translate_model.set_o1_models()
-    if options.model == "o1mini":
-        e.translate_model.set_o1mini_models()
-    if options.model == "o3mini":
-        e.translate_model.set_o3mini_models()
-    if options.model and options.model.startswith("claude-"):
-        e.translate_model.set_claude_model(options.model)
-    if options.model and options.model.startswith("qwen-"):
-        e.translate_model.set_qwen_model(options.model)
+    if api_format in LLM_FORMATS:
+        if not model_names and api_format not in MODEL_OPTIONAL_FORMATS:
+            raise SystemExit(
+                f"--model is required for the {api_format} format. Pass the "
+                f"model id the endpoint uses, e.g. --model claude-sonnet-4-6"
+            )
+        if route is None:  # a route's class names its own model
+            try:
+                e.translate_model.set_model_list(model_names)
+            except Exception as ex:
+                print(f"[red]Error: {ex}[/red]")
+                exit(1)
+        # Settled before the first paid request: the codex sidecar is up and
+        # signed in, an auto budget has its number.
+        if hasattr(e.translate_model, "preflight"):
+            try:
+                e.translate_model.preflight()
+            except Exception as err:
+                if not getattr(err, "user_facing", False):
+                    raise
+                print(f"[bold red]{escape(str(err))}[/bold red]")
+                exit(1)
+    elif model_names:
+        # These formats translate through a fixed engine and take no model, so
+        # honoring the flag is impossible; saying so beats ignoring it.
+        print(
+            f"[bold red]Error: the {api_format} format has no model to "
+            f"choose, so --model is not supported by it.[/bold red]"
+        )
+        exit(1)
     if options.block_size > 0:
         e.block_size = options.block_size
     if options.batch_flag:
@@ -1148,41 +1245,31 @@ So you are close to reaching the limit. You have to choose your own value, there
     if options.batch_use_flag:
         e.batch_use_flag = options.batch_use_flag
 
-    if options.model in ("gemini", "geminipro"):
-        e.translate_model.set_interval(options.interval)
-    if options.model == "gemini":
-        if options.model_list:
-            e.translate_model.set_model_list(options.model_list.split(","))
-        else:
-            e.translate_model.set_geminiflash_models()
-    if options.model == "geminipro":
-        e.translate_model.set_geminipro_models()
-
-    if options.provider and provider_cfg:
-        if options.model_list:
-            e.translate_model.set_model_list(options.model_list.split(","))
-        else:
-            default_models = provider_cfg.get("default_models", [])
-            if default_models:
-                e.translate_model.set_model_list(default_models)
-            else:
-                raise ValueError(
-                    "Provider has no default_models. Please provide --model_list"
-                )
-
-    # Everything that must be settled before the first paid request, now
-    # that the model list is known: the codex sidecar is up and signed in,
-    # and an auto-sized compact budget has a number from the endpoint for
-    # every model in play. A login prompt — or a window nobody can report —
-    # after ten minutes of translating is the wrong time to find out.
-    if hasattr(e.translate_model, "preflight"):
+    if plan_auto:
+        # the verdict is cached, so the first translation does not pay again
         try:
-            e.translate_model.preflight()
+            mode, reason = resolve_plan_mode(
+                book_type,
+                api_format,
+                translate_tags_given,
+                getattr(e.translate_model, "_probe_verdict", None),
+            )
         except Exception as err:
+            # a model the endpoint will not serve is refused here; the
+            # message is the whole explanation
             if not getattr(err, "user_facing", False):
                 raise
             print(f"[bold red]{escape(str(err))}[/bold red]")
             exit(1)
+        if mode == "model":
+            print(f"plan mode: on ({reason})")
+            e.plan_mode = True
+            e.plan_auto = True
+            e.plan_fallback_tags = options.translate_tags
+            e.translate_tags = "auto"
+            e.plan_classify = "model"
+        else:
+            print(f"plan mode: off ({reason})")
 
     try:
         e.make_bilingual_book()

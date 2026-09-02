@@ -15,9 +15,10 @@ half-applying an earlier run's skips. Those two policies live in
 a condition repeated wherever the loader happens to branch.
 """
 
-# The name a decider goes on the row under. The mode, not "user": a person
-# asked for the mode, but nobody ruled on this signature, and a row reading
-# "user" is indistinguishable from one somebody edited by hand.
+# The name a decider goes on the row under. Its own name, not "user": the
+# person chose the *rule* (translate everything), not this signature — and a
+# row claiming a user ruled on it reads as a judgment somebody made about
+# these samples, which is exactly what this mode did not do.
 DECIDED_BY = "all"
 
 # ...and the honest name for what they decided about. Nobody looked at this

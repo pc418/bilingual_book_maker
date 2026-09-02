@@ -156,3 +156,6 @@ tools/epubcheck-*/
 # where runs put what they produce: the corpus gate writes its partition
 # audit here, and translated books land next to it
 output/
+
+# your own provider entries, copied from bbm_providers.example.json
+bbm_providers.json
