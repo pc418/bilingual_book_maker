@@ -27,25 +27,57 @@ endpoint serves. `--api_format` selects the fixed engines (`google`, `caiyun`, `
 
 ## Quick Start
 
-A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
+A sample book, `test_books/animal_farm.epub`, is provided for testing purposes,
+and `--test` translates only its first few paragraphs.
 
 ```shell
-pip install -r requirements.txt
-python3 make_book.py --book_name test_books/animal_farm.epub --openai_key ${openai_key} --test
-OR
-pip install -U bbook_maker
-bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} --test
+pip install -r requirements.txt      # or: pip install -U bbook_maker
+```
+
+**The provider file is the shortest path.** Copy the shipped example, fill in
+your endpoint, export the key once, and every command after that names the
+provider:
+
+```shell
+cp bbm_providers.example.json bbm_providers.json
+# edit base_url, default_models and env_key for your endpoint
+export OPENAI_API_KEY=sk-...
+python3 make_book.py --book_name test_books/animal_farm.epub --provider openai --test
+```
+
+Bare flags are the alternative, and they are the whole configuration when you
+have a base URL, a key and a model name:
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub \
+  --key sk-... --model gpt-5.6-luna --test
+```
+
+**On a ChatGPT plan instead of API credits**: install the
+[Codex CLI](https://developers.openai.com/codex/cli), run `codex login` once,
+and translate with no key and no base URL — `--model codex` spends your plan
+allowance through a local sidecar. `--use_context` has nothing to do there,
+since one thread is the whole context, and the run stays in tag mode unless
+you pass `--plan-classify`.
+
+```shell
+python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
 ```
 
 ## Translate Service
 
-- Use `--openai_key` option to specify OpenAI API key. If you have multiple keys, separate them by commas (xxx,xxx,xxx) to reduce errors caused by API call limits.
-  Or, just set environment variable `BBM_OPENAI_API_KEY` instead.
-- A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
-- The default underlying model is [GPT-3.5-turbo](https://openai.com/blog/introducing-chatgpt-and-whisper-apis), which is used by ChatGPT currently. Use `--model gpt4` to change the underlying model to `GPT4`. You can also use `GPT4omini`.
-- Important to note that `gpt-4` is significantly more expensive than `gpt-4-turbo`, but to avoid bumping into rate limits, we automatically balance queries across `gpt-4-1106-preview`, `gpt-4`, `gpt-4-32k`, `gpt-4-0613`,`gpt-4-32k-0613`.
-- If you want to use a specific model alias with OpenAI (eg `gpt-4-1106-preview` or `gpt-3.5-turbo-0125`), you can use `--model openai --model_list gpt-4-1106-preview,gpt-3.5-turbo-0125`. `--model_list` takes a comma-separated list of model aliases.
-- If using chatgptapi, you can add `--use_context` to add a context paragraph to each passage sent to the model for translation (see below).
+- **Any OpenAI-compatible endpoint.** Three things describe one: `--api_base`
+  (the URL ending in `/v1`), `--key`, and `--model <id>` spelled the way that
+  endpoint spells it. Leave `--api_base` out for OpenAI's own host, and
+  `--model` out to take the default, `gpt-5.6-luna`. A provider entry holds
+  the same three so you do not retype them.
+- `--key` accepts several comma-separated keys and rotates them, which is how
+  you go past a per-key rate limit. It also reads `$BBM_API_KEY`, then the
+  format's own variable (`$OPENAI_API_KEY`, `$ANTHROPIC_API_KEY`), so a key
+  need never appear on the command line.
+- `--model_list` names several models to rotate between, comma-separated.
+- `--use_context` sends earlier text along with each passage, for consistency
+  of names and tone; see the flag's own entry below for which mode to pick.
 
 * DeepL
   Support DeepL model [DeepL Translator](https://rapidapi.com/splintPRO/api/dpl-translator) need pay to get the token
@@ -453,7 +485,18 @@ Notes:
 
 - `--use_context session`:
 
-  `--use_context` also takes a mode. Bare `--use_context` (or `--use_context window`) is the behaviour described above. `--use_context session` instead keeps a single append-only history of everything translated so far, so a model endpoint that supports prompt caching re-reads it at its cache rate. Context can then grow to chapter length for less money than window mode spends on a few paragraphs. When the history reaches the compact budget, the model is asked for a translator handoff report, which seeds the next window and is appended to `<book>_handoff.md`. If the endpoint never reports cached tokens, a warning is printed, since without caching this mode costs more than window mode.
+  `--use_context` also takes a mode, and which one to pick is a question about
+  your endpoint's billing. **Use `--use_context session` when the endpoint
+  bills prompt caching** — OpenAI's and Anthropic's official endpoints do —
+  and bare `--use_context` (window mode) when it does not. Session mode keeps
+  one append-only history of everything translated so far and re-reads it at
+  the cache rate, so context can grow to chapter length for less than window
+  mode spends on a few paragraphs; without caching it re-reads the same
+  history at full price. When the history reaches the compact budget, the
+  model is asked for a translator handoff report, which seeds the next window
+  and is appended to `<book>_handoff.md`. The progress bar's `cached=` count
+  tells you which case you are in: still zero after a dozen requests means the
+  endpoint is not caching, so drop back to window mode.
 
 - `--context-compact-at`:
 
