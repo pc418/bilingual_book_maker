@@ -1408,6 +1408,11 @@ class TranslationPlan:
                     # forward would let one --plan-classify all run settle
                     # every later run's questions, which is the opposite of
                     # what the modes are for. It reopens; a decider rules.
+                    # Recorded as reopened, not merely left blank: the file
+                    # is what the agent reads and what the next run loads, so
+                    # a row cleared only in memory would be handed over
+                    # looking decided and reopened again on every run.
+                    ledger.reopened_keys.add(key)
                     continue
                 row["action"] = prior.get("action")
                 row["decided_by"] = prior.get("decided_by")

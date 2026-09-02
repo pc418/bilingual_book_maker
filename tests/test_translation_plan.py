@@ -2742,6 +2742,34 @@ class TestAllModeAttribution:
         assert rebuilt.rows[keys[0]]["decided_by"] is None
         assert rebuilt.rows[keys[1]]["action"] == "skip"
         assert rebuilt.rows[keys[1]]["decided_by"] == "user"
+        # clearing it in memory is half the job: `reopened` is what makes the
+        # run rewrite the file, and a plan JSON still reading "decided" would
+        # hand the agent a question it cannot see
+        assert keys[0] in rebuilt.reopened_keys
+        assert keys[1] not in rebuilt.reopened_keys
+
+    def test_a_prior_all_row_is_written_back_as_a_question(self, tmp_path):
+        # the file is what the agent reads and what the next run loads, so a
+        # row reopened only in memory is reopened again on every run, forever
+        setup, src = _make_loader(tmp_path, FakeModel)
+        setup.only_filelist = "index_split_004.html"
+        plan_path = _write_decided_plan(setup)
+        data = json.loads(plan_path.read_text())
+        key = data["signatures"][0]["key"]
+        data["signatures"][0]["decided_by"] = "all"
+        data["signatures"][0]["content_type"] = "unclassified"
+        plan_path.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == PLAN_HANDOFF_EXIT_CODE
+
+        rows = {r["key"]: r for r in json.loads(plan_path.read_text())["signatures"]}
+        assert rows[key]["action"] is None
+        assert rows[key]["decided_by"] is None
 
 
 class TestPlanExitCodes:
