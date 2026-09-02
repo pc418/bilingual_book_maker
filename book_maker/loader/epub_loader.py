@@ -30,6 +30,8 @@ from book_maker.utils import num_tokens_from_text, prompt_config_to_kwargs
 
 from .base_loader import BaseBookLoader
 from .helper import (
+    language_tag,
+    stamp_translation,
     restamp_language,
     EPUBBookLoaderHelper,
     append_inline_translation,
@@ -151,7 +153,38 @@ class ChapterTranslationPlan:
     jobs: list[TranslationJob]
 
 
+def check_file_filters_against(book, only_filelist, exclude_filelist):
+    """Every name in --only_filelist / --exclude_filelist must be in `book`.
+
+    Shared by the loader and the plan dry run, which has no loader: the
+    answer needs the book and nothing else.
+    """
+    documents = sorted(item.file_name for item in book.get_items_of_type(ITEM_DOCUMENT))
+    known = set(documents)
+    for flag, raw in (
+        ("--only_filelist", only_filelist),
+        ("--exclude_filelist", exclude_filelist),
+    ):
+        unknown = [f for f in raw.split(",") if f and f not in known]
+        if not unknown:
+            continue
+        lines = [
+            f"[bold red]{flag} names {len(unknown)} document(s) this book "
+            f"does not have: {', '.join(unknown)}.[/bold red]"
+        ]
+        for name in unknown:
+            near = difflib.get_close_matches(name, documents, n=3, cutoff=0.5)
+            if near:
+                lines.append(f"  {name} — did you mean: {', '.join(near)}?")
+        lines.append(f"  the book's documents: {', '.join(documents)}")
+        print("\n".join(lines))
+        raise SystemExit(1)
+
+
 class EPUBBookLoader(BaseBookLoader):
+    # what `lang=` may carry for the target language; None stamps nothing
+    language_tag = None
+
     CHECKPOINT_VERSION = 3
     CHECKPOINT_ORDER = "document"
 
@@ -179,6 +212,8 @@ class EPUBBookLoader(BaseBookLoader):
     ):
         self.epub_name = epub_name
         self.language = language
+        # what `lang=` may carry for that language, or None when nothing may
+        self.language_tag = language_tag(language)
         self.new_epub = epub.EpubBook()
         self.translate_model = model(
             key,
@@ -301,11 +336,13 @@ class EPUBBookLoader(BaseBookLoader):
             self.load_state()
         elif os.path.exists(self.bin_path):
             # Overwriting is the documented behaviour; doing it silently is
-            # not. A run that meant to continue has one flag to add.
+            # not. A run that meant to continue has one flag to add. Worded
+            # as a prospect: a plan gate or a filter typo may still end the
+            # run before the first save touches the file.
             print(
-                f"[yellow]existing progress cache {self.bin_path} — starting "
-                f"fresh and overwriting it; pass --resume to continue it "
-                f"instead[/yellow]"
+                f"[yellow]existing progress cache {self.bin_path} is ignored "
+                f"and will be overwritten once translation starts; pass "
+                f"--resume to continue it instead[/yellow]"
             )
 
     @staticmethod
@@ -863,28 +900,9 @@ class EPUBBookLoader(BaseBookLoader):
         Tag mode needs it as much as plan mode — it was the only mode that
         never ran it.
         """
-        documents = sorted(
-            item.file_name for item in self.origin_book.get_items_of_type(ITEM_DOCUMENT)
+        check_file_filters_against(
+            self.origin_book, self.only_filelist, self.exclude_filelist
         )
-        known = set(documents)
-        for flag, raw in (
-            ("--only_filelist", self.only_filelist),
-            ("--exclude_filelist", self.exclude_filelist),
-        ):
-            unknown = [f for f in raw.split(",") if f and f not in known]
-            if not unknown:
-                continue
-            lines = [
-                f"[bold red]{flag} names {len(unknown)} document(s) this book "
-                f"does not have: {', '.join(unknown)}.[/bold red]"
-            ]
-            for name in unknown:
-                near = difflib.get_close_matches(name, documents, n=3, cutoff=0.5)
-                if near:
-                    lines.append(f"  {name} — did you mean: {', '.join(near)}?")
-            lines.append(f"  the book's documents: {', '.join(documents)}")
-            print("\n".join(lines))
-            raise SystemExit(1)
 
     def _build_partitioned_plan(self):
         """The plan is built from the same cached partitions the processing
@@ -1095,9 +1113,13 @@ class EPUBBookLoader(BaseBookLoader):
                     ruby.name = "span"
                 else:
                     ruby.unwrap()
-            self._write_single_translation(unit, t_text, translation_style)
+            self._write_single_translation(
+                unit, t_text, translation_style, language=self.language_tag
+            )
         elif has_restricted_content_model(unit.element):
-            self._append_inline_translation(unit, t_text, translation_style)
+            self._append_inline_translation(
+                unit, t_text, translation_style, language=self.language_tag
+            )
         elif unit.resolver is not None and (
             # A clone carries *all* of the owner's text, so it is only a
             # translation of this unit when this unit is the whole owner.
@@ -1109,7 +1131,7 @@ class EPUBBookLoader(BaseBookLoader):
             or not is_simple_owner(unit.element, unit.resolver)
         ):
             self._insert_anchored_translation(
-                unit, t_text, translation_style, language=self.language
+                unit, t_text, translation_style, language=self.language_tag
             )
         else:
             self._insert_trans_preserving_tags(
@@ -1117,7 +1139,7 @@ class EPUBBookLoader(BaseBookLoader):
             )
 
     @staticmethod
-    def _append_inline_translation(unit, t_text, translation_style=""):
+    def _append_inline_translation(unit, t_text, translation_style="", language=None):
         """Put the translation *inside* the element it belongs to.
 
         Same rule as `helper.append_inline_translation` — the containers that
@@ -1133,6 +1155,7 @@ class EPUBBookLoader(BaseBookLoader):
         if translation_style:
             span["style"] = translation_style
         span.string = f" {t_text}"
+        stamp_translation(span, unit.element, language)
         unit.nodes[-1].insert_after(span)
 
     @staticmethod
@@ -1177,6 +1200,7 @@ class EPUBBookLoader(BaseBookLoader):
             strip_duplicate_ids(span)
         else:
             span = make_tag("span")
+            stamp_translation(span, unit.element, language)
         if translation_style:
             span["style"] = translation_style
         span.string = t_text
@@ -1187,7 +1211,7 @@ class EPUBBookLoader(BaseBookLoader):
         line_break.insert_after(span)
 
     @staticmethod
-    def _write_single_translation(unit, t_text, translation_style=""):
+    def _write_single_translation(unit, t_text, translation_style="", language=None):
         """Put a segment's translation where the segment was.
 
         The translation replaces the first owned node *only when the markup
@@ -1201,6 +1225,8 @@ class EPUBBookLoader(BaseBookLoader):
         `<a href="…"></a>` husks — an unclickable link is not preservation.
         """
         translation = EPUBBookLoader._styled_translation(t_text, translation_style)
+        # a bare string has nowhere to carry a tag; a styled <span> does
+        stamp_translation(translation, unit.element, language)
         container = unit.nodes[0]
         if unit.resolver is not None:
             container = inline_subtree_root(unit.nodes[0], unit.resolver)
@@ -1382,14 +1408,17 @@ class EPUBBookLoader(BaseBookLoader):
             for code_tag in code_placeholders:
                 temp_p.append(copy(code_tag))
 
-            # Replace original content
+            # Replace original content: the element now holds the translation
             p.clear()
             for content in temp_p.contents:
                 p.append(copy(content))
+            restamp_language(p, self.language_tag)
         else:
             # Bilingual mode: keep original paragraph with code, add translation after
             if has_restricted_content_model(p):
-                append_inline_translation(p, translated_text, translation_style)
+                append_inline_translation(
+                    p, translated_text, translation_style, self.language_tag
+                )
                 return
             new_p = copy(p)
             # Remove code tags from translation
@@ -1399,6 +1428,7 @@ class EPUBBookLoader(BaseBookLoader):
             new_p.string = translated_text
             # a translated copy is a second rendering, not a second anchor
             strip_duplicate_ids(new_p)
+            restamp_language(new_p, self.language_tag)
             if translation_style != "":
                 new_p["style"] = translation_style
             p.insert_after(new_p)

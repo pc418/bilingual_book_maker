@@ -473,3 +473,55 @@ def test_the_translated_sibling_is_stamped_with_the_target_language():
     assert divs[1]["xml:lang"] == "zh-hans" and divs[1]["lang"] == "zh-hans"
     ps = soup.find_all("p")
     assert "xml:lang" not in ps[1].attrs and "lang" not in ps[1].attrs
+
+
+def test_the_stamp_is_a_language_tag_not_the_prompt_wording():
+    """Codex review 2 on #553: the loader receives the prompt wording
+    ("simplified chinese"), and `xml:lang="simplified chinese"` is a value
+    validators reject. The wording becomes its code; a wording nothing knows
+    stamps nothing rather than something invalid."""
+    from bs4 import BeautifulSoup
+    from book_maker.loader.helper import EPUBBookLoaderHelper, language_tag
+
+    assert language_tag("simplified chinese") == "zh"
+    assert language_tag("zh-hans") == "zh-hans"
+    assert language_tag("pt-BR") == "pt-BR"
+    assert language_tag("Klingon, but formal") is None
+    assert language_tag(None) is None
+
+    soup = BeautifulSoup(
+        '<body><div lang="de">Bin gar keine Russin</div></body>', "html.parser"
+    )
+    EPUBBookLoaderHelper(
+        None, 1, "", False, language="simplified chinese"
+    ).insert_trans(soup.div, "我根本不是俄国人")
+    assert soup.find_all("div")[1]["lang"] == "zh"
+
+    soup = BeautifulSoup(
+        '<body><div lang="de">Bin gar keine Russin</div></body>', "html.parser"
+    )
+    EPUBBookLoaderHelper(
+        None, 1, "", False, language="Klingon, but formal"
+    ).insert_trans(soup.div, "我根本不是俄国人")
+    # nothing valid to say, so the copy keeps what it had: not an invalid value
+    assert soup.find_all("div")[1]["lang"] == "de"
+
+
+def test_a_translation_span_the_loader_made_declares_its_language():
+    """The inline paths make a bare <span>; inside `<p lang="de">` it would
+    read as German. Stamped only when the source element itself declares a
+    language, the rule the clone paths follow."""
+    from bs4 import BeautifulSoup
+    from book_maker.loader.helper import append_inline_translation, stamp_translation
+
+    soup = BeautifulSoup(
+        '<nav><ol><li><a href="c.xhtml" xml:lang="de" lang="de">Kapitel</a></li></ol></nav>',
+        "html.parser",
+    )
+    span = append_inline_translation(soup.a, "章节", language="zh-hans")
+    assert span["lang"] == "zh-hans" and span["xml:lang"] == "zh-hans"
+
+    plain = BeautifulSoup("<p>plain</p>", "html.parser").p
+    made = BeautifulSoup("<span>x</span>", "html.parser").span
+    stamp_translation(made, plain, "zh-hans")
+    assert "lang" not in made.attrs

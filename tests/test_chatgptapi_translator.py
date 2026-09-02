@@ -1253,3 +1253,18 @@ def test_model_list_order_survives_an_endpoint_missing_one_model():
 
     assert translator._model_names == ["a-model", "b-model"]
     assert translator.model == "a-model"
+
+
+def test_gateways_know_their_model_before_the_first_request():
+    # Codex review 2 on #553: `preflight` sizes an auto compact budget from
+    # every model in play before any request rotates one in; the gateways
+    # used to leave `model` None and `_model_names` empty until then
+    from book_maker.translator.orcarouter_translator import OrcaRouterTranslator
+    from book_maker.translator.xai_translator import XAIClient
+
+    orca = OrcaRouterTranslator("sk-orca-test", "Chinese")
+    assert orca.model == "orcarouter/auto"
+    assert orca._model_names == ("orcarouter/auto",)
+    xai = XAIClient("sk-xai-test", "Chinese")
+    assert xai.model == "grok-beta"
+    assert xai._model_names == ("grok-beta",)

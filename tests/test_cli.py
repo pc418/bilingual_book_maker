@@ -433,6 +433,18 @@ def test_a_misspelled_exclude_filelist_name_fails_loud(tmp_path):
     assert not plan.exists()
 
 
+def test_a_misspelled_filter_name_fails_the_dry_run_too(tmp_path):
+    # Codex review 2 on #553: the dry run returned before the filter gate,
+    # so it wrote a plan that did not honor the exclusion and exited 0
+    proc, plan = _run(
+        tmp_path, "--plan-dry-run", "--exclude_filelist", "titlepage.xhtm"
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--exclude_filelist" in flat and "titlepage.xhtm" in flat
+    assert not plan.exists()
+
+
 def test_a_misspelled_only_filelist_name_fails_loud(tmp_path):
     proc, plan = _run(
         tmp_path, "--plan-classify", "agent", "--only_filelist", "chpater1.xhtml"

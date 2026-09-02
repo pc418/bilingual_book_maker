@@ -342,7 +342,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--ignore-cache-guard`:
 
-  仅会话模式。当端点未报告缓存的提示词 token 时不再警告或停止。用于会缓存但不报告的端点；此时历史按端点实际计费方式计费，由你自行负责。
+  仅会话模式。当端点未报告缓存的提示词 token 时不再警告。用于会缓存但不报告的端点；此时历史按端点实际计费方式计费，由你自行负责。
 
 - `--temperature`:
 

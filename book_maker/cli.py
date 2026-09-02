@@ -525,7 +525,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         "--ignore-cache-guard",
         dest="ignore_cache_guard",
         action="store_true",
-        help="session mode only: do not warn or stop when the endpoint reports "
+        help="session mode only: do not warn when the endpoint reports "
         "no cached prompt tokens. For endpoints that cache but do not report "
         "it; the history is then billed as the endpoint bills it, on you",
     )
@@ -723,7 +723,14 @@ So you are close to reaching the limit. You have to choose your own value, there
 
         from book_maker.loader.plan import build_plan, is_fixed_layout
 
+        from book_maker.loader.epub_loader import check_file_filters_against
+
         book = _epub.read_epub(options.book_name)
+        # a typo in a filter is answerable here too, before a plan that
+        # would silently not honor it is written
+        check_file_filters_against(
+            book, options.only_filelist, options.exclude_filelist
+        )
         if is_fixed_layout(book):
             print(
                 "[bold yellow]warning: this is a fixed-layout (pre-paginated) "

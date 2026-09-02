@@ -396,7 +396,7 @@ bbook_maker --book_name test_books/animal_farm.epub --openai_key ${openai_key} -
 
 - `--ignore-cache-guard`:
 
-  Session mode only. Do not warn or stop when the endpoint reports no cached prompt tokens. For an endpoint that caches but does not report it; the history is then billed however the endpoint bills it, and that is on you.
+  Session mode only. Do not warn when the endpoint reports no cached prompt tokens. For an endpoint that caches but does not report it; the history is then billed however the endpoint bills it, and that is on you.
 
 - `--parallel-workers`:
 
