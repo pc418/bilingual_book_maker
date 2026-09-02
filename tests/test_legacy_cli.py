@@ -170,11 +170,17 @@ class TestKeys:
             "--qwen_key",
             "--caiyun_key",
             "--deepl_key",
-            "--api_key",
         ],
     )
     def test_every_key_flag_becomes_key(self, flag):
         assert flags(flag, "secret")["--key"] == "secret"
+
+    def test_api_key_is_not_rewritten(self):
+        # --api_key is a second spelling of --key on the parser, so the shim
+        # passes it through and nothing is printed about it
+        result = translate_legacy_argv(["--api_key", "secret"])
+        assert result.argv == ["--api_key", "secret"]
+        assert result.notices == []
 
     def test_the_legacy_key_variable_is_still_consulted(self):
         # --model gemini now routes through the openai format, whose variables

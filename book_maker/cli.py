@@ -455,13 +455,14 @@ def build_parser():
     ########## ENDPOINT ##########
     parser.add_argument(
         "--key",
+        "--api_key",
         dest="key",
         type=str,
         default="",
-        help="API key for the endpoint. Several comma-separated keys are "
-        "rotated to go beyond per-key rate limits. Falls back to $BBM_API_KEY, "
-        "then to the format's conventional variable ($OPENAI_API_KEY, "
-        "$ANTHROPIC_API_KEY)",
+        help="API key for the endpoint (--api_key is the same flag). Several "
+        "comma-separated keys are rotated to go beyond per-key rate limits. "
+        "Falls back to $BBM_API_KEY, then to the format's conventional "
+        "variable ($OPENAI_API_KEY, $ANTHROPIC_API_KEY)",
     )
     parser.add_argument(
         "--test",

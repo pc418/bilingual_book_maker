@@ -62,6 +62,8 @@ _MT_FORMATS = {
 
 # Old per-vendor key flags. All of them are just a key now, but which one to
 # take matters: a command carrying two keys must send each vendor its own.
+# `--api_key` is deliberately absent: it is a second spelling of `--key` on
+# the parser itself, not a legacy flag to rewrite and apologise for.
 _KEY_FLAGS = (
     "--openai_key",
     "--claude_key",
@@ -72,7 +74,6 @@ _KEY_FLAGS = (
     "--caiyun_key",
     "--deepl_key",
     "--orcarouter_key",
-    "--api_key",
 )
 
 # `--model` alias -> the key flag that alias used to read.

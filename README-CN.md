@@ -204,7 +204,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 | `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
 | `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
 | `--custom_api URL` | `--api_format customapi --api_base URL` |
-| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
+| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` | `--key`（`--api_key` 从未被改名：它就是同一个参数） |
 | `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
 | `--deployment_id D` | `--model D`，并把 `--api_base` 改写为该部署的 `/openai/v1` 路径 |
 | `--interval` | 已删除，它只对已移除的 gemini 路由有效 |
@@ -465,7 +465,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 - `--api_key`:
 
-  `--key` 的旧写法，仍然接受。
+  与 `--key` 是同一个参数的两种写法，都是一等公民，都不会打印弃用提示。
 
 ### 示范用例
 

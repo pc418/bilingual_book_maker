@@ -80,11 +80,12 @@ If the anthropic format is inferred from a model id but the endpoint does not
 serve `/v1/messages`, the first request falls back to the `openai` format for
 the rest of the run and says so. `--api_format` skips that attempt.
 
-Key lookup order: `--key`, then `BBM_API_KEY`, then `OPENAI_API_KEY` /
+Key lookup order: `--key` (spelled `--api_key` if you prefer; the two are
+one flag), then `BBM_API_KEY`, then `OPENAI_API_KEY` /
 `ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` / `BBM_DEEPL_API_KEY` depending on
 the format. Endpoints on localhost need no key.
 
-The old `--model` preset names, the per-vendor `--*_key` flags, `--api_key`,
+The old `--model` preset names, the per-vendor `--*_key` flags,
 `--ollama_model`, `--deployment_id` and `--interval` are no longer part of the
 parser, but old command lines still run: `book_maker/legacy_cli.py` rewrites
 them into the flags above before the run starts and prints each substitution.

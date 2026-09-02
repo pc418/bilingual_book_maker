@@ -236,7 +236,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 | `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
 | `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
 | `--custom_api URL` | `--api_format customapi --api_base URL` |
-| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--api_key` | `--key` |
+| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` | `--key` (`--api_key` was never renamed: it is the same flag) |
 | `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
 | `--deployment_id D` | `--model D`, with `--api_base` rewritten to the deployment's `/openai/v1` path |
 | `--interval` | dropped; it only applied to the removed gemini route |
@@ -547,7 +547,8 @@ Notes:
 
 - `--api_key`:
 
-  Old spelling of `--key`, still accepted.
+  The same flag as `--key`, spelled the older way. Both are first-class;
+  neither prints a notice.
 
 ### Examples
 

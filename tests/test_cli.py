@@ -78,6 +78,15 @@ def test_plan_classify_implies_plan_mode(tmp_path):
     assert "Paste the block below" in proc.stdout
 
 
+def test_api_key_is_the_same_flag_as_key(tmp_path):
+    # --api_key is a second spelling on the parser, not a legacy flag: the
+    # run takes it and nothing is printed about it
+    proc, _ = _run(tmp_path, "--api_key", "secret", "--test", "--test_num", "1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "deprecated" not in proc.stdout
+    assert "--api_key" not in proc.stdout
+
+
 def test_no_classify_flag_keeps_legacy_tag_mode(tmp_path):
     # the flag is opt-in: without it nothing about today's behavior changes
     proc, plan = _run(tmp_path, "--test", "--test_num", "1")
