@@ -277,11 +277,19 @@ class Claude(Base):
             temperature=self.temperature,
             context_flag=self.context_flag,
             context_paragraph_limit=self.context_paragraph_limit,
+            context_mode=self.context_mode,
+            context_compact_at=self.context_compact_at,
         )
         # Straight assignment rather than set_model_list: the model is already
         # chosen, and re-validating it would spend requests mid-run.
         fallback.model_list = cycle([self.model])
         fallback.model = self.model
+        # One history and one meter across the switch: the pairs the
+        # anthropic shape collected go on being replayed, and the bar keeps
+        # counting instead of freezing at the request that switched.
+        if self.session is not None:
+            fallback.session = self.session
+        fallback.usage = self.usage
         return fallback
 
     def _switch_to_openai(self, error):

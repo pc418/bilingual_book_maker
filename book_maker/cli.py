@@ -957,15 +957,25 @@ def main():
         )
         exit(1)
 
+    # One codex thread is the route's whole context. A second worker would
+    # interleave chapters into it (measured: 225 document switches in 416
+    # turns), and serializing the turns only hides that. Refused here,
+    # before the sidecar is started for nothing.
+    if options.parallel_workers > 1 and api_format == "codex":
+        print(
+            "[bold red]Error: --parallel-workers is not supported on the codex "
+            "format: one thread is the context, and workers would interleave "
+            "chapters into it. Drop --parallel-workers.[/bold red]"
+        )
+        exit(1)
+
     # Parallel workers each get a clone carrying their own chapter context.
     # A format that keeps no re-sendable window has nothing to clone, and the
     # run died reading a context attribute it never set — after the chapters
-    # were already dispatched. Codex is exempt: it keeps a thread, serializes
-    # turns on it, and is warned about below instead of refused.
+    # were already dispatched.
     if (
         options.parallel_workers > 1
         and options.context_mode is not None
-        and api_format != "codex"
         and not getattr(translate_model, "SUPPORTS_PARALLEL_CONTEXT", False)
     ):
         print(
@@ -1239,15 +1249,6 @@ def main():
                     raise
                 print(f"[bold red]{escape(str(err))}[/bold red]")
                 exit(1)
-        if api_format == "codex" and options.parallel_workers > 1:
-            # A codex thread is the context, and turns on it are serialized
-            # so chapters do not interleave into one thread. Saying so beats
-            # letting the flag look like it did something.
-            print(
-                "[bold yellow]Warning:[/bold yellow] the codex format runs one "
-                "thread and serializes turns on it, so --parallel-workers does "
-                "not speed it up."
-            )
     elif model_names:
         # These formats translate through a fixed engine and take no model, so
         # honoring the flag is impossible; saying so beats ignoring it.
