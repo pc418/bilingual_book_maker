@@ -11,7 +11,7 @@ from rich import print
 from rich.markup import escape
 from tqdm import tqdm
 
-from book_maker.session_context import SessionHistory, handoff_path
+from book_maker.session_context import handoff_path
 from book_maker.utils import prompt_config_to_kwargs
 
 from .base_loader import BaseBookLoader
@@ -535,10 +535,6 @@ class MarkdownBookLoader(BaseBookLoader):
             clone.context_list = []
         if hasattr(clone, "context_translated_list"):
             clone.context_translated_list = []
-        if getattr(clone, "session", None) is not None:
-            # Same reason as the context lists above: a shared append-only
-            # history would be written by every worker at once.
-            clone.session = SessionHistory()
         return clone
 
     def _assemble_render_items(self, render_items, batches, translated_batches):

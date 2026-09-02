@@ -467,12 +467,14 @@ class TestWindowModeUnchanged:
         assert len(_prefix(t.sent[-1])) == 3
 
 
-class TestParallelIsolation:
-    """Each parallel worker needs its own history.
+class TestOneHistoryPerRun:
+    """A session run has exactly one history, and it is never cloned.
 
-    A shared SessionHistory would be appended to from several threads at
-    once, interleaving chapters into one list and destroying the very
-    prefix stability the mode exists for.
+    Several workers cannot share one — chapters would interleave and the
+    prefix stability the mode exists for would be gone — and a fresh
+    history per chapter is window mode at session prices. So the pairing
+    is refused on the command line (see tests/test_cli.py) and the loader
+    only ever hands out the shared instance.
     """
 
     def _loader(self, tmp_path, workers):
@@ -493,21 +495,6 @@ class TestParallelIsolation:
             context_mode="session",
             parallel_workers=workers,
         )
-
-    def test_each_parallel_clone_gets_its_own_history(self, tmp_path):
-        loader = self._loader(tmp_path, workers=2)
-        loader.translate_model.session.append("chapter one", "第一章")
-        first = loader._clone_translator_for_context()
-        second = loader._clone_translator_for_context()
-        assert first.session is not second.session
-        assert first.session is not loader.translate_model.session
-        assert first.session.messages() == []
-
-    def test_a_clone_does_not_write_into_the_shared_history(self, tmp_path):
-        loader = self._loader(tmp_path, workers=2)
-        clone = loader._clone_translator_for_context()
-        clone.session.append("worker text", "译文")
-        assert loader.translate_model.session.messages() == []
 
     def test_sequential_runs_keep_the_shared_history(self, tmp_path):
         loader = self._loader(tmp_path, workers=1)
