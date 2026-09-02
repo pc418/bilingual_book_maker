@@ -328,7 +328,7 @@ Notes:
   Use `--translate-tags` to specify tags need for translation. Use comma to separate multiple tags.
   For example: `--translate-tags h1,h2,h3,p,div`
 
-- `--plan-classify {none,most,model,agent}` (epub only):
+- `--plan-classify {auto,none,most,model,agent}` (epub only):
 
   **Plan mode**: instead of selecting tags, every text node in the book is either assigned
   to a translation unit or skipped for an explicit, reported reason (hidden content,
@@ -343,7 +343,10 @@ Notes:
   one-word dialogue, drop caps) to save only 0–6% of characters. Deciding what is not
   worth translating is the classification entry you pick here:
 
-  - `none` (default): no plan — translate the `--translate-tags` selection as usual.
+  - `auto` (default): plan the book as `model` when it is an epub and the endpoint is
+    verified to apply a strict JSON schema, and translate the `--translate-tags`
+    selection otherwise — including when the plan cannot be built.
+  - `none`: no plan — translate the `--translate-tags` selection as usual.
   - `most`: translate the whole partition, no classification.
   - `model`: an LLM rules on the uncertain signatures first (headings, the prose spine and
     poetry groups are never asked about), then the run continues. Use

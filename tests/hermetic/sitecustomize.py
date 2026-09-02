@@ -13,6 +13,8 @@ pass at all. Live translation is covered by tests/test_integration.py, which
 is explicitly about talking to real providers.
 """
 
+import os
+
 from book_maker.translator import FORMAT_DICT
 
 
@@ -43,7 +45,34 @@ class OfflineTranslator:
         return [self.translate(line) for line in str(text).splitlines()]
 
 
+class OfflineLLM(OfflineTranslator):
+    """An LLM-shaped endpoint: it has a capability verdict and can be asked
+    questions. Only the openai route gets this — `google` and the other MT
+    engines answer neither, which is what several CLI tests are about.
+    """
+
+    def _probe_verdict(self, model=None):
+        # The real probe is a paid request against a real endpoint;
+        # BBM_FAKE_PROBE stands in for its verdict so a CLI test can pick
+        # which side of `--plan-classify auto` it is testing. The echo lets a
+        # test assert the probe was *not* made.
+        print("probe asked")
+        return os.environ.get("BBM_FAKE_PROBE") or False
+
+    def supports_structured_json(self):
+        return True
+
+    def structured_json(self, prompt, schema, model=None, accept=None):
+        # Every signature is book content: what the classifier does with a
+        # real model is tests/test_structured_classify.py's subject, and what
+        # these tests need is a plan run that completes.
+        return {
+            key: {"verdict": "translate", "content_type": "prose"}
+            for key in schema["schema"]["required"]
+        }
+
+
 FORMAT_DICT["google"] = OfflineTranslator
 # The openai format too: it is the default route, so the contract tests for
 # what a bare command does have no other way to stay offline.
-FORMAT_DICT["openai"] = OfflineTranslator
+FORMAT_DICT["openai"] = OfflineLLM

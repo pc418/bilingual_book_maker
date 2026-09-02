@@ -31,7 +31,7 @@ sections after it provide additional notes for selected workflows.
 | Option | Purpose |
 |---|---|
 | `--plan-dry-run` | Build and print the EPUB plan, write `<book>_plan.json` with every `action` still `null`, and exit before classification. Needs no credentials. |
-| `--plan-classify {none,most,model,agent}` | Select no plan, greedy plan, model triage, or coding-agent triage. |
+| `--plan-classify {auto,none,most,model,agent}` | Select no plan, greedy plan, model triage, or coding-agent triage. Default `auto`: model triage on an epub whose endpoint is verified to apply a strict JSON schema, tag mode otherwise. |
 | `--plan-classify-model MODEL` | Classification model; implies model mode and conflicts with `most`/`agent`. |
 | `--plan-min-coverage FRACTION` | Fail if selected planned text is below this fraction; default `0.5`. |
 | `--poetry-group-size N` | Maximum verse lines per planned translation request; default `8`. |

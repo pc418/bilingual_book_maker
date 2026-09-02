@@ -305,7 +305,8 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
   取值决定由谁判断哪些标签签名值得翻译：
 
-  - `none`（默认）：不建计划，照常翻译 `--translate-tags` 选中的标签。
+  - `auto`（默认）：epub 且端点经校验会严格应用 JSON Schema 时，按 `model` 建计划；否则（含计划无法建成时）照常翻译 `--translate-tags` 选中的标签。
+  - `none`：不建计划，照常翻译 `--translate-tags` 选中的标签。
   - `most`：翻译整个分区，不做分类。
   - `model`：先让一个 LLM 裁决不确定的签名（标题、正文主干和诗歌分组不会被问到），然后继续翻译。可用 `--plan-classify-model X` 指定分类用的模型——指定了就意味着此模式，且分类失败会中止而不是回退。
   - `agent`：不调用 API。写出计划 JSON，打印一段可以粘贴进 coding-agent 会话（Claude Code、Codex 等）的指引，然后**在翻译前停下**。改完 action 后重跑同一条命令即可翻译。
