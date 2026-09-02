@@ -502,7 +502,8 @@ def test_epub_sequential_interrupt_and_resume_uses_completed_prefix(
 
     with pytest.raises(SystemExit) as exc:
         loader.make_bilingual_book()
-    assert exc.value.code == 0
+    # an interrupted run has no finished book, and says so (P9)
+    assert exc.value.code == 130
     assert loader.p_to_save == ["<T>one</T>"]
 
     resumed, output = _make_loader(
@@ -649,7 +650,7 @@ def test_epub_parallel_interrupt_resumes_from_contiguous_prefix(tmp_path, monkey
 
     with pytest.raises(SystemExit) as exc:
         loader.make_bilingual_book()
-    assert exc.value.code == 0
+    assert exc.value.code == 130
     assert loader.p_to_save == ["<T>chapter A</T>"]
 
     resumed, output = _make_loader(
