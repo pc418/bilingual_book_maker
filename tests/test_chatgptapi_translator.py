@@ -1223,3 +1223,33 @@ def test_a_strict_endpoint_that_answers_prose_falls_through():
 )
 def test_json_extraction_survives_fences_and_prose(reply, expected):
     assert ChatGPTAPI._extract_json_object(reply) == expected
+
+
+def _model_list_translator(api_models):
+    """A translator whose only live surface is the endpoint's model listing."""
+    translator = _translator()
+    translator.deployment_id = None
+    translator._fetch_api_models_with_retry = Mock(return_value=api_models)
+    return translator
+
+
+def test_model_list_keeps_the_order_it_was_given():
+    # --model_list a,b names a first on purpose: the first id is what the
+    # structured-output probe grades and what the compact budget keys on.
+    # Deduplicating through a set made that a coin flip between runs.
+    translator = _model_list_translator(["b-model", "a-model", "c-model"])
+
+    translator.set_model_list(["a-model", "b-model", "a-model"])
+
+    assert translator._model_names == ["a-model", "b-model"]
+    assert translator.model == "a-model"
+
+
+def test_model_list_order_survives_an_endpoint_missing_one_model():
+    # the surviving ids keep the user's order, not the endpoint's listing order
+    translator = _model_list_translator(["c-model", "b-model", "a-model"])
+
+    translator.set_model_list(["a-model", "gone", "b-model"])
+
+    assert translator._model_names == ["a-model", "b-model"]
+    assert translator.model == "a-model"

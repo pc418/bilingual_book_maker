@@ -1567,8 +1567,12 @@ class ChatGPTAPI(Base):
                 "api_models": [],
             }
 
-        available_models = list(set(custom_model_list) & set(api_models))
-        unavailable_models = list(set(custom_model_list) - set(api_models))
+        # Order is the user's, not the endpoint's: --model_list a,b names a
+        # first on purpose — the first id is the one the structured-output
+        # probe grades and the one the session budget is sized from.
+        served = set(api_models)
+        available_models = [m for m in custom_model_list if m in served]
+        unavailable_models = [m for m in custom_model_list if m not in served]
 
         if not available_models:
             print(
@@ -1714,7 +1718,9 @@ class ChatGPTAPI(Base):
         self._set_models("O3-mini", "o3-mini", set(O3MINI_MODEL_LIST))
 
     def set_model_list(self, model_list):
-        model_list = list(set(model_list))
+        # dict.fromkeys drops repeats while keeping the order they were
+        # given in; a set would reorder them differently on every run.
+        model_list = list(dict.fromkeys(model_list))
         if not model_list:
             raise Exception(
                 "Empty model list provided. Use --model_list with at least one model name."
