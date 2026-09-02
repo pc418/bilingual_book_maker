@@ -417,3 +417,34 @@ def test_a_colour_on_its_own_is_not_warned_about(tmp_path):
     proc, _ = _run(tmp_path, "--test", "--test_num", "1", "--translation_color", "red")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "--translation_color" not in proc.stdout
+
+
+def test_a_misspelled_exclude_filelist_name_fails_loud(tmp_path):
+    # a typo here used to be silent: the chapter the user meant to skip was
+    # translated and paid for. The only-list reached the coverage gate; the
+    # exclude-list reached nothing at all
+    proc, plan = _run(
+        tmp_path, "--plan-classify", "agent", "--exclude_filelist", "titlepage.xhtm"
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--exclude_filelist" in flat
+    assert "titlepage.xhtm" in flat
+    assert not plan.exists()
+
+
+def test_a_misspelled_only_filelist_name_fails_loud(tmp_path):
+    proc, plan = _run(
+        tmp_path, "--plan-classify", "agent", "--only_filelist", "chpater1.xhtml"
+    )
+    assert proc.returncode == 1
+    assert "--only_filelist" in " ".join(proc.stdout.split())
+    assert not plan.exists()
+
+
+def test_correctly_spelled_file_filters_still_plan(tmp_path):
+    proc, plan = _run(
+        tmp_path, "--plan-classify", "agent", "--exclude_filelist", "titlepage.xhtml"
+    )
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE, proc.stdout + proc.stderr
+    assert plan.exists()

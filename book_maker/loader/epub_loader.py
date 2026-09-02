@@ -1,4 +1,5 @@
 import builtins
+import difflib
 import hashlib
 import json
 import os
@@ -550,6 +551,8 @@ class EPUBBookLoader(BaseBookLoader):
         self._plan_css = BookCss(self.origin_book)
         self._plan_overrides = overrides
 
+        self._check_file_filters()
+
         if is_fixed_layout(self.origin_book):
             print(
                 "[bold yellow]warning: this is a fixed-layout (pre-paginated) "
@@ -834,6 +837,38 @@ class EPUBBookLoader(BaseBookLoader):
                 parts.append(shlex.quote(arg))
                 pending_env = env_name
         return " ".join(["python3", *parts])
+
+    def _check_file_filters(self):
+        """Every name in --only_filelist / --exclude_filelist must exist.
+
+        A misspelled only-list name reached the coverage gate as "the plan
+        selected no translatable text"; a misspelled exclude-list name
+        reached nothing at all — the document the user meant to skip was
+        translated and paid for, with no warning. Both are typos, and both
+        are cheap to catch before a single request.
+        """
+        documents = sorted(
+            item.file_name for item in self.origin_book.get_items_of_type(ITEM_DOCUMENT)
+        )
+        known = set(documents)
+        for flag, raw in (
+            ("--only_filelist", self.only_filelist),
+            ("--exclude_filelist", self.exclude_filelist),
+        ):
+            unknown = [f for f in raw.split(",") if f and f not in known]
+            if not unknown:
+                continue
+            lines = [
+                f"[bold red]{flag} names {len(unknown)} document(s) this book "
+                f"does not have: {', '.join(unknown)}.[/bold red]"
+            ]
+            for name in unknown:
+                near = difflib.get_close_matches(name, documents, n=3, cutoff=0.5)
+                if near:
+                    lines.append(f"  {name} — did you mean: {', '.join(near)}?")
+            lines.append(f"  the book's documents: {', '.join(documents)}")
+            print("\n".join(lines))
+            raise SystemExit(1)
 
     def _build_partitioned_plan(self):
         """The plan is built from the same cached partitions the processing
