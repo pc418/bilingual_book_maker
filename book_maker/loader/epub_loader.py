@@ -1044,7 +1044,7 @@ class EPUBBookLoader(BaseBookLoader):
                     ruby.name = "span"
                 else:
                     ruby.unwrap()
-            self._write_single_translation(unit, t_text)
+            self._write_single_translation(unit, t_text, translation_style)
         elif has_restricted_content_model(unit.element):
             self._append_inline_translation(unit, t_text, translation_style)
         elif unit.resolver is not None and (
@@ -1133,7 +1133,7 @@ class EPUBBookLoader(BaseBookLoader):
         line_break.insert_after(span)
 
     @staticmethod
-    def _write_single_translation(unit, t_text):
+    def _write_single_translation(unit, t_text, translation_style=""):
         """Put a segment's translation where the segment was.
 
         The translation replaces the first owned node *only when the markup
@@ -1146,6 +1146,7 @@ class EPUBBookLoader(BaseBookLoader):
         Emptied inline wrappers are then removed. Keeping them would leave
         `<a href="…"></a>` husks — an unclickable link is not preservation.
         """
+        translation = EPUBBookLoader._styled_translation(t_text, translation_style)
         container = unit.nodes[0]
         if unit.resolver is not None:
             container = inline_subtree_root(unit.nodes[0], unit.resolver)
@@ -1156,7 +1157,7 @@ class EPUBBookLoader(BaseBookLoader):
             # rubies would survive as <ruby></ruby> — a file epubcheck
             # rejects (RSC-005 "element ruby incomplete", 53 on kusamakura).
             emptied = EPUBBookLoader._collect_wrappers(unit.nodes[1:], unit.element)
-            unit.nodes[0].replace_with(NavigableString(t_text))
+            unit.nodes[0].replace_with(translation)
             for node in unit.nodes[1:]:
                 node.extract()
             EPUBBookLoader._remove_emptied_wrappers(emptied)
@@ -1166,10 +1167,25 @@ class EPUBBookLoader(BaseBookLoader):
         # only wrappers *we* empty are ours to remove: an already-empty
         # <a id="…"> is a link target the book still needs
         emptied = EPUBBookLoader._collect_wrappers(unit.nodes, unit.element)
-        anchor.insert_before(NavigableString(t_text))
+        anchor.insert_before(translation)
         for node in unit.nodes:
             node.extract()
         EPUBBookLoader._remove_emptied_wrappers(emptied)
+
+    @staticmethod
+    def _styled_translation(t_text, translation_style=""):
+        """The translated text as it goes into the document.
+
+        A style declaration has to hang on an element, so asking for one
+        turns the string into a <span>. Without one it stays a string: a
+        wrapper no book asked for is markup the original did not have.
+        """
+        if not translation_style:
+            return NavigableString(t_text)
+        span = make_tag("span")
+        span["style"] = translation_style
+        span.string = t_text
+        return span
 
     @staticmethod
     def _collect_wrappers(nodes, stop):

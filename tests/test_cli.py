@@ -392,3 +392,28 @@ def test_an_empty_exclude_translate_tags_excludes_nothing(tmp_path):
     )
     assert proc.returncode == PLAN_HANDOFF_EXIT_CODE, proc.stdout + proc.stderr
     assert json.loads(plan.read_text())["exclude_tags"] == []
+
+
+def test_a_style_and_a_colour_together_say_the_colour_is_lost(tmp_path):
+    # --translation_style is the whole declaration block and replaces the
+    # colour; it used to win in silence
+    proc, _ = _run(
+        tmp_path,
+        "--test",
+        "--test_num",
+        "1",
+        "--translation_color",
+        "red",
+        "--translation_style",
+        "font-style: italic;",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    flat = " ".join(proc.stdout.split())
+    assert "--translation_color" in flat
+    assert "ignored" in flat
+
+
+def test_a_colour_on_its_own_is_not_warned_about(tmp_path):
+    proc, _ = _run(tmp_path, "--test", "--test_num", "1", "--translation_color", "red")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--translation_color" not in proc.stdout

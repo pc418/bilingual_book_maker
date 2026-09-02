@@ -957,6 +957,16 @@ So you are close to reaching the limit. You have to choose your own value, there
     if options.translation_color:
         e.translation_style = f"color: {options.translation_color};"
     if options.translation_style:
+        # --translation_style is the whole declaration block, so it replaces
+        # the colour rather than merging with it. Losing a flag the user
+        # typed is worth a line.
+        if options.translation_color:
+            print(
+                f"[bold yellow]Warning:[/bold yellow] --translation_style "
+                f"replaces --translation_color; the colour "
+                f"{options.translation_color!r} is ignored. Put it in the "
+                f"style instead."
+            )
         e.translation_style = options.translation_style
     if options.batch_size:
         e.batch_size = options.batch_size

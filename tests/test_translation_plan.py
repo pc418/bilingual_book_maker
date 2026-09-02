@@ -1342,6 +1342,35 @@ class TestEpubHardening:
         assert soup.find("ruby") is None
         assert "Mountain path." in soup.get_text()
 
+    def test_single_translate_carries_the_translation_style(self, tmp_path):
+        # tag mode puts --translation_style on the replacement element in
+        # single-translate mode; plan mode wrote a bare string, so the flag
+        # was accepted and then dropped without a word
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        soup = bs("<body><p>chapter one</p></body>", "html.parser")
+        fp = partition_soup(soup, DisplayResolver([]), "x.html")
+        loader._insert_plan_translation(
+            fp.units[0],
+            "\u7b2c\u4e00\u7ae0",
+            translation_style="color: #808080;",
+            single_translate=True,
+        )
+        styled = soup.find("span", style="color: #808080;")
+        assert styled is not None
+        assert styled.get_text() == "\u7b2c\u4e00\u7ae0"
+        assert "chapter one" not in soup.get_text()
+
+    def test_single_translate_without_a_style_stays_a_bare_string(self, tmp_path):
+        # a book that asked for no styling keeps the markup it had
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        soup = bs("<body><p>chapter one</p></body>", "html.parser")
+        fp = partition_soup(soup, DisplayResolver([]), "x.html")
+        loader._insert_plan_translation(
+            fp.units[0], "\u7b2c\u4e00\u7ae0", single_translate=True
+        )
+        assert soup.find("span") is None
+        assert soup.find("p").get_text() == "\u7b2c\u4e00\u7ae0"
+
     def test_single_translate_keeps_a_wrapper_holding_a_link_target(self, tmp_path):
         # <span> is an emptied husk, but the <a id> inside it is the target
         # of every cross-reference to this chapter. Deleting the wrapper
