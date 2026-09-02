@@ -93,11 +93,14 @@ What to do, for every null row:
 You may also change a non-null row if its samples convince you, but the
 nulls are the required work.
 
-When you are done, tell me and I will run:
+When you are done, tell me. The next command is a smoke, not the whole
+book — with every row decided, the plan command no longer stops here:
 
-    {rerun_command}
+    {rerun_command} --quiet --test --test_num 8 > smoke.log 2>&1
 
-which picks up the edited plan automatically. A coverage gate and an
-action lint will reject a malformed plan, so mistakes fail loudly rather
-than silently dropping text.
+It picks up the edited plan, translates 8 units, and writes a partial
+<book>_bilingual.epub to read before anything more is paid. The full run
+is the same command with --quiet --resume in place of --test. A coverage
+gate and an action lint reject a malformed plan, so mistakes fail loudly
+rather than silently dropping text.
 ────────────────────────────────────────────────────────────────────────"""

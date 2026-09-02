@@ -87,6 +87,9 @@ EXPECTED = {
         "<glossary>\nWinston → 温斯顿 (note)\n</glossary>\nUse these "
         "translations verbatim whenever the source term appears.",
     ),
+    # A codex turn is an agent turn by default. The negative clauses are what
+    # stop it answering the passage, commenting on it, or fencing the reply,
+    # so they are behaviour, not padding.
     "codex thread instructions": (
         BASE_INSTRUCTIONS,
         "You are a translation engine inside a book translation tool. "

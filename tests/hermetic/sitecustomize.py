@@ -19,9 +19,18 @@ from book_maker.translator import FORMAT_DICT
 
 
 class OfflineTranslator:
-    """Deterministic, no network. Mirrors the surface the loaders call."""
+    """Deterministic, no network. Mirrors the surface the loaders call.
+
+    It stands in for a fully context-capable route, not for the real
+    `google` engine: the CLI's capability gates are part of the contract
+    these tests exercise, and a stand-in that declared no context would
+    make every context flag untestable offline.
+    """
 
     TRANSLATION_ERROR_MARKER = None
+    SUPPORTS_SESSION_CONTEXT = True
+    SUPPORTS_PARALLEL_CONTEXT = True
+    context_paragraph_limit = 3
 
     def __init__(self, *args, **kwargs):
         self._fatal_error_detected = False

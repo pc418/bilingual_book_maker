@@ -1,4 +1,5 @@
 from book_maker.cli import get_book_type, main
+from book_maker.loader.classify import PLAN_HANDOFF_EXIT_CODE
 
 
 def test_get_book_type_uses_final_suffix_and_lowercases():
@@ -12,7 +13,9 @@ import pytest
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 BOOK = REPO / "test_books" / "animal_farm.epub"
@@ -69,7 +72,8 @@ def test_plan_classify_implies_plan_mode(tmp_path):
     # any classification choice is a choice to have a plan; no second flag
     # is needed to enter plan mode
     proc, plan = _run(tmp_path, "--plan-classify", "agent")
-    assert proc.returncode == 0
+    # the handoff is not a finished translation, and says so
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE
     assert plan.exists()
     assert "Paste the block below" in proc.stdout
 
@@ -129,7 +133,7 @@ def test_the_retired_name_is_not_advertised():
 
 def test_explicit_tag_list_loses_to_the_classify_flag(tmp_path):
     proc, plan = _run(tmp_path, "--plan-classify", "agent", "--translate-tags", "div,p")
-    assert proc.returncode == 0
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE
     assert plan.exists()
     # rich wraps long lines at terminal width, so compare wrap-insensitively
     assert "ignoring --translate-tags div,p" in " ".join(proc.stdout.split())
@@ -148,7 +152,7 @@ def test_translate_tags_auto_is_an_ordinary_tag(tmp_path):
 def test_default_tags_are_overridden_quietly(tmp_path):
     # the untouched default "p" is not a selection worth a warning
     proc, plan = _run(tmp_path, "--plan-classify", "agent")
-    assert proc.returncode == 0
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE
     assert plan.exists()
     assert "ignoring --translate-tags" not in proc.stdout
 
@@ -355,6 +359,83 @@ def test_a_local_endpoint_needs_no_key(tmp_path, monkeypatch):
     monkeypatch.delenv("BBM_OPENAI_API_KEY", raising=False)
 
     assert resolve_api_key("openai", "", "http://localhost:11434/v1") == "local"
+
+
+def test_parallel_workers_is_refused_with_codex(tmp_path):
+    # codex serializes every turn on one thread, and the parallel path then
+    # reads a context attribute Codex does not have — an AttributeError that
+    # only lands once the run is already under way. Refuse it up front
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--parallel-workers", "4")
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--parallel-workers" in flat
+    assert "codex" in flat
+    # nothing may have been dispatched: no output book, no sidecar preflight
+    assert not (tmp_path / f"{src.stem}_bilingual.epub").exists()
+    assert "codex app-server" not in proc.stdout + proc.stderr
+
+
+def test_parallel_workers_runs_with_session_context(tmp_path):
+    # each worker is handed a clone with a session history of its own
+    # (_clone_translator_for_context), so the pairing is supported here
+    # rather than refused
+    proc, _ = _run(
+        tmp_path,
+        "--use_context",
+        "session",
+        "--parallel-workers",
+        "4",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--parallel-workers" not in proc.stdout
+
+
+def test_parallel_workers_still_runs_with_window_context(tmp_path):
+    # only the two pairings are refused; the openai window route is untouched
+    proc, _ = _run(
+        tmp_path,
+        "--use_context",
+        "--parallel-workers",
+        "4",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--parallel-workers" not in proc.stdout
+
+
+def test_one_worker_is_never_refused(tmp_path):
+    # 1 worker is what every run already does, in either pairing
+    proc, _ = _run(
+        tmp_path,
+        "--use_context",
+        "session",
+        "--parallel-workers",
+        "1",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    # a dry run reaches no model at all, so the codex side of the boundary
+    # can be checked without starting a sidecar
+    proc = _cli(
+        "--book_name",
+        str(tmp_path / BOOK.name),
+        "--model",
+        "codex",
+        "--parallel-workers",
+        "1",
+        "--plan-dry-run",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def test_quiet_flag_is_accepted(tmp_path):
@@ -716,3 +797,296 @@ class TestOrcaRouterModelList:
 
         assert models == ["gpt-5-mini", "orcarouter"]
         assert options.api_base == ""
+
+
+# --------------------------------------------------------------------------
+# The flag audit's fixes (PR #553), on this fork's endpoint surface: the
+# route is --api_format / --model <id verbatim>, so a check the branch wrote
+# against --model gemini is written here against the format it names.
+# --------------------------------------------------------------------------
+
+
+def test_compact_budget_still_rejects_a_budget_too_small_to_use():
+    import argparse
+
+    from book_maker.cli import compact_budget
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        compact_budget("499")
+
+
+def test_a_promptdown_file_with_no_user_message_fails_clearly(tmp_path):
+    # the repo's own prompt_md.prompt.md is written in promptdown's table
+    # form, which the pinned promptdown does not parse. It used to fall
+    # through to `prompt["user"]` and die with a KeyError traceback, after
+    # the user had already been told the file loaded
+    from book_maker.cli import parse_prompt_arg
+
+    md = tmp_path / "style.prompt.md"
+    md.write_text(
+        "# Prompt\n\n## Conversation\n\n"
+        "| Role | Content |\n|---|---|\n| User | Translate {text} |\n"
+    )
+    with pytest.raises(ValueError) as excinfo:
+        parse_prompt_arg(str(md))
+    message = str(excinfo.value)
+    assert str(md) in message
+    assert "**User:**" in message
+
+
+def test_a_promptdown_file_in_block_form_still_loads(tmp_path):
+    from book_maker.cli import parse_prompt_arg
+
+    md = tmp_path / "style.prompt.md"
+    md.write_text(
+        "# Prompt\n\n## Developer Message\n\nBe faithful.\n\n"
+        "## Conversation\n\n**User:**\nTranslate {text} into {language}\n"
+    )
+    prompt = parse_prompt_arg(str(md))
+    assert "{text}" in prompt["user"]
+    assert prompt["system"] == "Be faithful."
+
+
+def test_an_empty_exclude_translate_tags_excludes_nothing(tmp_path):
+    # the README documents --exclude-translate-tags "" as the way to
+    # translate code and sup too; the empty string is falsy, so it used to
+    # leave the sup,code default in place with no sign anything was ignored
+    proc, plan = _run(
+        tmp_path, "--plan-classify", "agent", "--exclude-translate-tags", ""
+    )
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE, proc.stdout + proc.stderr
+    assert json.loads(plan.read_text())["exclude_tags"] == []
+
+
+def test_a_style_and_a_colour_together_say_the_colour_is_lost(tmp_path):
+    # --translation_style is the whole declaration block and replaces the
+    # colour; it used to win in silence
+    proc, _ = _run(
+        tmp_path,
+        "--test",
+        "--test_num",
+        "1",
+        "--translation_color",
+        "red",
+        "--translation_style",
+        "font-style: italic;",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    flat = " ".join(proc.stdout.split())
+    assert "--translation_color" in flat
+    assert "ignored" in flat
+
+
+def test_a_colour_on_its_own_is_not_warned_about(tmp_path):
+    proc, _ = _run(tmp_path, "--test", "--test_num", "1", "--translation_color", "red")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--translation_color" not in proc.stdout
+
+
+def test_a_misspelled_exclude_filelist_name_fails_loud(tmp_path):
+    # a typo here used to be silent: the chapter the user meant to skip was
+    # translated and paid for. The only-list reached the coverage gate; the
+    # exclude-list reached nothing at all
+    proc, plan = _run(
+        tmp_path, "--plan-classify", "agent", "--exclude_filelist", "titlepage.xhtm"
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--exclude_filelist" in flat
+    assert "titlepage.xhtm" in flat
+    assert not plan.exists()
+
+
+def test_a_misspelled_filter_name_fails_the_dry_run_too(tmp_path):
+    # Codex review 2 on #553: the dry run returned before the filter gate,
+    # so it wrote a plan that did not honor the exclusion and exited 0
+    proc, plan = _run(
+        tmp_path, "--plan-dry-run", "--exclude_filelist", "titlepage.xhtm"
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--exclude_filelist" in flat and "titlepage.xhtm" in flat
+    assert not plan.exists()
+
+
+def test_a_misspelled_only_filelist_name_fails_loud(tmp_path):
+    proc, plan = _run(
+        tmp_path, "--plan-classify", "agent", "--only_filelist", "chpater1.xhtml"
+    )
+    assert proc.returncode == 1
+    assert "--only_filelist" in " ".join(proc.stdout.split())
+    assert not plan.exists()
+
+
+def test_correctly_spelled_file_filters_still_plan(tmp_path):
+    proc, plan = _run(
+        tmp_path, "--plan-classify", "agent", "--exclude_filelist", "titlepage.xhtml"
+    )
+    assert proc.returncode == PLAN_HANDOFF_EXIT_CODE, proc.stdout + proc.stderr
+    assert plan.exists()
+
+
+def test_a_misspelled_exclude_name_fails_loud_in_tag_mode_too(tmp_path):
+    # the gate lived inside the plan build, so a tag-mode run translated and
+    # paid for the document the user meant to skip
+    proc, _ = _run(
+        tmp_path,
+        "--plan-classify",
+        "none",
+        "--exclude_filelist",
+        "titlepage.xhtm",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--exclude_filelist" in flat
+    assert "titlepage.xhtm" in flat
+    assert not (tmp_path / f"{BOOK.stem}_bilingual.epub").exists()
+
+
+def test_the_file_filter_gate_runs_before_any_model_setup(tmp_path):
+    # even in plan mode it ran after preflight, so a codex sidecar had
+    # already booted and printed its login line before the typo was caught
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "codex",
+        "--plan-classify",
+        "agent",
+        "--exclude_filelist",
+        "titlepage.xhtm",
+    )
+    assert proc.returncode == 1
+    assert "--exclude_filelist" in " ".join(proc.stdout.split())
+    assert "Codex:" not in proc.stdout
+
+
+def test_batch_is_refused_on_the_codex_format(tmp_path):
+    # codex has no Batch API; the run used to die partway through with
+    # AttributeError: batch_init, after plan quota had already been spent
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--batch")
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--batch" in flat
+    assert "Codex:" not in proc.stdout
+    assert "Traceback" not in proc.stderr
+
+
+def test_batch_use_is_refused_on_the_codex_format(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--batch-use")
+    assert proc.returncode == 1
+    assert "--batch" in " ".join(proc.stdout.split())
+
+
+def test_a_resumed_codex_run_says_continuity_restarts(tmp_path):
+    # the thread is the only context this route has and it dies with the
+    # process; <book>_handoff.md is written but never read back
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--resume")
+    assert "new thread" in " ".join(proc.stdout.split())
+
+
+def test_a_codex_run_without_resume_says_nothing_about_threads(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli("--book_name", str(src), "--model", "codex", "--batch")
+    assert "new thread" not in proc.stdout
+
+
+def test_session_context_is_refused_on_a_format_that_has_none(tmp_path):
+    # a machine-translation format keeps no history at all; --use_context
+    # session was accepted and silently meant window
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--api_format",
+        "deepl",
+        "--use_context",
+        "session",
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--use_context session" in flat
+    assert "deepl" in flat
+
+
+def test_bare_window_context_is_not_refused_anywhere(tmp_path):
+    # window mode is what those formats do have; only session is refused
+    proc, _ = _run(tmp_path, "--use_context", "--test", "--test_num", "1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--use_context session" not in proc.stdout
+
+
+def test_session_context_is_accepted_on_the_formats_that_implement_it():
+    from book_maker.translator import FORMAT_DICT
+
+    assert FORMAT_DICT["openai"].SUPPORTS_SESSION_CONTEXT
+    assert FORMAT_DICT["anthropic"].SUPPORTS_SESSION_CONTEXT
+    assert FORMAT_DICT["codex"].SUPPORTS_SESSION_CONTEXT
+    # (google is replaced by the hermetic stub, which declares both)
+    assert not FORMAT_DICT["deepl"].SUPPORTS_SESSION_CONTEXT
+    assert not FORMAT_DICT["caiyun"].SUPPORTS_SESSION_CONTEXT
+
+
+def test_parallel_workers_with_context_is_refused_where_it_breaks(tmp_path):
+    # a format that keeps no re-sendable window has nothing to clone, and
+    # the run died reading a context attribute it never set — after the
+    # chapters had already been dispatched
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--api_format",
+        "deepl",
+        "--use_context",
+        "--parallel-workers",
+        "2",
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--parallel-workers" in flat
+    assert "--use_context" in flat
+
+
+def test_parallel_workers_without_context_is_left_alone(tmp_path):
+    # only the pairing is refused; parallel on its own is untouched
+    proc, _ = _run(tmp_path, "--parallel-workers", "2", "--plan-dry-run")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_the_formats_that_carry_chapter_context_are_not_refused():
+    from book_maker.translator import FORMAT_DICT
+
+    assert FORMAT_DICT["openai"].SUPPORTS_PARALLEL_CONTEXT
+    assert FORMAT_DICT["anthropic"].SUPPORTS_PARALLEL_CONTEXT
+    assert not FORMAT_DICT["deepl"].SUPPORTS_PARALLEL_CONTEXT
+    assert not FORMAT_DICT["caiyun"].SUPPORTS_PARALLEL_CONTEXT
+
+
+def test_the_old_mode_name_still_works_and_says_it_moved(tmp_path):
+    # scripts written before the rename keep running
+    proc, plan = _run(tmp_path, "--plan-classify", "most", "--test", "--test_num", "1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not plan.exists()
+    assert "--plan-classify most is now --plan-classify all" in " ".join(
+        proc.stdout.split()
+    )
+
+
+def test_the_old_mode_name_is_not_advertised():
+    proc = _cli("--help")
+    assert "{auto,none,all,model,agent}" in " ".join(proc.stdout.split())
+    assert "'most'" not in proc.stdout

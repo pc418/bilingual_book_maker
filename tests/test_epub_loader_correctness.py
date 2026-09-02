@@ -503,7 +503,8 @@ def test_epub_sequential_interrupt_and_resume_uses_completed_prefix(
 
     with pytest.raises(SystemExit) as exc:
         loader.make_bilingual_book()
-    assert exc.value.code == 0
+    # an interrupted run has no finished book, and says so (P9)
+    assert exc.value.code == 130
     assert loader.p_to_save == ["<T>one</T>"]
 
     resumed, output = _make_loader(
@@ -650,7 +651,7 @@ def test_epub_parallel_interrupt_resumes_from_contiguous_prefix(tmp_path, monkey
 
     with pytest.raises(SystemExit) as exc:
         loader.make_bilingual_book()
-    assert exc.value.code == 0
+    assert exc.value.code == 130
     assert loader.p_to_save == ["<T>chapter A</T>"]
 
     resumed, output = _make_loader(
@@ -880,3 +881,26 @@ def test_the_bar_shows_usage_once_a_request_reported_it():
     loader._show_usage(bar)
     assert bar.postfix == {"in": "2.0k", "out": "400", "cached": "1.0k"}
     assert loader._usage_suffix() == " in=2.0k out=400 cached=1.0k"
+
+
+def test_a_broken_meter_never_stops_the_bar():
+    """The bar hooks decorate; a meter that raises must not end a paid run."""
+    from book_maker.loader.epub_loader import EPUBBookLoader
+
+    loader = EPUBBookLoader.__new__(EPUBBookLoader)
+
+    class Broken:
+        def usage_postfix(self):
+            raise RuntimeError("meter")
+
+        def usage_summary(self):
+            raise RuntimeError("meter")
+
+    class Bar:
+        def set_postfix(self, postfix, refresh=True):
+            raise RuntimeError("bar")
+
+    loader.translate_model = Broken()
+    loader._show_usage(Bar())
+    assert loader._usage_suffix() == ""
+    loader._print_usage()

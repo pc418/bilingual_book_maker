@@ -149,6 +149,13 @@ class TestHandoffPrompt:
         prompt = handoff_prompt(with_glossary=False, with_style=False)
         assert "style" not in prompt.lower()
 
+    def test_the_style_request_is_scoped_to_deviations(self):
+        """Unscoped, the section comes back restating defaults the model
+        would follow anyway, which costs a line and says nothing."""
+        assert "different from general translation" in handoff_prompt(
+            with_glossary=False
+        )
+
     def test_renderings_are_asked_for_only_with_the_glossary_flag(self):
         assert "<renderings>" in handoff_prompt(with_glossary=True)
         assert "<renderings>" not in handoff_prompt(with_glossary=False)

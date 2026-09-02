@@ -305,8 +305,18 @@ def parse_prompt_arg(prompt_arg):
 
             return prompt
         except Exception as e:
-            print(f"Error parsing PromptDown file: {e}")
-            # Fall through to other parsing methods
+            # Falling through left `prompt` half-built and the next line
+            # died on `prompt["user"]` with a KeyError traceback — after
+            # the run had already printed that the file loaded. The pinned
+            # promptdown reads the block form only; its table form (which
+            # this repo's own prompt_md.prompt.md still uses) parses to a
+            # conversation with no user message.
+            raise ValueError(
+                f"could not read the PromptDown file {prompt_arg}: {e}. "
+                f"Write the conversation in block form -- a line reading "
+                f"`**User:**` followed by the template, which must contain "
+                f"`{{text}}`."
+            ) from e
 
     # Existing parsing logic for JSON strings and other formats
     if not any(prompt_arg.endswith(ext) for ext in [".json", ".txt", ".md"]):
@@ -862,7 +872,14 @@ def main():
 
         from book_maker.loader.plan import build_plan, is_fixed_layout
 
+        from book_maker.loader.epub_loader import check_file_filters_against
+
         book = _epub.read_epub(options.book_name)
+        # a typo in a filter is answerable here too, before a plan that
+        # would silently not honor it is written
+        check_file_filters_against(
+            book, options.only_filelist, options.exclude_filelist
+        )
         if is_fixed_layout(book):
             print(
                 "[bold yellow]warning: this is a fixed-layout (pre-paginated) "
@@ -910,6 +927,65 @@ def main():
     model_names, api_format, endpoint_env_keys = resolve_endpoint(options)
     translate_model = FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
+
+    # What the endpoint alone decides, decided before a key is read, a book
+    # is parsed or the codex sidecar is started: a run that cannot honor the
+    # flags it was given must say so while nothing has been paid for.
+
+    # Batch translation is OpenAI's Batch API. The codex format has no such
+    # thing, and reached it anyway: `AttributeError: batch_init` partway into
+    # a run that had already spent plan quota.
+    if api_format == "codex" and (options.batch_flag or options.batch_use_flag):
+        print(
+            "[bold red]Error: --batch / --batch-use are the OpenAI Batch "
+            "API, which the codex format does not have. Drop the flag, or "
+            "translate through an OpenAI-shaped endpoint.[/bold red]"
+        )
+        exit(1)
+
+    # A format that does not implement session mode used to accept the flag
+    # and translate as though it had never been passed — the run cost more
+    # attention than a window run and bought nothing.
+    if options.context_mode == "session" and not getattr(
+        translate_model, "SUPPORTS_SESSION_CONTEXT", False
+    ):
+        print(
+            f"[bold red]Error: --use_context session is not implemented for "
+            f"the {api_format} format; it would be accepted and ignored. Use "
+            f"bare --use_context for a re-sent window of paragraph "
+            f"pairs.[/bold red]"
+        )
+        exit(1)
+
+    # Parallel workers each get a clone carrying their own chapter context.
+    # A format that keeps no re-sendable window has nothing to clone, and the
+    # run died reading a context attribute it never set — after the chapters
+    # were already dispatched. Codex is exempt: it keeps a thread, serializes
+    # turns on it, and is warned about below instead of refused.
+    if (
+        options.parallel_workers > 1
+        and options.context_mode is not None
+        and api_format != "codex"
+        and not getattr(translate_model, "SUPPORTS_PARALLEL_CONTEXT", False)
+    ):
+        print(
+            f"[bold red]Error: --parallel-workers is not supported with "
+            f"--use_context on the {api_format} format, which keeps no "
+            f"per-chapter context for a worker to carry. Drop "
+            f"--parallel-workers, or drop --use_context for this "
+            f"run.[/bold red]"
+        )
+        exit(1)
+
+    # A codex run's context is the thread, and a thread does not survive the
+    # process. The handoff report on disk is written, never read back.
+    if api_format == "codex" and options.resume:
+        print(
+            "[bold yellow]Note:[/bold yellow] a resumed codex run starts a "
+            "new thread. Nothing already translated is paid for again, but "
+            "the earlier thread's terminology and register are not carried "
+            "into it."
+        )
     API_KEY = resolve_api_key(
         api_format,
         options.key,
@@ -1080,7 +1156,10 @@ def main():
             )
         e.plan_mode = True
         e.translate_tags = "auto"
-    if options.exclude_translate_tags:
+    # `--exclude-translate-tags ""` is the documented way to exclude nothing
+    # (README). Testing for truthiness swallowed it and left the sup,code
+    # default standing, with nothing printed to say so.
+    if options.exclude_translate_tags is not None:
         e.exclude_translate_tags = options.exclude_translate_tags
     if hasattr(e, "plan_min_coverage"):
         e.plan_min_coverage = options.plan_min_coverage
@@ -1104,11 +1183,26 @@ def main():
         e.exclude_filelist = options.exclude_filelist
     if options.only_filelist:
         e.only_filelist = options.only_filelist
+    # Both lists name documents inside the book, which is already open. A
+    # typo is answerable here and nowhere cheaper — before any model setup,
+    # so a sidecar boot or a context-window lookup cannot precede it.
+    if hasattr(e, "check_file_filters"):
+        e.check_file_filters()
     if options.accumulated_num > 1:
         e.accumulated_num = options.accumulated_num
     if options.translation_color:
         e.translation_style = f"color: {options.translation_color};"
     if options.translation_style:
+        # --translation_style is the whole declaration block, so it replaces
+        # the colour rather than merging with it. Losing a flag the user
+        # typed is worth a line.
+        if options.translation_color:
+            print(
+                f"[bold yellow]Warning:[/bold yellow] --translation_style "
+                f"replaces --translation_color; the colour "
+                f"{options.translation_color!r} is ignored. Put it in the "
+                f"style instead."
+            )
         e.translation_style = options.translation_style
     if options.batch_size:
         e.batch_size = options.batch_size
@@ -1132,10 +1226,19 @@ def main():
         except Exception as ex:
             print(f"[red]Error: {ex}[/red]")
             exit(1)
-        # Check the sidecar is up and signed in before parsing a book: a
-        # login prompt after ten minutes of work is the wrong time to find out.
+        # Everything that must be settled before the first paid request, now
+        # that the model list is known: the codex sidecar is up and signed
+        # in. A login prompt after ten minutes of work is the wrong time to
+        # find out — and a failure the user can act on is one line, not a
+        # traceback.
         if hasattr(e.translate_model, "preflight"):
-            e.translate_model.preflight()
+            try:
+                e.translate_model.preflight()
+            except Exception as err:
+                if not getattr(err, "user_facing", False):
+                    raise
+                print(f"[bold red]{escape(str(err))}[/bold red]")
+                exit(1)
         if api_format == "codex" and options.parallel_workers > 1:
             # A codex thread is the context, and turns on it are serialized
             # so chapters do not interleave into one thread. Saying so beats

@@ -24,8 +24,10 @@ from ebooklib import epub
 from rich.console import Console
 from rich.markup import escape
 
+from book_maker.loader.classify import PLAN_HANDOFF_EXIT_CODE
 from book_maker.loader.plan import (
     DisplayResolver,
+    TranslationPlan,
     build_plan,
     classify_skip,
     parse_css_display,
@@ -632,10 +634,37 @@ class TestPlanArtifact:
         data = json.loads(out.read_text())
         assert data["coverage"] == pytest.approx(plan.coverage)
         assert data["book_sha256"]
+        assert data["planning_settings"] == {
+            "exclude_tags": ["code", "sup"],
+            "poetry_group_size": 8,
+            "only_files": [],
+            "exclude_files": [],
+        }
         rows = {s["key"]: s for s in data["signatures"]}
         # every row is a question until someone answers it
         assert rows["block:blockquote.calibre_17"]["action"] is None
         assert rows["block:blockquote.calibre_17"]["samples"]
+
+    def test_same_key_with_changed_occurrence_evidence_reopens_its_decision(self):
+        first = bs("<body><p>Front matter.</p></body>", "html.parser")
+        old_plan = TranslationPlan(
+            [partition_soup(first, DisplayResolver([]), "front.xhtml")], (), 8
+        )
+        old_ledger = old_plan.build_ledger()
+        old_ledger.decide("block:p", "skip", "agent", "front matter")
+
+        second = bs(
+            "<body><p>Main prose that happens to use the same tag.</p></body>",
+            "html.parser",
+        )
+        new_plan = TranslationPlan(
+            [partition_soup(second, DisplayResolver([]), "chapter.xhtml")], (), 8
+        )
+        row = new_plan.build_ledger(decisions=old_ledger).rows["block:p"]
+
+        assert row["action"] is None
+        assert row["decided_by"] is None
+        assert row["content_type"] is None
 
     def test_signature_override_skip(self, tmp_path):
         book = epub.read_epub(str(ANIMAL_FARM))
@@ -723,7 +752,7 @@ def _write_decided_plan(loader, action="translate"):
     loader.plan_classify = "agent"
     with pytest.raises(SystemExit) as exit_info:
         loader.make_bilingual_book()
-    assert exit_info.value.code == 0
+    assert exit_info.value.code == PLAN_HANDOFF_EXIT_CODE
     plan_path = Path(loader.epub_name).with_name(
         Path(loader.epub_name).stem + "_plan.json"
     )
@@ -751,8 +780,8 @@ def _make_loader(tmp_path, model_cls, book=ANIMAL_FARM):
     )
     loader.plan_mode = True
     loader.translate_tags = "auto"
-    # tests that exercise the plan JSON set this to "agent"; the default is
-    # the deliberate translate-everything mode, which writes no plan file
+    # a programmatic caller must pick a mode (the loader's own default is
+    # "none", no plan mode); tests that exercise the plan JSON set "agent"
     loader.plan_classify = "all"
     return loader, src
 
@@ -888,7 +917,7 @@ class TestLoaderPlanMode:
         loader.plan_classify = "agent"
         with pytest.raises(SystemExit) as first:
             loader.make_bilingual_book()
-        assert first.value.code == 0
+        assert first.value.code == PLAN_HANDOFF_EXIT_CODE
         plan_path = src.parent / (src.stem + "_plan.json")
         rows = json.loads(plan_path.read_text())["signatures"]
         assert rows and all(r["action"] is None for r in rows)
@@ -899,7 +928,7 @@ class TestLoaderPlanMode:
         loader2.plan_classify = "agent"
         with pytest.raises(SystemExit) as second:
             loader2.make_bilingual_book()
-        assert second.value.code == 0
+        assert second.value.code == PLAN_HANDOFF_EXIT_CODE
         assert "Paste the block below" in capsys.readouterr().out
         assert not loader2.translate_model.list_calls, "nothing may be paid for"
 
@@ -965,7 +994,7 @@ class TestLoaderPlanMode:
         assert len(guarded) == 2, "the re-partitioned plan was never guarded"
         assert guarded[1] is not guarded[0]
 
-    def test_a_signature_a_settings_change_introduces_reaches_the_plan(self, tmp_path):
+    def test_a_settings_change_reopens_every_carried_decision(self, tmp_path):
         # A decided plan plus a widened file filter: the new document's
         # signatures are new questions. Listing them in the prompt while the
         # JSON has no row to edit makes the instruction impossible to follow
@@ -980,18 +1009,67 @@ class TestLoaderPlanMode:
         loader2.plan_classify = "agent"
         with pytest.raises(SystemExit) as exit_info:
             loader2.make_bilingual_book()
-        assert exit_info.value.code == 0
+        assert exit_info.value.code == PLAN_HANDOFF_EXIT_CODE
 
         rows = json.loads(plan_path.read_text())["signatures"]
         keys = {r["key"] for r in rows}
         assert keys - before, "the widened filter added no signature to work with"
-        # the new rows are askable, and the answered ones were left alone
-        assert {r["key"] for r in rows if r["action"] is None} == keys - before
-        assert all(
-            r["action"] == "translate" and r["decided_by"] == "agent"
-            for r in rows
-            if r["key"] in before
-        )
+        # The filter is part of the evidence boundary. A shared signature can
+        # now describe occurrences from another chapter, so a matching key is
+        # not enough to keep its old verdict.
+        assert all(r["action"] is None for r in rows)
+        assert all(r["decided_by"] is None for r in rows)
+
+    def test_a_settings_change_refreshes_an_already_open_plan(self, tmp_path):
+        loader, src = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit):
+            loader.make_bilingual_book()
+        plan_path = src.parent / (src.stem + "_plan.json")
+
+        # The exclude list is semantically shadowed by the only list, so the
+        # row keys and evidence stay identical. The settings record must still
+        # advance or any answers added now would be reopened on every rerun.
+        loader2, _ = _make_loader(tmp_path, FakeModel)
+        loader2.only_filelist = "index_split_004.html"
+        loader2.exclude_filelist = "index_split_003.html"
+        loader2.plan_classify = "agent"
+        with pytest.raises(SystemExit):
+            loader2.make_bilingual_book()
+
+        data = json.loads(plan_path.read_text())
+        assert data["planning_settings"]["exclude_files"] == ["index_split_003.html"]
+        assert all(row["action"] is None for row in data["signatures"])
+
+    def test_an_inline_skip_does_not_reopen_the_answers_around_it(self, tmp_path):
+        # An inline verdict removes its text *before* segments are formed, so
+        # the enclosing block runs partition differently on the next run. That
+        # is the plan doing what it was told, not evidence going stale: if it
+        # reopened the surrounding rows, a fully answered plan would come back
+        # unanswered every time it was run, and the agent handoff would never
+        # terminate.
+        loader, src = _make_loader(tmp_path, FakeModel)
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit):
+            loader.make_bilingual_book()
+        plan_path = src.parent / (src.stem + "_plan.json")
+
+        data = json.loads(plan_path.read_text())
+        assert any(r["scope"] == "inline" for r in data["signatures"])
+        for row in data["signatures"]:
+            row["action"] = "skip" if row["scope"] == "inline" else "translate"
+            row["decided_by"] = "agent"
+            row["content_type"] = "x"
+        plan_path.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+        answered = plan_path.read_text()
+
+        loader2, _ = _make_loader(tmp_path, FakeModel)
+        loader2.plan_classify = "agent"
+        loader2.make_bilingual_book()  # must not raise SystemExit
+
+        assert plan_path.read_text() == answered, "answered plan was overwritten"
+        assert loader2.translate_model.list_calls, "nothing was translated"
 
     def test_parallel_resume_cache_is_document_ordered(self, tmp_path):
         # Finding #1: cache slots must follow document order, not thread
@@ -1264,6 +1342,35 @@ class TestEpubHardening:
         assert soup.find("ruby") is None
         assert "Mountain path." in soup.get_text()
 
+    def test_single_translate_carries_the_translation_style(self, tmp_path):
+        # tag mode puts --translation_style on the replacement element in
+        # single-translate mode; plan mode wrote a bare string, so the flag
+        # was accepted and then dropped without a word
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        soup = bs("<body><p>chapter one</p></body>", "html.parser")
+        fp = partition_soup(soup, DisplayResolver([]), "x.html")
+        loader._insert_plan_translation(
+            fp.units[0],
+            "\u7b2c\u4e00\u7ae0",
+            translation_style="color: #808080;",
+            single_translate=True,
+        )
+        styled = soup.find("span", style="color: #808080;")
+        assert styled is not None
+        assert styled.get_text() == "\u7b2c\u4e00\u7ae0"
+        assert "chapter one" not in soup.get_text()
+
+    def test_single_translate_without_a_style_stays_a_bare_string(self, tmp_path):
+        # a book that asked for no styling keeps the markup it had
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        soup = bs("<body><p>chapter one</p></body>", "html.parser")
+        fp = partition_soup(soup, DisplayResolver([]), "x.html")
+        loader._insert_plan_translation(
+            fp.units[0], "\u7b2c\u4e00\u7ae0", single_translate=True
+        )
+        assert soup.find("span") is None
+        assert soup.find("p").get_text() == "\u7b2c\u4e00\u7ae0"
+
     def test_single_translate_keeps_a_wrapper_holding_a_link_target(self, tmp_path):
         # <span> is an emptied husk, but the <a id> inside it is the target
         # of every cross-reference to this chapter. Deleting the wrapper
@@ -1277,6 +1384,20 @@ class TestEpubHardening:
         fp = partition_soup(soup, DisplayResolver([]), "x.html")
         loader._insert_plan_translation(fp.units[0], "ZHANG YI", single_translate=True)
         assert soup.find(id="target") is not None
+        assert "ZHANG YI" in soup.get_text()
+
+    def test_single_translate_keeps_a_legacy_named_anchor_target(self, tmp_path):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        soup = bs(
+            '<body><p><span><a name="target">chapter</a></span> one</p></body>',
+            "html.parser",
+        )
+        fp = partition_soup(soup, DisplayResolver([]), "x.html")
+        loader._insert_plan_translation(fp.units[0], "ZHANG YI", single_translate=True)
+
+        anchor = soup.find("a", attrs={"name": "target"})
+        assert anchor is not None
+        assert anchor.get_text() == ""
         assert "ZHANG YI" in soup.get_text()
 
     def test_single_translate_still_removes_a_husk_that_targets_nothing(self, tmp_path):
@@ -1391,6 +1512,20 @@ class TestEpubHardening:
         assert [s.get("class") for s in trans] == [["lin"], ["lin"]]
         assert all(s.get("id") is None for s in trans)
         assert list(soup.find("p").stripped_strings) == ["one", "T1", "two", "T2"]
+
+    def test_bilingual_anchored_ruby_translation_uses_a_neutral_wrapper(self, tmp_path):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        soup = bs(
+            "<body><p><ruby>漢字<rt>かんじ</rt></ruby><br/>next</p></body>",
+            "html.parser",
+        )
+        fp = partition_soup(soup, DisplayResolver([]), "x.html")
+        loader._insert_plan_translation(fp.units[0], "kanji", single_translate=False)
+
+        assert len(soup.find_all("ruby")) == 1
+        translated = next(t for t in soup.find_all("span") if t.get_text() == "kanji")
+        assert translated.name == "span"
+        assert soup.find("ruby").find("rt") is not None
 
     def test_bilingual_anchored_translation_keeps_bare_span_for_fragment_markup(
         self, tmp_path
@@ -1544,11 +1679,12 @@ class TestEpubHardening:
         # dropped either way.
         m, conditional = parse_css_display(
             "@supports (display: flex) { @media print { .a { display:none } } "
-            ".b { display: inline } }"
+            ".b { display: inline } .c { display: none } }"
         )
         assert m == {}
         assert (None, "a") not in conditional
-        assert conditional[(None, "b")] == ["@supports (display: flex)"]
+        assert (None, "b") not in conditional
+        assert conditional[(None, "c")] == ["@supports (display: flex)"]
 
     # -- item 5: br / whitespace glue --------------------------------------
 
@@ -2575,7 +2711,7 @@ class TestModePolicy:
         assert not mode_policy("all").reads_saved_plan
         assert not mode_policy("all").writes_plan_file
         # the agent handoff *is* the job: stopping there is a success
-        assert mode_policy("agent").handoff_exit_code == 0
+        assert mode_policy("agent").handoff_exit_code == PLAN_HANDOFF_EXIT_CODE
         assert mode_policy("model").handoff_exit_code == 1
 
     def test_an_invented_mode_is_refused(self):
@@ -2583,6 +2719,149 @@ class TestModePolicy:
 
         with pytest.raises(ValueError, match="unknown --plan-classify mode"):
             mode_policy("vibes")
+
+
+class TestAllModeAttribution:
+    """`--plan-classify all` decides every row. The row must say the mode
+    did it, not a person: nobody looked at the samples, and a row reading
+    "user" is indistinguishable from one somebody edited by hand."""
+
+    @staticmethod
+    def _plan():
+        soup = bs(
+            '<body><p>Prose.</p><span class="pageno">12</span></body>',
+            "html.parser",
+        )
+        return TranslationPlan(
+            [partition_soup(soup, DisplayResolver([]), "c.xhtml")], (), 8
+        )
+
+    def test_the_rows_it_decides_are_attributed_to_the_mode(self):
+        from book_maker.loader.classify import decide_everything
+
+        ledger = self._plan().build_ledger()
+        assert ledger.undecided_keys(), "nothing to decide, the test proves nothing"
+        decide_everything(ledger)
+        decided = {row["decided_by"] for row in ledger.rows.values()}
+        assert decided == {"all"}
+        assert all(row["action"] == "translate" for row in ledger.rows.values())
+
+    def test_the_ledger_accepts_that_provenance(self):
+        from book_maker.loader.ledger import VALID_DECIDED_BY
+
+        assert "all" in VALID_DECIDED_BY
+        assert "user" in VALID_DECIDED_BY
+
+    def test_an_all_row_does_not_settle_a_later_run_but_a_user_row_does(self):
+        # the mode's blanket answer is not a decision anybody made, so a
+        # rebuilt ledger asks again; a hand-edited row is a real decision
+        # and is carried forward
+        plan = self._plan()
+        prior = plan.build_ledger()
+        keys = sorted(prior.rows)
+        prior.decide(keys[0], "skip", "all", "unclassified")
+        prior.decide(keys[1], "skip", "user", "running head")
+
+        rebuilt = plan.build_ledger(decisions=prior)
+        assert rebuilt.rows[keys[0]]["action"] is None
+        assert rebuilt.rows[keys[0]]["decided_by"] is None
+        assert rebuilt.rows[keys[1]]["action"] == "skip"
+        assert rebuilt.rows[keys[1]]["decided_by"] == "user"
+        # clearing it in memory is half the job: `reopened` is what makes the
+        # run rewrite the file, and a plan JSON still reading "decided" would
+        # hand the agent a question it cannot see
+        assert keys[0] in rebuilt.reopened_keys
+        assert keys[1] not in rebuilt.reopened_keys
+
+    def test_a_prior_all_row_is_written_back_as_a_question(self, tmp_path):
+        # the file is what the agent reads and what the next run loads, so a
+        # row reopened only in memory is reopened again on every run, forever
+        setup, src = _make_loader(tmp_path, FakeModel)
+        setup.only_filelist = "index_split_004.html"
+        plan_path = _write_decided_plan(setup)
+        data = json.loads(plan_path.read_text())
+        key = data["signatures"][0]["key"]
+        data["signatures"][0]["decided_by"] = "all"
+        data["signatures"][0]["content_type"] = "unclassified"
+        plan_path.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == PLAN_HANDOFF_EXIT_CODE
+
+        rows = {r["key"]: r for r in json.loads(plan_path.read_text())["signatures"]}
+        assert rows[key]["action"] is None
+        assert rows[key]["decided_by"] is None
+
+
+class TestPlanExitCodes:
+    """Agent mode reaches two very different endings from one command line:
+    it hands the plan over having translated nothing, or it finds the plan
+    answered and translates the whole book. Whatever is running the command
+    can only tell them apart by the exit status."""
+
+    def test_the_handoff_says_nothing_was_translated(self, tmp_path):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == PLAN_HANDOFF_EXIT_CODE
+        assert not loader.translate_model.list_calls, "nothing may be paid for"
+
+    def test_the_rerun_that_translates_succeeds(self, tmp_path):
+        # the same command a second time, once the rows are answered: it goes
+        # through, and owes its caller the plain success of a finished book
+        setup, src = _make_loader(tmp_path, FakeModel)
+        setup.only_filelist = "index_split_004.html"
+        _write_decided_plan(setup)
+
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        loader.make_bilingual_book()  # returning at all is the exit status 0
+        assert (src.parent / (src.stem + "_bilingual.epub")).exists()
+
+    def test_a_refusal_stays_a_failure(self, tmp_path):
+        # the handoff code must not swallow the gates in front of it: a plan
+        # that covers too little of the book is broken, not handed over, and
+        # a caller that retries on the handoff must not retry on this
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.plan_classify = "agent"
+        loader.plan_min_coverage = 1.01  # impossible on purpose
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == 1
+
+    def test_an_interrupted_run_does_not_report_success(self, tmp_path):
+        # Ctrl+C leaves a half-translated book and a checkpoint. Exiting 0
+        # told every caller the opposite; 130 is what a shell reports for a
+        # process killed by SIGINT
+        loader, src = _make_loader(tmp_path, FakeModel)
+
+        class Interrupted(FakeModel):
+            calls = 0
+
+            def translate_list(self, text_list):
+                type(self).calls += 1
+                if type(self).calls > 2:
+                    raise KeyboardInterrupt
+                return super().translate_list(text_list)
+
+        loader, src = _make_loader(tmp_path, Interrupted)
+        with pytest.raises(SystemExit) as stop:
+            loader.make_bilingual_book()
+        assert stop.value.code == 130
+        # the halt is only safe because the work so far was written down
+        assert loader.p_to_save
+        assert (src.parent / ("." + src.stem + ".temp.bin")).exists()
+
+    def test_the_handoff_code_collides_with_neither_ending(self):
+        # 0 is a translated book and 1 is every refusal this project raises
+        assert PLAN_HANDOFF_EXIT_CODE not in (0, 1, 130)
 
 
 class TestFileSha256Cache:
@@ -2694,6 +2973,109 @@ class TestAgentPrompt:
         prompt = build_agent_prompt("/p.json", "/b.epub", "rerun")
         assert "still undecided" not in prompt
         assert "null" in prompt
+
+
+class TestRerunCommandRedaction:
+    """The rerun line is echoed to the terminal, captured by whatever log the
+    run is piped to, and pasted whole into an agent session. A key given on
+    the command line would leak by all three routes, on a handoff that spends
+    nothing and so never looks like the moment to be careful."""
+
+    @staticmethod
+    def _rerun(argv):
+        from book_maker.loader.epub_loader import EPUBBookLoader
+
+        with mock.patch("sys.argv", argv):
+            return EPUBBookLoader._rerun_command()
+
+    def test_an_abbreviated_key_flag_is_redacted(self):
+        # argparse accepts any unambiguous abbreviation, so `--openai_k` is a
+        # working spelling of `--openai_key` — and an exact-name lookup would
+        # print the key it carries straight back at the user.
+        line = self._rerun(
+            ["make_book.py", "--book_name", "b.epub", "--openai_k", "sk-live-secret"]
+        )
+        assert "sk-live-secret" not in line
+        assert '--openai_k "$BBM_OPENAI_API_KEY"' in line
+
+    def test_an_abbreviated_joined_key_flag_is_redacted(self):
+        line = self._rerun(["make_book.py", "--claude_ke=sk-live-secret"])
+        assert "sk-live-secret" not in line
+        assert '--claude_ke="$BBM_CLAUDE_API_KEY"' in line
+
+    def test_a_flag_that_merely_starts_alike_is_left_alone(self):
+        # --api_base is not a prefix of --api_key, and its value is not secret.
+        line = self._rerun(["make_book.py", "--api_base", "https://host/v1"])
+        assert "https://host/v1" in line
+
+    def test_a_separated_key_becomes_its_variable(self):
+        command = self._rerun(
+            ["make_book.py", "--book_name", "b.epub", "--openai_key", "sk-secret"]
+        )
+        assert "sk-secret" not in command
+        # the rest of the command must survive intact — the block is printed
+        # so the user can run it, not so they can reconstruct it
+        assert command == (
+            "python3 make_book.py --book_name b.epub "
+            '--openai_key "$BBM_OPENAI_API_KEY"'
+        )
+
+    def test_the_joined_spelling_is_redacted_too(self):
+        # argparse accepts `--flag=value`, where the key is not an argv entry
+        # of its own and a value-position scan would walk straight past it
+        command = self._rerun(["make_book.py", "--claude_key=sk-ant-secret"])
+        assert "sk-ant-secret" not in command
+        assert command == 'python3 make_book.py --claude_key="$BBM_CLAUDE_API_KEY"'
+
+    def test_comma_joined_keys_go_as_one(self):
+        # --openai_key takes a comma-separated list to spread rate limits.
+        # It is a single argv entry, so redacting it must not leave the
+        # second and third keys standing.
+        command = self._rerun(["make_book.py", "--openai_key", "sk-a,sk-b,sk-c"])
+        for key in ("sk-a", "sk-b", "sk-c"):
+            assert key not in command
+        assert command.count("$BBM_OPENAI_API_KEY") == 1
+
+    def test_this_forks_own_key_flag_is_redacted(self):
+        # --key is the one key flag the endpoint surface has; the per-vendor
+        # names above still appear in the argv of a legacy command line
+        command = self._rerun(["make_book.py", "--key", "sk-live-secret"])
+        assert "sk-live-secret" not in command
+        assert command == 'python3 make_book.py --key "$BBM_API_KEY"'
+
+    def test_a_run_with_no_key_is_unchanged(self):
+        argv = ["make_book.py", "--book_name", "b.epub", "--model", "chatgptapi"]
+        assert self._rerun(argv) == "python3 " + " ".join(argv)
+
+    def test_a_value_that_merely_looks_like_a_flag_is_kept(self):
+        # only the position after a key flag is a secret; an ordinary option
+        # whose name ends in the same letters is not one to redact
+        command = self._rerun(["make_book.py", "--language", "monkey"])
+        assert command == "python3 make_book.py --language monkey"
+
+    def test_every_key_flag_the_cli_accepts_has_a_placeholder(self):
+        # a new vendor flag added to the CLI without a row in the table would
+        # print its key in the clear, and nothing else here would notice
+        import book_maker.cli as cli_mod
+        from book_maker.loader.epub_loader import KEY_FLAG_ENV
+
+        declared = set(
+            re.findall(r'"(--[a-z_]*key[a-z_]*)"', Path(cli_mod.__file__).read_text())
+        )
+        assert declared, "the flag scan found nothing, so it proves nothing"
+        assert declared <= set(KEY_FLAG_ENV)
+
+    def test_the_key_is_absent_from_a_real_handoff(self, tmp_path, capsys):
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        loader.only_filelist = "index_split_004.html"
+        loader.plan_classify = "agent"
+        argv = ["make_book.py", "--openai_key", "sk-live-secret"]
+        with mock.patch("sys.argv", argv):
+            with pytest.raises(SystemExit):
+                loader.make_bilingual_book()
+        printed = capsys.readouterr().out
+        assert "Paste the block below" in printed, "no handoff, nothing was proved"
+        assert "sk-live-secret" not in printed
 
 
 class TestNumericSignatureSuffix:
@@ -2843,7 +3225,7 @@ class TestAllRowsReopen:
         assert (note["action"], note["decided_by"]) == ("skip", "user")
         assert ledger.undecided_keys() == ["block:p.body"]
         # and the reopening is recorded, so the plan file gets rewritten
-        assert ledger.reopened == {"block:p.body"}
+        assert ledger.reopened_keys == {"block:p.body"}
 
     def test_a_reopened_all_row_is_written_back_before_the_handoff(self, tmp_path):
         # agent mode on a plan whose rows an earlier `all` run decided: the
@@ -2868,3 +3250,31 @@ class TestAllRowsReopen:
         assert stop.value.code == mode_policy("agent").handoff_exit_code
         after = json.loads(plan_path.read_text())
         assert all(row["action"] is None for row in after["signatures"])
+
+
+class TestOperatorFindings:
+    """From the 260901 operator smoke of the skill (The Waste Land)."""
+
+    def test_the_handoff_offers_the_smoke_not_the_whole_book(self):
+        from book_maker.loader.classify.agent import build_agent_prompt
+
+        text = build_agent_prompt(
+            "b_plan.json",
+            "b.epub",
+            "python make_book.py --book_name b.epub",
+            unresolved=["block:p"],
+        )
+        assert "--quiet --test --test_num 8" in text
+        assert "--quiet --resume" in text
+        # the bare command must not be offered as the thing to run
+        assert "python make_book.py --book_name b.epub\n" not in text
+
+    def test_a_run_without_resume_says_it_overwrites_the_cache(self, tmp_path, capsys):
+        src = tmp_path / ANIMAL_FARM.name
+        shutil.copy(ANIMAL_FARM, src)
+        (tmp_path / ("." + src.stem + ".temp.bin")).write_bytes(b"x")
+        _make_loader(tmp_path, FakeModel)
+        assert "existing progress cache" in capsys.readouterr().out
+        (tmp_path / ("." + src.stem + ".temp.bin")).unlink()
+        _make_loader(tmp_path, FakeModel)
+        assert "existing progress cache" not in capsys.readouterr().out

@@ -189,6 +189,9 @@ class ChatGPTAPI(Base):
     # probing them would send the capability request to the wrong endpoint.
     SUPPORTS_STRUCTURED_OUTPUTS = True
 
+    SUPPORTS_SESSION_CONTEXT = True
+    SUPPORTS_PARALLEL_CONTEXT = True
+
     # Session-mode state, declared here so the window-mode path is well
     # defined on any instance — including the subclasses and test fixtures
     # that build one without running __init__. `session is None` means window
@@ -631,16 +634,21 @@ class ChatGPTAPI(Base):
         request, and only this number says so. `model` is the id the
         request asked for — the one a provider entry prices.
         """
-        usage = getattr(completion, "usage", None)
-        if usage is None:
+        try:
+            usage = getattr(completion, "usage", None)
+            if usage is None:
+                return
+            details = getattr(usage, "prompt_tokens_details", None)
+            self.usage.note(
+                getattr(usage, "prompt_tokens", 0),
+                getattr(usage, "completion_tokens", 0),
+                getattr(details, "cached_tokens", 0),
+                model=model or self.model,
+            )
+        except Exception:
+            # a readout, not a gate: a usage record shaped strangely by a
+            # gateway is not a reason to stop a paid run
             return
-        details = getattr(usage, "prompt_tokens_details", None)
-        self.usage.note(
-            getattr(usage, "prompt_tokens", 0),
-            getattr(usage, "completion_tokens", 0),
-            getattr(details, "cached_tokens", 0),
-            model=model or self.model,
-        )
 
     def _session_budget(self):
         return (

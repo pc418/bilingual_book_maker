@@ -135,11 +135,12 @@ user to rotate it.
    replaced text, a visual style for the translation, specific chapters
    only.
 
-Base command — `ROUTE` from step 0, the context flags from §1d:
+Base command — `ROUTE` from step 0, `CONTEXT` from §1d:
 
 ```bash
 set -a; source .env; set +a
 ROUTE=(--provider openai)                   # or (--provider NAME) / (--model codex)
+CONTEXT=(--use_context session)             # or () on codex
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
   --language "$LANG" --plan-classify agent "${CONTEXT[@]}"
 ```
@@ -192,21 +193,21 @@ itself is rejected by its own provider.
 `--model codex` and `--api_format codex` are the same thing, and neither is
 a model id or a host: the run drives a local `codex app-server` sidecar and
 spends the user's ChatGPT/Codex plan allowance instead of API credits.
-**Step 1b does not apply** — there is nothing to curl.
+**Step 1b does not apply** — there is nothing to curl, and no key to resolve.
 
 ```bash
 python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
-  --plan-classify agent --use_context session
+  --plan-classify agent
 ```
 
+- **`--model codex` runs the sidecar's own default.** To name one, spell
+  the route as `--api_format codex --model "$MODEL"`; offer only ids the
+  user's plan lists, and read the model echoed in the run's first lines.
 - **No `--key`, no `--api_base`.** Run `codex login` once beforehand; the
   run checks the sidecar is up and signed in before parsing the book and
   reports how much of the 5-hour window is left.
 - **`--parallel-workers` buys nothing here** — turns serialize on one
   thread. The run says so rather than pretending.
-- **A spent 5-hour window is waited out**, not failed. A weekly limit is
-  reported instead, because its reset is too far off to sit through; rerun
-  later, the run is resumable either way.
 - **The sidecar is stripped before any book text reaches it.** Startup
   disables shell and exec, hooks, plugins and apps, browser and computer
   use, web search, and every MCP server the user's codex config declares —
@@ -215,6 +216,13 @@ python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
   private working directory that is deleted when the run ends, so the user's
   project config and hooks are not in play. The user's own codex setup is
   untouched; only this sidecar is.
+- **A spent 5-hour window is waited out**, not failed. A weekly limit ends
+  the run instead, printing when the allowance returns — its reset is too
+  far off to sit through. Rerun later; the run is resumable either way.
+- **A resumed run starts a new thread**, and the thread is the only context
+  this route has. Nothing already translated is paid for again, but the
+  earlier run's terminology and register are not carried into the new one.
+  The run prints this.
 - Tell the user which allowance this spends: plan quota, not the API key in
   `.env`.
 
@@ -230,13 +238,12 @@ legal alternatives.
 | format | `ROUTE` | `CONTEXT` | why |
 |---|---|---|---|
 | openai (any OpenAI-shaped entry, `orcarouter`) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
-| anthropic (`api_style: claude`) | `(--provider NAME)` | `(--use_context --context_paragraph_limit 3)` | session mode is inert on this route and bare window mode keeps zero pairs without the limit |
-| codex | `(--model codex)` | `()` | the thread is the context; context flags are moot |
+| anthropic (`api_style: claude`) | `(--provider NAME)` | `(--use_context session)` | the same history, and this route keeps it |
+| codex | `(--model codex)` | `()` | the thread is the context; a context flag has nothing to add to it |
 
 Common to all three, per step: `--plan-classify agent` always; the smoke
 adds `--quiet --test --test_num 8`; the full run adds `--quiet --resume`.
 Nothing from the "Never pass in plan mode" list, ever.
-
 
 ## 2. Plan (agent mode translates nothing)
 
@@ -369,16 +376,16 @@ so you can honour a request without guessing at legal values.
 |---|---|---|---|
 | `--plan-classify` | `auto`, `none`, `all`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
-| `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it). **A window becomes one request only on the openai route**; anthropic and codex send one line per call whatever this says, so raising it cannot fix split verse there |
-| `--exclude-translate-tags` | comma-separated tags | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
+| `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it) |
+| `--exclude-translate-tags` | comma-separated tags; `""` excludes nothing | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
 
 ### Context and consistency
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--use_context` | bare/`window`, `session` | **`session`** — on the **openai** route | the progress bar's `cached=` count is still 0 after a dozen requests — the endpoint is not caching, so session mode re-reads the history at full price; drop to bare `--use_context` — or a run must go parallel. The bar shows `in= out= cached=` tokens live and the run ends with one `tokens:` line; under `--quiet` only the line. **On the anthropic route session mode is silently inert** — the translator never reads it, and bare window mode keeps zero pairs unless you also pass `--context_paragraph_limit 3`. On codex the thread is the context and the flag is moot |
-| `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window before compaction (raise it). **openai and codex only** — the anthropic route drops it, and drops it silently when session mode is asked for |
-| `--context_paragraph_limit` | integer | *unset* (openai substitutes 3) | window mode only. **Required on the anthropic route** for `--use_context` to carry anything at all — its default of 0 keeps zero pairs |
+| `--use_context` | bare/`window`, `session` | **`session`** on openai and anthropic; **nothing** on codex, where the thread is the context | the progress bar's `cached=` count is still 0 after a dozen requests — the endpoint is not caching, so session mode re-reads the history at full price; drop to bare `--use_context`, which re-sends the last few pairs instead — or a run must go parallel. The bar shows `in= out= cached=` tokens live (`spent=` when the entry carries `prices`, §0b) and the run ends with one closing line; under `--quiet` only the line |
+| `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window before compaction (raise it). **Needs `--use_context session`** on an API route — without it the flag is accepted and does nothing. On `codex` it applies unconditionally |
+| `--context_paragraph_limit` | integer | *unset* (the translator substitutes 3) | window mode only, and only when the user wants a different number of pairs re-sent |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
 | `--temperature` | float | *unset* | output is erratic; lower it and re-smoke. **On the openai format only** is an unset value left out of the request; the anthropic route sends `1.0` on every call whether you asked for it or not. Ignored on codex; openai retries once without it if the model rejects an explicit one |
 
@@ -387,34 +394,39 @@ so you can honour a request without guessing at legal values.
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | *(bilingual)* | — | **bilingual: translation added beside the original** | — |
-| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced. `--translation_style` and `--translation_color` are **silently ignored** on this path |
-| `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"` |
-| `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS. Passing both loses this one silently — `--translation_style` wins |
+| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced. `--translation_style` still applies on this path |
+| `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"`. It is the whole declaration block, so it replaces `--translation_color` rather than merging with it (the run says so) |
+| `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS. Passing both: `--translation_style` wins, and the run says the colour was lost |
 
 ### Scope and run control
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--only_filelist` | comma-separated internal filenames, **OPF-relative** (`s04.xhtml`, not `EPUB/s04.xhtml`) | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. A typo fails loud (empty plan, exit 1). Wins outright over an exclude-list |
-| `--exclude_filelist` | same form | *unset* | dropping a few documents. **A typo is silent here** — the file you meant to skip is simply translated, with no warning; verify the names against the plan's document list |
+| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames, **OPF-relative** (`s04.xhtml`, not `EPUB/s04.xhtml`) | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. A name the book does not have fails loud on either list, before anything is paid for. **An only-list wins outright**: pass both and the exclude-list is unreachable |
 | `--test` / `--test_num` | flag + integer | **`--test --test_num 8`** at the smoke step only | poetry-heavy books: ~20, once you have confirmed the first N units are body text |
 | `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
 | `--resume` | on/off | **on for the full run, once a cache exists** | never off after a crash — replay is positional and fingerprint-guarded. On a first run with no `.<book>.temp.bin` it raises an uncaught traceback, so do not add it to the smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
-| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user: with `--use_context` each worker is handed its own fresh history, so continuity stops at every chapter boundary and session mode buys nothing. **Pointless on `codex`** — one thread is the context, so turns are serialized to stop chapters interleaving into it, and the run prints that the flag does not speed it up |
+| `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock has to beat consistency. Then say so to the user: with `--use_context` each worker is handed its own fresh history, so continuity stops at every chapter boundary and session mode buys nothing. **Never on `codex`** (below) |
 | `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
 
 ### Never pass in plan mode
 
-`--translate-tags` (the plan overrides it), `--plan-dry-run` (it returns
-before classification: the plan it writes has every `action` still `null`,
-and there is no agent handoff block to work from — use the base command,
-which writes the same plan *and* hands off), `--accumulated_num` and
-`--allow_navigable_strings` (both explicitly ignored; a non-1
-`accumulated_num` also disables the interrupt-save path), `--batch` /
-`--batch-use` and `--retranslate` (**refused** in plan mode — the run prints
-which flag and exits 1), `--sentence_mode` (refused the same way),
-`--block_size` / `--batch_size` (they re-cut text the plan has already
-partitioned).
+- `--translate-tags` — the plan partitions the whole book; a tag selection
+  has nothing left to select, and the run says it is ignoring it.
+- `--plan-dry-run` — it returns *before* classification, so the plan it
+  writes has every `action` still `null` and there is no agent handoff
+  block to work from. The base command writes the same plan *and* hands
+  off.
+- `--accumulated_num` and `--allow_navigable_strings` — both explicitly
+  ignored; a non-1 `accumulated_num` also disables the interrupt-save path.
+- `--batch` / `--batch-use`, `--retranslate`, `--sentence_mode` —
+  **refused** in plan mode: the run prints which flag and exits 1.
+  `--batch` is also refused on the codex route, which has no batch API.
+- `--block_size` / `--batch_size` — they re-cut text the plan has already
+  partitioned.
+- `--parallel-workers` on `codex` — it shreds the one thread the route's
+  whole context lives in (measured: 225 document switches in 416 turns) and
+  buys no speed, because turns serialize anyway.
 
 ## Halt / resume — safe by construction
 
@@ -427,6 +439,8 @@ partitioned).
   exited having translated 70/70). Checkpoints stay correct; it is the
   *stopping* that does not work. Tell the user before a big parallel run,
   and use SIGKILL when a run must actually stop now.
+- **A halted run exits 130**, a finished one 0, the agent handoff 3, and
+  every refusal 1. Read the code, not the log, when a background run ends.
 - **Resume = rerun the identical command with `--resume`.** Same book, same
   plan, continues where it stopped. This is also why the smoke test is never
   wasted money.
@@ -458,16 +472,20 @@ early and one late chapter.
 
 | symptom | meaning |
 |---|---|
-| `doesn't apply JSON schema … using delimiter method`, `honors JSON schema shape but not value constraints`, `no strict structured-output support` | **not a failure.** The endpoint does not do strict schema decoding, so translation uses the delimiter method. Expected on claude and most proxies; note it, do not switch models over it |
+| `doesn't apply JSON schema … using delimiter method`, `honors JSON schema shape but not value constraints`, `no strict structured-output support` | **not a failure.** The endpoint does not do strict schema decoding, so translation uses the delimiter method. Expected on the anthropic route and most proxies; note it, do not switch models over it |
 | `refused the … request shape; using a simpler one` | classification's ladder descended a rung. Informational |
 | fingerprint refusal on `--resume` | book file or plan changed since the cache was written; delete the cache only if that was intentional |
 | `undecided signature(s)` on plan load | null actions remain — answer every open question, then rerun |
 | `invalid action` on plan load | typo in a hand-edited `action` — fix the JSON, rerun |
-| coverage-gate error / empty plan | `--only_filelist` misspelled, or the plan skips nearly everything — re-check the plan |
+| coverage-gate error / empty plan | the plan skips nearly everything — re-check the plan |
+| `--only_filelist / --exclude_filelist names N document(s) this book does not have` | a typo, caught before anything is paid for; the message lists the near matches |
+| `--context-compact-at 0 sizes the budget … this endpoint reports no usable one` | that endpoint does not publish a context window for that model. Pass a number (8000 default, 2500 cheapest); nothing was paid |
+| `--use_context session is not implemented for the … route` | that route keeps no history; use bare `--use_context`, or a route that does (§1d) |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
 | `--use_context session` not supported for *txt/srt/pdf* | those loaders never hand context to the model; epub is where this workflow lives anyway |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
+| codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints (everything, unless `--accumulated_num` was raised); rerun with `--resume` after the time it names |
 | `handoff report failed (…); starting the next window` | one compact produced no report. Informational; translation continues |
 
 ## Reference files
@@ -477,5 +495,3 @@ early and one late chapter.
   not a plain OpenAI-shaped host.
 - **`references/prompt-files.md`** — the `--prompt` file contract, linting,
   and keeping a user's prompt out of git.
-- **`references/next-phase.md`** — an unbuilt design note (a per-book brief
-  for parallel runs). Not part of this workflow.
