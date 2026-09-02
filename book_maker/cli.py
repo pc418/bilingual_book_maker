@@ -761,6 +761,20 @@ So you are close to reaching the limit. You have to choose your own value, there
         translate_model = MODEL_DICT.get("chatgptapi")
         options.model = "chatgptapi"
     assert translate_model is not None, "unsupported model"
+
+    # A format that does not implement session mode used to accept the flag
+    # and translate as though it had never been passed — the run cost more
+    # attention than a window run and bought nothing.
+    if options.context_mode == "session" and not getattr(
+        translate_model, "SUPPORTS_SESSION_CONTEXT", False
+    ):
+        print(
+            f"[bold red]Error: --use_context session is not implemented for "
+            f"the {options.provider or options.model} route; it would be "
+            f"accepted and ignored. Use bare --use_context for a re-sent "
+            f"window of paragraph pairs.[/bold red]"
+        )
+        exit(1)
     API_KEY = ""
     if options.model in [
         "openai",

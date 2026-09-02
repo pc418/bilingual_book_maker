@@ -90,6 +90,10 @@ class Codex(Base):
     # capability probe would ask the wrong server.
     SUPPORTS_STRUCTURED_OUTPUTS = False
 
+    # The thread is the history: a turn is appended to it and the window
+    # rolls over into a handoff turn like any other session route.
+    SUPPORTS_SESSION_CONTEXT = True
+
     # A turn carries no system message of its own; `prompt_sys_msg` is read
     # once, when a thread opens, and the thread outlives any one window.
     BATCH_SYS_MSG_PER_REQUEST = False

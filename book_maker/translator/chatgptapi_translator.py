@@ -324,6 +324,8 @@ class ChatGPTAPI(Base):
     # probing them would send the capability request to the wrong endpoint.
     SUPPORTS_STRUCTURED_OUTPUTS = True
 
+    SUPPORTS_SESSION_CONTEXT = True
+
     # Session-mode state, declared here so the window-mode path is well
     # defined on any instance — including the subclasses and test fixtures
     # that build one without running __init__. `session is None` means window

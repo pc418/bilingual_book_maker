@@ -10,6 +10,10 @@ ORCAROUTER_MODEL_LIST = [
 
 
 class OrcaRouterTranslator(ChatGPTAPI):
+    # This __init__ does not forward the context arguments to ChatGPTAPI's,
+    # so a history it never receives cannot be kept.
+    SUPPORTS_SESSION_CONTEXT = False
+
     def __init__(self, key, language, api_base=None, **kwargs) -> None:
         super().__init__(key, language)
         self.model_list = ORCAROUTER_MODEL_LIST

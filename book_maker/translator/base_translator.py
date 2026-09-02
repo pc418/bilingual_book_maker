@@ -59,6 +59,14 @@ class Base(ABC):
     # Default values for fatal error handling - subclasses can override
     TRANSLATION_ERROR_MARKER = None
 
+    # Does this format implement `--use_context session` — one append-only
+    # history, compacted into a handoff report at --context-compact-at? A
+    # format that does not gets the flag refused rather than accepting it
+    # and translating as if it had never been passed. The same answer
+    # settles `--context-compact-at 0`, whose auto-sizing lives beside the
+    # history it sizes.
+    SUPPORTS_SESSION_CONTEXT = False
+
     # Whether a system message can be borrowed for the length of one request.
     # False where it is not sent per request at all: the codex route folds it
     # into a thread's base instructions when the thread opens, and the thread

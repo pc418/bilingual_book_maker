@@ -80,6 +80,8 @@ class Claude(Base):
         "and provide only the translated result.\n```{text}```"
     )
 
+    SUPPORTS_SESSION_CONTEXT = True
+
     # How many requests to allow before concluding the endpoint is not billing
     # cache reads. One miss is normal (nothing is cached yet), and short books
     # should not be nagged.

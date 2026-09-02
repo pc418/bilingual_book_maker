@@ -526,3 +526,53 @@ def test_a_codex_run_without_resume_says_nothing_about_threads(tmp_path):
     src.write_bytes(BOOK.read_bytes())
     proc = _cli("--book_name", str(src), "--model", "codex", "--batch")
     assert "new thread" not in proc.stdout
+
+
+def test_session_context_is_refused_on_a_route_that_has_none(tmp_path):
+    # gemini keeps its own chat history and drops --context-compact-at and
+    # --no-context-compact; the flag was accepted and silently meant window
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "gemini",
+        "--gemini_key",
+        "k",
+        "--use_context",
+        "session",
+    )
+    assert proc.returncode == 1
+    flat = " ".join(proc.stdout.split())
+    assert "--use_context session" in flat
+    assert "gemini" in flat
+
+
+def test_bare_window_context_is_not_refused_anywhere(tmp_path):
+    # window mode is what those routes do have; only session is refused
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli(
+        "--book_name",
+        str(src),
+        "--model",
+        "gemini",
+        "--gemini_key",
+        "k",
+        "--use_context",
+        "--plan-dry-run",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_session_context_is_accepted_on_the_routes_that_implement_it():
+    from book_maker.translator import MODEL_DICT
+
+    assert MODEL_DICT["openai"].SUPPORTS_SESSION_CONTEXT
+    assert MODEL_DICT["claude"].SUPPORTS_SESSION_CONTEXT
+    assert MODEL_DICT["codex"].SUPPORTS_SESSION_CONTEXT
+    # these two never forward the context arguments to ChatGPTAPI.__init__
+    assert not MODEL_DICT["xai"].SUPPORTS_SESSION_CONTEXT
+    assert not MODEL_DICT["orcarouter"].SUPPORTS_SESSION_CONTEXT
+    assert not MODEL_DICT["gemini"].SUPPORTS_SESSION_CONTEXT
