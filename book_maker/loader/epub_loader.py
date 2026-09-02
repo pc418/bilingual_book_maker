@@ -726,15 +726,24 @@ class EPUBBookLoader(BaseBookLoader):
                 f"plan written to {plan_path} with {len(undecided)} "
                 f"undecided signature(s) (null actions must be resolved)"
             )
-        elif added:
+        elif added or ledger.reopened:
             # The rewrite carries every existing decision forward (they were
             # merged into this ledger before anything was applied), so the
-            # only rows it changes are the ones that had nowhere to live.
+            # only rows it changes are the ones that had nowhere to live and
+            # the "all" rows this run's decider is asked about again.
             plan.save_json(plan_path, book_path=self.epub_name, ledger=ledger)
-            print(
-                f"{plan_path} updated: {len(added)} signature(s) this run's "
-                f"settings introduced now have rows to decide"
-            )
+            changes = []
+            if added:
+                changes.append(
+                    f"{len(added)} signature(s) this run's settings introduced "
+                    f"now have rows to decide"
+                )
+            if ledger.reopened:
+                changes.append(
+                    f"{len(ledger.reopened)} row(s) decided by --plan-classify "
+                    f"all are open again for this run's decider"
+                )
+            print(f"{plan_path} updated: {'; '.join(changes)}")
             if dropped:
                 print(
                     f"[bold yellow]{len(dropped)} decided signature(s) no "

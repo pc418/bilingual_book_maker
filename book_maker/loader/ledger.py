@@ -200,6 +200,10 @@ class Ledger:
     def __init__(self, rows=None):
         # insertion-ordered; build() sorts by -chars before handing over
         self.rows = dict(rows or {})
+        # keys whose prior decision this run set back to null (an "all"
+        # row met by a model or agent run); the plan file must be rewritten
+        # or the handoff points at rows that still look decided
+        self.reopened = set()
         # inline key -> every block key it was seen inside. The row's own
         # "parents" is capped at three for whoever reads the file; a
         # disposition asks whether *any* block carrying this text survived,

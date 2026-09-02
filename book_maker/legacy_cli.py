@@ -200,9 +200,9 @@ def translate_legacy_argv(argv):
     # alias is known. Preferring position would hand vendor A's key to B.
     alias = legacy.get("--model", "")
     preferred = _ALIAS_KEY_FLAG.get(alias)
-    if alias.startswith("claude"):
+    if alias.lower().startswith("claude"):
         preferred = "--claude_key"
-    elif alias.startswith("orcarouter/"):
+    elif alias.lower().startswith("orcarouter/"):
         # `orcarouter/<id>` addresses the same gateway as the bare alias, and
         # the exact-name map above cannot list every model id it serves
         preferred = "--orcarouter_key"
