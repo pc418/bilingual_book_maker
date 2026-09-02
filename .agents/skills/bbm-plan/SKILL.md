@@ -477,5 +477,3 @@ Route caveats worth knowing before reading a diff of two runs: an unset
   not a plain OpenAI-shaped host.
 - **`references/prompt-files.md`** — the `--prompt` file contract, linting,
   and keeping a user's prompt out of git.
-- **`references/next-phase.md`** — an unbuilt design note (a per-book brief
-  for parallel runs). Not part of this workflow.

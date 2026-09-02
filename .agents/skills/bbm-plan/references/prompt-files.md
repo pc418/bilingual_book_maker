@@ -38,8 +38,8 @@ approved the cost is the wrong place to learn about a missing `{text}`.
 
 ## Keep them out of git
 
-Prompt files are the user's personal voice and often carry character names or
-glossary content — same handling as `.env`. If the working directory is a
+Prompt files are the user's personal voice and often carry character names
+or other personal terminology — same handling as `.env`. If the working directory is a
 repo:
 
 ```bash
