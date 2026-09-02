@@ -84,9 +84,7 @@ Do not write the entry for them from guesses:
 ```bash
 [ -f bbm_providers.json ] || cp .agents/skills/bbm-plan/assets/bbm_providers.example.json bbm_providers.json
 [ -f .env ]               || cp .agents/skills/bbm-plan/assets/env.example .env
-for f in bbm_providers.json .env; do   # one path per call: -q refuses two
-  git check-ignore -q "$f" || echo "$f" >> "$(git rev-parse --git-common-dir)/info/exclude"
-done                                    # common dir: a worktree's .git is a file
+git check-ignore -q bbm_providers.json .env || printf 'bbm_providers.json\n.env\n' >> .git/info/exclude
 ```
 
 Then tell them exactly what to edit and stop until they say it is done:
@@ -301,15 +299,6 @@ plan's defaults, not discover it in the output. Edit **only** the `action`,
 action, missing hash or edited book is a hard error on the next run, never a
 silent default.
 
-The file's top-level `coverage` / `skipped` numbers describe the plan as it
-was written and are not refreshed by your edits — a decided plan is never
-rewritten. The run prints the recomputed numbers; read those.
-
-**Then go to §4.** Do not rerun the plan command bare: once every row is
-decided it no longer stops at a handoff — it translates the whole book,
-unquiet, at full price. The handoff block prints the smoke form for this
-reason.
-
 ## 4. Smoke test (pennies)
 
 Base command + `--quiet --test --test_num 8 > smoke.log 2>&1`. You check
@@ -333,9 +322,7 @@ the markup around a translated unit:
 - did the plan's `skip` decisions actually hold?
 
 Then check `smoke.log` for error lines. The cache carries into the full run,
-so nothing paid here is re-paid. The reverse is not true: a run **without**
-`--resume` overwrites whatever cache exists (it says so before starting), so
-if an earlier run left one, add `--resume` or accept starting over.
+so nothing paid here is re-paid.
 
 Not a failure at this step: the endpoint being graded below `strict` and the
 run announcing the delimiter method. That is the expected line on claude, on
@@ -446,24 +433,7 @@ so you can honour a request without guessing at legal values.
 Report the end-of-run coverage/skip stats, every classification decision you
 made (resolved nulls and any non-null overrides, with the name-then-rule
 reasoning), and hand over `<book>_bilingual.epub`. Suggest spot-checking one
-early and one late chapter. Before handing over, run the §4 markup check on
-the *finished* book, not just the smoke: every original block must have its
-translated sibling — a mid-run realignment (see failure modes) is where one
-could go missing, and the count is cheap:
-
-```bash
-unzip -o -q "<book>_bilingual.epub" -d out && python3 - <<'EOF'
-import re, glob
-for f in glob.glob("out/**/*.*html", recursive=True):
-    t = open(f, encoding="utf8").read()
-    blocks = len(re.findall(r"<(p|div|h\d|li|blockquote)\b", t))
-    cjk = len(re.findall(r"<(p|div|h\d|li|blockquote)\b[^>]*>[^<]*[\u4e00-\u9fff]", t))
-    print(f, "blocks:", blocks, "translated:", cjk)
-EOF
-```
-
-(the character class is for a CJK target; swap it for the target script.
-In a bilingual book the two counts should be close to 2:1.)
+early and one late chapter.
 
 ## Context hygiene
 
@@ -495,9 +465,6 @@ In a bilingual book the two counts should be close to 2:1.)
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
 | codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints (everything, unless `--accumulated_num` was raised); rerun with `--resume` after the time it names |
 | `handoff report failed (…); starting the next window` | one compact produced no report. Informational; translation continues |
-| `existing progress cache … starting fresh and overwriting it` | a run without `--resume` found an earlier run's cache. Expected after the smoke; if that cache was a real run's progress, stop and rerun with `--resume` |
-| `Structured batch translation failed after retries: Empty translation for non-empty paragraph(s) […]: batch alignment lost. Falling back to one-by-one translation` | one batch came back misaligned; its lines are re-translated one by one and nothing is dropped. Informational; that batch is paid twice |
-| `this endpoint has not reported a single cached prompt token after 10 requests` | on short units (verse) the first ten requests can sit under the endpoint's cache minimum, so this can be a false alarm — OpenAI's official endpoint does bill caching for `gpt-5.6-luna`. Judge it once the history is past ~1000 tokens; if it persists, drop to bare `--use_context`, or pass `--ignore-cache-guard` when the user knows the endpoint caches without reporting it |
 
 Route caveats worth knowing before reading a diff of two runs: an unset
 `--temperature` still sends `1.0` on the anthropic and gemini routes, so

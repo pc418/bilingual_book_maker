@@ -14,7 +14,7 @@ from tqdm import tqdm
 from book_maker.session_context import SessionHistory, handoff_path
 from book_maker.utils import prompt_config_to_kwargs
 
-from .base_loader import BaseBookLoader, is_user_facing
+from .base_loader import BaseBookLoader
 
 
 @dataclass(frozen=True)
@@ -239,10 +239,6 @@ class MarkdownBookLoader(BaseBookLoader):
             print("Saving progress so you can resume later.")
             self._save_progress()
             self._save_temp_book()
-            if is_user_facing(e):
-                # its message is the whole explanation; a traceback on top
-                # only buries it
-                sys.exit(1)
             raise
 
     def _render_bilingual_result(self, translate_missing):
@@ -609,8 +605,6 @@ class MarkdownBookLoader(BaseBookLoader):
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            if is_user_facing(e):
-                raise
             print(f"Translation failed: {e}")
             raise Exception("Something is wrong when translating") from e
 
