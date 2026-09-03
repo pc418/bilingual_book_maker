@@ -218,7 +218,7 @@ class Gemini(Base):
 
         return config_kwargs
 
-    def _note_usage(self, response) -> None:
+    def _note_usage(self, response, model=None) -> None:
         """Record one response's tokens on the shared meter.
 
         Nothing else reads Gemini's `usage_metadata`, so without this a run
@@ -233,7 +233,9 @@ class Gemini(Base):
             prompt=getattr(meta, "prompt_token_count", 0) or 0,
             completion=getattr(meta, "candidates_token_count", 0) or 0,
             cached=getattr(meta, "cached_content_token_count", 0) or 0,
-            model=getattr(self, "model", None),
+            # a classification request may name --plan-classify-model, and
+            # pricing it as the translation model would be wrong
+            model=model or getattr(self, "model", None),
         )
 
     def _extract_translation_text(self, response_text: str) -> str:
@@ -362,7 +364,7 @@ class Gemini(Base):
             if getattr(e, "code", None) in (400, 422):
                 raise RungRejected(e) from e
             raise
-        self._note_usage(response)
+        self._note_usage(response, model=model or getattr(self, "model", None))
         return response.text
 
     def _chat_completion(self, prompt, model=None):

@@ -773,9 +773,12 @@ class TestVendorFormats:
         assert f"--model is required for the {fmt} format" in output
         assert example in output
 
-    def test_a_format_that_overrides_a_provider_drops_its_key(self, provider_entry):
-        # a groq entry used with --api_format xai would otherwise put
-        # GROQ_KEY first while the request goes to api.x.ai
+    def test_a_format_that_moves_the_endpoint_drops_the_providers_key(
+        self, provider_entry
+    ):
+        # a groq entry with no base_url takes its address from its format, so
+        # --api_format xai moves the request to api.x.ai; leading with
+        # GROQ_KEY there would hand xAI the Groq credential
         from book_maker.cli import resolve_endpoint
 
         provider_entry(api_style="groq", env_key="BBM_TEST_PROVIDER_KEY")
@@ -785,6 +788,24 @@ class TestVendorFormats:
         assert api_format == "xai"
         assert options.api_base == "https://api.x.ai/v1"
         assert env_keys == ()
+
+    def test_an_entry_that_writes_its_own_address_keeps_its_key(self, provider_entry):
+        # the key belongs to the host, and the host here is still the entry's
+        # whatever wire format the command asks for — `--api_format anthropic`
+        # at a gateway entry is a real command
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://gw.example/v1",
+            env_key="BBM_TEST_PROVIDER_KEY",
+        )
+        options = _options(provider="p", api_format="anthropic", model="claude-x")
+        _, api_format, env_keys = resolve_endpoint(options)
+
+        assert api_format == "anthropic"
+        assert options.api_base == "https://gw.example/v1"
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
 
     def test_a_provider_whose_format_is_kept_still_leads_with_its_key(
         self, provider_entry

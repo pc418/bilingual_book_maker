@@ -186,20 +186,22 @@ def apply_provider(options):
         route = resolve_provider(options.provider)
     except ValueError as err:
         raise SystemExit(str(err))
-    # An explicit --api_format outranks the entry's, and then the run is no
-    # longer calling the endpoint the entry describes: a `groq` entry used
-    # with --api_format xai would otherwise hand xAI the Groq key, because
-    # the format supplies its own address and the entry still supplied the
-    # variable. The entry's key names its own endpoint and travels with it.
-    entry_endpoint_kept = not options.api_format or (
-        options.api_format == route.api_format
+    # The entry's key belongs to the entry's *address*, not to its format
+    # name. An entry that writes its own base_url keeps that address whatever
+    # --api_format says, so its key still names the host being called — and
+    # `--api_format anthropic` at an entry's gateway is a real command. An
+    # entry with no base_url takes its address from its format, so overriding
+    # the format moves the endpoint: a `groq` entry used with --api_format
+    # xai would otherwise hand xAI the Groq key.
+    entry_endpoint_kept = bool(route.api_base) or (
+        not options.api_format or options.api_format == route.api_format
     )
     if not entry_endpoint_kept:
         print(
             f"[bold yellow]Warning:[/bold yellow] --api_format "
-            f"{options.api_format} overrides provider "
-            f"{options.provider}'s {route.api_format}; its key variable is "
-            f"not read for another endpoint."
+            f"{options.api_format} moves provider {options.provider} off the "
+            f"{route.api_format} endpoint it names, so its key variable is "
+            f"not read for this run."
         )
     options.api_format = options.api_format or route.api_format
     options.api_base = options.api_base or route.api_base
