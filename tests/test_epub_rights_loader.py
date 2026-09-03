@@ -281,7 +281,7 @@ def test_package_prefixes_tolerates_a_file_it_cannot_read(tmp_path):
     assert package_prefixes(str(tmp_path / "absent.epub")) == {}
 
 
-def test_package_prefixes_tolerates_an_unparseable_package(tmp_path):
+def test_package_prefixes_tolerates_an_unparsable_package(tmp_path):
     source_path = _write_epub(tmp_path / "broken.epub")
     member, _ = _opf_member(source_path)
     _rewrite_member(source_path, member, "<package")
