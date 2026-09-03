@@ -33,7 +33,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from xml.sax.saxutils import escape
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from .helper import read_package
 from .rights import local_name
@@ -122,6 +122,9 @@ def _declarations(archive):
     gate as font obfuscation and then had nothing restored and nothing
     reported, so the output shipped a scrambled font with no declaration
     left to explain it.
+
+    The URI is percent-encoded in the file, so it is decoded back to the
+    member name here; `build_encryption_xml` encodes on the way out.
     """
     root = ET.fromstring(archive.read(ENCRYPTION_PATH))
     found = []
@@ -231,13 +234,19 @@ def _written_opf_dir(path):
 
 def build_encryption_xml(members):
     """The OCF declaration for `[(container-relative path, algorithm)]`."""
-    # Attribute values, so `&`, `<` and the quotes have to be escaped: a
-    # font called `A&B.otf` is a legal member name and an illegal one to
-    # paste into XML as is.
+    # The member name goes out as a URI, not as a path: `Old#1.otf`
+    # written as is declares a fragment and resolves to nothing, and
+    # `a b.otf` is not a legal URI at all — so percent-encode first (`/`
+    # stays, it is the path separator), which is exactly what
+    # `_declarations` undoes with `unquote` on the way back in. Then
+    # escape, because these are XML attribute values: a font called
+    # `A&B.otf` is a legal member name and an illegal one to paste in raw.
+    # The algorithm is a URI already, and one carrying a real `#`, so it
+    # is escaped only.
     entries = "".join(
         ENCRYPTION_ENTRY.format(
             algorithm=escape(algorithm, {'"': "&quot;"}),
-            uri=escape(uri, {'"': "&quot;"}),
+            uri=escape(quote(uri, safe="/"), {'"': "&quot;"}),
         )
         for uri, algorithm in members
     )
