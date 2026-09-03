@@ -40,7 +40,7 @@ See [Endpoints, models and languages](./model_lang.md#named-endpoints---provider
 
 `BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, `BBM_XAI_API_KEY` and
 `BBM_QWEN_API_KEY` are still read when an old-style command implies that
-route (see "Migrating from the old flags" in the README). They are not
+route (see [Migrating from the old flags](migration.md)). They are not
 consulted for a command written in the new flags, where `--api_base` decides
 the endpoint and the key must match it.
 

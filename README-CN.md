@@ -53,7 +53,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 （`google`、`caiyun`、`deepl`、`deeplfree`、`tencent`、`customapi`）和 `codex`；
 `--provider` 按名字使用 `bbm_providers.json` 里保存的接口。旧的预设名和 key 参数
 （`--model gpt4o`、`--model gemini`、`--openai_key`……）仍然可用，运行时会被改写并
-打印一行说明，见[从旧参数迁移](#从旧参数迁移)。
+打印一行说明，见[从旧参数迁移](./docs/migration.md)。
 
 - **任何 OpenAI 兼容接口**只需要三样东西：`--api_base`（以 `/v1` 结尾的地址）、
   `--key`，以及按接口拼写的 `--model`。用 OpenAI 官方地址时省略 `--api_base`，
@@ -214,48 +214,6 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
   python3 make_book.py --provider deepseek --api_key sk-xxx --model_list deepseek-reasoner --book_name test_books/animal_farm.epub
   ```
 
-## 从旧参数迁移
-
-为旧版 CLI 写的命令仍然可用。每个被移除的参数会在运行前改写成新参数，并打印一行
-说明它变成了什么：
-
-```
-$ bbook_maker --book_name book.epub --model gpt4omini --openai_key sk-...
-deprecated: --openai_key is now --key
-deprecated: --model gpt4omini is now --model gpt-4o-mini
-```
-
-| 旧写法 | 改写为 |
-|---|---|
-| `--model gpt4o` / `gpt4omini` / `o3mini` | `--model` 加对应的模型 ID |
-| `--model chatgptapi` / `openai` | 直接去掉：openai 格式本来就是默认，要指定模型时用 `--model` |
-| `--model openai --model_list X` | `--model_list X` |
-| `--model claude` | `--model claude-haiku-4-5-20251001` |
-| 具体的 `claude-*` ID | 不变，anthropic 格式由 ID 推断 |
-| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-flash-latest` / `gemini-pro-latest` |
-| `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
-| `--model xai` | `--api_base https://api.x.ai/v1 --model grok-beta` |
-| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
-| `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
-| `--custom_api URL` | `--api_format customapi --api_base URL` |
-| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--orcarouter_key` | `--key`（`--api_key` 是同一个参数，从未改名） |
-| `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
-| `--deployment_id D` | `--model D`，并把 `--api_base` 改写为该部署的 `/openai/v1` 路径 |
-| `--interval` | 已删除，它只对已移除的 gemini 路由有效 |
-
-说明：
-
-- 旧的 key 环境变量对相应路由依然有效：改写后的 `--model groq` 仍读取
-  `BBM_GROQ_API_KEY`，`--model gemini` 仍读取 `BBM_GOOGLE_GEMINI_KEY`。
-- 你自己写的参数优先，所以 `--model gemini --api_base https://my-gateway/v1`
-  会保留你的网关地址。
-- 改写后的命令跑的还是原来那个模型，取自旧的预设列表，不会换成更新的。其中一些
-  模型现已下线，接口的模型校验会直接指出。
-- 不是旧别名的 `--model` 值原样传递，它就是模型 ID，这也是现在的常态。
-- 指向已下线 OpenAI 模型的别名（`gpt4`、`gpt5mini`、`o1`、`o1mini`、`o1preview`）
-  已移除。它们现在作为模型 ID 原样传给接口，由接口点名拒绝，同样的失败提早一步，
-  报错更清楚。
-
 ## 使用说明
 
 - 翻译完会生成一本 `{book_name}_bilingual.epub` 的双语书
@@ -265,7 +223,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 
 - `--model`:
 
-  接口所用的模型 ID（`gpt-5.6-luna`、`claude-sonnet-4-6`、`deepseek-chat`）。openai 格式下默认 `gpt-5.6-luna`。有两个值表示路线而不是模型：`codex`（通过 Codex CLI 使用 ChatGPT 套餐）和 `orcarouter`（OrcaRouter 网关，key 读取 `BBM_ORCAROUTER_API_KEY`）。旧的预设值仍然可以写，会被改写成真实模型 ID 并打印说明，对照表见[从旧参数迁移](#从旧参数迁移)。其他任何接口：`--api_base <url> --key <key> --model <id>`，或一条 `--provider` 配置（见「自定义 API Provider」章节）。
+  接口所用的模型 ID（`gpt-5.6-luna`、`claude-sonnet-4-6`、`deepseek-chat`）。openai 格式下默认 `gpt-5.6-luna`。有两个值表示路线而不是模型：`codex`（通过 Codex CLI 使用 ChatGPT 套餐）和 `orcarouter`（OrcaRouter 网关，key 读取 `BBM_ORCAROUTER_API_KEY`）。旧的预设值仍然可以写，会被改写成真实模型 ID 并打印说明，对照表见[从旧参数迁移](./docs/migration.md)。其他任何接口：`--api_base <url> --key <key> --model <id>`，或一条 `--provider` 配置（见「自定义 API Provider」章节）。
 
 - `--key`:
 
