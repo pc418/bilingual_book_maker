@@ -22,8 +22,6 @@ retired by now, and the endpoint's own model check reports that clearly.
 import os
 from dataclasses import dataclass, field
 
-from book_maker.provider_loader import DASHSCOPE_BASE, GEMINI_BASE
-
 # Legacy `--model` value -> the head of its old preset list. Only aliases
 # whose model is still served are kept; `gpt4`, `gpt5mini`, `o1`, `o1mini`
 # and `o1preview` named retired models, and now travel verbatim to the
@@ -39,16 +37,19 @@ _OPENAI_PRESETS = {
 # retired preset here would override it.
 _DEFAULT_MODEL_ALIASES = ("openai", "chatgptapi")
 
-# Vendors whose native wrapper was removed because they serve an
-# OpenAI-compatible endpoint. Reaching them is now a base URL.
-_VENDOR_ROUTES = {
-    "gemini": (GEMINI_BASE, "gemini-flash-latest", "BBM_GOOGLE_GEMINI_KEY"),
-    "geminipro": (GEMINI_BASE, "gemini-pro-latest", "BBM_GOOGLE_GEMINI_KEY"),
-    "groq": ("https://api.groq.com/openai/v1", None, "BBM_GROQ_API_KEY"),
-    "xai": ("https://api.x.ai/v1", "grok-beta", "BBM_XAI_API_KEY"),
-    "qwen": (DASHSCOPE_BASE, "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
-    "qwen-mt-turbo": (DASHSCOPE_BASE, "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
-    "qwen-mt-plus": (DASHSCOPE_BASE, "qwen-mt-plus", "BBM_QWEN_API_KEY"),
+# `--model` aliases that named a route rather than a model. Each is an
+# --api_format now: the format carries the endpoint's address, so only the
+# model the alias used to default to has to travel with it. `groq` names
+# none because every id in its old preset list is retired, and inventing a
+# replacement would bill a book to a model nobody chose.
+_NATIVE_FORMATS = {
+    "gemini": ("gemini", "gemini-flash-latest", "BBM_GOOGLE_GEMINI_KEY"),
+    "geminipro": ("gemini", "gemini-pro-latest", "BBM_GOOGLE_GEMINI_KEY"),
+    "qwen": ("qwen", "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
+    "qwen-mt-turbo": ("qwen", "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
+    "qwen-mt-plus": ("qwen", "qwen-mt-plus", "BBM_QWEN_API_KEY"),
+    "groq": ("groq", None, "BBM_GROQ_API_KEY"),
+    "xai": ("xai", "grok-beta", "BBM_XAI_API_KEY"),
 }
 
 # Aliases that were always a fixed engine rather than a model.
@@ -150,7 +151,6 @@ def _split(argv):
         "--ollama_model",
         "--custom_api",
         "--deployment_id",
-        "--interval",
     }
     while i < len(argv):
         arg = argv[i]
@@ -206,12 +206,6 @@ def translate_legacy_argv(argv):
         rest = ["--key", legacy[key_flag]] + rest
         notices.append(f"{key_flag} is now --key")
 
-    if "--interval" in legacy:
-        notices.append(
-            "--interval was dropped; it only ever applied to the removed "
-            "gemini route and has no effect now"
-        )
-
     if "--model" in legacy:
         alias = legacy["--model"]
         if alias in _OPENAI_PRESETS:
@@ -228,8 +222,8 @@ def translate_legacy_argv(argv):
             # the bare alias was a stand-in for a default model
             model = "claude-haiku-4-5-20251001"
             route_source = "--model claude"
-        elif alias in _VENDOR_ROUTES:
-            api_base, model, env_key = _VENDOR_ROUTES[alias]
+        elif alias in _NATIVE_FORMATS and not has_format:
+            api_format, model, env_key = _NATIVE_FORMATS[alias]
             env_keys.append(env_key)
             route_source = f"--model {alias}"
         elif alias in _MT_FORMATS:
@@ -243,6 +237,12 @@ def translate_legacy_argv(argv):
             # the normal case now. Hand it straight back so the parser sees
             # the flag the user typed — including any conflict with
             # --model_list, which is not this module's to resolve.
+            #
+            # `qwen-mt-turbo` and `qwen-mt-plus` land here when the command
+            # already says --api_format: they are real model ids on that
+            # route, so there is nothing to rewrite and nothing to apologise
+            # for. Only a command that named them *instead of* a format is
+            # an old command line.
             passthrough_model = alias
 
     if "--ollama_model" in legacy:

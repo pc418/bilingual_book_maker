@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 from anthropic import BadRequestError as AnthropicBadRequest
+from google.genai import errors as genai_errors
 
 from book_maker.structured import (
     RungRejected,
@@ -28,6 +29,7 @@ from book_maker.structured import (
 from book_maker.translator.base_translator import Base
 from book_maker.translator.capabilities import CapabilityLedger
 from book_maker.translator.claude_translator import Claude, _sdk_base_url
+from book_maker.translator.gemini_translator import Gemini, _openapi_schema
 from book_maker.loader.classify.model import (
     PAGE_SIZE,
     PlanClassifyError,
@@ -506,6 +508,137 @@ class TestClaudeWiring:
         claude = self._claude(Mock(side_effect=_http_error(AnthropicBadRequest, 400)))
         with pytest.raises(RungRejected):
             claude._chat_completion("classify this")
+
+
+class TestGeminiWiring:
+    def test_the_schema_is_converted_to_geminis_dialect(self):
+        cands = [{"key": key_of("p.header"), "units": 9, "chars": 81, "samples": ["G"]}]
+        converted = _openapi_schema(build_schema(cands))
+
+        assert converted["type"] == "OBJECT"
+        # gemini's dialect has neither of these and 400s on both
+        assert "additionalProperties" not in json.dumps(converted)
+        assert "strict" not in converted
+        verdict = converted["properties"][key_of("p.header")]["properties"]["verdict"]
+        assert verdict["type"] == "STRING"
+        assert verdict["enum"] == ["translate", "skip", "unsure"]
+
+    def _gemini(self, generate_content):
+        gemini = Gemini.__new__(Gemini)
+        Base.__init__(gemini, "k", "zh-hans")
+        gemini.model = "gemini-3-flash"
+        gemini.convo = SimpleNamespace(
+            send_message=Mock(side_effect=AssertionError("used the translation chat"))
+        )
+        gemini.client = SimpleNamespace(
+            models=SimpleNamespace(generate_content=generate_content)
+        )
+        return gemini
+
+    def test_classification_never_enters_the_translation_conversation(self):
+        # self.convo carries context for the paragraphs still to come; a
+        # classification question and its answer must not become part of it
+        generate = Mock(
+            return_value=SimpleNamespace(text='{"p.h": {"verdict": "skip"}}')
+        )
+        gemini = self._gemini(generate)
+
+        gemini._chat_completion("classify this")
+
+        assert generate.call_args.kwargs["contents"] == "classify this"
+
+    def test_the_native_rung_comes_first_and_the_prompt_rung_backs_it(self):
+        gemini = self._gemini(Mock())
+        names = [name for name, _ in gemini.structured_rungs("q", {"schema": {}})]
+        assert names == ["response_schema", "prompt"]
+
+    def test_a_rejected_schema_descends_but_a_dead_key_does_not(self):
+        class _Err(genai_errors.ClientError):
+            def __init__(self, code):
+                Exception.__init__(self, f"{code}")
+                self.code = code
+
+        gemini = self._gemini(Mock(side_effect=_Err(400)))
+        with pytest.raises(RungRejected):
+            gemini._chat_completion("q")
+
+        gemini = self._gemini(Mock(side_effect=_Err(403)))
+        with pytest.raises(genai_errors.ClientError):
+            gemini._chat_completion("q")
+
+
+class TestQwenConfiguration:
+    """Qwen-MT cannot classify, but it must still be configured correctly."""
+
+    def test_the_model_survives_construction(self):
+        # `self.model = self.set_qwen_model(model)` assigned the setter's
+        # return over the value it had just set; every request went out with
+        # model=None
+        from book_maker.translator.qwen_translator import QwenTranslator
+
+        qwen = QwenTranslator(key="k", language="zh-hans", model="qwen-mt-plus")
+        assert qwen.model == "qwen-mt-plus"
+        assert qwen.terminology == [] and qwen.domain_hint == ""
+
+    def test_an_unknown_model_is_refused_not_substituted(self):
+        from book_maker.translator.qwen_translator import QwenTranslator
+
+        qwen = QwenTranslator(key="k", language="zh-hans")
+        with pytest.raises(ValueError, match="qwen-mt-turbo"):
+            qwen.set_model_list(["qwen-mt-ultra"])
+        # billing a whole book to a model the user did not choose is not a
+        # recovery from a typo
+        assert qwen.model == "qwen-mt-turbo"
+
+
+class TestOpenAIShapedVendorFormats:
+    """groq, xai and litellm are the OpenAI route at another address.
+
+    The point of keeping them as formats rather than as a base URL people
+    have to remember is that `--api_format groq` is a complete route. The
+    point of *not* giving them a client of their own is that everything the
+    OpenAI translator has grown — the structured-output ladder, session
+    context, batching, the model check, the usage meter — applies to them.
+    """
+
+    @pytest.mark.parametrize(
+        "fmt,base",
+        [
+            ("groq", "https://api.groq.com/openai/v1"),
+            ("xai", "https://api.x.ai/v1"),
+            ("litellm", "http://localhost:4000"),
+        ],
+    )
+    def test_the_format_carries_its_address(self, fmt, base):
+        from book_maker.translator import FORMAT_DEFAULT_BASES, FORMAT_DICT
+
+        assert FORMAT_DEFAULT_BASES[fmt] == base
+        assert FORMAT_DICT[fmt].DEFAULT_API_BASE == base
+
+    @pytest.mark.parametrize("fmt", ["groq", "xai", "litellm"])
+    def test_the_route_keeps_what_the_openai_route_has(self, fmt):
+        from book_maker.translator import FORMAT_DICT
+        from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+        cls = FORMAT_DICT[fmt]
+        assert issubclass(cls, ChatGPTAPI)
+        # a wrapper that swapped the client out had to opt out of these
+        assert cls.SUPPORTS_STRUCTURED_OUTPUTS
+        assert cls.SUPPORTS_SESSION_CONTEXT
+        assert cls.SUPPORTS_AUTO_COMPACT_BUDGET
+
+    def test_a_command_that_names_an_address_keeps_it(self):
+        from book_maker.translator.groq_translator import GroqClient
+
+        groq = GroqClient("k", "zh-hans", api_base="https://gw.example/v1")
+        assert groq.api_base == "https://gw.example/v1"
+
+    def test_the_openai_route_itself_still_has_no_address_of_its_own(self):
+        from book_maker.translator import FORMAT_DEFAULT_BASES
+
+        # the SDK's own default is api.openai.com; naming it here would
+        # override a gateway the provider entry left to the SDK
+        assert "openai" not in FORMAT_DEFAULT_BASES
 
 
 class TestModelListAcrossFormats:

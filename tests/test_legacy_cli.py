@@ -110,38 +110,26 @@ class TestVendorRoutes:
         assert rewrite("--model", "claude-opus-4-6") == ["--model", "claude-opus-4-6"]
 
     @pytest.mark.parametrize(
-        "alias,base,model",
+        "alias,fmt,model",
         [
-            (
-                "gemini",
-                "https://generativelanguage.googleapis.com/v1beta/openai/",
-                "gemini-flash-latest",
-            ),
-            (
-                "geminipro",
-                "https://generativelanguage.googleapis.com/v1beta/openai/",
-                "gemini-pro-latest",
-            ),
-            ("xai", "https://api.x.ai/v1", "grok-beta"),
-            (
-                "qwen",
-                "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "qwen-mt-turbo",
-            ),
-            (
-                "qwen-mt-plus",
-                "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "qwen-mt-plus",
-            ),
+            ("gemini", "gemini", "gemini-flash-latest"),
+            ("geminipro", "gemini", "gemini-pro-latest"),
+            ("xai", "xai", "grok-beta"),
+            ("qwen", "qwen", "qwen-mt-turbo"),
+            ("qwen-mt-plus", "qwen", "qwen-mt-plus"),
         ],
     )
-    def test_vendors_become_their_openai_compatible_endpoint(self, alias, base, model):
-        assert rewrite("--model", alias) == ["--api_base", base, "--model", model]
+    def test_a_route_alias_becomes_its_format_and_its_model(self, alias, fmt, model):
+        # the format carries the endpoint's address, so only the model the
+        # alias used to default to has to be spelled out
+        assert rewrite("--model", alias) == ["--api_format", fmt, "--model", model]
 
-    def test_groq_keeps_the_required_model_list(self):
+    def test_groq_names_a_format_and_no_model(self):
+        # every id in groq's old preset list is retired; the model list the
+        # command already carried is what runs
         assert rewrite("--model", "groq", "--model_list", "llama3-8b-8192") == [
-            "--api_base",
-            "https://api.groq.com/openai/v1",
+            "--api_format",
+            "groq",
             "--model_list",
             "llama3-8b-8192",
         ]
@@ -150,8 +138,19 @@ class TestVendorRoutes:
         # a gateway serving gemini ids is the whole reason someone passes both
         assert flags("--model", "gemini", "--api_base", "https://gw/v1") == {
             "--api_base": "https://gw/v1",
+            "--api_format": "gemini",
             "--model": "gemini-flash-latest",
         }
+
+    def test_a_qwen_model_id_beside_an_explicit_format_is_not_rewritten(self):
+        # `qwen-mt-plus` is a real id on the qwen route, so a command that
+        # already names the format is a modern one with nothing to apologise
+        # for
+        assert flags("--api_format", "qwen", "--model", "qwen-mt-plus") == {
+            "--api_format": "qwen",
+            "--model": "qwen-mt-plus",
+        }
+        assert notices("--api_format", "qwen", "--model", "qwen-mt-plus") == ""
 
     @pytest.mark.parametrize(
         "alias,fmt",
@@ -225,12 +224,15 @@ class TestEndpointFlags:
             "--model": "dep",
         }
 
-    def test_interval_is_dropped_with_a_word_about_it(self):
+    def test_interval_is_left_alone(self):
+        # a real flag again, and the gemini route it paces is back with it
         assert rewrite("--interval", "0.5", "--model_list", "m") == [
+            "--interval",
+            "0.5",
             "--model_list",
             "m",
         ]
-        assert "interval" in notices("--interval", "0.5", "--model_list", "m").lower()
+        assert notices("--interval", "0.5", "--model_list", "m") == ""
 
 
 class TestFaithfulness:
@@ -248,11 +250,14 @@ class TestFaithfulness:
         assert rewrite("--model", "google") == ["--api_format", "google"]
 
     def test_no_default_is_invented_when_a_fixed_format_was_named(self):
-        # `--api_format google --interval 0.5` asks for one deprecated flag to
-        # be dropped; inventing an OpenAI model turns that into an error
-        assert rewrite("--api_format", "google", "--interval", "0.5") == [
+        # `--api_format deepl --deepl_key k` asks for one key flag to be
+        # rewritten; inventing an OpenAI model turns that into an error,
+        # because a fixed engine refuses --model outright
+        assert rewrite("--api_format", "deepl", "--deepl_key", "k") == [
+            "--key",
+            "k",
             "--api_format",
-            "google",
+            "deepl",
         ]
 
     def test_the_key_matching_the_route_wins(self):
@@ -333,8 +338,8 @@ class TestNotices:
     def test_a_notice_never_claims_a_flag_that_was_overridden(self):
         # reporting the default base while the run used the user's gateway
         # describes a run that did not happen
-        text = notices("--model", "gemini", "--api_base", "https://gw/v1")
-        assert "generativelanguage" not in text
+        text = notices("--ollama_model", "llama3", "--api_base", "https://gw/v1")
+        assert "localhost" not in text
         assert "--api_base" in text  # says the user's own was kept
 
     def test_a_fully_superseded_translation_says_so(self):

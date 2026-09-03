@@ -620,6 +620,122 @@ def provider_entry(tmp_path, monkeypatch):
     return write
 
 
+class TestVendorFormats:
+    """The routes that name one vendor's endpoint.
+
+    `gemini` and `qwen` speak protocols of their own; `groq`, `xai` and
+    `litellm` are the OpenAI shape at another address. Either way the
+    format alone has to be a complete route, or the flag saves nobody
+    anything over typing the URL.
+    """
+
+    @pytest.mark.parametrize(
+        "fmt,model",
+        [("gemini", "gemini-flash-latest"), ("qwen", "qwen-mt-turbo")],
+    )
+    def test_a_native_format_names_the_model_its_alias_used_to_run(self, fmt, model):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(api_format=fmt)
+        models, api_format, _ = resolve_endpoint(options)
+
+        assert (models, api_format) == ([model], fmt)
+        # the SDK knows the vendor's host; naming it here would be a second
+        # answer to the same question
+        assert options.api_base == ""
+
+    @pytest.mark.parametrize(
+        "fmt,base",
+        [
+            ("groq", "https://api.groq.com/openai/v1"),
+            ("xai", "https://api.x.ai/v1"),
+            ("litellm", "http://localhost:4000"),
+        ],
+    )
+    def test_an_openai_shaped_format_fills_in_its_address(self, fmt, base):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(api_format=fmt)
+        models, api_format, _ = resolve_endpoint(options)
+
+        assert api_format == fmt
+        assert options.api_base == base
+        # no model: those catalogues turn over, and the CLI asks for one
+        assert models == []
+
+    def test_a_command_that_names_an_address_keeps_it(self):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(api_format="groq", api_base="https://gw.example/v1")
+        resolve_endpoint(options)
+
+        assert options.api_base == "https://gw.example/v1"
+
+    @pytest.mark.parametrize(
+        "fmt,variable",
+        [
+            ("gemini", "BBM_GOOGLE_GEMINI_KEY"),
+            ("qwen", "BBM_QWEN_API_KEY"),
+            ("groq", "BBM_GROQ_API_KEY"),
+            ("xai", "BBM_XAI_API_KEY"),
+        ],
+    )
+    def test_each_format_reads_its_own_key_variable(self, monkeypatch, fmt, variable):
+        from book_maker.cli import resolve_api_key
+
+        monkeypatch.delenv("BBM_API_KEY", raising=False)
+        monkeypatch.setenv(variable, "vendor-secret")
+
+        assert resolve_api_key(fmt, "", "") == "vendor-secret"
+
+    @pytest.mark.parametrize("fmt", ["gemini", "qwen", "groq", "xai"])
+    def test_a_missing_key_names_where_it_looked(self, monkeypatch, fmt):
+        from book_maker.cli import FORMAT_ENV_KEYS, resolve_api_key
+
+        for name in FORMAT_ENV_KEYS[fmt]:
+            monkeypatch.delenv(name, raising=False)
+        with pytest.raises(SystemExit) as err:
+            resolve_api_key(fmt, "", "")
+        assert FORMAT_ENV_KEYS[fmt][-1] in str(err.value)
+
+    def test_a_litellm_proxy_on_this_machine_needs_no_key(self, monkeypatch):
+        # the default address is localhost, so the run authenticates nobody
+        from book_maker.cli import resolve_api_key, resolve_endpoint
+
+        monkeypatch.delenv("BBM_API_KEY", raising=False)
+        monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+        options = _options(api_format="litellm", model="gpt-4o")
+        _, api_format, _ = resolve_endpoint(options)
+
+        assert resolve_api_key(api_format, "", options.api_base) == "local"
+
+    def test_a_remote_litellm_proxy_still_asks_for_one(self, monkeypatch):
+        from book_maker.cli import resolve_api_key
+
+        monkeypatch.delenv("BBM_API_KEY", raising=False)
+        monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+        monkeypatch.delenv("BBM_LITELLM_API_KEY", raising=False)
+        with pytest.raises(SystemExit):
+            resolve_api_key("litellm", "", "https://proxy.example.com")
+
+    def test_the_gemini_route_can_be_paced(self):
+        # --interval is applied on this route and described as ignored
+        # everywhere else; the CLI calls this method unconditionally there
+        from book_maker.translator import FORMAT_DICT
+        from book_maker.cli import build_parser
+
+        assert hasattr(FORMAT_DICT["gemini"], "set_interval")
+        assert build_parser().parse_args(["--book_name", "b.epub"]).interval == 0.01
+
+    def test_every_format_that_defaults_a_model_can_be_asked_for_one(self):
+        # a default model on a format whose class refuses --model would be a
+        # command that cannot run
+        from book_maker.cli import DEFAULT_MODELS
+        from book_maker.translator import LLM_FORMATS
+
+        assert set(DEFAULT_MODELS) <= set(LLM_FORMATS)
+
+
 class TestProviderPrecedence:
     """`--provider` is shorthand for flags, so it fills gaps and settles nothing.
 
