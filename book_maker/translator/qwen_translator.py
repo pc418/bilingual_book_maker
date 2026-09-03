@@ -17,6 +17,13 @@ class QwenTranslator(Base):
     Todo: support more languages, terminology, and domain hints
     """
 
+    # The window lives in `context_list` / `context_translated_list`, which
+    # `_clone_translator_for_context` gives each parallel worker fresh.
+    SUPPORTS_PARALLEL_CONTEXT = True
+
+    # The window a request carries as `tm_list` when the command names none.
+    DEFAULT_CONTEXT_PARAGRAPH_LIMIT = 5
+
     # Language mapping from bilingual_book_maker format to Qwen language codes
     LANGUAGE_MAP = {
         # Common languages
@@ -99,7 +106,15 @@ class QwenTranslator(Base):
         self.context_flag = context_flag
         self.context_list = []
         self.context_translated_list = []
-        self.context_paragraph_limit = context_paragraph_limit
+        # The loaders pass 0 when the command named no limit, which would
+        # make save_context evict every pair as soon as it stored it — the
+        # flag would be accepted and do nothing. The openai route resolves a
+        # zero the same way, against its own default.
+        self.context_paragraph_limit = (
+            context_paragraph_limit
+            if context_paragraph_limit and context_paragraph_limit > 0
+            else self.DEFAULT_CONTEXT_PARAGRAPH_LIMIT
+        )
         self.request_interval = float(kwargs.get("request_interval", 1.2))
         self._last_request_at = 0.0
 
@@ -155,6 +170,23 @@ class QwenTranslator(Base):
 
         return options
 
+    def _note_usage(self, completion) -> None:
+        """Record one completion's tokens on the shared meter.
+
+        Without it a Qwen run reports no tokens at all, and a provider entry
+        carrying Qwen prices produces no spending figure.
+        """
+        usage = getattr(completion, "usage", None)
+        if usage is None:
+            return
+        details = getattr(usage, "prompt_tokens_details", None)
+        self.usage.note(
+            prompt=getattr(usage, "prompt_tokens", 0) or 0,
+            completion=getattr(usage, "completion_tokens", 0) or 0,
+            cached=getattr(details, "cached_tokens", 0) or 0,
+            model=self.model,
+        )
+
     def save_context(self, text, t_text):
         """Save the current translation pair to context for translation memory"""
         if not self.context_flag:
@@ -207,6 +239,8 @@ class QwenTranslator(Base):
                     messages=messages,
                     extra_body={"translation_options": translation_options},
                 )
+
+                self._note_usage(completion)
 
                 # Extract translated text
                 if completion.choices[0].message.content:

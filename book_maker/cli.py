@@ -21,6 +21,7 @@ from book_maker.translator import (
     ROUTE_DICT,
 )
 from book_maker.translator.base_translator import PriceTable
+from book_maker.translator.chatgptapi_translator import ChatGPTAPI
 from book_maker.translator.capabilities import ModelUnavailable
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
@@ -186,6 +187,21 @@ def apply_provider(options):
         route = resolve_provider(options.provider)
     except ValueError as err:
         raise SystemExit(str(err))
+    # An explicit --api_format outranks the entry's, and then the run is no
+    # longer calling the endpoint the entry describes: a `groq` entry used
+    # with --api_format xai would otherwise hand xAI the Groq key, because
+    # the format supplies its own address and the entry still supplied the
+    # variable. The entry's key names its own endpoint and travels with it.
+    entry_endpoint_kept = not options.api_format or (
+        options.api_format == route.api_format
+    )
+    if not entry_endpoint_kept:
+        print(
+            f"[bold yellow]Warning:[/bold yellow] --api_format "
+            f"{options.api_format} overrides provider "
+            f"{options.provider}'s {route.api_format}; its key variable is "
+            f"not read for another endpoint."
+        )
     options.api_format = options.api_format or route.api_format
     options.api_base = options.api_base or route.api_base
     # Prices are the entry's to know and the meter's to apply; they ride
@@ -199,6 +215,8 @@ def apply_provider(options):
             options.model = route.models[0]
         else:
             options.model_list = ",".join(route.models)
+    if not entry_endpoint_kept:
+        return ()
     return (route.env_key,) if route.env_key else ()
 
 
@@ -977,11 +995,13 @@ def main():
     # Batch translation is OpenAI's Batch API. The codex format has no such
     # thing, and reached it anyway: `AttributeError: batch_init` partway into
     # a run that had already spent plan quota.
-    if api_format == "codex" and (options.batch_flag or options.batch_use_flag):
+    if (options.batch_flag or options.batch_use_flag) and not getattr(
+        translate_model, "SUPPORTS_BATCH_API", False
+    ):
         print(
-            "[bold red]Error: --batch / --batch-use are the OpenAI Batch "
-            "API, which the codex format does not have. Drop the flag, or "
-            "translate through an OpenAI-shaped endpoint.[/bold red]"
+            f"[bold red]Error: --batch / --batch-use are the OpenAI Batch "
+            f"API, which the {api_format} format does not have. Drop the "
+            f"flag, or translate through an OpenAI-shaped endpoint.[/bold red]"
         )
         exit(1)
 
@@ -1169,7 +1189,10 @@ def main():
     # an arbitrary attribute on the other translators used to print success
     # and then silently drop the fields.
     if options.extra_body:
-        if api_format != "openai":
+        # The OpenAI request path is what reads it, so every route built on
+        # that path takes it — naming the format instead would have told a
+        # groq or xai run that its fields were dropped when they were not.
+        if not issubclass(translate_model, ChatGPTAPI):
             print(
                 f"[bold yellow]Warning:[/bold yellow] --extra_body is ignored "
                 f"by the {api_format} route"

@@ -567,8 +567,100 @@ class TestGeminiWiring:
             gemini._chat_completion("q")
 
 
+class TestRestoredRoutesMeetTodaysBase:
+    """The two native classes predate half of what Base and the loaders do."""
+
+    def _gemini(self):
+        gemini = Gemini.__new__(Gemini)
+        Base.__init__(gemini, "k", "zh-hans")
+        gemini.model = "gemini-3-flash"
+        return gemini
+
+    def test_gemini_records_what_a_response_cost(self):
+        # without this the progress bar and the closing line show nothing,
+        # and a provider entry's prices are never applied
+        gemini = self._gemini()
+        gemini._note_usage(
+            SimpleNamespace(
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=120,
+                    candidates_token_count=45,
+                    cached_content_token_count=None,
+                )
+            )
+        )
+        assert gemini.usage.requests == 1
+        assert gemini.usage.prompt == 120 and gemini.usage.completion == 45
+
+    def test_a_response_with_no_usage_is_skipped_not_counted(self):
+        gemini = self._gemini()
+        gemini._note_usage(SimpleNamespace())
+        assert gemini.usage.requests == 0
+
+    def test_qwen_records_what_a_completion_cost(self):
+        from book_maker.translator.qwen_translator import QwenTranslator
+
+        qwen = QwenTranslator.__new__(QwenTranslator)
+        Base.__init__(qwen, "k", "zh-hans")
+        qwen.model = "qwen-mt-turbo"
+        qwen._note_usage(
+            SimpleNamespace(
+                usage=SimpleNamespace(
+                    prompt_tokens=30,
+                    completion_tokens=10,
+                    prompt_tokens_details=SimpleNamespace(cached_tokens=4),
+                )
+            )
+        )
+        assert (qwen.usage.prompt, qwen.usage.completion, qwen.usage.cached) == (
+            30,
+            10,
+            4,
+        )
+
+    def test_gemini_keeps_a_readable_model_list_for_the_disclosure(self):
+        # model_list is an endless cycle; the translation note cannot read it
+        from book_maker.loader.disclosure import model_id
+
+        gemini = self._gemini()
+        gemini.create_convo = lambda: None
+        gemini.set_model_list(["gemini-2.5-flash", "gemini-2.0-flash"])
+
+        assert gemini._model_names == ("gemini-2.5-flash", "gemini-2.0-flash")
+        assert model_id(gemini) == "gemini-2.5-flash, gemini-2.0-flash"
+
+    @pytest.mark.parametrize("fmt", ["gemini", "qwen"])
+    def test_both_carry_per_chapter_context_a_worker_can_clone(self, fmt):
+        # _clone_translator_for_context resets the window lists and calls
+        # create_convo; declaring False here made that path unreachable
+        from book_maker.translator import FORMAT_DICT
+
+        assert FORMAT_DICT[fmt].SUPPORTS_PARALLEL_CONTEXT
+
+    @pytest.mark.parametrize("fmt", ["gemini", "qwen"])
+    def test_neither_claims_a_session_history_or_the_batch_api(self, fmt):
+        from book_maker.translator import FORMAT_DICT
+
+        assert not FORMAT_DICT[fmt].SUPPORTS_SESSION_CONTEXT
+        assert not FORMAT_DICT[fmt].SUPPORTS_BATCH_API
+
+
 class TestQwenConfiguration:
     """Qwen-MT cannot classify, but it must still be configured correctly."""
+
+    def test_a_zero_context_limit_means_the_default_not_no_context(self):
+        # the loaders pass 0 when the command named no limit; storing it
+        # made save_context evict every pair as soon as it stored one
+        from book_maker.translator.qwen_translator import QwenTranslator
+
+        qwen = QwenTranslator(
+            key="k", language="zh-hans", context_flag=True, context_paragraph_limit=0
+        )
+        assert qwen.context_paragraph_limit == 5
+
+        qwen.save_context("a", "b")
+        qwen.save_context("c", "d")
+        assert qwen.context_list == ["a", "c"]
 
     def test_the_model_survives_construction(self):
         # `self.model = self.set_qwen_model(model)` assigned the setter's

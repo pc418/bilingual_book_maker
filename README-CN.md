@@ -452,7 +452,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 - `--extra_body`:
 
   以 JSON 字符串向 ChatGPT/OpenAI 衍生请求路径透传额外参数，包括 OpenAI 风格的
-  自定义 provider。其余格式会明说并忽略该参数。例如：
+  自定义 provider，以及同样走这条请求路径的 `groq`、`xai`、`litellm` 和 `--model orcarouter`。其余格式会明说并忽略该参数。例如：
 
   ```shell
   python3 make_book.py --book_name book.epub --extra_body '{"chat_template_kwargs":{"enable_thinking":false}}'

@@ -152,6 +152,11 @@ class Gemini(Base):
     # Error marker for failed translations
     TRANSLATION_ERROR_MARKER = "[Translation unavailable]"
 
+    # This route's context is the chat object, and
+    # `_clone_translator_for_context` gives each worker a fresh one — that
+    # branch was written for this class.
+    SUPPORTS_PARALLEL_CONTEXT = True
+
     # Regex patterns
     TAG_PATTERN = r"<step3_refined_translation>(.*?)</step3_refined_translation>"
 
@@ -213,6 +218,24 @@ class Gemini(Base):
 
         return config_kwargs
 
+    def _note_usage(self, response) -> None:
+        """Record one response's tokens on the shared meter.
+
+        Nothing else reads Gemini's `usage_metadata`, so without this a run
+        reports no tokens and a provider entry's prices never apply. A
+        response without the field (or with None counts, which the SDK does
+        return) is skipped rather than counted as zero-cost.
+        """
+        meta = getattr(response, "usage_metadata", None)
+        if meta is None:
+            return
+        self.usage.note(
+            prompt=getattr(meta, "prompt_token_count", 0) or 0,
+            completion=getattr(meta, "candidates_token_count", 0) or 0,
+            cached=getattr(meta, "cached_content_token_count", 0) or 0,
+            model=getattr(self, "model", None),
+        )
+
     def _extract_translation_text(self, response_text: str) -> str:
         """Extract translation from response, handling custom tags if present."""
         text = response_text.strip()
@@ -271,6 +294,7 @@ class Gemini(Base):
             response = self.convo.send_message(
                 self.prompt.format(text=text, language=self.language)
             )
+            self._note_usage(response)
             t_text = self._extract_translation_text(response.text)
 
             # Restore paragraph number if present
@@ -338,6 +362,7 @@ class Gemini(Base):
             if getattr(e, "code", None) in (400, 422):
                 raise RungRejected(e) from e
             raise
+        self._note_usage(response)
         return response.text
 
     def _chat_completion(self, prompt, model=None):
@@ -398,6 +423,7 @@ class Gemini(Base):
                 f"for this API key. Available models: {available_models}"
             )
         print(f"Using model list {model_list}")
+        self._model_names = tuple(model_list)
         self.model_list = cycle(model_list)
         self.rotate_model()
 
@@ -405,6 +431,11 @@ class Gemini(Base):
         # keep the order of input
         model_list = sorted(list(set(model_list)), key=model_list.index)
         print(f"Using model list {model_list}")
+        # `model_list` becomes an endless cycle, which the output file's
+        # translation note cannot iterate; `_model_names` is the readable
+        # copy it reads, and a rotation mid-book means every name here may
+        # have translated part of the book.
+        self._model_names = tuple(model_list)
         self.model_list = cycle(model_list)
         self.rotate_model()
 
@@ -459,6 +490,7 @@ class Gemini(Base):
                 ),
             )
 
+            self._note_usage(response)
             result = self._parse_batch_response(response.text, batch_size)
             if result:
                 self._manage_conversation_history()

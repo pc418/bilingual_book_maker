@@ -35,9 +35,13 @@ Notes:
   keeps your gateway.
 - `--interval` is not a legacy flag: it is still in the parser and still
   paces the gemini route, which is still a route.
-- `qwen-mt-turbo` and `qwen-mt-plus` are real model ids on the `qwen`
-  format, so a command that already says `--api_format qwen` is left alone
-  and nothing is printed about it.
+- `qwen-mt-turbo` and `qwen-mt-plus` are real model ids, so a command that
+  also passes `--api_format` is left alone and nothing is printed about it.
+- The other route aliases are not model ids anywhere. `--model gemini`
+  together with an `--api_format` naming a different route is refused rather
+  than resolved one way or the other: honouring the format would send that
+  alias's key to a host it does not belong to, and honouring the alias would
+  ignore what you typed. The error names both and the two ways out.
 - A rewritten command runs the model it used to run, taken from the old
   preset list, not a newer one. Some of those models have since been
   retired, and the endpoint's model check says so.

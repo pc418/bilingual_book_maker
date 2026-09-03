@@ -197,6 +197,7 @@ class ChatGPTAPI(Base):
 
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
+    SUPPORTS_BATCH_API = True
     # `/v1/models` is where a gateway reports a model's context window, so
     # this is the one route `--context-compact-at 0` can be asked of.
     SUPPORTS_AUTO_COMPACT_BUDGET = True
