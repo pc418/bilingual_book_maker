@@ -33,13 +33,12 @@ import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from xml.sax.saxutils import escape
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from .helper import read_package
+from .rights import local_name
 
 ENCRYPTION_PATH = "META-INF/encryption.xml"
-
-ENC_NS = "{http://www.w3.org/2001/04/xmlenc#}"
 
 
 @dataclass(frozen=True)
@@ -71,8 +70,18 @@ ADOBE_WINDOW = 1024  # 64 rounds of the 16-byte UUID
 
 
 def _idpf_key(identifier):
-    """SHA-1 of the unique identifier with every whitespace character gone."""
-    return hashlib.sha1("".join(identifier.split()).encode("utf-8")).digest()
+    """SHA-1 of the unique identifier with every whitespace character gone.
+
+    None when the identifier is empty. `sha1(b"")` is a computable key and
+    a certainly wrong one: a font XORed with it would be counted as
+    restored and then re-scrambled under the output identifier — corrupt,
+    and silently so. No identifier is no key, exactly as it already is for
+    Adobe below.
+    """
+    stripped = "".join(identifier.split())
+    if not stripped:
+        return None
+    return hashlib.sha1(stripped.encode("utf-8")).digest()
 
 
 def _adobe_key(identifier):
@@ -93,13 +102,42 @@ def _unscramble(data, key, window):
     return bytes(out)
 
 
+def _child(element, name):
+    """The first direct child with this local name, or None."""
+    return next((el for el in element if local_name(el.tag) == name), None)
+
+
 def _declarations(archive):
-    """(algorithm, container-relative URI) for every encrypted resource."""
+    """(algorithm, container-relative URI) for every encrypted resource.
+
+    Matched by local name, and `EncryptionMethod` among direct children
+    only — the rule `rights.check_epub` gates on. Requiring the xmlenc
+    namespace here read *less* than the gate accepted: a producer who wrote
+    `EncryptedData` in the container namespace (or in none) cleared the
+    gate as font obfuscation and then had nothing restored and nothing
+    reported, so the output shipped a scrambled font with no declaration
+    left to explain it.
+
+    Direct children throughout, `CipherReference` included: it is read
+    from the entry's own `CipherData` and nowhere else. Searching the
+    subtree instead picked up references that belong to something else —
+    a `KeyInfo/EncryptedKey` wrapping its own cipher text names one, and
+    it comes first — so the entry was read as declaring a resource it
+    does not, and a nested `EncryptedData` had its URI declared twice.
+
+    The URI is percent-encoded in the file, so it is decoded back to the
+    member name here; `build_encryption_xml` encodes on the way out.
+    """
     root = ET.fromstring(archive.read(ENCRYPTION_PATH))
     found = []
-    for data in root.iter(f"{ENC_NS}EncryptedData"):
-        method = data.find(f"{ENC_NS}EncryptionMethod")
-        reference = data.find(f"{ENC_NS}CipherData/{ENC_NS}CipherReference")
+    for data in root.iter():
+        if local_name(data.tag) != "EncryptedData":
+            continue
+        method = _child(data, "EncryptionMethod")
+        cipher_data = _child(data, "CipherData")
+        reference = (
+            None if cipher_data is None else _child(cipher_data, "CipherReference")
+        )
         if method is None or reference is None:
             continue
         uri = reference.get("URI")
@@ -131,14 +169,20 @@ def deobfuscate_fonts(book, epub_path):
         # or a truncation the reader below will report far better.
         return [], []
 
-    # The OCF key is derived from the identifier the package names as
-    # `unique-identifier`. `book.uid` is ebooklib's guess at that — the last
-    # identified dc:identifier it read — which on a book carrying an ISBN
-    # after its UUID is a different string and therefore a wrong key. It
-    # stays only as a last resort, for a package this could not read at all.
+    # The OCF key is the identifier the package names as its
+    # `unique-identifier`, and nothing else. ebooklib's `book.uid` is not a
+    # fallback at any price: `EpubBook.reset()` seeds it with a fresh
+    # random uuid, so a book that names no identifier arrives carrying an
+    # invented one that no reader can tell from a real reading — and when
+    # it *is* read, it is the last identified dc:identifier, which on a
+    # book listing an ISBN after its UUID is a different string from the
+    # named unique-identifier. Either way it is a key that unscrambles
+    # nothing while reporting success, which is worse than no key at all.
+    # `read_package` answers None for a package it could not read, so that
+    # case lands here as no identifier too.
     package = read_package(epub_path)
     opf_dir = package.opf_dir
-    identifier = package.unique_identifier or getattr(book, "uid", None) or ""
+    identifier = package.unique_identifier or ""
 
     # A CipherReference URI is relative to the container root, while an
     # ebooklib item's file_name is relative to the OPF. Both spellings are
@@ -201,13 +245,19 @@ def _written_opf_dir(path):
 
 def build_encryption_xml(members):
     """The OCF declaration for `[(container-relative path, algorithm)]`."""
-    # Attribute values, so `&`, `<` and the quotes have to be escaped: a
-    # font called `A&B.otf` is a legal member name and an illegal one to
-    # paste into XML as is.
+    # The member name goes out as a URI, not as a path: `Old#1.otf`
+    # written as is declares a fragment and resolves to nothing, and
+    # `a b.otf` is not a legal URI at all — so percent-encode first (`/`
+    # stays, it is the path separator), which is exactly what
+    # `_declarations` undoes with `unquote` on the way back in. Then
+    # escape, because these are XML attribute values: a font called
+    # `A&B.otf` is a legal member name and an illegal one to paste in raw.
+    # The algorithm is a URI already, and one carrying a real `#`, so it
+    # is escaped only.
     entries = "".join(
         ENCRYPTION_ENTRY.format(
             algorithm=escape(algorithm, {'"': "&quot;"}),
-            uri=escape(uri, {'"': "&quot;"}),
+            uri=escape(quote(uri, safe="/"), {'"': "&quot;"}),
         )
         for uri, algorithm in members
     )
