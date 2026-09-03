@@ -34,20 +34,18 @@ fixed machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
 `codex` is not an endpoint at all: it drives a local `codex app-server`
 sidecar and bills the run to your ChatGPT plan, so it takes no `--key` and no
 `--api_base`, and `--model` is optional (default `gpt-5.6-luna`). It is never
-inferred — name it explicitly. See the README section "codex: translate on
-your ChatGPT subscription".
+inferred; name it explicitly. See the Codex entry under "Translate Service"
+in the README.
 
 Inference goes in this order: an explicit `--api_format` wins; then the
 `--api_base` host (`anthropic.com` means the anthropic shape, anything else
 the OpenAI shape); then, when no endpoint was named, a model id mentioning
-`claude` or `anthropic` — `anthropic/claude-sonnet-4-6` included.
+`claude` or `anthropic`, `anthropic/claude-sonnet-4-6` included.
 
-A wrong guess costs one request rather than the run: if the anthropic shape
-was inferred and the endpoint answers 404/405 on `/v1/messages`, the route
-switches to `openai` for the rest of the run and prints why. That fallback
-only applies to an endpoint you named — on Anthropic's own host a 404 means
-the model does not exist, and retrying elsewhere would just fail differently.
-A rejected key never triggers it.
+A gateway asked for the anthropic shape it does not serve answers 404 or
+405 on `/v1/messages`. The run stops and names the fix: rerun with
+`--api_format openai`. On Anthropic's own host a 404 means the model does
+not exist and is reported as such.
 
 Credentials come from `--key`, then `BBM_API_KEY`, then the format's
 conventional variable — see [Environment settings](./env_settings.md). An
@@ -89,11 +87,11 @@ bbook_maker --book_name book.epub --model orcarouter --language ja
 ```
 
 `--model orcarouter` sends the run to the OrcaRouter gateway and asks for
-its smart-routing model; `--model orcarouter/<id>` pins one model there.
-Neither needs `--api_base` — one you pass yourself wins — and the key is
-read from `BBM_ORCAROUTER_API_KEY` before the usual fallbacks. It is a
-shortcut for the address, not a legacy alias, so nothing is printed about
-it.
+its smart-routing model, `orcarouter/auto`. It needs no `--api_base`, and
+one you pass yourself wins. The key is read from `BBM_ORCAROUTER_API_KEY`
+before the usual fallbacks. It is a supported route, not a legacy alias, so
+nothing is rewritten. To pin one model at the gateway, name the endpoint
+like any other: `--api_base https://api.orcarouter.ai/v1 --model <id>`.
 
 ## OpenAI-compatible endpoints
 
@@ -102,9 +100,10 @@ output, `--use_context`, parallel workers, async and the Batch API are
 available on all of them to the extent the endpoint itself supports them —
 support is probed at runtime rather than assumed from the model name.
 
-`--use_context session` additionally needs the endpoint to bill prompt-cache
-reads back; it warns after ten requests that report no cached tokens, since
-without pass-through caching it costs more than window mode.
+`--use_context session` also needs the endpoint to charge less for cached
+prompt tokens. Watch the `cached=` count on the progress bar: still zero
+after a dozen requests means the endpoint is not caching, and window mode
+is cheaper.
 
 | Vendor | `--api_base` |
 |---|---|

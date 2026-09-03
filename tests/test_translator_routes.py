@@ -74,8 +74,11 @@ class TestAnthropicWrongShape:
             body=None,
         )
 
-    def test_a_404_from_a_gateway_names_the_fix(self):
-        translator = self._claude(self._not_found())
+    @pytest.mark.parametrize(
+        "api_base", ["https://gw.example.com", "https://notanthropic.com"]
+    )
+    def test_a_404_from_a_gateway_names_the_fix(self, api_base):
+        translator = self._claude(self._not_found(), api_base=api_base)
 
         with pytest.raises(RuntimeError, match="--api_format openai"):
             translator.translate("text")

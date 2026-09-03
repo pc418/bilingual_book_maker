@@ -67,7 +67,8 @@ def infer_api_format(api_base, model=""):
         return "codex"
     if api_base:
         host = (urlparse(api_base).hostname or "").lower()
-        return "anthropic" if host.endswith("anthropic.com") else "openai"
+        official = host == "anthropic.com" or host.endswith(".anthropic.com")
+        return "anthropic" if official else "openai"
     if "claude" in name or "anthropic" in name:
         return "anthropic"
     return "openai"

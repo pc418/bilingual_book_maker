@@ -3,7 +3,7 @@ import threading
 import time
 from itertools import cycle
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -633,6 +633,23 @@ def test_orcarouter_honors_custom_api_base():
     )
     assert translator.api_base == "http://proxy.local/v1"
     assert translator.openai_client.base_url == "http://proxy.local/v1/"
+
+
+def test_orcarouter_route_is_still_checked_at_the_first_paid_call():
+    # the class names its model in __init__ rather than through
+    # set_model_list, and the route check must not be skipped for that
+    from book_maker.translator.orcarouter_translator import OrcaRouterTranslator
+
+    translator = OrcaRouterTranslator("sk-orca-test", "Chinese")
+    with patch(
+        "book_maker.translator.chatgptapi_translator.verify_model_routes",
+        return_value={"success": True, "available_models": ["orcarouter/auto"]},
+    ) as verify:
+        translator._ensure_models_routable()
+        translator._ensure_models_routable()
+
+    verify.assert_called_once()
+    assert verify.call_args.args[1] == ["orcarouter/auto"]
 
 
 # --------------------------------------------------------------------------

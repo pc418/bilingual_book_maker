@@ -241,7 +241,8 @@ class Claude(Base):
         """
         host = (urlparse(self.api_url).hostname or "").lower()
         status = getattr(error, "status_code", None)
-        if host.endswith("anthropic.com") or status not in (404, 405):
+        official = host == "anthropic.com" or host.endswith(".anthropic.com")
+        if official or status not in (404, 405):
             raise error
         raise RuntimeError(
             f"{self.api_url} does not answer the anthropic shape at "

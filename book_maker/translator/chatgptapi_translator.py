@@ -317,7 +317,13 @@ class ChatGPTAPI(Base):
         """
         state = self._route_state
         if state is None:
-            return
+            if not self._model_names:
+                return
+            # a subclass that named its models in __init__ (OrcaRouterTranslator)
+            state = self._route_state = {
+                "pending": list(self._model_names),
+                "failure": None,
+            }
         with self._api_lock:
             if state["failure"] is not None:
                 raise state["failure"]
