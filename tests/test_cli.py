@@ -794,6 +794,36 @@ class TestVendorFormats:
 
         assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
 
+    def test_an_explicit_address_takes_the_key_off_the_entry(self, provider_entry):
+        # the entry's key names the entry's host; --api_base moves the run
+        # off it, so leading with that variable would send the credential to
+        # whatever host was typed
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://gw.example/v1",
+            env_key="BBM_TEST_PROVIDER_KEY",
+        )
+        options = _options(provider="p", api_base="https://other.example/v1")
+        _, _, env_keys = resolve_endpoint(options)
+
+        assert env_keys == ()
+
+    def test_the_same_address_retyped_is_still_the_entrys(self, provider_entry):
+        # a trailing slash is not a different host
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://gw.example/v1",
+            env_key="BBM_TEST_PROVIDER_KEY",
+        )
+        options = _options(provider="p", api_base="https://gw.example/v1/")
+        _, _, env_keys = resolve_endpoint(options)
+
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
+
     @pytest.mark.parametrize("fmt", ["groq", "xai", "litellm"])
     def test_extra_body_reaches_the_routes_built_on_the_openai_path(
         self, tmp_path, fmt

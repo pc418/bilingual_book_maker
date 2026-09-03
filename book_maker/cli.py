@@ -173,6 +173,16 @@ def resolve_api_key(api_format, explicit_key, api_base, extra_env_keys=()):
     return ""
 
 
+def _entry_address(api_base, api_format):
+    """The host a (base, format) pair actually calls, for comparing two of them.
+
+    An empty base means the format's own address — which for the vendor
+    formats is a real URL, and for openai/anthropic is the SDK's default.
+    Trailing slashes are noise here: `.../v1` and `.../v1/` are one host.
+    """
+    return (api_base or FORMAT_DEFAULT_BASES.get(api_format, "")).rstrip("/")
+
+
 def apply_provider(options):
     """Fill in the endpoint flags `--provider` covers, and name its key variable.
 
@@ -187,22 +197,23 @@ def apply_provider(options):
         route = resolve_provider(options.provider)
     except ValueError as err:
         raise SystemExit(str(err))
-    # The entry's key belongs to the entry's *address*, not to its format
-    # name. An entry that writes its own base_url keeps that address whatever
-    # --api_format says, so its key still names the host being called — and
-    # `--api_format anthropic` at an entry's gateway is a real command. An
-    # entry with no base_url takes its address from its format, so overriding
-    # the format moves the endpoint: a `groq` entry used with --api_format
-    # xai would otherwise hand xAI the Groq key.
-    entry_endpoint_kept = bool(route.api_base) or (
-        not options.api_format or options.api_format == route.api_format
+    # The entry's key belongs to the entry's *address*, and travels only as
+    # far as that address does. Either flag can move it: --api_base says so
+    # outright, and --api_format moves an entry that has no base_url of its
+    # own, because then the format is what supplies the address. Asking for
+    # another wire format at the entry's own gateway moves nothing, and
+    # there the key is still the right one.
+    entry_address = _entry_address(route.api_base, route.api_format)
+    run_address = _entry_address(
+        options.api_base or route.api_base, options.api_format or route.api_format
     )
+    entry_endpoint_kept = run_address == entry_address
     if not entry_endpoint_kept:
         print(
-            f"[bold yellow]Warning:[/bold yellow] --api_format "
-            f"{options.api_format} moves provider {options.provider} off the "
-            f"{route.api_format} endpoint it names, so its key variable is "
-            f"not read for this run."
+            f"[bold yellow]Warning:[/bold yellow] provider "
+            f"{options.provider} names {entry_address}, but this run calls "
+            f"{run_address}; its key variable is not read for another "
+            f"endpoint."
         )
     options.api_format = options.api_format or route.api_format
     options.api_base = options.api_base or route.api_base
