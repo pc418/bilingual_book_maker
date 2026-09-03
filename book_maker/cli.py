@@ -13,7 +13,12 @@ from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
 from book_maker.provider_loader import resolve_provider
-from book_maker.translator import FORMAT_DICT, LLM_FORMATS, ROUTE_DICT
+from book_maker.translator import (
+    FORMAT_DEFAULT_BASES,
+    FORMAT_DICT,
+    LLM_FORMATS,
+    ROUTE_DICT,
+)
 from book_maker.translator.base_translator import PriceTable
 from book_maker.translator.capabilities import ModelUnavailable
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
@@ -24,6 +29,11 @@ from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 FORMAT_ENV_KEYS = {
     "openai": ("BBM_API_KEY", "OPENAI_API_KEY", "BBM_OPENAI_API_KEY"),
     "anthropic": ("BBM_API_KEY", "ANTHROPIC_API_KEY", "BBM_CLAUDE_API_KEY"),
+    "gemini": ("BBM_API_KEY", "BBM_GOOGLE_GEMINI_KEY", "GEMINI_API_KEY"),
+    "qwen": ("BBM_API_KEY", "BBM_QWEN_API_KEY", "DASHSCOPE_API_KEY"),
+    "groq": ("BBM_API_KEY", "BBM_GROQ_API_KEY", "GROQ_API_KEY"),
+    "xai": ("BBM_API_KEY", "BBM_XAI_API_KEY", "XAI_API_KEY"),
+    "litellm": ("BBM_API_KEY", "BBM_LITELLM_API_KEY", "LITELLM_MASTER_KEY"),
     "caiyun": ("BBM_API_KEY", "BBM_CAIYUN_API_KEY"),
     "deepl": ("BBM_API_KEY", "BBM_DEEPL_API_KEY"),
 }
@@ -31,7 +41,19 @@ FORMAT_ENV_KEYS = {
 # Formats that will not work at all without a credential. The others are
 # public endpoints (google, deeplfree, tencent) or carry their own address
 # instead of a key (customapi).
-FORMATS_REQUIRING_KEY = ("openai", "anthropic", "caiyun", "deepl")
+FORMATS_REQUIRING_KEY = (
+    "openai",
+    "anthropic",
+    "gemini",
+    "qwen",
+    "groq",
+    "xai",
+    # a proxy on this machine authenticates nobody, and is_local_endpoint
+    # answers that before this list is consulted
+    "litellm",
+    "caiyun",
+    "deepl",
+)
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal")
 
@@ -43,9 +65,14 @@ CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 # LLM formats that can resolve a model on their own, so --model is optional.
 MODEL_OPTIONAL_FORMATS = ("codex",)
 
-# The model a format falls back to when the command names none. Only the
-# openai format has an obvious one; the anthropic format asks for an id.
-DEFAULT_MODELS = {"openai": "gpt-5.6-luna"}
+# The model a format falls back to when the command names none. The anthropic
+# format asks for an id; the other three name what their own route used to
+# run by default, so `--api_format gemini` alone is a working command.
+DEFAULT_MODELS = {
+    "openai": "gpt-5.6-luna",
+    "gemini": "gemini-flash-latest",
+    "qwen": "qwen-mt-turbo",
+}
 
 # `--model codex` selects the format rather than a model id. The sidecar then
 # picks its own default, exactly as `--api_format codex` with no --model does.
@@ -217,6 +244,12 @@ def resolve_endpoint(options):
     api_format = options.api_format or infer_api_format(
         options.api_base, model_names[0] if model_names else ""
     )
+    # A format that stands for one vendor's endpoint carries its address, so
+    # the format alone is a complete route. Filled in here rather than left
+    # to the translator, so everything downstream — the local-endpoint check
+    # that skips the key, and the record the output file keeps — sees the
+    # address the run will actually call.
+    options.api_base = options.api_base or FORMAT_DEFAULT_BASES.get(api_format, "")
     options.api_base = normalize_api_base(options.api_base, api_format)
     if not model_names and api_format in DEFAULT_MODELS:
         model_names = [DEFAULT_MODELS[api_format]]
@@ -784,6 +817,14 @@ So you are close to reaching the limit. You have to choose your own value, there
         help="Use pre-generated batch translations to create files. Run with --batch first before using this option",
     )
     parser.add_argument(
+        "--interval",
+        type=float,
+        default=0.01,
+        help="seconds to wait between requests, e.g. 0.1 for 100ms. Only the "
+        "gemini format paces itself with it; every other route ignores it. "
+        "Default: 0.01",
+    )
+    parser.add_argument(
         "--parallel-workers",
         dest="parallel_workers",
         type=int,
@@ -1214,6 +1255,11 @@ def main():
                 f"--model is required for the {api_format} format. Pass the "
                 f"model id the endpoint uses, e.g. --model claude-sonnet-4-6"
             )
+        # Only the gemini route paces itself between requests; --interval
+        # is described as ignored everywhere else, so it is not offered
+        # to a translator that would silently drop it.
+        if api_format == "gemini":
+            e.translate_model.set_interval(options.interval)
         if route is None:  # a route's class names its own model
             try:
                 e.translate_model.set_model_list(model_names)

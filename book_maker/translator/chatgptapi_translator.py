@@ -186,6 +186,12 @@ class ChatGPTAPI(Base):
     # probing them would send the capability request to the wrong endpoint.
     SUPPORTS_STRUCTURED_OUTPUTS = True
 
+    # The address this route calls when the command names none. None means
+    # the OpenAI SDK's own default, api.openai.com. A subclass that stands
+    # for one vendor's endpoint sets it; the CLI reads the same value off
+    # FORMAT_DEFAULT_BASES so that --api_format alone is a complete route.
+    DEFAULT_API_BASE = None
+
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
     # `/v1/models` is where a gateway reports a model's context window, so
@@ -232,6 +238,7 @@ class ChatGPTAPI(Base):
     ) -> None:
         super().__init__(key, language)
         self.key_len = len(key.split(","))
+        api_base = api_base or self.DEFAULT_API_BASE
         self.openai_client = OpenAI(
             api_key=next(self.keys), base_url=api_base, **REQUEST_LIMITS
         )
