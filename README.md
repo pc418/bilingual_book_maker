@@ -318,9 +318,10 @@ The OpenAI and the Anthropic API formats are supported.
   - `model`: the translating LLM judges, then translates. `--plan-classify-model X` picks the model that classifies.
   - `agent`: writes the classification plan for the book and prints instructions to paste into your coding tool for classification.
 
-  - `--plan-dry-run`: print the per-signature table, write `<book>_plan.json`, and exit.
+  - `--plan-dry-run`: print the per-signature table, write `<book>_plan.json`, and exit. Honors `--only_filelist` / `--exclude_filelist`.
   - `<book>_plan.json`: the translation plan; delete it to classify again.
   - `--plan-min-coverage` (default 0.5): plan mode aborts if the plan covers less than this fraction of the text.
+  - `--poetry-group-size` (default 8): runs of short verse lines are grouped into stanzas of up to this many lines and translated together.
 
   ```shell
   # let the model judge which tags need translating
