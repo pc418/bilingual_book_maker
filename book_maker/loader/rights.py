@@ -98,7 +98,7 @@ def check_epub(path):
     entries = [el for el in root.iter() if _local_name(el.tag) == "EncryptedData"]
     if not entries:
         # A declaration that declares nothing is malformed, and malformed
-        # fails closed exactly like an unparseable one.
+        # fails closed exactly like an unparsable one.
         return "drm"
     for entry in entries:
         # Direct children only. `EncryptionMethod` says how *this* resource
