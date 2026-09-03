@@ -506,8 +506,15 @@ def test_translating_an_output_again_rekeys_the_font(tmp_path):
 
 def test_a_font_name_with_an_ampersand_yields_well_formed_encryption_xml():
     """Codex finding on 959c74d: the URI was pasted into the declaration
-    unescaped, so `EPUB/fonts/A&B.otf` produced XML no parser accepts."""
+    unescaped, so `EPUB/fonts/A&B.otf` produced XML no parser accepts.
+
+    The URI is now percent-encoded before it is escaped, so the `&` leaves
+    as `%26` and the XML escape has nothing left to do — the name comes
+    back through `unquote` on the read side. Still well-formed, which is
+    what this test is for.
+    """
     import xml.etree.ElementTree as ET
+    from urllib.parse import unquote
 
     from book_maker.loader.font_obfuscation import IDPF_ALGORITHM, build_encryption_xml
 
@@ -517,8 +524,8 @@ def test_a_font_name_with_an_ampersand_yields_well_formed_encryption_xml():
         el.get("URI")
         for el in root.iter("{http://www.w3.org/2001/04/xmlenc#}CipherReference")
     ]
-    assert uris == ["EPUB/fonts/A&B.otf"]
-
+    assert uris == ["EPUB/fonts/A%26B.otf"]
+    assert [unquote(uri) for uri in uris] == ["EPUB/fonts/A&B.otf"]
 
 
 # ------------- finding 1: the gate matches by local name, so must the read
@@ -663,3 +670,56 @@ def test_a_book_with_no_identifier_leaves_its_idpf_font_alone(tmp_path):
     assert restored == []
     assert unresolved == ["EPUB/fonts/obfuscated.otf"]
     assert book.get_item_with_id("font").content == scrambled
+
+
+# ------------- finding 3: the write path percent-encodes what the read undoes
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["A&B.otf", "a b.otf", "Old#1.otf", "a%20b.otf", "plain.otf"],
+)
+def test_a_font_member_name_survives_the_declaration_round_trip(name):
+    from book_maker.loader.font_obfuscation import (
+        IDPF_ALGORITHM as ALGORITHM,
+        _declarations,
+        build_encryption_xml,
+    )
+
+    member = f"EPUB/fonts/{name}"
+    xml = build_encryption_xml([(member, ALGORITHM)])
+
+    class OneMemberArchive:
+        def read(self, _path):
+            return xml
+
+    assert _declarations(OneMemberArchive()) == [(ALGORITHM, member)]
+
+
+def test_the_declaration_percent_encodes_the_member_name():
+    """`#` opens a fragment and a space is not legal in a URI attribute, so
+    the written URI has to be encoded — `unquote` on the read side is what
+    puts the name back."""
+    import xml.etree.ElementTree as ET
+
+    from book_maker.loader.font_obfuscation import (
+        IDPF_ALGORITHM as ALGORITHM,
+        build_encryption_xml,
+    )
+
+    xml = build_encryption_xml(
+        [
+            ("EPUB/fonts/Old#1.otf", ALGORITHM),
+            ("EPUB/fonts/a b.otf", ALGORITHM),
+            ("EPUB/fonts/a%20b.otf", ALGORITHM),
+        ]
+    )
+    root = ET.fromstring(xml)
+    assert [
+        el.get("URI")
+        for el in root.iter("{http://www.w3.org/2001/04/xmlenc#}CipherReference")
+    ] == [
+        "EPUB/fonts/Old%231.otf",
+        "EPUB/fonts/a%20b.otf",
+        "EPUB/fonts/a%2520b.otf",
+    ]
