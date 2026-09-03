@@ -213,3 +213,58 @@ def test_an_identifier_that_is_not_a_uuid_defeats_the_adobe_key(tmp_path):
     restored, unresolved = deobfuscate_fonts(book, str(path))
     assert restored == []
     assert unresolved == ["EPUB/fonts/obfuscated.otf"]
+
+
+# ---------------------------- finding 2: which identifier holds the key
+
+
+UNIQUE_ID = "urn:uuid:44444444-4444-4444-8444-444444444444"
+OTHER_ID = "urn:uuid:99999999-9999-4999-8999-999999999999"
+
+
+def _two_identifier_source(tmp_path, algorithm):
+    """A book whose `unique-identifier` is the *first* dc:identifier.
+
+    ebooklib sets `book.uid` from the last identified dc:identifier it
+    reads, not the one the package names, so a book like this hands the
+    wrong key to anything that trusts `uid`.
+    """
+    path = _write_source(tmp_path / "two-ids.epub", LONG_FONT, algorithm, UNIQUE_ID)
+
+    with zipfile.ZipFile(path) as archive:
+        member = next(n for n in archive.namelist() if n.endswith(".opf"))
+        opf = archive.read(member).decode("utf-8")
+    opf = opf.replace(
+        "</metadata>",
+        f'<dc:identifier id="isbn">{OTHER_ID}</dc:identifier></metadata>',
+        1,
+    )
+    replacement = path.with_suffix(".fixed.epub")
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(replacement, "w") as target:
+        for info in source.infolist():
+            target.writestr(
+                info,
+                (
+                    opf.encode("utf-8")
+                    if info.filename == member
+                    else source.read(info.filename)
+                ),
+            )
+    replacement.replace(path)
+    return path
+
+
+@pytest.mark.parametrize("algorithm", [IDPF_ALGORITHM, ADOBE_ALGORITHM])
+def test_the_key_comes_from_the_identifier_the_package_names(tmp_path, algorithm):
+    """Finding 2: the key is the *unique-identifier*, not whichever
+    dc:identifier ebooklib happened to read last."""
+    path = _two_identifier_source(tmp_path, algorithm)
+
+    book = epub.read_epub(str(path))
+    assert book.uid == OTHER_ID, "the fixture must actually mislead ebooklib"
+
+    restored, unresolved = deobfuscate_fonts(book, str(path))
+
+    assert unresolved == []
+    assert restored == ["EPUB/fonts/obfuscated.otf"]
+    assert book.get_item_with_id("font").content == LONG_FONT

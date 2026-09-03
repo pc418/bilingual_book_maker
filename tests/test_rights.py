@@ -147,3 +147,86 @@ def test_the_refusal_message_offers_no_way_around_it():
     assert "drm" in lowered
     for forbidden in ("dedrm", "calibre", "strip", "first", "instead"):
         assert forbidden not in lowered
+
+
+# ------------------------------------------------- finding 1: fail closed
+
+
+def _raw_encryption(body):
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"'
+        ' xmlns:enc="http://www.w3.org/2001/04/xmlenc#">'
+        f"{body}</encryption>"
+    )
+
+
+def test_an_entry_with_no_encryption_method_is_drm(tmp_path):
+    """Finding 1: an EncryptedData that names no algorithm was being skipped
+    and the book passed. Nothing about it says the content is in the clear,
+    so it has to be read as protection."""
+    path = _epub(
+        tmp_path,
+        members={
+            "META-INF/encryption.xml": _raw_encryption(
+                "<enc:EncryptedData><enc:CipherData>"
+                '<enc:CipherReference URI="OEBPS/ch0.xhtml"/>'
+                "</enc:CipherData></enc:EncryptedData>"
+            )
+        },
+    )
+    assert check_epub(str(path)) == "drm"
+
+
+def test_a_method_in_an_unexpected_namespace_is_drm(tmp_path):
+    """Finding 1: the check matched EncryptionMethod in the xmlenc namespace
+    only, so a producer using another one slipped an AES declaration past it."""
+    path = _epub(
+        tmp_path,
+        members={
+            "META-INF/encryption.xml": _raw_encryption(
+                '<enc:EncryptedData><EncryptionMethod xmlns="http://example.invalid/enc"'
+                ' Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/>'
+                "</enc:EncryptedData>"
+            )
+        },
+    )
+    assert check_epub(str(path)) == "drm"
+
+
+def test_an_encrypted_data_in_an_unexpected_namespace_still_counts(tmp_path):
+    """Finding 1: EncryptedData is matched by local name, any namespace."""
+    path = _epub(
+        tmp_path,
+        members={
+            "META-INF/encryption.xml": _raw_encryption(
+                '<EncryptedData xmlns="http://example.invalid/enc">'
+                '<EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/>'
+                "</EncryptedData>"
+            )
+        },
+    )
+    assert check_epub(str(path)) == "drm"
+
+
+def test_a_font_algorithm_in_an_unexpected_namespace_is_still_a_font(tmp_path):
+    """Finding 1: matching by local name must not turn the font case into a
+    refusal — the algorithm URI is what decides, not the element's namespace."""
+    path = _epub(
+        tmp_path,
+        members={
+            "META-INF/encryption.xml": _raw_encryption(
+                '<EncryptedData xmlns="http://example.invalid/enc">'
+                '<EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/>'
+                "</EncryptedData>"
+            )
+        },
+    )
+    assert check_epub(str(path)) == "ok"
+
+
+def test_a_declaration_that_declares_nothing_is_drm(tmp_path):
+    """Finding 1: an encryption.xml holding no EncryptedData is malformed,
+    and malformed fails closed like an unparseable one."""
+    path = _epub(tmp_path, members={"META-INF/encryption.xml": _raw_encryption("")})
+    assert check_epub(str(path)) == "drm"

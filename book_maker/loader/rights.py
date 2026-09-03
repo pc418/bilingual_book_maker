@@ -44,7 +44,17 @@ FONT_OBFUSCATION = frozenset(
     }
 )
 
-ENCRYPTION_METHOD = "{http://www.w3.org/2001/04/xmlenc#}EncryptionMethod"
+
+def _local_name(tag):
+    """The element name without its namespace.
+
+    Matching by local name is deliberate. The two elements below are only
+    ever written in the xmlenc namespace by a conforming producer, but a
+    check that trusts the namespace lets a non-conforming one hide an AES
+    declaration in plain sight — and this check exists precisely for files
+    that are not playing fair.
+    """
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
 
 
 def check_epub(path):
@@ -79,7 +89,25 @@ def check_epub(path):
     except ET.ParseError:
         return "drm"
 
-    for method in root.iter(ENCRYPTION_METHOD):
-        if method.get("Algorithm") not in FONT_OBFUSCATION:
+    # Allow-list, not deny-list: the file is clear only if every declared
+    # resource is positively identified as font obfuscation. An entry that
+    # names no algorithm, names one this code does not know, or hides the
+    # method somewhere the reader did not look is protection as far as this
+    # tool is concerned — the cost of being wrong the other way is helping
+    # circumvent something.
+    entries = [el for el in root.iter() if _local_name(el.tag) == "EncryptedData"]
+    if not entries:
+        # A declaration that declares nothing is malformed, and malformed
+        # fails closed exactly like an unparseable one.
+        return "drm"
+    for entry in entries:
+        algorithms = [
+            el.get("Algorithm")
+            for el in entry.iter()
+            if _local_name(el.tag) == "EncryptionMethod"
+        ]
+        if not algorithms:
+            return "drm"
+        if any(algorithm not in FONT_OBFUSCATION for algorithm in algorithms):
             return "drm"
     return "ok"
