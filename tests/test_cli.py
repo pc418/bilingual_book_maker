@@ -751,6 +751,28 @@ class TestVendorFormats:
         assert hasattr(FORMAT_DICT["gemini"], "set_interval")
         assert build_parser().parse_args(["--book_name", "b.epub"]).interval == 0.01
 
+    @pytest.mark.parametrize(
+        "fmt,example",
+        [
+            ("groq", "llama-3.3-70b-versatile"),
+            ("xai", "grok-beta"),
+            ("anthropic", "claude-sonnet-4-6"),
+        ],
+    )
+    def test_asking_for_a_model_names_one_that_endpoint_serves(
+        self, tmp_path, fmt, example
+    ):
+        # a Claude id offered as the example for the groq format sends the
+        # reader to an id groq refuses
+        src = tmp_path / BOOK.name
+        src.write_bytes(BOOK.read_bytes())
+        proc = _cli("--book_name", str(src), "--key", "sk-test", "--api_format", fmt)
+
+        assert proc.returncode != 0
+        output = " ".join((proc.stdout + proc.stderr).split())
+        assert f"--model is required for the {fmt} format" in output
+        assert example in output
+
     def test_every_format_that_defaults_a_model_can_be_asked_for_one(self):
         # a default model on a format whose class refuses --model would be a
         # command that cannot run
