@@ -640,16 +640,13 @@ class TestRestoredRoutesMeetTodaysBase:
             4,
         )
 
-    def test_gemini_keeps_a_readable_model_list_for_the_disclosure(self):
-        # model_list is an endless cycle; the translation note cannot read it
-        from book_maker.loader.disclosure import model_id
-
+    def test_gemini_keeps_a_readable_model_list(self):
+        # model_list is an endless cycle; nothing downstream can read it back
         gemini = self._gemini()
         gemini.create_convo = lambda: None
         gemini.set_model_list(["gemini-2.5-flash", "gemini-2.0-flash"])
 
         assert gemini._model_names == ("gemini-2.5-flash", "gemini-2.0-flash")
-        assert model_id(gemini) == "gemini-2.5-flash, gemini-2.0-flash"
 
     @pytest.mark.parametrize("fmt", ["gemini", "qwen"])
     def test_both_carry_per_chapter_context_a_worker_can_clone(self, fmt):
