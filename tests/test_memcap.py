@@ -43,14 +43,29 @@ with open(os.path.join(out, "parent.pid"), "w") as handle:
 time.sleep(60)
 """
 
+SLEEPER = """
+import os, sys, time
+with open(os.path.join(sys.argv[1], "sleeper.pid"), "w") as handle:
+    handle.write(str(os.getpid()))
+time.sleep(60)
+"""
+
 # the same spawn, and then the parent leaves at once: the memory lives on
-# in a process the cap's direct child no longer has any relation to
+# in a process the cap's direct child no longer has any relation to.
+# argv: out dir, grandchild script, exit status.
 DESERTING_PARENT = """
-import os, subprocess, sys
-out = sys.argv[1]
-subprocess.Popen([sys.executable, os.path.join(out, "grandchild.py"), out])
+import os, subprocess, sys, time
+out, script, status = sys.argv[1], sys.argv[2], int(sys.argv[3])
+subprocess.Popen([sys.executable, os.path.join(out, script), out])
 with open(os.path.join(out, "parent.pid"), "w") as handle:
     handle.write(str(os.getpid()))
+# leave only once the grandchild has said who it is, so the test has a pid
+# to look for however fast the sweep is
+pid_path = os.path.join(out, script.replace(".py", ".pid"))
+deadline = time.monotonic() + 5
+while not os.path.exists(pid_path) and time.monotonic() < deadline:
+    time.sleep(0.02)
+raise SystemExit(status)
 """
 
 
@@ -140,25 +155,21 @@ def test_a_command_inside_the_cap_passes_its_status_through():
     assert "killed past" not in done.stderr
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="ps -axo layout is macOS's")
-def test_memory_left_behind_by_a_departed_child_is_still_cleaned_up(tmp_path):
-    """The command exits immediately and leaves its grandchild holding
-    300 MB. Waiting on the direct child is not enough: whether the cap
-    fired while the parent still lived or the parent was gone first, the
-    grandchild must not outlive the run, and stderr has to say so."""
-    (tmp_path / "grandchild.py").write_text(GRANDCHILD)
+def _desert(tmp_path, script, body, limit, status=0):
+    (tmp_path / script).write_text(body)
     (tmp_path / "parent.py").write_text(DESERTING_PARENT)
-
-    done = subprocess.run(
+    return subprocess.run(
         [
             sys.executable,
             str(MEMCAP),
             "--limit-mb",
-            "150",
+            str(limit),
             "--",
             sys.executable,
             str(tmp_path / "parent.py"),
             str(tmp_path),
+            script,
+            str(status),
         ],
         capture_output=True,
         text=True,
@@ -166,7 +177,34 @@ def test_memory_left_behind_by_a_departed_child_is_still_cleaned_up(tmp_path):
         env=_plain_env(),
     )
 
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -axo layout is macOS's")
+def test_memory_left_behind_by_a_departed_child_is_still_cleaned_up(tmp_path):
+    """The command exits immediately and leaves its grandchild holding
+    300 MB. Waiting on the direct child is not enough: the memory is over
+    the cap whether it was read while the parent still lived or only in
+    the sweep afterwards, so it is a breach either way — 137, said out
+    loud, and no process left holding it. A sweep that measured the
+    survivors but never compared them to the limit reported a 312 MB peak
+    and exited 0."""
+    done = _desert(tmp_path, "grandchild.py", GRANDCHILD, limit=150, status=0)
+
     grandchild = int((tmp_path / "grandchild.pid").read_text())
     assert _wait_gone([grandchild]) == [], "the abandoned memory outlived the cap"
-    assert "killed past 150 MB" in done.stderr or "survivor" in done.stderr, done.stderr
+    assert done.returncode == 137, done.stderr
+    assert "killed past 150 MB" in done.stderr
     assert "memcap: peak" in done.stderr
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -axo layout is macOS's")
+def test_a_survivor_under_the_cap_is_swept_without_failing_the_cell(tmp_path):
+    """A leftover process that never came near the limit is still swept and
+    still said out loud — but it is not a breach, so the cell's own exit
+    status is what comes back."""
+    done = _desert(tmp_path, "sleeper.py", SLEEPER, limit=150, status=5)
+
+    sleeper = int((tmp_path / "sleeper.pid").read_text())
+    assert _wait_gone([sleeper]) == [], "the leftover process was not swept"
+    assert done.returncode == 5, done.stderr
+    assert "memcap: killed 1 survivor(s) after exit" in done.stderr
+    assert "killed past" not in done.stderr

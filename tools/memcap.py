@@ -20,7 +20,8 @@ and `os.killpg` kills it in one call: no pid list that can go stale
 between the listing and the signal, and nothing reparented to launchd
 still holding the memory. The group also outlives the command, which is
 the point of the survivor sweep below: a sidecar the cell forgot to reap
-is still in the group after the cell is gone.
+is still in the group after the cell is gone, and the cap covers what
+that sweep finds exactly as it covers a reading taken while the cell ran.
 """
 
 import argparse
@@ -105,9 +106,19 @@ def main():
             survivors = len(members)
             if survivors:
                 kill_group(group)
+                # The cap applies to what was found here too. Memory over
+                # the limit is a breach whether it was read while the
+                # command still ran or only once it had gone: a sweep that
+                # measured 312 MB against a 20 MB cap and exited 0 said
+                # the cell was fine, which is the one thing it was not.
+                killed = current > args.limit_mb
+    except KeyboardInterrupt:
+        # a Ctrl-C is not a crash: kill the group and go, no traceback
+        kill_group(group)
+        sys.exit(130)
     except BaseException:
-        # a Ctrl-C, a SIGTERM, or a bug in here: none of them may leave
-        # the cell and its sidecars running
+        # a SIGTERM (raised as SystemExit by the handler above), or a bug
+        # in here: neither may leave the cell and its sidecars running
         kill_group(group)
         raise
 
