@@ -164,14 +164,20 @@ def deobfuscate_fonts(book, epub_path):
         # or a truncation the reader below will report far better.
         return [], []
 
-    # The OCF key is derived from the identifier the package names as
-    # `unique-identifier`. `book.uid` is ebooklib's guess at that — the last
-    # identified dc:identifier it read — which on a book carrying an ISBN
-    # after its UUID is a different string and therefore a wrong key. It
-    # stays only as a last resort, for a package this could not read at all.
+    # The OCF key is the identifier the package names as its
+    # `unique-identifier`, and nothing else. ebooklib's `book.uid` is not a
+    # fallback at any price: `EpubBook.reset()` seeds it with a fresh
+    # random uuid, so a book that names no identifier arrives carrying an
+    # invented one that no reader can tell from a real reading — and when
+    # it *is* read, it is the last identified dc:identifier, which on a
+    # book listing an ISBN after its UUID is a different string from the
+    # named unique-identifier. Either way it is a key that unscrambles
+    # nothing while reporting success, which is worse than no key at all.
+    # `read_package` answers None for a package it could not read, so that
+    # case lands here as no identifier too.
     package = read_package(epub_path)
     opf_dir = package.opf_dir
-    identifier = package.unique_identifier or getattr(book, "uid", None) or ""
+    identifier = package.unique_identifier or ""
 
     # A CipherReference URI is relative to the container root, while an
     # ebooklib item's file_name is relative to the OPF. Both spellings are
