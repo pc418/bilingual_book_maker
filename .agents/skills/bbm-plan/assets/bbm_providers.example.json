@@ -39,6 +39,12 @@
       "default_models": ["llama-3.3-70b-versatile"],
       "env_key": "BBM_GROQ_API_KEY"
     },
+    "orcarouter": {
+      "api_style": "openai",
+      "base_url": "https://api.orcarouter.ai/v1",
+      "default_models": ["orcarouter/auto"],
+      "env_key": "BBM_ORCAROUTER_API_KEY"
+    },
     "deepseek": {
       "api_style": "openai",
       "base_url": "https://api.deepseek.com/v1",
