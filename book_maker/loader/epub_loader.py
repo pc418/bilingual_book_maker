@@ -41,10 +41,13 @@ from .helper import (
     is_text_link,
     make_tag,
     not_trans,
+    package_prefixes,
     rebase_ncx_srcs,
     shorter_result_link,
     strip_duplicate_ids,
 )
+from .font_obfuscation import deobfuscate_fonts
+from .rights import DRM_MESSAGE, check_epub
 from .plan import (
     PLAN_SCHEMA_VERSION,
     BookCss,
@@ -213,6 +216,14 @@ class EPUBBookLoader(BaseBookLoader):
         source_lang="auto",
         parallel_workers=1,
     ):
+        # Before the translator is built and before a byte of the book is
+        # read: a protected book is refused, and there is no flag that opens
+        # one. builtins.print, not rich — the sentence must reach stderr
+        # whole, unwrapped and unstyled, because it is the whole answer.
+        if check_epub(epub_name) == "drm":
+            builtins.print(DRM_MESSAGE, file=sys.stderr)
+            raise SystemExit(1)
+
         self.epub_name = epub_name
         self.language = language
         # what `lang=` may carry for that language, or None when nothing may
@@ -337,6 +348,19 @@ class EPUBBookLoader(BaseBookLoader):
             epub.EpubReader._load_spine = _load_spine
             self.origin_book = epub.read_epub(self.epub_name)
 
+        # ebooklib carries no META-INF member into the output, so the
+        # encryption declaration that describes an obfuscated font is gone
+        # by the time the book is written. Unscramble now and the drop is
+        # correct; skip it and the output ships a font nothing can parse.
+        _, unresolved = deobfuscate_fonts(self.origin_book, self.epub_name)
+        if unresolved:
+            builtins.print(
+                "warning: could not restore obfuscated resource(s) "
+                + ", ".join(unresolved)
+                + "; the translated book may carry an unusable font",
+                file=sys.stderr,
+            )
+
         self.p_to_save = []
         self.resume = resume
         self.bin_path = f"{Path(epub_name).parent}/.{Path(epub_name).stem}.temp.bin"
@@ -442,6 +466,48 @@ class EPUBBookLoader(BaseBookLoader):
                     new_book.add_metadata(namespace, name, value, others)
                 else:
                     new_book.add_metadata(namespace, name, value)
+
+        # EPUB 3 resolves a `property` like `tdm:reservation` through the
+        # package's `prefix` attribute, which ebooklib's reader does not
+        # read: without this the copied metas name vocabularies the book
+        # never declares. `rendition` is excluded because the writer always
+        # emits it — a second copy is a duplicate declaration.
+        for name, uri in package_prefixes(getattr(self, "epub_name", None)).items():
+            declaration = f"{name}: {uri}"
+            if name != "rendition" and declaration not in new_book.prefixes:
+                new_book.prefixes.append(declaration)
+
+        # The book is made to be read in the target language, and a reading
+        # system takes the first dc:language as the book's own. A single
+        # translation is only in that language; a bilingual one keeps the
+        # source's languages behind it.
+        tag = language_tag(self.language)
+        if tag:
+            dc_namespace = epub.NAMESPACES["DC"]
+            source_languages = (
+                []
+                if self.single_translate
+                else [
+                    entry
+                    for entry in new_book.get_metadata("DC", "language")
+                    if entry[0] != tag
+                ]
+            )
+            new_book.metadata.setdefault(dc_namespace, {})["language"] = [
+                (tag, None)
+            ] + source_languages
+            new_book.language = tag
+
+        # A translation is a derivative work, so it says what it derives
+        # from. `uid` is the source's primary identifier — the same value
+        # the identity above is derived from. Nothing is invented when the
+        # source has none, and a book rebuilt from an earlier output
+        # (--retranslate) already carries the pointer and keeps just one.
+        source_uid = getattr(self.origin_book, "uid", None)
+        if source_uid:
+            existing = new_book.get_metadata("DC", "source")
+            if not any(value == source_uid for value, _ in existing):
+                new_book.add_metadata("DC", "source", source_uid)
 
         # ebooklib's _load_spine turns every child of <spine> into an
         # (idref, linear) tuple — including XML comments, which become

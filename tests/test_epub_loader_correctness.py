@@ -300,7 +300,8 @@ def test_empty_nav_is_generated_with_rebuilt_book_title(tmp_path, monkeypatch):
     with zipfile.ZipFile(output) as archive:
         nav = archive.read("EPUB/generated-nav.xhtml").decode("utf-8")
     assert rebuilt.title == "Correctness baseline"
-    assert rebuilt.language == "en"
+    # the rebuilt book's language is the language it was made to be read in
+    assert rebuilt.language == "zh-hans"
     assert "<h2>Correctness baseline</h2>" in nav
 
 

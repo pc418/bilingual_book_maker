@@ -1,5 +1,6 @@
 import posixpath
 import re
+import zipfile
 import backoff
 import logging
 import uuid
@@ -25,6 +26,44 @@ SINGLETON_TAGS = frozenset(["figcaption", "caption", "legend", "summary"])
 VOID_TAGS = frozenset(
     ["area", "br", "col", "embed", "hr", "img", "input", "source", "track", "wbr"]
 )
+
+
+CONTAINER_PATH = "META-INF/container.xml"
+CONTAINER_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
+OPF_NS = "{http://www.idpf.org/2007/opf}"
+
+
+def package_prefixes(epub_path):
+    """The `prefix` declarations on the source's `<package>`, as name -> URI.
+
+    EPUB 3 resolves a `property` like `tdm:reservation` through this
+    attribute; ebooklib's reader never reads it, so a translated book that
+    copies the metas alone declares nothing they refer to and the property
+    is undefined (epubcheck OPF-028). Reading it back is the whole fix.
+
+    The attribute is a flat whitespace-separated list of `name: uri` pairs.
+    A trailing name with no URI is not a mapping and is dropped rather than
+    guessed at. Anything unreadable — not a zip, no container, no package,
+    no attribute — is an empty mapping: a missing declaration is not worth
+    an exception on a book that may not use one.
+    """
+    try:
+        with zipfile.ZipFile(epub_path) as archive:
+            container = etree.fromstring(archive.read(CONTAINER_PATH))
+            rootfile = container.find(f".//{CONTAINER_NS}rootfile")
+            if rootfile is None or not rootfile.get("full-path"):
+                return {}
+            package = etree.fromstring(archive.read(rootfile.get("full-path")))
+    except Exception:
+        return {}
+
+    tokens = (package.get("prefix") or "").split()
+    prefixes = {}
+    for index in range(0, len(tokens) - 1, 2):
+        name = tokens[index]
+        if name.endswith(":"):
+            prefixes[name[:-1]] = tokens[index + 1]
+    return prefixes
 
 
 def derive_translation_identity(new_book, source_book, *facets):
