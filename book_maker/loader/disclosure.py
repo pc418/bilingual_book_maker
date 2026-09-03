@@ -69,14 +69,18 @@ def model_id(translator):
     """
     if translator is None:
         return "unspecified model"
-    models = getattr(translator, "model_list", None)
-    if models is not None:
-        try:
+    # `_model_names` is the readable list a rotating translator keeps beside
+    # its `model_list`; `model_list` itself may be an itertools.cycle, and
+    # iterating one never ends. Only a real sequence is read here — a
+    # smoke run on 260902 found the write step of every openai cell
+    # growing past 2.5 GB inside this comprehension.
+    for attribute in ("_model_names", "model_list"):
+        models = getattr(translator, attribute, None)
+        if isinstance(models, (list, tuple)):
             names = [str(name) for name in models if name]
-        except TypeError:
-            names = []
-        if len(names) > 1:
-            return ", ".join(names)
+            if len(names) > 1:
+                return ", ".join(names)
+            break
     name = getattr(translator, "model_name", None)
     if name:
         return str(name)
