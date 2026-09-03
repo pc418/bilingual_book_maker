@@ -69,13 +69,11 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
   URL ending in `/v1`), `--key`, and `--model` spelled the way the endpoint
   spells it. Omit `--api_base` for OpenAI's own host, and `--model` for the
   default, `gpt-5.6-luna`.
-- **Every other OpenAI-compatible vendor is a provider entry.**
-  `bbm_providers.example.json` ships one for Gemini, Qwen, xAI, Groq,
-  DeepSeek, SiliconFlow, OpenRouter and Ollama. Copy it to
-  `bbm_providers.json`, export the key variable the entry names, and pass
-  `--provider gemini`. An entry is the same three values written down once,
-  so the flags above always work too. The fixed engines (DeepL, Google,
-  Caiyun, Tencent) are not endpoints of that kind; they are `--api_format`.
+- A provider entry is the same three values written down once.
+  `bbm_providers.example.json` ships one for each vendor below (Gemini,
+  Qwen, xAI, Groq, OrcaRouter, Ollama, DeepSeek, SiliconFlow, OpenRouter):
+  copy it to `bbm_providers.json`, export the key variable the entry names,
+  and `--provider gemini` runs the same command as the Gemini example.
 - `--key` takes several keys separated by commas and rotates them, which
   gets past a per-key rate limit. Without the flag the key is read from
   `$BBM_API_KEY`, then from the format's own variable (`$OPENAI_API_KEY`,
@@ -119,20 +117,20 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * Gemini
 
-  Google [Gemini](https://aistudio.google.com/app/apikey) is reached through its OpenAI-compatible endpoint. The shipped `gemini` entry points there and reads `BBM_GOOGLE_GEMINI_KEY`; `--model` names any other Gemini id.
+  Google [Gemini](https://aistudio.google.com/app/apikey) is reached through its OpenAI-compatible endpoint; name any Gemini model id.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider gemini
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
   ```
 
 * Qwen
 
   Support Alibaba Cloud [Qwen-MT](https://bailian.console.aliyun.com/) specialized translation model. Supports 92 languages with features like terminology intervention and translation memory.
-  `qwen-mt-turbo` is faster and cheaper, `qwen-mt-plus` higher quality. The shipped `qwen` entry points at DashScope's OpenAI-compatible endpoint, defaults to `qwen-mt-turbo` and reads `BBM_QWEN_API_KEY`.
+  `qwen-mt-turbo` is faster and cheaper, `qwen-mt-plus` higher quality. Both are served by DashScope's OpenAI-compatible endpoint.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider qwen --language "Simplified Chinese"
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider qwen --model qwen-mt-plus --language "Japanese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-plus --language "Japanese"
   ```
 
 * [Tencent TranSmart](https://transmart.qq.com)
@@ -143,10 +141,8 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [xAI](https://x.ai)
 
-  The shipped `xai` entry reads `BBM_XAI_API_KEY`.
-
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider xai
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-beta
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -162,19 +158,19 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [Ollama](https://github.com/ollama/ollama)
 
-  Support [Ollama](https://github.com/ollama/ollama) self-host models.
-  Ollama is an OpenAI-compatible endpoint on localhost, and localhost needs no key; the shipped `ollama` entry has no key variable. Name the model you pulled.
+  Support [Ollama](https://github.com/ollama/ollama) self-host models,
+  Ollama is an OpenAI-compatible endpoint on localhost, and localhost needs no key.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider ollama --model ${ollama_model_name}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base http://localhost:11434/v1 --model ${ollama_model_name}
   ```
 
 * [groq](https://console.groq.com/keys)
 
-  GroqCloud currently supports models: you can find from [Supported Models](https://console.groq.com/docs/models). The shipped `groq` entry reads `BBM_GROQ_API_KEY`.
+  GroqCloud currently supports models: you can find from [Supported Models](https://console.groq.com/docs/models)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider groq --model llama-3.3-70b-versatile
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.groq.com/openai/v1 --key [your_key] --model llama-3.3-70b-versatile
   ```
 
 * [Codex](https://developers.openai.com/codex/cli)

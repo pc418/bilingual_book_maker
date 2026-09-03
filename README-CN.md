@@ -58,11 +58,10 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 - **任何 OpenAI 兼容接口**只需要三样东西：`--api_base`（以 `/v1` 结尾的地址）、
   `--key`，以及按接口拼写的 `--model`。用 OpenAI 官方地址时省略 `--api_base`，
   用默认模型 `gpt-5.6-luna` 时省略 `--model`。
-- **其他 OpenAI 兼容的厂商都用 provider 条目。**`bbm_providers.example.json`
-  里已经写好了 Gemini、Qwen、xAI、Groq、DeepSeek、SiliconFlow、OpenRouter 和
-  Ollama 的条目。复制成 `bbm_providers.json`，导出条目里写的 key 变量，然后传
-  `--provider gemini`。条目就是上面那三样东西写下来一次，所以直接传参数也一样能用。
-  固定的翻译引擎（DeepL、谷歌、彩云、腾讯）不是这类接口，它们用 `--api_format`。
+- provider 条目就是这三样东西写下来一次。`bbm_providers.example.json` 里已经写好了
+  下面每家厂商的条目（Gemini、Qwen、xAI、Groq、OrcaRouter、Ollama、DeepSeek、
+  SiliconFlow、OpenRouter）：复制成 `bbm_providers.json`，导出条目里写的 key 变量，
+  `--provider gemini` 跑的就是 Gemini 那条示例命令。
 - `--key` 可以写多个 key，英文逗号分隔，轮换使用，用来绕开单 key 的速率限制。
   不写这个参数时，依次读取 `$BBM_API_KEY` 和该格式自己的变量（`$OPENAI_API_KEY`、
   `$ANTHROPIC_API_KEY`），所以 key 不必出现在命令行上。
@@ -108,20 +107,18 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * Gemini
 
-  通过 Gemini 的 OpenAI 兼容接口使用。自带的 `gemini` 条目指向该接口，key 读取
-  `BBM_GOOGLE_GEMINI_KEY`；`--model` 可以换成任意 Gemini 模型 ID。
+  通过 Gemini 的 OpenAI 兼容接口使用，模型 ID 任选。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider gemini
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
   ```
 
 * Qwen
 
-  [Qwen-MT](https://www.aliyun.com/product/dashscope) 翻译模型：`qwen-mt-turbo` 更快更便宜，`qwen-mt-plus` 质量更高。自带的 `qwen` 条目指向百炼的 OpenAI 兼容接口，默认 `qwen-mt-turbo`，key 读取 `BBM_QWEN_API_KEY`。
+  [Qwen-MT](https://www.aliyun.com/product/dashscope) 翻译模型：`qwen-mt-turbo` 更快更便宜，`qwen-mt-plus` 质量更高。两者都走百炼的 OpenAI 兼容接口。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider qwen --language "Simplified Chinese"
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider qwen --model qwen-mt-plus --language "Japanese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
   ```
 
 * 腾讯交互翻译
@@ -132,10 +129,8 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [xAI](https://x.ai)
 
-  自带的 `xai` 条目 key 读取 `BBM_XAI_API_KEY`。
-
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider xai
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-beta
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -150,18 +145,18 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [Ollama](https://github.com/ollama/ollama)
 
-  Ollama 是本机上的一个 OpenAI 兼容接口，本机地址不需要 key，自带的 `ollama` 条目也没有 key 变量。写你拉取过的模型名。
+  Ollama 是本机上的一个 OpenAI 兼容接口，本机地址不需要 key。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider ollama --model ${ollama_model_name}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base http://localhost:11434/v1 --model ${ollama_model_name}
   ```
 
 * [Groq](https://console.groq.com/keys)
 
-  GroqCloud 当前支持的模型可以查看[Supported Models](https://console.groq.com/docs/models)。自带的 `groq` 条目 key 读取 `BBM_GROQ_API_KEY`。
+  GroqCloud 当前支持的模型可以查看[Supported Models](https://console.groq.com/docs/models)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --provider groq --model llama-3.3-70b-versatile
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.groq.com/openai/v1 --key [your_key] --model llama-3.3-70b-versatile
   ```
 
 * [Codex](https://developers.openai.com/codex/cli)
