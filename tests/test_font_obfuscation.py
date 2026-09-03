@@ -502,3 +502,19 @@ def test_translating_an_output_again_rekeys_the_font(tmp_path):
     with zipfile.ZipFile(twice) as archive:
         shipped = archive.read("EPUB/fonts/obfuscated.otf")
     assert _obfuscate(shipped, IDPF_ALGORITHM, _output_identifier(twice)) == LONG_FONT
+
+
+def test_a_font_name_with_an_ampersand_yields_well_formed_encryption_xml():
+    """Codex finding on 959c74d: the URI was pasted into the declaration
+    unescaped, so `EPUB/fonts/A&B.otf` produced XML no parser accepts."""
+    import xml.etree.ElementTree as ET
+
+    from book_maker.loader.font_obfuscation import IDPF_ALGORITHM, build_encryption_xml
+
+    xml = build_encryption_xml([("EPUB/fonts/A&B.otf", IDPF_ALGORITHM)])
+    root = ET.fromstring(xml)
+    uris = [
+        el.get("URI")
+        for el in root.iter("{http://www.w3.org/2001/04/xmlenc#}CipherReference")
+    ]
+    assert uris == ["EPUB/fonts/A&B.otf"]
