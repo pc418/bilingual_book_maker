@@ -36,8 +36,7 @@ A sample book, `test_books/animal_farm.epub`, is provided for testing purposes.
 pip install -r requirements.txt      # or: pip install -U bbook_maker
 ```
 
-The shortest path is a provider file. Copy the example, fill in your
-endpoint, export the key once, and name the provider on every command:
+Then:
 
 ```shell
 cp bbm_providers.example.json bbm_providers.json
@@ -46,18 +45,14 @@ export OPENAI_API_KEY=sk-...
 python3 make_book.py --book_name test_books/animal_farm.epub --provider openai --test
 ```
 
-Or pass the flags directly:
+Or pass the key on the command line:
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub \
   --key sk-... --model gpt-5.6-luna --test
 ```
 
-To spend a ChatGPT plan instead of API credits, install the
-[Codex CLI](https://developers.openai.com/codex/cli), run `codex login` once,
-and pass `--model codex`. No key and no base URL are needed. On this route
-the thread is the context, so `--use_context` adds nothing, and the run
-stays in tag mode unless you pass `--plan-classify`.
+To spend a [Codex CLI](https://developers.openai.com/codex/cli) plan:
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
@@ -65,22 +60,23 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 ## Translate Service
 
-- **Any OpenAI-compatible endpoint** needs three things: `--api_base` (the
-  URL ending in `/v1`), `--key`, and `--model` spelled the way the endpoint
-  spells it. Omit `--api_base` for OpenAI's own host, and `--model` for the
-  default, `gpt-5.6-luna`.
-- A provider entry is the same three values written down once.
-  `bbm_providers.example.json` ships one for each vendor below (Gemini,
-  Qwen, xAI, Groq, OrcaRouter, Ollama, DeepSeek, SiliconFlow, OpenRouter):
-  copy it to `bbm_providers.json`, export the key variable the entry names,
-  and `--provider gemini` runs the same command as the Gemini example.
-- `--key` takes several keys separated by commas and rotates them, which
-  gets past a per-key rate limit. Without the flag the key is read from
-  `$BBM_API_KEY`, then from the format's own variable (`$OPENAI_API_KEY`,
-  `$ANTHROPIC_API_KEY`), so it never has to appear on the command line.
-- `--model_list` names several models, comma-separated, to rotate between.
-- `--use_context` sends earlier text along with each passage, so names and
-  tone stay consistent. The flag's entry below says which mode to pick.
+The OpenAI and the Anthropic API formats are supported.
+
+- `--api_format` picks a machine-translation engine (`google`, `caiyun`,
+  `deepl`, `deeplfree`, `tencent`, `customapi`), `codex`, or names the API
+  format as `openai` / `anthropic`.
+- **OpenAI-compatible API**: `--api_base` (ending in `/v1`), `--key` the API
+  key, and the model id in `--model`. Omit `--api_base` for OpenAI's own
+  API, and `--model` for `gpt-5.6-luna`.
+- Or translate through `--provider`: `bbm_providers.example.json` has an
+  entry for each vendor below (Gemini, Qwen, xAI, Groq, OrcaRouter, Ollama,
+  DeepSeek, SiliconFlow, OpenRouter). Copy it to `bbm_providers.json`, set
+  the key in it, and `--provider gemini` uses the Gemini API from it.
+- `--key` takes several keys separated by commas and rotates them.
+- `--use_context session` translates in session mode and compacts at an 8k
+  context.
+- The old preset names and key flags still work, see
+  [Migrating from the old flags](./docs/migration.md).
 
 * DeepL
   Support DeepL model [DeepL Translator](https://rapidapi.com/splintPRO/api/dpl-translator) need pay to get the token
@@ -125,12 +121,10 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * Qwen
 
-  Support Alibaba Cloud [Qwen-MT](https://bailian.console.aliyun.com/) specialized translation model. Supports 92 languages with features like terminology intervention and translation memory.
-  `qwen-mt-turbo` is faster and cheaper, `qwen-mt-plus` higher quality. Both are served by DashScope's OpenAI-compatible endpoint.
+  Translate with [Qwen](https://www.aliyun.com/product/dashscope) models; `qwen-mt-turbo` and `qwen-mt-plus` are supported.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-plus --language "Japanese"
   ```
 
 * [Tencent TranSmart](https://transmart.qq.com)
@@ -148,9 +142,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 * [OrcaRouter](https://www.orcarouter.ai)
 
   Support [OrcaRouter](https://www.orcarouter.ai) gateway, defaulting to the
-  `orcarouter/auto` smart-routing model. It also runs gateway-level, zero-trust
-  security for AI agents on the same endpoint — screening every prompt/response and
-  governing every tool call on a default-deny basis, with no application code changes.
+  `orcarouter/auto` smart-routing model.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
@@ -158,8 +150,8 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [Ollama](https://github.com/ollama/ollama)
 
-  Support [Ollama](https://github.com/ollama/ollama) self-host models,
-  Ollama is an OpenAI-compatible endpoint on localhost, and localhost needs no key.
+  Translate with [Ollama](https://github.com/ollama/ollama) self-hosted models.
+  If the ollama server is not local, point `--api_base http://x.x.x.x:port/v1` at it.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --api_base http://localhost:11434/v1 --model ${ollama_model_name}
@@ -175,12 +167,9 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [Codex](https://developers.openai.com/codex/cli)
 
-  Translate on your ChatGPT/Codex plan allowance instead of API credits. Install the
-  [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login` once — a
-  `codex app-server` sidecar owns that session, so no key is needed. `--model codex` runs
-  `gpt-5.6-luna`; `--api_format codex --model <id>` names another. One thread is reused for the whole book and
-  compacted at `--context-compact-at`; the sidecar runs sandboxed, with shell, MCP
-  servers, browsing and hooks off.
+  Spend your ChatGPT/Codex plan. Install the
+  [Codex CLI](https://developers.openai.com/codex/cli). The default model is `gpt-5.6-luna`; `--api_format codex --model <id>` names another. One session is reused for the whole book and compacted at `--context-compact-at`;
+  it runs sandboxed, with shell, MCP servers and browsing off, but hooks may still fire.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
@@ -188,7 +177,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * Custom API Provider
 
-  An endpoint you use often belongs in a provider file rather than on every command line. Any OpenAI-compatible or Anthropic API (DeepSeek, SiliconFlow, a local proxy) can be an entry.
+  When the built-in models do not cover your needs, define a provider in a JSON config file. Without a code change, any OpenAI-compatible or Anthropic-format API (DeepSeek, SiliconFlow, a local proxy, ...) becomes usable.
 
   Create `bbm_providers.json` in the current directory (or `~/.bbm/providers.json` for global config):
 
@@ -224,16 +213,14 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
   | Field | Required | Description |
   |-------|----------|-------------|
-  | `api_style` | Yes | `openai` or `anthropic` |
-  | `base_url` | No | The endpoint URL. Omitted means the format's official host |
+  | `api_style` | Yes | API request format, `openai` or `anthropic` |
+  | `base_url` | No | The API address. Omitted means the api_style's default address |
   | `default_models` | No | Default model list. Required if `--model_list` is not provided |
   | `env_key` | No | Environment variable name for API key. Required if `--api_key` is not provided |
   | `prices` | No | Prices per million tokens, per model: `{"<model id>": {"input": …, "output": …, "cached_input": …}}`. When every model in the run has a price, the progress bar shows money spent (`spent=$0.012`) instead of token counts, and the closing line shows both. Without `cached_input`, cache reads are charged at the input price. A model without a price puts the bar back on tokens, and the closing line names it |
   | `currency` | No | Currency code for the prices, default `USD`. `USD`, `EUR`, `GBP`, `CNY` and `JPY` print with their symbol; any other code prints after the amount, as in `0.500 CHF` |
 
   Priority: project-level `./bbm_providers.json` overrides global `~/.bbm/providers.json`.
-
-  The shipped `bbm_providers.example.json` has an entry for every vendor named above; copy it and keep the ones you use.
 
   `--model` names a model at that provider; without it the first of `default_models` is used.
 
@@ -255,7 +242,18 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - `--model`:
 
-  The model id, exactly as the endpoint names it (`gpt-5.6-luna`, `claude-sonnet-4-6`, `deepseek-chat`). On the OpenAI format the default is `gpt-5.6-luna`. Two values name a route rather than a model: `codex` (a ChatGPT plan through the Codex CLI) and `orcarouter` (the OrcaRouter gateway, key from `BBM_ORCAROUTER_API_KEY`). The old preset values still parse and are rewritten to a real model id with a note; [Migrating from the old flags](./docs/migration.md) lists them. Anything else is an endpoint: `--api_base <url> --key <key> --model <id>`, or a `--provider` entry (see the Custom API Provider section).
+  The model id, exactly as the endpoint spells it. On the OpenAI format the default is `gpt-5.6-luna`. The second column is the `--api_format` the id needs:
+
+  | model | `--api_format` | notes |
+  |-------|---------------|-------|
+  | `gpt-5.6-luna` | `openai` | the default, at OpenAI's own address |
+  | `claude-sonnet-4-6` | `anthropic` | Anthropic's own address |
+  | `gpt-4o-mini` | `openai` | OpenAI |
+  | `~deepseek/deepseek-v4-flash-latest` | `openai` | with the matching `--api_base` |
+  | `codex` | same as `--api_format codex` | through the Codex CLI |
+  | `orcarouter` | `openai` | OrcaRouter, key from `BBM_ORCAROUTER_API_KEY` |
+
+  The old preset values still parse and are rewritten to a real model id with a note; [Migrating from the old flags](./docs/migration.md) lists them. Anything else is an endpoint: `--api_base <url> --key <key> --model <id>`, or a `--provider` entry (see the Custom API Provider section).
 
 - `--key`:
 
@@ -263,7 +261,19 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - `--api_format`:
 
-  The API the endpoint speaks: `openai` (default), `anthropic`, `codex`, or a machine-translation engine (`google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`). When omitted it is inferred: an `anthropic.com` host, or a model id containing `claude` with no `--api_base`, means `anthropic`; anything else means `openai`. Pass it when the guess is wrong, or to pick an engine.
+  The API the endpoint speaks. When omitted it is inferred: an `anthropic.com` host, or a model id containing `claude` with no `--api_base`, means `anthropic`; anything else means `openai`. Pass it when the guess is wrong, or to pick an engine.
+
+  | format | key | notes |
+  |--------|-----|-------|
+  | `openai` (default) | required: `--key`, else `$BBM_API_KEY`, `$OPENAI_API_KEY`; not for a local address such as Ollama | any OpenAI-compatible endpoint: OpenAI itself, DeepSeek, Gemini, Qwen, xAI, Groq, OpenRouter, Ollama and the rest, the address in `--api_base` |
+  | `anthropic` | required: `--key`, else `$BBM_API_KEY`, `$ANTHROPIC_API_KEY` | Anthropic itself, and gateways that speak the Messages API |
+  | `codex` | none: `codex login` (Codex CLI) | the local `codex app-server` sidecar on a ChatGPT/Codex plan, default `gpt-5.6-luna` |
+  | `google` | none | Google Translate, free |
+  | `caiyun` | required: `--key` or `$BBM_CAIYUN_API_KEY` | Caiyun |
+  | `deepl` | required: `--key` or `$BBM_DEEPL_API_KEY` | DeepL (paid) |
+  | `deeplfree` | none | DeepL free tier |
+  | `tencent` | none | Tencent TranSmart, free |
+  | `customapi` | none; `--api_base` is your translation endpoint | a custom translation API |
 
 - `--source_lang`:
 
@@ -296,53 +306,26 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
   Use `--translate-tags` to specify tags need for translation. Use comma to separate multiple tags.
   For example: `--translate-tags h1,h2,h3,p,div`
 
-- `--plan-classify {auto,none,all,model,agent}` (epub only):
+- `--plan-classify` (epub only):
 
-  **Plan mode**: instead of selecting tags, every text node in the book is either assigned
-  to a translation unit or skipped for an explicit, reported reason (hidden content,
-  page-list navs, symbols, links, ...). This is the right choice for books whose text does
-  not live in `<p>` — e.g. poetry rendered as per-line `<div>`s or `<blockquote>`s, which
-  the default would silently skip. Runs of short verse lines are batched into stanza
-  windows (up to `--poetry-group-size` lines, default 8) and translated in one request so
-  the model sees neighboring lines for context.
+  **Plan mode**: classify with the translating model, or with your codex / claude code.
 
-  The partition is deliberately greedy: it keeps everything it cannot rule out
-  structurally, because guessing from shape used to drop real content (verse numbers,
-  one-word dialogue, drop caps) to save only 0–6% of characters. Deciding what is not
-  worth translating is the classification entry you pick here:
+  The value decides who judges which epub tags need translating:
 
-  - `auto` (default): plan the book as `model` when it is an epub and the endpoint has
-    been verified to apply a strict JSON schema. Otherwise, and whenever the plan
-    cannot be built, translate the `--translate-tags` selection.
-  - `none`: no plan; translate the `--translate-tags` selection as usual.
-  - `all`: translate the whole partition, no classification. (The old name `most` still
-    works and prints a note.)
-  - `model`: an LLM rules on the uncertain signatures first (headings, the prose spine and
-    poetry groups are never asked about), then the run continues. Use
-    `--plan-classify-model X` to pick a different model for it — naming one implies this
-    mode, and a failure then aborts instead of falling back.
-  - `agent`: makes no API call. Writes the plan, prints a block of instructions to paste
-    into a coding-agent session (Claude Code, Codex, ...), and **stops before translating**.
-    Edit the actions, then rerun the same command to translate.
+  - `auto` (default): when the book is an epub and the endpoint applies a JSON schema, ask the LLM what to translate. Otherwise, and when the plan fails, translate only the `--translate-tags` selection.
+  - `none`: no plan; only the `--translate-tags` selection.
+  - `all`: translate the whole partition, no classification.
+  - `model`: the translating LLM judges, then translates. `--plan-classify-model X` picks the model that classifies.
+  - `agent`: writes the classification plan for the book and prints instructions to paste into your coding tool for classification.
 
-  In plan mode `--translate-tags` is ignored — the plan partitions the whole book.
-
-  - `--plan-dry-run`: print the per-signature coverage table, write `<book>_plan.json`, and
-    exit. No API key or credits needed. Honors `--only_filelist` / `--exclude_filelist`.
-  - `<book>_plan.json`: edit a signature's `"action"` to `"skip"` to exclude it from the
-    real run; the file is never overwritten once it exists (delete it to regenerate).
-    Each row carries up to 5 real `samples` so you can judge without opening the epub.
-  - `--plan-min-coverage` (default 0.5): plan mode aborts if the plan covers less than this
-    fraction of the book's text, instead of silently translating a fraction of it.
+  - `--plan-dry-run`: print the per-signature table, write `<book>_plan.json`, and exit.
+  - `<book>_plan.json`: the translation plan; delete it to classify again.
+  - `--plan-min-coverage` (default 0.5): plan mode aborts if the plan covers less than this fraction of the text.
 
   ```shell
-  # inspect what would be translated (free, no key needed)
-  python3 make_book.py --book_name my_book.epub --plan-dry-run
-  # translate the whole partition
-  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify all
-  # let a model triage the apparatus first
+  # let the model judge which tags need translating
   python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify model
-  # or hand the triage to a coding agent (stops, prints instructions, then rerun)
+  # or hand it to an agent: stops, prints instructions, then you give them to your AI
   python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
   ```
 
@@ -403,7 +386,8 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - `--use_context`:
 
-  prompts the model to create a three-paragraph summary. If it's the beginning of the translation, it will summarize the entire passage sent (the size depending on `--accumulated_num`).
+  Translate with context.
+  Prompts the model to create a three-paragraph summary. If it's the beginning of the translation, it will summarize the entire passage sent (the size depending on `--accumulated_num`).
   For subsequent passages, it will amend the summary to include details from the most recent passage, creating a running one-paragraph context payload of the important details of the entire translated work. This improves consistency of flow and tone throughout the translation. This option is available for all ChatGPT-compatible models and Gemini models.
 
 - `--context_paragraph_limit`:
@@ -412,29 +396,20 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - `--use_context session`:
 
-  `--use_context` also takes a mode, and the right one depends on how your
-  endpoint bills. **Use `--use_context session` when the endpoint charges
-  less for cached prompt tokens.** OpenAI's and Anthropic's own endpoints
-  do. Use bare `--use_context` (window mode) when it does not. Session mode
-  keeps one append-only history of everything translated so far and re-reads
-  it at the cache price, so the context can grow to chapter length for less
-  than window mode spends on a few paragraphs. Without caching, the same
-  history is re-read at full price on every request. When the history
-  reaches the compact budget, the model writes a translator handoff report,
-  which seeds the next window and is appended to `<book>_handoff.md`. The
-  progress bar's `cached=` count shows which case you are in. If it is still
-  zero after a dozen requests, the endpoint is not caching: switch to window
-  mode.
+  Session mode keeps one append-only history and re-reads it at the cache
+  price, so the context can grow to about a chapter. When the history
+  reaches the compact budget, the model writes a handoff report, which seeds
+  the next window and is appended to `<book>_handoff.md`. Watch the progress
+  bar's `cached=`: if it is still zero after a dozen requests, the endpoint
+  is not reporting a cache; Ctrl+C and switch to window mode.
 
 - `--context-compact-at`:
 
   Session mode only. The estimated-token budget the history may reach before it is compacted into a handoff report. Default `8000`, minimum `500`.
 
-  At `8000` a run costs between roughly 0.5x and 1.1x what window mode costs, while carrying several times the context — the exact ratio depends on how cheaply your endpoint prices cached input. `--context-compact-at 2500` is the cheapest setting (about 0.4-0.5x) if you would rather have that than the longer context.
+  At `8000` a run is estimated at 0.5x to 1.1x what window mode costs, while carrying several times the context; the ratio depends on the cache discount. Our calculation (August 2026) found `--context-compact-at 2500` the cheapest for most model prices (about 0.4x to 0.5x).
 
-  `--context-compact-at 0` sizes the budget from the model's context window instead: 90% of it, or of the smallest window when `--model_list` names several models. It works on the openai, anthropic and codex routes. The machine-translation engines have no model to ask about and need a number.
-
-  The routes answer differently when the window cannot be read. The openai route stops before the first paid request: its `/v1/models` answer will not change, and a default budget would be a guess about the one model nobody could size. The anthropic route (a gateway may serve the API without reporting `max_input_tokens`) and the codex route (the sidecar reports the window only after a turn has spent tokens) print one line and use the default budget. Codex keeps asking until the sidecar answers.
+  `--context-compact-at 0` asks the model for its context window and takes 90% of it as the budget, that is, as much context as possible.
 
 - `--no-context-compact`:
 
@@ -449,11 +424,8 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - `--temperature`:
 
-  Sampling temperature, on the formats that take one. The anthropic format
-  always sends it. The openai format leaves it out when it equals the API
-  default, and when the model rejects an explicit one (gpt-5.x, the
-  o-series). The codex format has no such setting and ignores it. For
-  example: `--temperature 0.7`.
+  Sampling temperature for the openai and anthropic formats (the codex
+  format has none). For example: `--temperature 0.7`.
 
 - `--block_size`:
 
@@ -523,11 +495,11 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - `--provider`:
 
-  Use a provider defined in `bbm_providers.json`. Its `base_url`, `api_style`, `default_models` and `env_key` fill in `--api_base`, `--api_format`, `--model` and the key. Flags you pass yourself win. See the "Custom API Provider" section above.
+  Use a custom provider defined in `bbm_providers.json`; `--model` picks a model at it. See the "Custom API Provider" section above.
 
 - `--api_key`:
 
-  The same flag as `--key`, under its older name. Neither prints a notice.
+  Same as `--key`.
 
 ### Examples
 
