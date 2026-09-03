@@ -18,7 +18,11 @@ import pytest
 from ebooklib import epub
 
 from book_maker.loader.epub_loader import EPUBBookLoader
-from book_maker.loader.font_obfuscation import deobfuscate_fonts
+from book_maker.loader.font_obfuscation import (
+    ENCRYPTION_PATH,
+    deobfuscate_fonts,
+    reobfuscate_written_epub,
+)
 
 IDPF_ALGORITHM = "http://www.idpf.org/2008/embedding"
 ADOBE_ALGORITHM = "http://ns.adobe.com/pdf/enc#RC"
@@ -148,7 +152,14 @@ def test_the_font_is_plain_once_the_book_is_loaded(tmp_path, algorithm, font):
     assert loader.origin_book.get_item_with_id("font").content == font
 
 
-def test_the_written_book_carries_the_plain_font_and_no_declaration(tmp_path):
+def test_the_written_book_declares_its_fonts_and_drops_the_signature(tmp_path):
+    """The output declares the obfuscation it applies — and only that.
+
+    An earlier revision shipped the font in the clear and no declaration;
+    that undid the publisher's licence compliance, so the font now goes out
+    obfuscated with an `encryption.xml` describing it. A signature still
+    goes: it asserted the integrity of a file that no longer exists.
+    """
     path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
     loader = _load(path)
     loader.quiet = True
@@ -157,8 +168,7 @@ def test_the_written_book_carries_the_plain_font_and_no_declaration(tmp_path):
     output = tmp_path / "book_bilingual.epub"
     with zipfile.ZipFile(output) as archive:
         names = set(archive.namelist())
-        assert archive.read("EPUB/fonts/obfuscated.otf") == LONG_FONT
-    assert "META-INF/encryption.xml" not in names
+    assert ENCRYPTION_PATH in names
     assert "META-INF/signatures.xml" not in names
 
 
@@ -266,5 +276,229 @@ def test_the_key_comes_from_the_identifier_the_package_names(tmp_path, algorithm
     restored, unresolved = deobfuscate_fonts(book, str(path))
 
     assert unresolved == []
-    assert restored == ["EPUB/fonts/obfuscated.otf"]
+    assert [font.uri for font in restored] == ["EPUB/fonts/obfuscated.otf"]
     assert book.get_item_with_id("font").content == LONG_FONT
+
+
+# ----------------------------------- the round trip: obfuscated in, out
+
+
+def _opf_of(path):
+    with zipfile.ZipFile(path) as archive:
+        name = next(n for n in archive.namelist() if n.endswith(".opf"))
+        return name, archive.read(name).decode("utf-8")
+
+
+def _output_identifier(path):
+    """The identifier the *written* package names, read back independently."""
+    import re
+
+    _, opf = _opf_of(path)
+    named = re.search(r'<package[^>]*\bunique-identifier="([^"]+)"', opf).group(1)
+    return re.search(
+        rf'<dc:identifier[^>]*\bid="{named}"[^>]*>([^<]*)</dc:identifier>', opf
+    ).group(1)
+
+
+def _declared_algorithms(path):
+    with zipfile.ZipFile(path) as archive:
+        if ENCRYPTION_PATH not in archive.namelist():
+            return {}
+        declaration = archive.read(ENCRYPTION_PATH).decode("utf-8")
+    import re
+
+    return dict(
+        zip(
+            re.findall(r'CipherReference URI="([^"]+)"', declaration),
+            re.findall(r'EncryptionMethod Algorithm="([^"]+)"', declaration),
+        )
+    )
+
+
+@pytest.mark.parametrize("algorithm", [IDPF_ALGORITHM, ADOBE_ALGORITHM])
+@pytest.mark.parametrize("font", [LONG_FONT, SHORT_FONT], ids=["long", "short"])
+def test_an_obfuscated_font_comes_out_obfuscated(tmp_path, algorithm, font):
+    """A foundry licence that allowed the source to embed the font allowed it
+    *obfuscated*. Shipping it in the clear undoes the publisher's compliance,
+    so the output re-obfuscates under its own identifier."""
+    path = _write_source(tmp_path / "book.epub", font, algorithm)
+    loader = _load(path)
+    loader.quiet = True
+    loader.make_bilingual_book()
+
+    output = tmp_path / "book_bilingual.epub"
+    member = "EPUB/fonts/obfuscated.otf"
+
+    assert _declared_algorithms(output) == {member: algorithm}
+
+    with zipfile.ZipFile(output) as archive:
+        shipped = archive.read(member)
+    assert shipped != font, "the font must not ship in the clear"
+
+    # the same algorithm, keyed on the output book's own identifier,
+    # must give the plain font back exactly
+    assert _obfuscate(shipped, algorithm, _output_identifier(output)) == font
+
+
+def test_the_output_is_keyed_on_its_own_identifier_not_the_sources(tmp_path):
+    """The translation has its own identity (`derive_translation_identity`),
+    and the OCF key is the identifier of the book the font sits in."""
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    loader = _load(path)
+    loader.quiet = True
+    loader.make_bilingual_book()
+
+    output = tmp_path / "book_bilingual.epub"
+    with zipfile.ZipFile(output) as archive:
+        shipped = archive.read("EPUB/fonts/obfuscated.otf")
+
+    assert _output_identifier(output) != IDENTIFIER
+    assert _obfuscate(shipped, IDPF_ALGORITHM, IDENTIFIER) != LONG_FONT
+
+
+def test_the_rewritten_archive_still_opens_as_an_epub(tmp_path):
+    """OCF requires `mimetype` first and uncompressed; the rewrite that adds
+    encryption.xml must not disturb that."""
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    loader = _load(path)
+    loader.quiet = True
+    loader.make_bilingual_book()
+
+    with zipfile.ZipFile(tmp_path / "book_bilingual.epub") as archive:
+        first = archive.infolist()[0]
+        assert first.filename == "mimetype"
+        assert first.compress_type == zipfile.ZIP_STORED
+        assert archive.read("mimetype") == b"application/epub+zip"
+        assert archive.testzip() is None
+
+
+def test_a_book_with_no_obfuscated_fonts_is_not_rewritten(tmp_path):
+    """Nothing to declare, so no declaration and no second pass over the zip."""
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    plain = tmp_path / "plain.epub"
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(plain, "w") as target:
+        for info in source.infolist():
+            if info.filename == "META-INF/encryption.xml":
+                continue
+            target.writestr(info, source.read(info.filename))
+
+    loader = _load(plain)
+    loader.quiet = True
+    loader.make_bilingual_book()
+
+    output = tmp_path / "plain_bilingual.epub"
+    with zipfile.ZipFile(output) as archive:
+        assert ENCRYPTION_PATH not in archive.namelist()
+
+
+def test_re_obfuscating_nothing_leaves_the_file_untouched(tmp_path):
+    """The rewrite is skipped entirely, not performed with an empty list.
+
+    Byte equality alone would not show that: the rewrite replaces the file
+    through `os.replace`, so the inode is what says whether it ran.
+    """
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    before = path.read_bytes()
+    inode = path.stat().st_ino
+
+    assert reobfuscate_written_epub(str(path), []) == []
+
+    assert path.read_bytes() == before
+    assert path.stat().st_ino == inode, "the archive was rewritten anyway"
+
+
+def test_every_other_member_survives_the_rewrite(tmp_path):
+    """Only the fonts change; the member list and every other payload are
+    exactly what ebooklib wrote."""
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    loader = _load(path)
+    loader.quiet = True
+    loader.make_bilingual_book()
+    output = tmp_path / "book_bilingual.epub"
+
+    with zipfile.ZipFile(output) as archive:
+        after = {n: archive.read(n) for n in archive.namelist()}
+
+    # rebuild the same book without the re-obfuscation step to compare
+    loader2 = _load(path)
+    loader2.quiet = True
+    loader2._reobfuscate_written = lambda *args, **kwargs: None
+    loader2.make_bilingual_book()
+    with zipfile.ZipFile(output) as archive:
+        before = {n: archive.read(n) for n in archive.namelist()}
+
+    assert set(after) - set(before) == {ENCRYPTION_PATH}
+    changed = {n for n in before if before[n] != after.get(n)}
+    assert changed == {"EPUB/fonts/obfuscated.otf"}
+
+
+# ------------------------------------------------ the other write routes
+
+
+def test_the_single_translation_route_re_obfuscates(tmp_path):
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    loader = _load(path)
+    loader.quiet = True
+    loader.single_translate = True
+    loader.make_bilingual_book()
+
+    output = tmp_path / "book_bilingual.epub"
+    assert _declared_algorithms(output) == {"EPUB/fonts/obfuscated.otf": IDPF_ALGORITHM}
+    with zipfile.ZipFile(output) as archive:
+        shipped = archive.read("EPUB/fonts/obfuscated.otf")
+    assert _obfuscate(shipped, IDPF_ALGORITHM, _output_identifier(output)) == LONG_FONT
+
+
+def test_the_recovery_save_re_obfuscates(tmp_path):
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    loader = _load(path)
+    loader.quiet = True
+    loader.make_bilingual_book()
+    loader.p_to_save = loader.p_to_save[:1]
+
+    loader._save_temp_book()
+
+    output = tmp_path / "book_bilingual_temp.epub"
+    assert _declared_algorithms(output) == {"EPUB/fonts/obfuscated.otf": IDPF_ALGORITHM}
+    with zipfile.ZipFile(output) as archive:
+        shipped = archive.read("EPUB/fonts/obfuscated.otf")
+    assert _obfuscate(shipped, IDPF_ALGORITHM, _output_identifier(output)) == LONG_FONT
+
+
+def test_the_retranslate_route_re_obfuscates(tmp_path):
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    first = _load(path)
+    first.quiet = True
+    first.make_bilingual_book()
+    once = tmp_path / "book_bilingual.epub"
+
+    loader = _load(path)
+    loader.quiet = True
+    loader.retranslate = [str(once), "chapter.xhtml", "Body text", "Body text"]
+    with pytest.raises(SystemExit):
+        loader.make_bilingual_book()
+
+    assert _declared_algorithms(once) == {"EPUB/fonts/obfuscated.otf": IDPF_ALGORITHM}
+    with zipfile.ZipFile(once) as archive:
+        shipped = archive.read("EPUB/fonts/obfuscated.otf")
+    assert _obfuscate(shipped, IDPF_ALGORITHM, _output_identifier(once)) == LONG_FONT
+
+
+def test_translating_an_output_again_rekeys_the_font(tmp_path):
+    """Each generation is keyed on its own identifier: the second book's
+    font must unscramble with the second book's key, not the first's."""
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    first = _load(path)
+    first.quiet = True
+    first.make_bilingual_book()
+    once = tmp_path / "book_bilingual.epub"
+
+    second = _load(once)
+    second.quiet = True
+    second.make_bilingual_book()
+    twice = tmp_path / "book_bilingual_bilingual.epub"
+
+    assert _output_identifier(twice) != _output_identifier(once)
+    with zipfile.ZipFile(twice) as archive:
+        shipped = archive.read("EPUB/fonts/obfuscated.otf")
+    assert _obfuscate(shipped, IDPF_ALGORITHM, _output_identifier(twice)) == LONG_FONT
