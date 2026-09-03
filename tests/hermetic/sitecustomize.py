@@ -39,6 +39,14 @@ class OfflineTranslator:
     def rotate_key(self):
         pass
 
+    @property
+    def model_name(self):
+        # the same answer the real translators give: the model, else the
+        # api_format / provider key this stand-in is registered under
+        from book_maker.translator.base_translator import service_name
+
+        return getattr(self, "model", None) or service_name(self)
+
     def set_model_list(self, model_list=(), *args, **kwargs):
         # echoed so a CLI test can see which models the run selected —
         # including the one no --model named
