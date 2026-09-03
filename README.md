@@ -228,7 +228,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
   | Field | Required | Description |
   |-------|----------|-------------|
-  | `api_style` | Yes | The wire format: `openai` or `anthropic` (`claude` is accepted as the older spelling). A vendor is an address, not a style: Gemini or Qwen is `openai` plus its `base_url`. A vendor name here is refused, and the error prints the two lines to write |
+  | `api_style` | Yes | `openai` or `anthropic` |
   | `base_url` | No | The endpoint URL. Omitted means the format's official host |
   | `default_models` | No | Default model list. Required if `--model_list` is not provided |
   | `env_key` | No | Environment variable name for API key. Required if `--api_key` is not provided |
