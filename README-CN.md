@@ -232,7 +232,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
   | `gpt-5.6-luna` | `openai` | 默认值，OpenAI 官方地址 |
   | `claude-sonnet-4-6` | `anthropic` | Anthropic 官方地址 |
   | `gpt-4o-mini` | `openai` | OpenAI |
-  | `~deepseek/deepseek-v4-flash-latest` | `openai` | 与`--api_base` 配合使用 |
+  | `deepseek/deepseek-v4-flash-0731` | `openai` | 与`--api_base` 配合使用 |
   | `codex` | 即 `--api_format codex` | 通过 Codex CLI 使用 |
   | `orcarouter` | `openai` | 使用OrcaRouter，key 读取 `BBM_ORCAROUTER_API_KEY` |
 

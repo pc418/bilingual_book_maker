@@ -269,7 +269,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
   | `gpt-5.6-luna` | `openai` | the default, at OpenAI's own address |
   | `claude-sonnet-4-6` | `anthropic` | Anthropic's own address |
   | `gpt-4o-mini` | `openai` | OpenAI |
-  | `~deepseek/deepseek-v4-flash-latest` | `openai` | with the matching `--api_base` |
+  | `deepseek/deepseek-v4-flash-0731` | `openai` | with the matching `--api_base` |
   | `gemini-flash-latest` | `gemini` | the default there, at Google's own address |
   | `qwen-mt-turbo` | `qwen` | the default there, on DashScope |
   | `llama-3.3-70b-versatile` | `groq` | Groq's own address |
