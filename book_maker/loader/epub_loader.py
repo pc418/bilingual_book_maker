@@ -46,6 +46,13 @@ from .helper import (
     shorter_result_link,
     strip_duplicate_ids,
 )
+from .disclosure import (
+    add_translation_credit,
+    attach_colophon,
+    is_calibre_metadata,
+    is_colophon,
+    model_id,
+)
 from .font_obfuscation import deobfuscate_fonts
 from .rights import DRM_MESSAGE, check_epub
 from .plan import (
@@ -215,6 +222,7 @@ class EPUBBookLoader(BaseBookLoader):
         temperature=1.0,
         source_lang="auto",
         parallel_workers=1,
+        disclose=True,
     ):
         # Before the translator is built and before a byte of the book is
         # read: a protected book is refused, and there is no flag that opens
@@ -226,6 +234,10 @@ class EPUBBookLoader(BaseBookLoader):
 
         self.epub_name = epub_name
         self.language = language
+        # Whether the output says it is a machine translation. Dropping
+        # calibre's record of its own file is not covered by this: that is
+        # a false statement about the file, not a disclosure.
+        self.disclose = disclose
         # what `lang=` may carry for that language, or None when nothing may
         self.language_tag = language_tag(language)
         self.new_epub = epub.EpubBook()
@@ -442,6 +454,12 @@ class EPUBBookLoader(BaseBookLoader):
                     # Unexpected metadata format; skip gracefully
                     continue
 
+                if is_calibre_metadata(namespace, name, others):
+                    # calibre's record describes the file calibre built —
+                    # a different file from this one, so it is not true of
+                    # it. Dropped whatever --no_disclosure says.
+                    continue
+
                 if name == "link":
                     # ebooklib parses OPF <link rel=… href=…> into metadata
                     # but writes every metadata entry back as <meta>, where
@@ -474,8 +492,9 @@ class EPUBBookLoader(BaseBookLoader):
         # emits it — a second copy is a duplicate declaration.
         for name, uri in package_prefixes(getattr(self, "epub_name", None)).items():
             declaration = f"{name}: {uri}"
-            if name != "rendition" and declaration not in new_book.prefixes:
-                new_book.prefixes.append(declaration)
+            if name in ("rendition", "calibre") or declaration in new_book.prefixes:
+                continue
+            new_book.prefixes.append(declaration)
 
         # The book is made to be read in the target language, and a reading
         # system takes the first dc:language as the book's own. A single
@@ -522,6 +541,21 @@ class EPUBBookLoader(BaseBookLoader):
             if not (isinstance(entry, tuple) and not entry[0])
         ]
         new_book.toc = backfill_toc_hrefs(self._fix_toc_uids(book.toc))
+
+        # Last, because it appends to the spine the block above just built:
+        # the file says, in metadata and on one page, that it is a machine
+        # translation. Off only through --no_disclosure; there is no path where
+        # the tool is credited but the page is missing, or the reverse.
+        if getattr(self, "disclose", True):
+            model = model_id(getattr(self, "translate_model", None))
+            add_translation_credit(new_book, model)
+            attach_colophon(
+                new_book,
+                model,
+                tag or self.language,
+                source_identifier=source_uid,
+                source_book=book,
+            )
         return new_book
 
     def _fix_toc_uids(self, toc, counter=None):
@@ -2711,7 +2745,14 @@ class EPUBBookLoader(BaseBookLoader):
         self.batch_init_then_wait()
         new_book = self._make_new_book(self.origin_book)
         trans_taglist = self.translate_tags.split(",")
-        document_items = list(self.origin_book.get_items_of_type(ITEM_DOCUMENT))
+        # A book being run through the tool a second time already carries a
+        # colophon. It is replaced, not translated and kept beside the new
+        # one — two of them would be two manifest entries under one id.
+        document_items = [
+            item
+            for item in self.origin_book.get_items_of_type(ITEM_DOCUMENT)
+            if not is_colophon(item)
+        ]
         chapter_plans = self._build_translation_plan(document_items, trans_taglist)
         self._planned_job_ids = [
             job.job_id for plan in chapter_plans for job in plan.jobs
@@ -2977,7 +3018,11 @@ class EPUBBookLoader(BaseBookLoader):
         origin_book_temp = epub.read_epub(self.epub_name)
         new_temp_book = self._make_new_book(origin_book_temp)
         trans_taglist = self.translate_tags.split(",")
-        document_items = list(origin_book_temp.get_items_of_type(ITEM_DOCUMENT))
+        document_items = [
+            item
+            for item in origin_book_temp.get_items_of_type(ITEM_DOCUMENT)
+            if not is_colophon(item)
+        ]
         chapter_plans = iter(
             self._build_translation_plan(document_items, trans_taglist)
         )

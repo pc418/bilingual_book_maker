@@ -21,9 +21,30 @@ from pathlib import Path
 import pytest
 from ebooklib import epub
 
+from book_maker.loader.disclosure import COLOPHON_FILE
 from book_maker.loader.epub_loader import EPUBBookLoader
 
 REPO = Path(__file__).resolve().parent.parent
+
+# What a translated animal_farm.epub scores: 6 distinct ERROR messages (8
+# occurrences), 0 warnings. Measured 260903 both at the parent commit and
+# with this slice applied — the same six either way, so neither the calibre
+# drop nor the colophon changes the number. All six are the source's own
+# EPUB 2 shape surviving into an EPUB 3 package: four RSC-005 over
+# `opf:scheme` / `opf:role` / `opf:file-as` attributes, one RSC-005 for the
+# missing `nav` property, one OPF-014 for an undeclared `svg` property.
+# Fixing those is explicitly out of this slice. A ratchet: may fall, never
+# rise.
+ANIMAL_FARM_ERRORS = 6
+
+# Captured at import, before any loader has run. `EPUBBookLoader.__init__`
+# installs a replacement `_load_spine` on the ebooklib *class* when a book
+# trips issue #71, and never puts it back — and ebooklib's own version is
+# what parses the NCX into `book.toc`. So in a process where any book has
+# tripped that path, every EPUB 2 book read afterwards arrives with an empty
+# table of contents, and writes an empty <navMap> (RSC-005). That is a
+# pre-existing landmine, not this branch's; this test refuses to inherit it.
+PRISTINE_LOAD_SPINE = epub.EpubReader._load_spine
 
 EPUBCHECK_HOME = "https://github.com/w3c/epubcheck/releases"
 
@@ -290,3 +311,50 @@ def test_a_deobfuscated_font_validates(epubcheck, font_book):
 
 def test_copied_rights_metadata_validates(epubcheck, rights_book):
     _assert_valid(epubcheck, rights_book, "the dc:rights book")
+
+
+@pytest.mark.parametrize("fixture", ["tdm_book", "font_book", "rights_book"])
+def test_every_output_carries_the_colophon(request, fixture):
+    """The disclosure page ships in every book, and ships valid — the three
+    fixtures above are checked by epubcheck with it in place."""
+    output = request.getfixturevalue(fixture)
+    with zipfile.ZipFile(output) as archive:
+        assert f"EPUB/{COLOPHON_FILE}" in archive.namelist()
+        opf_name = next(n for n in archive.namelist() if n.endswith(".opf"))
+        opf = archive.read(opf_name).decode("utf-8")
+    assert opf.count(f'href="{COLOPHON_FILE}"') == 1
+    assert opf.index('idref="colophon"') > opf.rindex("<spine")
+
+
+@pytest.fixture
+def pristine_reader(monkeypatch):
+    """Read books with ebooklib's own spine loader, whatever ran before."""
+    monkeypatch.setattr(epub.EpubReader, "_load_spine", PRISTINE_LOAD_SPINE)
+
+
+def test_a_real_calibre_book_does_not_get_worse(epubcheck, pristine_reader, tmp_path):
+    """animal_farm.epub is calibre output: an EPUB 2 package full of records
+    of the file calibre built. Translating it must not add findings of our
+    own on top of the ones its own shape already causes.
+
+    Copied into tmp_path first — a translation must never be written beside
+    the fixture it came from.
+    """
+    source = tmp_path / "animal_farm.epub"
+    shutil.copy(REPO / "test_books" / "animal_farm.epub", source)
+
+    output = _translate(source)
+
+    errors = [
+        text for severity, text in _findings(epubcheck, output) if severity != "WARNING"
+    ]
+    assert len(errors) <= ANIMAL_FARM_ERRORS, "\n".join(errors)
+
+    with zipfile.ZipFile(output) as archive:
+        opf_name = next(n for n in archive.namelist() if n.endswith(".opf"))
+        opf = archive.read(opf_name).decode("utf-8")
+    # calibre's record of its own output is gone; what identifies the work
+    # (an identifier it issued, the producer credit) is not ours to remove
+    assert 'name="calibre:' not in opf
+    assert "calibre: https://calibre-ebook.com" not in opf
+    assert '<dc:identifier opf:scheme="calibre">' in opf

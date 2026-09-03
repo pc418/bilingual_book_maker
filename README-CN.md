@@ -378,6 +378,10 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
   使用`--single_translate`只输出翻译后的图书，不创建双语版本。
 
+- `--no_disclosure`:
+
+  epub 输出默认标注为机器翻译：工具作为译者写入 contributor，一行描述记录模型名，书末附一页翻译说明。`--no_disclosure` 去掉这三项。作者、版权与来源元数据无论如何都会保留。
+
 - `--translation_style`:
 
   为 EPUB 译文应用完整 CSS，例如

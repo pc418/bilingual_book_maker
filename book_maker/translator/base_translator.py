@@ -258,6 +258,19 @@ class Base(ABC):
         # the loader reads it for the progress bar and the closing line.
         self.usage = UsageMeter()
 
+    @property
+    def model_name(self):
+        """The model id this translator runs with, for the record an output
+        file keeps of how it was made.
+
+        Every LLM translator here settles on `self.model` — the endpoint
+        needs a model id to call, so the attribute is not optional for
+        them. The ones that call a single fixed service (Google, DeepL,
+        Caiyun, TranSmart) have no model to name, and the class name is the
+        honest answer: it says which service, and claims no more.
+        """
+        return getattr(self, "model", None) or type(self).__name__
+
     def usage_postfix(self):
         return self.usage.postfix()
 

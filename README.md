@@ -437,6 +437,10 @@ The OpenAI and the Anthropic API formats are supported.
 
   Use `--single_translate` to output only the translated book without creating a bilingual version.
 
+- `--no_disclosure`:
+
+  An epub output is marked as a machine translation: the tool is added as a translator contributor, a description line names the model, and a one-page translation note closes the book. `--no_disclosure` leaves all three out. The author, rights and source metadata are carried over either way.
+
 - `--translation_style`:
 
   Apply custom CSS to translated EPUB text, for example

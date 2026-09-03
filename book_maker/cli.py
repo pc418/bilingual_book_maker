@@ -698,6 +698,12 @@ So you are close to reaching the limit. You have to choose your own value, there
         help="translate sentence by sentence within each paragraph instead of the whole paragraph at once",
     )
     parser.add_argument(
+        "--no_disclosure",
+        dest="disclosure",
+        action="store_false",
+        help="do not mark the epub as a machine translation (translator credit, description line and the closing translation note); the model id is recorded verbatim",
+    )
+    parser.add_argument(
         "--use_context",
         dest="context_mode",
         nargs="?",
@@ -1062,6 +1068,13 @@ def main():
         )
     if book_type == "pdf":
         loader_kwargs["pdf_layout"] = options.pdf_layout
+    if book_type == "epub":
+        loader_kwargs["disclose"] = options.disclosure
+    elif not options.disclosure:
+        print(
+            "[bold yellow]Warning:[/bold yellow] --no_disclosure is ignored for "
+            f"{book_type} books; only epub output carries the translation note."
+        )
 
     e = book_loader(
         options.book_name,
