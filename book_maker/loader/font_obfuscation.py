@@ -8,11 +8,17 @@ has already refused anything else that `META-INF/encryption.xml` might
 declare, so by the time this runs the only algorithms that can appear are
 the two below.
 
-Why it has to happen at all: `META-INF/encryption.xml` is not a manifest
-item, so ebooklib never carries it into the output — which is the outcome
-we want, since the translated book encrypts nothing. But dropping the
-declaration while keeping scrambled bytes would ship a font no reading
-system can parse. Unscrambling on read is what makes the drop correct.
+Why both directions: a foundry's embedding licence typically permits
+embedding only in obfuscated form. A publisher who obfuscated a font did
+so to comply, and a translated edition that shipped the same font in the
+clear would undo that compliance on the publisher's behalf — the output
+must be no less compliant than the input it was made from. So the round
+trip is the design: unscramble on read, because the text has to be worked
+on and `META-INF/encryption.xml` is not a manifest item so ebooklib
+carries neither it nor its meaning into the output; scramble again after
+the book is written, keyed on the *output* book's own identifier, and
+write the declaration back beside it. Calibre's EPUB output does the same
+thing (`encrypt_fonts`).
 
 This runs on the raw OCF zip, beside the reader rather than inside it — the
 package document is read directly (`helper.read_package`) rather than
@@ -21,9 +27,12 @@ package *names*, which is not the one ebooklib reports.
 """
 
 import hashlib
+import os
 import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
+from dataclasses import dataclass
+from xml.sax.saxutils import escape
 from urllib.parse import unquote
 
 from .helper import read_package
@@ -32,8 +41,29 @@ ENCRYPTION_PATH = "META-INF/encryption.xml"
 
 ENC_NS = "{http://www.w3.org/2001/04/xmlenc#}"
 
+
+@dataclass(frozen=True)
+class ObfuscatedFont:
+    """A resource the source shipped obfuscated, and how.
+
+    `file_name` is the manifest href — relative to the package document,
+    the coordinate system that survives into the output, where the OPF sits
+    somewhere else. `uri` is where it was in the *source* container, kept
+    for the messages that name it.
+    """
+
+    file_name: str
+    algorithm: str
+    uri: str
+
+
 IDPF_ALGORITHM = "http://www.idpf.org/2008/embedding"
 ADOBE_ALGORITHM = "http://ns.adobe.com/pdf/enc#RC"
+
+CONTAINER_PATH = "META-INF/container.xml"
+CONTAINER_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
+
+MIMETYPE_PATH = "mimetype"
 
 # How much of the file each scheme scrambles, and with what key length.
 IDPF_WINDOW = 1040  # 52 rounds of a 20-byte SHA-1 digest
@@ -81,9 +111,11 @@ def _declarations(archive):
 def deobfuscate_fonts(book, epub_path):
     """Replace every obfuscated item's content with its plain bytes.
 
-    Returns `(restored, unresolved)` — the URIs put back, and the ones that
-    could not be, which the caller should say out loud rather than leave the
-    reader to discover as a broken font.
+    Returns `(restored, unresolved)` — an `ObfuscatedFont` per resource put
+    back, which the caller keeps so the same fonts can be scrambled again
+    after the output is written, and the URIs that could not be, which the
+    caller should say out loud rather than leave the reader to discover as
+    a broken font.
 
     `book` is an already-read ebooklib book whose items still hold the raw
     bytes; it is mutated in place, and the output copies those same item
@@ -135,5 +167,124 @@ def deobfuscate_fonts(book, epub_path):
             unresolved.append(uri)
             continue
         item.content = _unscramble(item.content, key, window)
-        restored.append(uri)
+        restored.append(
+            ObfuscatedFont(file_name=item.file_name, algorithm=algorithm, uri=uri)
+        )
     return restored, unresolved
+
+
+ENCRYPTION_TEMPLATE = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"'
+    ' xmlns:enc="http://www.w3.org/2001/04/xmlenc#">\n'
+    "{entries}"
+    "</encryption>\n"
+)
+
+ENCRYPTION_ENTRY = (
+    "  <enc:EncryptedData>\n"
+    '    <enc:EncryptionMethod Algorithm="{algorithm}"/>\n'
+    "    <enc:CipherData>\n"
+    '      <enc:CipherReference URI="{uri}"/>\n'
+    "    </enc:CipherData>\n"
+    "  </enc:EncryptedData>\n"
+)
+
+
+def _written_opf_dir(path):
+    with zipfile.ZipFile(path) as archive:
+        container = ET.fromstring(archive.read(CONTAINER_PATH))
+    rootfile = container.find(f".//{CONTAINER_NS}rootfile")
+    full_path = rootfile.get("full-path") if rootfile is not None else None
+    return posixpath.dirname(full_path or "")
+
+
+def build_encryption_xml(members):
+    """The OCF declaration for `[(container-relative path, algorithm)]`."""
+    # Attribute values, so `&`, `<` and the quotes have to be escaped: a
+    # font called `A&B.otf` is a legal member name and an illegal one to
+    # paste into XML as is.
+    entries = "".join(
+        ENCRYPTION_ENTRY.format(
+            algorithm=escape(algorithm, {'"': "&quot;"}),
+            uri=escape(uri, {'"': "&quot;"}),
+        )
+        for uri, algorithm in members
+    )
+    return ENCRYPTION_TEMPLATE.format(entries=entries).encode("utf-8")
+
+
+def reobfuscate_written_epub(path, fonts):
+    """Scramble `fonts` inside the epub at `path` and declare them.
+
+    Returns the container-relative members it obfuscated, empty when there
+    was nothing to do — in which case the file is not touched at all, so a
+    book that shipped no obfuscated font is byte-for-byte what ebooklib
+    wrote.
+
+    This runs *after* `write_epub` because ebooklib offers no hook for a
+    META-INF member: `encryption.xml` is not in the manifest, so there is no
+    item to add. The archive is rebuilt member by member — same order, same
+    compression, `mimetype` still first and still stored — with the font
+    payloads replaced and the declaration appended.
+
+    The key is the identifier of the book being written, not the source's:
+    a translation has its own identity (`derive_translation_identity`), and
+    the OCF key is whatever the package the font sits in names as its
+    `unique-identifier`. It is read back out of the written package rather
+    than taken on trust from the object that was handed to the writer.
+    """
+    if not fonts:
+        return []
+
+    identifier = read_package(path).unique_identifier
+    if not identifier:
+        # Nothing to derive a key from. Leaving the fonts plain is worse
+        # than the alternative only in theory: a package with no usable
+        # unique-identifier is broken in ways this cannot repair.
+        return []
+
+    opf_dir = _written_opf_dir(path)
+    plan = {}
+    for font in fonts:
+        member = posixpath.normpath(posixpath.join(opf_dir, font.file_name))
+        if font.algorithm == IDPF_ALGORITHM:
+            key, window = _idpf_key(identifier), IDPF_WINDOW
+        elif font.algorithm == ADOBE_ALGORITHM:
+            key, window = _adobe_key(identifier), ADOBE_WINDOW
+        else:
+            continue
+        if key is not None:
+            plan[member] = (key, window, font.algorithm)
+
+    if not plan:
+        return []
+
+    temp_path = f"{path}.reobfuscating"
+    try:
+        with zipfile.ZipFile(path) as source:
+            present = set(source.namelist())
+            declared = [
+                (member, plan[member][2]) for member in plan if member in present
+            ]
+            if not declared:
+                return []
+            with zipfile.ZipFile(temp_path, "w") as target:
+                for info in source.infolist():
+                    if info.filename == ENCRYPTION_PATH:
+                        # ebooklib never writes one; a stale one would lie
+                        continue
+                    data = source.read(info.filename)
+                    if info.filename in plan:
+                        key, window, _ = plan[info.filename]
+                        data = _unscramble(data, key, window)
+                    # the ZipInfo carries the original compress_type, so
+                    # `mimetype` stays stored and every member keeps its place
+                    target.writestr(info, data)
+                target.writestr(ENCRYPTION_PATH, build_encryption_xml(declared))
+        os.replace(temp_path, path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+    return [member for member, _ in declared]

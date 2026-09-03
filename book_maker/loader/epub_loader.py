@@ -55,7 +55,7 @@ from .disclosure import (
     stamp_disclosure,
     tool_contributor_ids,
 )
-from .font_obfuscation import deobfuscate_fonts
+from .font_obfuscation import deobfuscate_fonts, reobfuscate_written_epub
 from .rights import DRM_MESSAGE, check_epub
 from .plan import (
     PLAN_SCHEMA_VERSION,
@@ -370,7 +370,11 @@ class EPUBBookLoader(BaseBookLoader):
         # encryption declaration that describes an obfuscated font is gone
         # by the time the book is written. Unscramble now and the drop is
         # correct; skip it and the output ships a font nothing can parse.
-        _, unresolved = deobfuscate_fonts(self.origin_book, self.epub_name)
+        # Kept for the write step: the same fonts are scrambled again once
+        # the output book exists, under the output's own identifier.
+        self._obfuscated_fonts, unresolved = deobfuscate_fonts(
+            self.origin_book, self.epub_name
+        )
         if unresolved:
             builtins.print(
                 "warning: could not restore obfuscated resource(s) "
@@ -580,6 +584,19 @@ class EPUBBookLoader(BaseBookLoader):
             getattr(self, "_disclosure_language", None) or self.language,
             source_identifier=getattr(self, "_disclosure_source", None),
         )
+
+    def _reobfuscate_written(self, path):
+        """Put back the obfuscation the source shipped, on the file just written.
+
+        A foundry licence that let the publisher embed a font let them embed
+        it obfuscated; the translated edition must be no less compliant than
+        the book it was made from. Runs after the write because
+        `META-INF/encryption.xml` is not a manifest item and ebooklib has no
+        hook for one. A source with no obfuscated fonts is not touched.
+        """
+        fonts = getattr(self, "_obfuscated_fonts", None)
+        if fonts:
+            reobfuscate_written_epub(path, fonts)
 
     def _fix_toc_uids(self, toc, counter=None):
         """Fix TOC items that have uid=None to prevent TypeError when writing NCX."""
@@ -1983,6 +2000,10 @@ class EPUBBookLoader(BaseBookLoader):
         name_fix = complete_book_name
 
         complete_book = epub.read_epub(complete_book_name)
+        # The book being corrected is a previous *output*: its fonts are
+        # obfuscated under its own identifier. Unscramble with its own path
+        # as the key source, or the rewrite below scrambles them twice.
+        deobfuscate_fonts(complete_book, complete_book_name)
 
         if fixname == "":
             fixname = self.find_items_containing_string(complete_book, fixstart)[
@@ -2068,6 +2089,7 @@ class EPUBBookLoader(BaseBookLoader):
         )
         self._stamp_disclosure(new_book)
         epub.write_epub(f"{name_fix}", new_book, {})
+        self._reobfuscate_written(f"{name_fix}")
 
     def has_nest_child(self, element, trans_taglist):
         if isinstance(element, Tag):
@@ -2962,12 +2984,14 @@ class EPUBBookLoader(BaseBookLoader):
                     name, _ = os.path.splitext(self.epub_name)
                     self._stamp_disclosure(new_book)
                     epub.write_epub(f"{name}_bilingual.epub", new_book, {})
+                    self._reobfuscate_written(f"{name}_bilingual.epub")
             name, _ = os.path.splitext(self.epub_name)
             if self.batch_flag:
                 self.translate_model.batch()
             else:
                 self._stamp_disclosure(new_book)
                 epub.write_epub(f"{name}_bilingual.epub", new_book, {})
+                self._reobfuscate_written(f"{name}_bilingual.epub")
         except KeyboardInterrupt as e:
             print(e)
             if self.accumulated_num == 1:
@@ -3045,6 +3069,11 @@ class EPUBBookLoader(BaseBookLoader):
         name, _ = os.path.splitext(self.epub_name)
         temp_path = f"{name}_bilingual_temp.epub"
         origin_book_temp = epub.read_epub(self.epub_name)
+        # A second read of the source is a second set of item objects, still
+        # carrying the source's obfuscated font bytes. Without this the
+        # recovery book ships them scrambled under the source's key and then
+        # scrambled again by the write step — a font nothing can parse.
+        deobfuscate_fonts(origin_book_temp, self.epub_name)
         new_temp_book = self._make_new_book(origin_book_temp)
         trans_taglist = self.translate_tags.split(",")
         document_items = [
@@ -3100,6 +3129,7 @@ class EPUBBookLoader(BaseBookLoader):
                 new_temp_book.add_item(item)
             self._stamp_disclosure(new_temp_book)
             epub.write_epub(temp_path, new_temp_book, {})
+            self._reobfuscate_written(temp_path)
         except Exception as e:
             # The recovery book is the only artifact a crashed run leaves
             # behind. Swallowing this told the user nothing and they found
