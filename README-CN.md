@@ -205,7 +205,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
   | 字段 | 必填 | 说明 |
   |------|------|------|
-  | `api_style` | 是 | 接口格式：`openai` 或 `anthropic`（旧写法 `claude` 也接受）。厂商是地址不是格式：Gemini、Qwen 就是 `openai` 加上各自的 `base_url`。这里写厂商名会被拒绝，报错会打印该改成的两行 |
+  | `api_style` | 是 | `openai` 或 `anthropic` |
   | `base_url` | 否 | 接口地址。不填就是该格式的官方地址 |
   | `default_models` | 否 | 默认模型列表。不填则必须通过 `--model_list` 指定 |
   | `env_key` | 否 | 读取 API key 的环境变量名。不填则必须通过 `--api_key` 传入 |

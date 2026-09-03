@@ -72,11 +72,9 @@ An endpoint used more than once can be written down instead of retyped.
 bbook_maker --book_name book.epub --provider nvidia --language ja
 ```
 
-`api_style` is the wire format, `openai` or `anthropic` (`claude` is the
-older spelling). A vendor is an address, so Gemini or Qwen is `openai` plus
-its `base_url`; a vendor name in `api_style` is refused with the two lines
-to write. The shipped `bbm_providers.example.json` already has those
-entries. `default_models` supplies `--model` when it
+`api_style` is `openai` or `anthropic`. Gemini or Qwen is `openai` plus
+its `base_url`, and the shipped `bbm_providers.example.json` already has
+those entries. `default_models` supplies `--model` when it
 holds one id and `--model_list` when it holds several, and `env_key` names
 the variable to read the key from; no secret goes in the file. Anything
 passed explicitly wins, so `--provider nvidia --model <id>` keeps that

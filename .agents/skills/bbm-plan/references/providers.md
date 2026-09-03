@@ -67,11 +67,10 @@ entry is the route spelled out:
 The `providers` wrapper is required; the loader reads nothing from a file
 without it.
 
-`api_style` is the wire format, `openai` or `anthropic` (`claude` is the
-older spelling). A vendor is an address: Gemini or Qwen is `openai` plus
-its `base_url`, and the loader refuses a vendor name there, printing the
-two lines to write. The shipped example file has an entry per vendor.
-`default_models` becomes `--model` when it holds one
+`api_style` is `openai` or `anthropic` (`claude` in older files means
+`anthropic`; `gemini`/`qwen` are refused, the error prints the entry to
+write). Gemini or Qwen is `openai` plus its `base_url`, and the shipped
+example file has an entry per vendor. `default_models` becomes `--model` when it holds one
 id and `--model_list` when it holds several. `env_key` is read for the key
 ahead of `BBM_API_KEY` and the format's own variables. **Explicit flags
 win**, so `--provider nvidia --model <id>` keeps the user's model. An

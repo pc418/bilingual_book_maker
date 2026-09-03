@@ -65,7 +65,7 @@ Read the answer into the `ROUTE` array every later step uses:
 
 | the user picks | `ROUTE` | format |
 |---|---|---|
-| a provider entry `NAME` | `(--provider NAME)` — add `--model "$MODEL"` only if they named a different one | the entry's `api_style`: `openai` → openai, `anthropic` (or the older `claude`) → anthropic |
+| a provider entry `NAME` | `(--provider NAME)` — add `--model "$MODEL"` only if they named a different one | the entry's `api_style`: `openai` → openai, `anthropic` (`claude` in older files) → anthropic |
 | a bare `OPENAI_API_KEY` | `(--provider openai)` after step 0b | openai |
 | a bare `ANTHROPIC_API_KEY` | `(--provider anthropic)` after step 0b | anthropic |
 | `BBM_ORCAROUTER_API_KEY` | `(--model orcarouter)` | openai |
@@ -93,9 +93,9 @@ Then tell them exactly what to edit and stop until they say it is done:
   `default_models` (the exact id the endpoint spells) and `env_key`; delete
   the `FILL-ME` entry if unused. The file holds no secrets — `env_key`
   only names a variable. The shape is `{"providers": {NAME: {...}}}`;
-  `api_style` is `openai` or `anthropic` (`claude` still means
-  `anthropic`); a vendor such as Gemini is `openai` plus its `base_url`,
-  and the example file ships those entries. An optional
+  `api_style` is `openai` or `anthropic`; a vendor such as Gemini is
+  `openai` plus its `base_url`, and the example file ships those entries.
+  An optional
   `prices` block (`{"<model id>": {"input", "output", "cached_input"}}`,
   per million tokens; `currency` defaults to USD) makes the progress bar
   show `spent=$0.012` instead of token counts, and the closing line show
