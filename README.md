@@ -17,7 +17,7 @@ machine-translation engines (`google`, `caiyun`, `deepl`, `deeplfree`,
 `bbm_providers.json`. The old preset names and key flags (`--model gpt4o`,
 `--model gemini`, `--openai_key`, …) still work: each is rewritten, and a
 line says what it became. See
-[Migrating from the old flags](#migrating-from-the-old-flags) and
+[Migrating from the old flags](./docs/migration.md) and
 [Models and languages](./docs/model_lang.md).
 
 ## Preparation
@@ -239,52 +239,6 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
   python3 make_book.py --provider deepseek --api_key sk-xxx --model_list deepseek-reasoner --book_name test_books/animal_farm.epub
   ```
 
-## Migrating from the old flags
-
-Commands written for the old CLI keep working. Each removed flag is rewritten
-into the new flags before the run starts, and a line says what it became:
-
-```
-$ bbook_maker --book_name book.epub --model gpt4omini --openai_key sk-...
-deprecated: --openai_key is now --key
-deprecated: --model gpt4omini is now --model gpt-4o-mini
-```
-
-| Old | Rewritten to |
-|---|---|
-| `--model gpt4o` / `gpt4omini` / `o3mini` | `--model` with that model's id |
-| `--model chatgptapi` / `openai` | dropped: the openai format is the default, and `--model` names a model when you want one |
-| `--model openai --model_list X` | `--model_list X` |
-| `--model claude` | `--model claude-haiku-4-5-20251001` |
-| an exact `claude-*` id | unchanged; the anthropic format is inferred from the id |
-| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-flash-latest` / `gemini-pro-latest` |
-| `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
-| `--model xai` | `--api_base https://api.x.ai/v1 --model grok-beta` |
-| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
-| `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
-| `--custom_api URL` | `--api_format customapi --api_base URL` |
-| `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--orcarouter_key` | `--key` (`--api_key` is the same flag and was never renamed) |
-| `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
-| `--deployment_id D` | `--model D`, with `--api_base` rewritten to the deployment's `/openai/v1` path |
-| `--interval` | dropped; it only applied to the removed gemini route |
-
-Notes:
-
-- The old key variables still work for the route that used them:
-  `BBM_GROQ_API_KEY` for a rewritten `--model groq`, `BBM_GOOGLE_GEMINI_KEY`
-  for a rewritten `--model gemini`, and so on.
-- Flags you pass yourself win. `--model gemini --api_base https://my-gateway/v1`
-  keeps your gateway.
-- A rewritten command runs the model it used to run, taken from the old
-  preset list, not a newer one. Some of those models have since been
-  retired, and the endpoint's model check says so.
-- A `--model` value that is not an old alias passes through as a model id,
-  which is the normal case now.
-- The aliases for retired OpenAI models (`gpt4`, `gpt5mini`, `o1`, `o1mini`,
-  `o1preview`) are gone. They now pass through as model ids and the endpoint
-  rejects them by name, which is the same failure one step earlier and with
-  a clearer message.
-
 ## Use
 
 - Once the translation is complete, a bilingual book named `${book_name}_bilingual.epub` would be generated for EPUB inputs; for TXT/MD/SRT inputs a bilingual text (or subtitle) file named `${book_name}_bilingual.txt` (or `_bilingual.srt`) will be generated. For **PDF inputs** the tool will produce a bilingual `.txt` fallback and will also attempt to create `${book_name}_bilingual.epub` — if EPUB creation fails, the TXT fallback remains so you do not need to retranslate.
@@ -294,7 +248,7 @@ Notes:
 
 - `--model`:
 
-  The model id, exactly as the endpoint names it (`gpt-5.6-luna`, `claude-sonnet-4-6`, `deepseek-chat`). On the OpenAI format the default is `gpt-5.6-luna`. Two values name a route rather than a model: `codex` (a ChatGPT plan through the Codex CLI) and `orcarouter` (the OrcaRouter gateway, key from `BBM_ORCAROUTER_API_KEY`). The old preset values still parse and are rewritten to a real model id with a note; [Migrating from the old flags](#migrating-from-the-old-flags) lists them. Anything else is an endpoint: `--api_base <url> --key <key> --model <id>`, or a `--provider` entry (see the Custom API Provider section).
+  The model id, exactly as the endpoint names it (`gpt-5.6-luna`, `claude-sonnet-4-6`, `deepseek-chat`). On the OpenAI format the default is `gpt-5.6-luna`. Two values name a route rather than a model: `codex` (a ChatGPT plan through the Codex CLI) and `orcarouter` (the OrcaRouter gateway, key from `BBM_ORCAROUTER_API_KEY`). The old preset values still parse and are rewritten to a real model id with a note; [Migrating from the old flags](./docs/migration.md) lists them. Anything else is an endpoint: `--api_base <url> --key <key> --model <id>`, or a `--provider` entry (see the Custom API Provider section).
 
 - `--key`:
 

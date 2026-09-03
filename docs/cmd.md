@@ -91,7 +91,7 @@ The old `--model` preset names, the per-vendor `--*_key` flags,
 `--ollama_model`, `--deployment_id` and `--interval` are no longer in the
 parser, but old command lines still run: `book_maker/legacy_cli.py` rewrites
 them into the flags above before the run starts and prints each rewrite. The
-table is in the README under "Migrating from the old flags". The old
+table is in [Migrating from the old flags](migration.md). The old
 per-vendor key variables (`BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, …) are
 still read for the route that used them.
 
