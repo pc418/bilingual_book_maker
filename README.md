@@ -58,6 +58,25 @@ To spend a [Codex CLI](https://developers.openai.com/codex/cli) plan:
 python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
 ```
 
+### Or let a coding agent drive it
+
+The repo ships a skill, `bbm-plan`, that teaches a coding agent the whole
+workflow: pick the route, partition the book, classify what to translate and
+what to skip, run it in the background and hand back the finished epub. It
+is registered for Claude Code at `.claude/skills/bbm-plan`, and lives at
+[`.agents/skills/bbm-plan/`](./.agents/skills/bbm-plan/SKILL.md) for any
+agent that reads `.agents/`.
+
+Open your agent in this repo, put the book somewhere it can reach, and ask:
+
+> please use the bbm-plan skill and help me translate xxx.epub to Chinese.
+
+It will find whatever key or provider entry you already have, ask once about
+anything it needs, show you the plan and what the run will cost, and only
+then start translating. Everything it does is a normal `make_book.py`
+command — the sections below are the same flags, if you would rather drive
+it yourself.
+
 ## Translate Service
 
 - `--api_format` names the API the endpoint speaks: `openai`, `anthropic`,

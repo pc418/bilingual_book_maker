@@ -41,6 +41,21 @@ python3 make_book.py --book_name test_books/animal_farm.epub \
 python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
 ```
 
+### 或者交给 coding agent
+
+仓库里带了一个 skill：`bbm-plan`，把整套流程教给 coding agent——选线路、切分
+全书、判断哪些要翻哪些要跳过、后台跑完、把成品 epub 交回给你。Claude Code
+在 `.claude/skills/bbm-plan` 已经注册好；其他读 `.agents/` 的 agent 走
+[`.agents/skills/bbm-plan/`](./.agents/skills/bbm-plan/SKILL.md)。
+
+在本仓库里打开你的 agent，把书放到它能读到的位置，然后说：
+
+> 请使用 bbm-plan skill，帮我把 xxx.epub 翻译成中文。
+
+它会先看你已有的 key 或 provider 配置，需要什么只问一次，把计划和预计花费
+给你确认，然后才开始翻译。它执行的都是普通的 `make_book.py` 命令——下面各节
+就是同样这些参数，你想自己来也可以。
+
 ## 翻译服务
 
 - `--api_format` 指定接口说的 API：`openai`、`anthropic`、`gemini`、`qwen`、
