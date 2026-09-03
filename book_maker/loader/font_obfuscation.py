@@ -107,11 +107,6 @@ def _child(element, name):
     return next((el for el in element if local_name(el.tag) == name), None)
 
 
-def _descendant(element, name):
-    """The first descendant with this local name, or None."""
-    return next((el for el in element.iter() if local_name(el.tag) == name), None)
-
-
 def _declarations(archive):
     """(algorithm, container-relative URI) for every encrypted resource.
 
@@ -123,6 +118,13 @@ def _declarations(archive):
     reported, so the output shipped a scrambled font with no declaration
     left to explain it.
 
+    Direct children throughout, `CipherReference` included: it is read
+    from the entry's own `CipherData` and nowhere else. Searching the
+    subtree instead picked up references that belong to something else —
+    a `KeyInfo/EncryptedKey` wrapping its own cipher text names one, and
+    it comes first — so the entry was read as declaring a resource it
+    does not, and a nested `EncryptedData` had its URI declared twice.
+
     The URI is percent-encoded in the file, so it is decoded back to the
     member name here; `build_encryption_xml` encodes on the way out.
     """
@@ -132,7 +134,10 @@ def _declarations(archive):
         if local_name(data.tag) != "EncryptedData":
             continue
         method = _child(data, "EncryptionMethod")
-        reference = _descendant(data, "CipherReference")
+        cipher_data = _child(data, "CipherData")
+        reference = (
+            None if cipher_data is None else _child(cipher_data, "CipherReference")
+        )
         if method is None or reference is None:
             continue
         uri = reference.get("URI")

@@ -767,3 +767,95 @@ def test_the_declaration_percent_encodes_the_member_name():
         "EPUB/fonts/a%20b.otf",
         "EPUB/fonts/a%2520b.otf",
     ]
+
+
+# ------- codex review: the reference is the resource's own, not any nested one
+
+
+KEYINFO_ENCRYPTION = """<?xml version="1.0" encoding="UTF-8"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+            xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+  <enc:EncryptedData>
+    <enc:EncryptionMethod Algorithm="{algorithm}"/>
+    <enc:KeyInfo>
+      <enc:EncryptedKey>
+        <enc:CipherData>
+          <enc:CipherReference URI="EPUB/keys/wrapped.bin"/>
+        </enc:CipherData>
+      </enc:EncryptedKey>
+    </enc:KeyInfo>
+    <enc:CipherData><enc:CipherReference URI="{uri}"/></enc:CipherData>
+  </enc:EncryptedData>
+</encryption>
+"""
+
+NESTED_ENCRYPTION = """<?xml version="1.0" encoding="UTF-8"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+            xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+  <enc:EncryptedData>
+    <enc:EncryptionMethod Algorithm="{algorithm}"/>
+    <enc:KeyInfo>
+      <enc:EncryptedData>
+        <enc:EncryptionMethod Algorithm="{algorithm}"/>
+        <enc:CipherData>
+          <enc:CipherReference URI="EPUB/fonts/inner.otf"/>
+        </enc:CipherData>
+      </enc:EncryptedData>
+    </enc:KeyInfo>
+    <enc:CipherData><enc:CipherReference URI="{uri}"/></enc:CipherData>
+  </enc:EncryptedData>
+</encryption>
+"""
+
+
+def _declarations_of(text):
+    from book_maker.loader.font_obfuscation import _declarations
+
+    class OneMemberArchive:
+        def read(self, _path):
+            return text.encode("utf-8")
+
+    return _declarations(OneMemberArchive())
+
+
+def test_the_reference_read_is_the_resources_own_cipher_data():
+    """A `KeyInfo/EncryptedKey` may carry a `CipherReference` of its own,
+    and it appears first. Searching the whole subtree picked *that* — so
+    the font was looked up under the wrapped key's name, went unresolved,
+    and the key blob would have been unscrambled in its place had it been
+    a manifest item. The reference is the one in the resource's own
+    `CipherData`, nothing else."""
+    declarations = _declarations_of(
+        KEYINFO_ENCRYPTION.format(
+            algorithm=IDPF_ALGORITHM, uri="EPUB/fonts/obfuscated.otf"
+        )
+    )
+    assert declarations == [(IDPF_ALGORITHM, "EPUB/fonts/obfuscated.otf")]
+
+
+def test_a_nested_encrypted_data_is_declared_once_and_only_for_itself():
+    """The inner entry is its own declaration; the outer one must not
+    borrow its reference and report it twice."""
+    declarations = _declarations_of(
+        NESTED_ENCRYPTION.format(
+            algorithm=IDPF_ALGORITHM, uri="EPUB/fonts/obfuscated.otf"
+        )
+    )
+    assert declarations == [
+        (IDPF_ALGORITHM, "EPUB/fonts/obfuscated.otf"),
+        (IDPF_ALGORITHM, "EPUB/fonts/inner.otf"),
+    ]
+
+
+def test_an_entry_with_no_cipher_data_of_its_own_declares_nothing():
+    """No `CipherData` child names no resource, so there is nothing to
+    restore and nothing to invent from elsewhere in the entry."""
+    declarations = _declarations_of("""<?xml version="1.0" encoding="UTF-8"?>
+<encryption xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+  <enc:EncryptedData>
+    <enc:EncryptionMethod Algorithm="%s"/>
+    <enc:KeyInfo><enc:CipherReference URI="EPUB/keys/stray.bin"/></enc:KeyInfo>
+  </enc:EncryptedData>
+</encryption>
+""" % IDPF_ALGORITHM)
+    assert declarations == []
