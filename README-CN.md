@@ -57,7 +57,12 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - **任何 OpenAI 兼容接口**只需要三样东西：`--api_base`（以 `/v1` 结尾的地址）、
   `--key`，以及按接口拼写的 `--model`。用 OpenAI 官方地址时省略 `--api_base`，
-  用默认模型 `gpt-5.6-luna` 时省略 `--model`。provider 条目保存的就是这三样。
+  用默认模型 `gpt-5.6-luna` 时省略 `--model`。
+- **其他 OpenAI 兼容的厂商都用 provider 条目。**`bbm_providers.example.json`
+  里已经写好了 Gemini、Qwen、xAI、Groq、DeepSeek、SiliconFlow、OpenRouter 和
+  Ollama 的条目。复制成 `bbm_providers.json`，导出条目里写的 key 变量，然后传
+  `--provider gemini`。条目就是上面那三样东西写下来一次，所以直接传参数也一样能用。
+  固定的翻译引擎（DeepL、谷歌、彩云、腾讯）不是这类接口，它们用 `--api_format`。
 - `--key` 可以写多个 key，英文逗号分隔，轮换使用，用来绕开单 key 的速率限制。
   不写这个参数时，依次读取 `$BBM_API_KEY` 和该格式自己的变量（`$OPENAI_API_KEY`、
   `$ANTHROPIC_API_KEY`），所以 key 不必出现在命令行上。
@@ -103,18 +108,20 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * Gemini
 
-  通过 Gemini 的 OpenAI 兼容接口使用，模型 ID 任选。
+  通过 Gemini 的 OpenAI 兼容接口使用。自带的 `gemini` 条目指向该接口，key 读取
+  `BBM_GOOGLE_GEMINI_KEY`；`--model` 可以换成任意 Gemini 模型 ID。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider gemini
   ```
 
 * Qwen
 
-  [Qwen-MT](https://www.aliyun.com/product/dashscope) 翻译模型：`qwen-mt-turbo` 更快更便宜，`qwen-mt-plus` 质量更高。两者都走百炼的 OpenAI 兼容接口。
+  [Qwen-MT](https://www.aliyun.com/product/dashscope) 翻译模型：`qwen-mt-turbo` 更快更便宜，`qwen-mt-plus` 质量更高。自带的 `qwen` 条目指向百炼的 OpenAI 兼容接口，默认 `qwen-mt-turbo`，key 读取 `BBM_QWEN_API_KEY`。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider qwen --language "Simplified Chinese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider qwen --model qwen-mt-plus --language "Japanese"
   ```
 
 * 腾讯交互翻译
@@ -125,8 +132,10 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [xAI](https://x.ai)
 
+  自带的 `xai` 条目 key 读取 `BBM_XAI_API_KEY`。
+
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-beta
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider xai
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -141,18 +150,18 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [Ollama](https://github.com/ollama/ollama)
 
-  Ollama 是本机上的一个 OpenAI 兼容接口，本机地址不需要 key。
+  Ollama 是本机上的一个 OpenAI 兼容接口，本机地址不需要 key，自带的 `ollama` 条目也没有 key 变量。写你拉取过的模型名。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base http://localhost:11434/v1 --model ${ollama_model_name}
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider ollama --model ${ollama_model_name}
   ```
 
 * [Groq](https://console.groq.com/keys)
 
-  GroqCloud 当前支持的模型可以查看[Supported Models](https://console.groq.com/docs/models)
+  GroqCloud 当前支持的模型可以查看[Supported Models](https://console.groq.com/docs/models)。自带的 `groq` 条目 key 读取 `BBM_GROQ_API_KEY`。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.groq.com/openai/v1 --key [your_key] --model llama3-8b-8192
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider groq --model llama-3.3-70b-versatile
   ```
 
 * [Codex](https://developers.openai.com/codex/cli)
@@ -196,12 +205,14 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
   | 字段 | 必填 | 说明 |
   |------|------|------|
-  | `api_style` | 是 | 翻译器接口风格。支持：`openai`、`claude`、`gemini`、`qwen` |
-  | `base_url` | 否 | API 地址。不填则使用该 api_style 的默认地址 |
+  | `api_style` | 是 | 接口格式：`openai` 或 `anthropic`（旧写法 `claude` 也接受）。厂商是地址不是格式：Gemini、Qwen 就是 `openai` 加上各自的 `base_url`。这里写厂商名会被拒绝，报错会打印该改成的两行 |
+  | `base_url` | 否 | 接口地址。不填就是该格式的官方地址 |
   | `default_models` | 否 | 默认模型列表。不填则必须通过 `--model_list` 指定 |
   | `env_key` | 否 | 读取 API key 的环境变量名。不填则必须通过 `--api_key` 传入 |
 
   优先级：项目级 `./bbm_providers.json` 覆盖全局 `~/.bbm/providers.json`。
+
+  自带的 `bbm_providers.example.json` 里有上面每家厂商的条目，复制过去留下你用的即可。
 
   `--model` 指定该 provider 下的模型；不写就用 `default_models` 的第一个。
 

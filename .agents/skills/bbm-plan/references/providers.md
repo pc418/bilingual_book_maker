@@ -67,9 +67,11 @@ entry is the route spelled out:
 The `providers` wrapper is required; the loader reads nothing from a file
 without it.
 
-`api_style` is `openai`, `claude` (the `anthropic` format), `gemini` or
-`qwen` (both the openai format at their compatibility bases, so `base_url`
-is optional for them). `default_models` becomes `--model` when it holds one
+`api_style` is the wire format, `openai` or `anthropic` (`claude` is the
+older spelling). A vendor is an address: Gemini or Qwen is `openai` plus
+its `base_url`, and the loader refuses a vendor name there, printing the
+two lines to write. The shipped example file has an entry per vendor.
+`default_models` becomes `--model` when it holds one
 id and `--model_list` when it holds several. `env_key` is read for the key
 ahead of `BBM_API_KEY` and the format's own variables. **Explicit flags
 win**, so `--provider nvidia --model <id>` keeps the user's model. An
@@ -102,10 +104,11 @@ for f in (pathlib.Path.home()/".bbm"/"providers.json", pathlib.Path("bbm_provide
         entry = json.load(open(f)).get("providers", {}).get(name, entry)
 if entry is None:
     print(f'echo "no provider entry named {name}" >&2; return 1'); sys.exit()
-shape = {"claude": "anthropic"}.get(entry.get("api_style"), "openai")
-host = {"gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1"}.get(entry.get("api_style"))
-root = (entry.get("base_url") or host or {"anthropic": "https://api.anthropic.com"}.get(shape, "https://api.openai.com")).rstrip("/")
+style = entry.get("api_style")
+if style not in ("openai", "anthropic", "claude"):
+    print(f'echo "provider {name}: api_style {style!r} is not a format; the loader refuses this entry" >&2; return 1'); sys.exit()
+shape = "anthropic" if style in ("anthropic", "claude") else "openai"
+root = (entry.get("base_url") or {"anthropic": "https://api.anthropic.com"}.get(shape, "https://api.openai.com")).rstrip("/")
 root = root[:-3] if root.endswith("/v1") else root
 key_var = entry.get("env_key") or "BBM_API_KEY"
 model = (entry.get("default_models") or [""])[0] or ("gpt-5.6-luna" if shape == "openai" else "")

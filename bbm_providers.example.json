@@ -10,10 +10,57 @@
       }
     },
     "anthropic": {
-      "api_style": "claude",
+      "api_style": "anthropic",
       "base_url": "https://api.anthropic.com",
       "default_models": ["claude-haiku-4-5-20251001"],
       "env_key": "ANTHROPIC_API_KEY"
+    },
+    "gemini": {
+      "api_style": "openai",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "default_models": ["gemini-flash-latest"],
+      "env_key": "BBM_GOOGLE_GEMINI_KEY"
+    },
+    "qwen": {
+      "api_style": "openai",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "default_models": ["qwen-mt-turbo"],
+      "env_key": "BBM_QWEN_API_KEY"
+    },
+    "xai": {
+      "api_style": "openai",
+      "base_url": "https://api.x.ai/v1",
+      "default_models": ["grok-beta"],
+      "env_key": "BBM_XAI_API_KEY"
+    },
+    "groq": {
+      "api_style": "openai",
+      "base_url": "https://api.groq.com/openai/v1",
+      "default_models": ["llama-3.3-70b-versatile"],
+      "env_key": "BBM_GROQ_API_KEY"
+    },
+    "deepseek": {
+      "api_style": "openai",
+      "base_url": "https://api.deepseek.com/v1",
+      "default_models": ["deepseek-chat"],
+      "env_key": "BBM_DEEPSEEK_API_KEY"
+    },
+    "siliconflow": {
+      "api_style": "openai",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "default_models": ["Qwen/Qwen2.5-72B-Instruct"],
+      "env_key": "BBM_SILICONFLOW_API_KEY"
+    },
+    "openrouter": {
+      "api_style": "openai",
+      "base_url": "https://openrouter.ai/api/v1",
+      "default_models": ["anthropic/claude-haiku-4.5"],
+      "env_key": "OPENROUTER_API_KEY"
+    },
+    "ollama": {
+      "api_style": "openai",
+      "base_url": "http://localhost:11434/v1",
+      "default_models": ["llama3.2"]
     },
     "gateway": {
       "api_style": "openai",
