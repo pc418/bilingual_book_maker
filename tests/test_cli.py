@@ -833,7 +833,7 @@ class TestVendorFormats:
 
         assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
 
-    def test_the_same_address_retyped_is_still_the_entrys(self, provider_entry):
+    def test_the_same_address_retyped_still_belongs_to_the_entry(self, provider_entry):
         # a trailing slash is not a different host
         from book_maker.cli import resolve_endpoint
 
