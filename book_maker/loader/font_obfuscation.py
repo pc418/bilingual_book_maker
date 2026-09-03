@@ -32,6 +32,7 @@ import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
+from xml.sax.saxutils import escape
 from urllib.parse import unquote
 
 from .helper import read_package
@@ -200,8 +201,14 @@ def _written_opf_dir(path):
 
 def build_encryption_xml(members):
     """The OCF declaration for `[(container-relative path, algorithm)]`."""
+    # Attribute values, so `&`, `<` and the quotes have to be escaped: a
+    # font called `A&B.otf` is a legal member name and an illegal one to
+    # paste into XML as is.
     entries = "".join(
-        ENCRYPTION_ENTRY.format(algorithm=algorithm, uri=uri)
+        ENCRYPTION_ENTRY.format(
+            algorithm=escape(algorithm, {'"': "&quot;"}),
+            uri=escape(uri, {'"': "&quot;"}),
+        )
         for uri, algorithm in members
     )
     return ENCRYPTION_TEMPLATE.format(entries=entries).encode("utf-8")
