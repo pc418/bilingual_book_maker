@@ -123,7 +123,7 @@ def test_a_plain_epub_is_ok(tmp_path):
     assert check_epub(str(_epub(tmp_path))) == "ok"
 
 
-def test_an_unparseable_encryption_declaration_fails_closed(tmp_path):
+def test_an_unparsable_encryption_declaration_fails_closed(tmp_path):
     """A declaration that cannot be read cannot be read as harmless."""
     path = _epub(tmp_path, members={"META-INF/encryption.xml": "<encryption"})
     assert check_epub(str(path)) == "drm"
@@ -227,7 +227,7 @@ def test_a_font_algorithm_in_an_unexpected_namespace_is_still_a_font(tmp_path):
 
 def test_a_declaration_that_declares_nothing_is_drm(tmp_path):
     """Finding 1: an encryption.xml holding no EncryptedData is malformed,
-    and malformed fails closed like an unparseable one."""
+    and malformed fails closed like an unparsable one."""
     path = _epub(tmp_path, members={"META-INF/encryption.xml": _raw_encryption("")})
     assert check_epub(str(path)) == "drm"
 
