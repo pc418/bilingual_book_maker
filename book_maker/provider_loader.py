@@ -22,16 +22,15 @@ LOCAL_CONFIG_FILENAME = "bbm_providers.json"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-# `api_style` -> (`--api_format`, the base URL that style implies). Gemini and
-# Qwen had their own translator classes once; both serve an OpenAI-compatible
-# endpoint, so they are the openai format at a fixed address. A `base_url` in
-# the entry overrides that address.
-API_STYLE_ROUTES = {
-    "openai": ("openai", None),
-    "claude": ("anthropic", None),
-    "gemini": ("openai", GEMINI_BASE),
-    "qwen": ("openai", DASHSCOPE_BASE),
-}
+# `api_style` -> `--api_format`. A style is a wire format and nothing else:
+# a vendor's address goes in `base_url`, never in a name. `claude` is the
+# older spelling of `anthropic` and stays accepted.
+API_STYLES = {"openai": "openai", "anthropic": "anthropic", "claude": "anthropic"}
+
+# Styles that once stood for a vendor address. An entry with one is refused
+# and told what to write; a config file is edited once, so it gets the fix
+# rather than a rewrite.
+RETIRED_STYLES = {"gemini": GEMINI_BASE, "qwen": DASHSCOPE_BASE}
 
 REQUIRED_FIELDS = {"api_style"}
 OPTIONAL_FIELDS = {"base_url", "default_models", "env_key", "prices", "currency"}
@@ -99,10 +98,19 @@ def validate_provider(name, provider):
         raise ValueError(f"provider {name!r} has unknown fields: {sorted(unknown)}")
 
     api_style = provider["api_style"]
-    if api_style not in API_STYLE_ROUTES:
+    if api_style in RETIRED_STYLES:
+        # an entry that already names its own address keeps it
+        base = provider.get("base_url") or RETIRED_STYLES[api_style]
+        raise ValueError(
+            f"provider {name!r}: api_style {api_style!r} is a vendor, not a "
+            f"format. Write the address instead:\n"
+            f'  "api_style": "openai",\n'
+            f'  "base_url": "{base}"'
+        )
+    if api_style not in API_STYLES:
         raise ValueError(
             f"provider {name!r} has unsupported api_style {api_style!r}. "
-            f"Supported: {sorted(API_STYLE_ROUTES)}"
+            f"Supported: openai, anthropic"
         )
 
     _validate_prices(name, provider)
@@ -178,10 +186,9 @@ def get_provider(name):
 def resolve_provider(name):
     """`name` as endpoint settings: format, base, models to rotate, key variable."""
     provider = get_provider(name)
-    api_format, style_base = API_STYLE_ROUTES[provider["api_style"]]
     return ProviderRoute(
-        api_format=api_format,
-        api_base=provider.get("base_url") or style_base or "",
+        api_format=API_STYLES[provider["api_style"]],
+        api_base=provider.get("base_url") or "",
         models=list(provider.get("default_models") or []),
         env_key=provider.get("env_key") or "",
         prices=provider.get("prices") or None,

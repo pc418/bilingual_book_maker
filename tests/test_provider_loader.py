@@ -149,27 +149,45 @@ class TestUnknownProvider:
 
 class TestApiStyles:
     @pytest.mark.parametrize(
-        "style,api_format,api_base",
-        [
-            ("openai", "openai", ""),
-            ("claude", "anthropic", ""),
-            ("gemini", "openai", GEMINI_BASE),
-            ("qwen", "openai", DASHSCOPE_BASE),
-        ],
+        "style,api_format",
+        [("openai", "openai"), ("anthropic", "anthropic"), ("claude", "anthropic")],
     )
-    def test_each_style_becomes_a_format_and_a_base(
-        self, configs, style, api_format, api_base
+    def test_a_style_is_a_wire_format_and_nothing_else(
+        self, configs, style, api_format
     ):
         _write(configs.local_file, {"p": {"api_style": style}})
         route = resolve_provider("p")
-        assert (route.api_format, route.api_base) == (api_format, api_base)
+        # no base: the CLI falls back to the format's official host
+        assert (route.api_format, route.api_base) == (api_format, "")
 
-    def test_the_entry_base_url_wins_over_the_style(self, configs):
+    @pytest.mark.parametrize(
+        "style,base", [("gemini", GEMINI_BASE), ("qwen", DASHSCOPE_BASE)]
+    )
+    def test_a_vendor_name_is_refused_with_the_entry_to_write(
+        self, configs, style, base
+    ):
+        _write(configs.local_file, {"p": {"api_style": style}})
+        with pytest.raises(ValueError) as err:
+            resolve_provider("p")
+        message = str(err.value)
+        assert style in message
+        assert '"api_style": "openai"' in message
+        assert f'"base_url": "{base}"' in message
+
+    def test_a_refused_entry_keeps_the_address_it_already_names(self, configs):
         _write(
             configs.local_file,
-            {"p": {"api_style": "gemini", "base_url": "https://gw.example/v1"}},
+            {"p": {"api_style": "qwen", "base_url": "https://gw.example/v1"}},
         )
-        assert resolve_provider("p").api_base == "https://gw.example/v1"
+        with pytest.raises(ValueError) as err:
+            resolve_provider("p")
+        assert '"base_url": "https://gw.example/v1"' in str(err.value)
+        assert DASHSCOPE_BASE not in str(err.value)
+
+    def test_an_unknown_style_names_the_two_that_exist(self, configs):
+        _write(configs.local_file, {"p": {"api_style": "grpc"}})
+        with pytest.raises(ValueError, match="openai, anthropic"):
+            resolve_provider("p")
 
 
 class TestApplyingToACommand:

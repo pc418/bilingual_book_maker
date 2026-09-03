@@ -68,7 +68,14 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 - **Any OpenAI-compatible endpoint** needs three things: `--api_base` (the
   URL ending in `/v1`), `--key`, and `--model` spelled the way the endpoint
   spells it. Omit `--api_base` for OpenAI's own host, and `--model` for the
-  default, `gpt-5.6-luna`. A provider entry stores the same three.
+  default, `gpt-5.6-luna`.
+- **Every other OpenAI-compatible vendor is a provider entry.**
+  `bbm_providers.example.json` ships one for Gemini, Qwen, xAI, Groq,
+  DeepSeek, SiliconFlow, OpenRouter and Ollama. Copy it to
+  `bbm_providers.json`, export the key variable the entry names, and pass
+  `--provider gemini`. An entry is the same three values written down once,
+  so the flags above always work too. The fixed engines (DeepL, Google,
+  Caiyun, Tencent) are not endpoints of that kind; they are `--api_format`.
 - `--key` takes several keys separated by commas and rotates them, which
   gets past a per-key rate limit. Without the flag the key is read from
   `$BBM_API_KEY`, then from the format's own variable (`$OPENAI_API_KEY`,
@@ -112,20 +119,20 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * Gemini
 
-  Google [Gemini](https://aistudio.google.com/app/apikey) is reached through its OpenAI-compatible endpoint; name any Gemini model id.
+  Google [Gemini](https://aistudio.google.com/app/apikey) is reached through its OpenAI-compatible endpoint. The shipped `gemini` entry points there and reads `BBM_GOOGLE_GEMINI_KEY`; `--model` names any other Gemini id.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider gemini
   ```
 
 * Qwen
 
   Support Alibaba Cloud [Qwen-MT](https://bailian.console.aliyun.com/) specialized translation model. Supports 92 languages with features like terminology intervention and translation memory.
-  `qwen-mt-turbo` is faster and cheaper, `qwen-mt-plus` higher quality. Both are served by DashScope's OpenAI-compatible endpoint.
+  `qwen-mt-turbo` is faster and cheaper, `qwen-mt-plus` higher quality. The shipped `qwen` entry points at DashScope's OpenAI-compatible endpoint, defaults to `qwen-mt-turbo` and reads `BBM_QWEN_API_KEY`.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-plus --language "Japanese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider qwen --language "Simplified Chinese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider qwen --model qwen-mt-plus --language "Japanese"
   ```
 
 * [Tencent TranSmart](https://transmart.qq.com)
@@ -136,8 +143,10 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [xAI](https://x.ai)
 
+  The shipped `xai` entry reads `BBM_XAI_API_KEY`.
+
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-beta
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider xai
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -153,19 +162,19 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [Ollama](https://github.com/ollama/ollama)
 
-  Support [Ollama](https://github.com/ollama/ollama) self-host models,
-  Ollama is an OpenAI-compatible endpoint on localhost, and localhost needs no key.
+  Support [Ollama](https://github.com/ollama/ollama) self-host models.
+  Ollama is an OpenAI-compatible endpoint on localhost, and localhost needs no key; the shipped `ollama` entry has no key variable. Name the model you pulled.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base http://localhost:11434/v1 --model ${ollama_model_name}
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider ollama --model ${ollama_model_name}
   ```
 
 * [groq](https://console.groq.com/keys)
 
-  GroqCloud currently supports models: you can find from [Supported Models](https://console.groq.com/docs/models)
+  GroqCloud currently supports models: you can find from [Supported Models](https://console.groq.com/docs/models). The shipped `groq` entry reads `BBM_GROQ_API_KEY`.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.groq.com/openai/v1 --key [your_key] --model llama3-8b-8192
+  python3 make_book.py --book_name test_books/animal_farm.epub --provider groq --model llama-3.3-70b-versatile
   ```
 
 * [Codex](https://developers.openai.com/codex/cli)
@@ -219,14 +228,16 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
   | Field | Required | Description |
   |-------|----------|-------------|
-  | `api_style` | Yes | Translator interface style. Supported: `openai`, `claude`, `gemini`, `qwen` |
-  | `base_url` | No | API endpoint URL. Falls back to the api_style's default |
+  | `api_style` | Yes | The wire format: `openai` or `anthropic` (`claude` is accepted as the older spelling). A vendor is an address, not a style: Gemini or Qwen is `openai` plus its `base_url`. A vendor name here is refused, and the error prints the two lines to write |
+  | `base_url` | No | The endpoint URL. Omitted means the format's official host |
   | `default_models` | No | Default model list. Required if `--model_list` is not provided |
   | `env_key` | No | Environment variable name for API key. Required if `--api_key` is not provided |
   | `prices` | No | Prices per million tokens, per model: `{"<model id>": {"input": …, "output": …, "cached_input": …}}`. When every model in the run has a price, the progress bar shows money spent (`spent=$0.012`) instead of token counts, and the closing line shows both. Without `cached_input`, cache reads are charged at the input price. A model without a price puts the bar back on tokens, and the closing line names it |
   | `currency` | No | Currency code for the prices, default `USD`. `USD`, `EUR`, `GBP`, `CNY` and `JPY` print with their symbol; any other code prints after the amount, as in `0.500 CHF` |
 
   Priority: project-level `./bbm_providers.json` overrides global `~/.bbm/providers.json`.
+
+  The shipped `bbm_providers.example.json` has an entry for every vendor named above; copy it and keep the ones you use.
 
   `--model` names a model at that provider; without it the first of `default_models` is used.
 
