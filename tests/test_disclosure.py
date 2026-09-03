@@ -16,6 +16,7 @@ import pytest
 from ebooklib import epub
 
 from book_maker.loader.disclosure import (
+    model_id,
     COLOPHON_FILE,
     COLOPHON_ID,
     CONTRIBUTOR_ID,
@@ -629,3 +630,35 @@ def test_a_model_list_run_names_every_model_it_could_have_used(tmp_path):
     assert "Machine translation (a, b," in opf
     page = rebuilt.get_item_with_id(COLOPHON_ID).content.decode("utf-8")
     assert "a, b" in page
+
+
+class _RotatingStub:
+    """The openai translator's shape: `model_list` is an itertools.cycle,
+    the readable list lives on `_model_names`."""
+
+    model = "a"
+    model_name = "a"
+
+    def __init__(self, names):
+        import itertools
+
+        self._model_names = list(names)
+        self.model_list = itertools.cycle(names)
+
+
+class _CycleOnlyStub:
+    model = "a"
+    model_name = "a"
+
+    def __init__(self):
+        import itertools
+
+        self.model_list = itertools.cycle(["a", "b"])
+
+
+def test_model_id_never_iterates_a_cycle():
+    """A `model_list` that is an itertools.cycle used to be iterated into a
+    list: unbounded memory at write time on every real openai run (the
+    260902 smoke matrix took a 16 GB machine down with it)."""
+    assert model_id(_RotatingStub(["a", "b"])) == "a, b"
+    assert model_id(_CycleOnlyStub()) == "a"
