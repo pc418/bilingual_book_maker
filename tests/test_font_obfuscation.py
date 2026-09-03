@@ -628,14 +628,27 @@ def test_an_oddly_namespaced_declaration_still_writes_a_conforming_one(tmp_path)
 # -------------- finding 2: no identifier is no key, not an empty-string key
 
 
-def _identifierless_source(tmp_path):
-    """A package that names no `unique-identifier` at all."""
+def _identifierless_source(tmp_path, shape="none"):
+    """A package with no usable `unique-identifier`.
+
+    Two shapes, because they fail differently: `none` names no
+    `unique-identifier` and carries no `dc:identifier` either, so ebooklib
+    hands back the random uuid its `reset()` invented; `dangling` names an
+    id that nothing in the package carries, so `read_package` finds no
+    identifier while ebooklib happily reports the one it can see. Both are
+    a book that does not say what its identifier is.
+    """
     path = _write_source(tmp_path / "anonymous.epub", LONG_FONT, IDPF_ALGORITHM)
     member, opf = _opf_of(path)
     import re
 
-    opf = re.sub(r'\sunique-identifier="[^"]*"', "", opf, count=1)
-    opf = re.sub(r"<dc:identifier[^>]*>[^<]*</dc:identifier>", "", opf)
+    if shape == "none":
+        opf = re.sub(r'\sunique-identifier="[^"]*"', "", opf, count=1)
+        opf = re.sub(r"<dc:identifier[^>]*>[^<]*</dc:identifier>", "", opf)
+    else:
+        opf = re.sub(
+            r'unique-identifier="[^"]*"', 'unique-identifier="nothing-has-this"', opf, 1
+        )
 
     replacement = path.with_suffix(".anon.epub")
     with zipfile.ZipFile(path) as source, zipfile.ZipFile(replacement, "w") as target:
@@ -652,20 +665,51 @@ def _identifierless_source(tmp_path):
     return path
 
 
-def test_a_book_with_no_identifier_leaves_its_idpf_font_alone(tmp_path):
+@pytest.mark.parametrize("shape", ["none", "dangling"])
+def test_a_book_with_no_identifier_leaves_its_idpf_font_alone(tmp_path, shape):
     """`sha1(b"")` is a perfectly computable key and a completely wrong one:
     the font was XORed with it, counted as restored, then re-scrambled under
     the output's identifier — a silently corrupt font and nothing said. No
-    identifier means no key, exactly as it already does for Adobe."""
-    path = _identifierless_source(tmp_path)
+    identifier means no key, exactly as it already does for Adobe.
+
+    `book.uid` is whatever ebooklib made of the same book, and it is never
+    consulted: for `none` it is a uuid ebooklib invented out of nothing,
+    for `dangling` it is a real dc:identifier that the package does not
+    name as its unique-identifier. Neither is the OCF key.
+    """
+    path = _identifierless_source(tmp_path, shape)
     book = epub.read_epub(str(path))
-    # ebooklib's `reset()` invents a uuid for a book that names none, so the
-    # last-resort fallback has to be emptied out by hand to model a book
-    # with no resolvable identifier at all.
-    book.uid = None
+    assert book.uid, "the fixture must leave ebooklib with a uid to be ignored"
 
     scrambled = book.get_item_with_id("font").content
     restored, unresolved = deobfuscate_fonts(book, str(path))
+
+    assert restored == []
+    assert unresolved == ["EPUB/fonts/obfuscated.otf"]
+    assert book.get_item_with_id("font").content == scrambled
+
+
+def test_a_package_that_cannot_be_read_at_all_yields_no_key(tmp_path):
+    """`read_package` answers `EMPTY_PACKAGE` for a container it could not
+    parse, so `unique_identifier` is None there and there is no key to be
+    had. That has to arrive as an unresolved font — not as an
+    `AttributeError` from `None.split()` in the key derivation, and not as
+    a key invented from somewhere else."""
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    book = epub.read_epub(str(path))
+    assert book.uid == IDENTIFIER, "ebooklib read the identifier it must not use"
+
+    # the same archive with no container.xml: encryption.xml is still there
+    # to be read, but nothing says where the package document is
+    headless = tmp_path / "headless.epub"
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(headless, "w") as target:
+        for info in source.infolist():
+            if info.filename == "META-INF/container.xml":
+                continue
+            target.writestr(info, source.read(info.filename))
+
+    scrambled = book.get_item_with_id("font").content
+    restored, unresolved = deobfuscate_fonts(book, str(headless))
 
     assert restored == []
     assert unresolved == ["EPUB/fonts/obfuscated.otf"]
