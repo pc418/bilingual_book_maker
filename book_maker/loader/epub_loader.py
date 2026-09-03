@@ -3057,11 +3057,15 @@ class EPUBBookLoader(BaseBookLoader):
         )
         try:
             for item in origin_book_temp.get_items():
-                # The same selection the plan was built from: a document
-                # filtered out above has no plan, and asking for one would
-                # end the recovery save with StopIteration on the very run
-                # that most needs it written.
-                if item.get_type() == ITEM_DOCUMENT and not is_our_colophon(item):
+                # A previous run's note is dropped, not carried: it has no
+                # plan (asking for one ended the recovery save with
+                # StopIteration), and copying it into the book anyway left
+                # the stamp below thinking the book was already stamped —
+                # so the recovery book kept the *last* run's claim, and
+                # --no_disclosure kept it too.
+                if is_our_colophon(item):
+                    continue
+                if item.get_type() == ITEM_DOCUMENT:
                     # one plan per document, consumed in document order: the
                     # replay must walk exactly the selection the processing
                     # pass walked or global_index lands on unrelated text

@@ -101,9 +101,15 @@ def check_epub(path):
         # fails closed exactly like an unparseable one.
         return "drm"
     for entry in entries:
+        # Direct children only. `EncryptionMethod` says how *this* resource
+        # is encrypted, and the one place it can say that is immediately
+        # under its EncryptedData — a copy parked deeper (under CipherData,
+        # say) declares nothing, and reading it as a declaration is how a
+        # font algorithm quoted in the wrong place clears an AES-encrypted
+        # book.
         algorithms = [
             el.get("Algorithm")
-            for el in entry.iter()
+            for el in entry
             if _local_name(el.tag) == "EncryptionMethod"
         ]
         if not algorithms:

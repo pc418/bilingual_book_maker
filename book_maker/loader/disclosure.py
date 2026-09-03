@@ -40,7 +40,13 @@ CONTRIBUTOR_ID = "bbm-trl"
 CONTRIBUTOR_ROLE = "trl"
 MARC_SCHEME = "marc:relators"
 
+# The description this tool writes, as two fixed halves with the model and
+# the year between them. Both halves are matched when deciding whether a
+# description is one of ours: a publisher's "Machine translation (French
+# edition)" opens the same way and is a statement about the book, not a
+# stamp to be replaced.
 DESCRIPTION_PREFIX = "Machine translation ("
+DESCRIPTION_TAIL = "). Original text unaltered; translation quality not verified."
 
 COLOPHON_ID = "bbm-translation-note"
 COLOPHON_STEM = "bbm_translation_note"
@@ -69,18 +75,18 @@ def model_id(translator):
     """
     if translator is None:
         return "unspecified model"
-    # `_model_names` is the readable list a rotating translator keeps beside
-    # its `model_list`; `model_list` itself may be an itertools.cycle, and
-    # iterating one never ends. Only a real sequence is read here — a
-    # smoke run on 260902 found the write step of every openai cell
-    # growing past 2.5 GB inside this comprehension.
-    for attribute in ("_model_names", "model_list"):
-        models = getattr(translator, attribute, None)
-        if isinstance(models, (list, tuple)):
-            names = [str(name) for name in models if name]
-            if len(names) > 1:
-                return ", ".join(names)
-            break
+    # `_model_names` and nothing else. It is the readable list kept by the
+    # one translator that actually rotates (the openai route, beside a
+    # `model_list` that is an itertools.cycle — iterating one never ends,
+    # and a smoke run on 260902 found the write step of every openai cell
+    # growing past 2.5 GB doing exactly that). `model_list` is not a
+    # substitute: codex stores every name there and then sends `self.model`
+    # for every request, so reading it would name models that never ran.
+    models = getattr(translator, "_model_names", None)
+    if isinstance(models, (list, tuple)):
+        names = [str(name) for name in models if name]
+        if len(names) > 1:
+            return ", ".join(names)
     name = getattr(translator, "model_name", None)
     if name:
         return str(name)
@@ -201,8 +207,10 @@ def is_prior_disclosure(name, value, others, owned_ids):
         and attributes.get("refines", "").lstrip("#") in owned_ids
     ):
         return True
-    if name == "description" and (value or "").startswith(DESCRIPTION_PREFIX):
-        return True
+    if name == "description":
+        text = value or ""
+        if text.startswith(DESCRIPTION_PREFIX) and text.endswith(DESCRIPTION_TAIL):
+            return True
     return False
 
 
@@ -337,8 +345,7 @@ def stamp_disclosure(book, model, language, source_identifier=None, when=None):
     book.add_metadata(
         "DC",
         "description",
-        f"{DESCRIPTION_PREFIX}{model}, {when.year}). Original text "
-        f"unaltered; translation quality not verified.",
+        f"{DESCRIPTION_PREFIX}{model}, {when.year}{DESCRIPTION_TAIL}",
     )
 
     item_id, file_name = allocate_colophon_names(book)
