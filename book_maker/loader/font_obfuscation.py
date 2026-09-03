@@ -70,8 +70,18 @@ ADOBE_WINDOW = 1024  # 64 rounds of the 16-byte UUID
 
 
 def _idpf_key(identifier):
-    """SHA-1 of the unique identifier with every whitespace character gone."""
-    return hashlib.sha1("".join(identifier.split()).encode("utf-8")).digest()
+    """SHA-1 of the unique identifier with every whitespace character gone.
+
+    None when the identifier is empty. `sha1(b"")` is a computable key and
+    a certainly wrong one: a font XORed with it would be counted as
+    restored and then re-scrambled under the output identifier — corrupt,
+    and silently so. No identifier is no key, exactly as it already is for
+    Adobe below.
+    """
+    stripped = "".join(identifier.split())
+    if not stripped:
+        return None
+    return hashlib.sha1(stripped.encode("utf-8")).digest()
 
 
 def _adobe_key(identifier):
