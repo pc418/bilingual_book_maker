@@ -274,8 +274,14 @@ def test_spine_comment_survives_the_rebuild_instead_of_crashing_it(
 
     rebuilt = loader._make_new_book(loader.origin_book)
     assert (None, None) not in rebuilt.spine
-    assert len(rebuilt.spine) == len(loader.origin_book.spine) - 1
-    assert all(entry[0] for entry in rebuilt.spine)
+    # Every real entry survives. Compared over the tuples only: the
+    # disclosure colophon is appended as an item object, not an idref.
+    assert [entry for entry in rebuilt.spine if isinstance(entry, tuple)] == [
+        entry for entry in loader.origin_book.spine if entry[0]
+    ]
+    assert all(
+        entry[0] if isinstance(entry, tuple) else entry for entry in rebuilt.spine
+    )
 
     epub.write_epub(str(tmp_path / "rebuilt.epub"), rebuilt)
 
@@ -300,7 +306,8 @@ def test_empty_nav_is_generated_with_rebuilt_book_title(tmp_path, monkeypatch):
     with zipfile.ZipFile(output) as archive:
         nav = archive.read("EPUB/generated-nav.xhtml").decode("utf-8")
     assert rebuilt.title == "Correctness baseline"
-    assert rebuilt.language == "en"
+    # the rebuilt book's language is the language it was made to be read in
+    assert rebuilt.language == "zh-hans"
     assert "<h2>Correctness baseline</h2>" in nav
 
 

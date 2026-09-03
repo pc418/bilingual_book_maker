@@ -41,10 +41,22 @@ from .helper import (
     is_text_link,
     make_tag,
     not_trans,
+    package_prefixes,
     rebase_ncx_srcs,
     shorter_result_link,
     strip_duplicate_ids,
 )
+from .disclosure import (
+    entry_is_our_colophon,
+    is_calibre_metadata,
+    is_our_colophon,
+    is_prior_disclosure,
+    model_id,
+    stamp_disclosure,
+    tool_contributor_ids,
+)
+from .font_obfuscation import deobfuscate_fonts
+from .rights import DRM_MESSAGE, check_epub
 from .plan import (
     PLAN_SCHEMA_VERSION,
     BookCss,
@@ -214,9 +226,22 @@ class EPUBBookLoader(BaseBookLoader):
         temperature=1.0,
         source_lang="auto",
         parallel_workers=1,
+        disclose=True,
     ):
+        # Before the translator is built and before a byte of the book is
+        # read: a protected book is refused, and there is no flag that opens
+        # one. builtins.print, not rich — the sentence must reach stderr
+        # whole, unwrapped and unstyled, because it is the whole answer.
+        if check_epub(epub_name) == "drm":
+            builtins.print(DRM_MESSAGE, file=sys.stderr)
+            raise SystemExit(1)
+
         self.epub_name = epub_name
         self.language = language
+        # Whether the output says it is a machine translation. Dropping
+        # calibre's record of its own file is not covered by this: that is
+        # a false statement about the file, not a disclosure.
+        self.disclose = disclose
         # what `lang=` may carry for that language, or None when nothing may
         self.language_tag = language_tag(language)
         self.new_epub = epub.EpubBook()
@@ -341,6 +366,19 @@ class EPUBBookLoader(BaseBookLoader):
             epub.EpubReader._load_spine = _load_spine
             self.origin_book = epub.read_epub(self.epub_name)
 
+        # ebooklib carries no META-INF member into the output, so the
+        # encryption declaration that describes an obfuscated font is gone
+        # by the time the book is written. Unscramble now and the drop is
+        # correct; skip it and the output ships a font nothing can parse.
+        _, unresolved = deobfuscate_fonts(self.origin_book, self.epub_name)
+        if unresolved:
+            builtins.print(
+                "warning: could not restore obfuscated resource(s) "
+                + ", ".join(unresolved)
+                + "; the translated book may carry an unusable font",
+                file=sys.stderr,
+            )
+
         self.p_to_save = []
         self.resume = resume
         self.bin_path = f"{Path(epub_name).parent}/.{Path(epub_name).stem}.temp.bin"
@@ -388,6 +426,11 @@ class EPUBBookLoader(BaseBookLoader):
             "single" if self.single_translate else "bilingual",
         )
         allowed_ns = set(epub.NAMESPACES.keys()) | set(epub.NAMESPACES.values())
+        # What a previous run of this tool stamped is this tool's to rewrite:
+        # stripped here and, when disclosure is on, written again from *this*
+        # run's facts at write time. Left in place, a book translated twice
+        # would claim both models and carry two colophons.
+        prior_ids = tool_contributor_ids(book)
 
         for namespace, metas in book.metadata.items():
             # Only keep namespaces recognized by ebooklib
@@ -422,6 +465,15 @@ class EPUBBookLoader(BaseBookLoader):
                     # Unexpected metadata format; skip gracefully
                     continue
 
+                if is_prior_disclosure(name, value, others, prior_ids):
+                    continue
+
+                if is_calibre_metadata(namespace, name, others):
+                    # calibre's record describes the file calibre built —
+                    # a different file from this one, so it is not true of
+                    # it. Dropped whatever --no_disclosure says.
+                    continue
+
                 if name == "link":
                     # ebooklib parses OPF <link rel=… href=…> into metadata
                     # but writes every metadata entry back as <meta>, where
@@ -447,6 +499,49 @@ class EPUBBookLoader(BaseBookLoader):
                 else:
                     new_book.add_metadata(namespace, name, value)
 
+        # EPUB 3 resolves a `property` like `tdm:reservation` through the
+        # package's `prefix` attribute, which ebooklib's reader does not
+        # read: without this the copied metas name vocabularies the book
+        # never declares. `rendition` is excluded because the writer always
+        # emits it — a second copy is a duplicate declaration.
+        for name, uri in package_prefixes(getattr(self, "epub_name", None)).items():
+            declaration = f"{name}: {uri}"
+            if name in ("rendition", "calibre") or declaration in new_book.prefixes:
+                continue
+            new_book.prefixes.append(declaration)
+
+        # The book is made to be read in the target language, and a reading
+        # system takes the first dc:language as the book's own. A single
+        # translation is only in that language; a bilingual one keeps the
+        # source's languages behind it.
+        tag = language_tag(self.language)
+        if tag:
+            dc_namespace = epub.NAMESPACES["DC"]
+            source_languages = (
+                []
+                if self.single_translate
+                else [
+                    entry
+                    for entry in new_book.get_metadata("DC", "language")
+                    if entry[0] != tag
+                ]
+            )
+            new_book.metadata.setdefault(dc_namespace, {})["language"] = [
+                (tag, None)
+            ] + source_languages
+            new_book.language = tag
+
+        # A translation is a derivative work, so it says what it derives
+        # from. `uid` is the source's primary identifier — the same value
+        # the identity above is derived from. Nothing is invented when the
+        # source has none, and a book rebuilt from an earlier output
+        # (--retranslate) already carries the pointer and keeps just one.
+        source_uid = getattr(self.origin_book, "uid", None)
+        if source_uid:
+            existing = new_book.get_metadata("DC", "source")
+            if not any(value == source_uid for value, _ in existing):
+                new_book.add_metadata("DC", "source", source_uid)
+
         # ebooklib's _load_spine turns every child of <spine> into an
         # (idref, linear) tuple — including XML comments, which become
         # (None, None) and crash lxml at write time with "Argument must be
@@ -458,9 +553,33 @@ class EPUBBookLoader(BaseBookLoader):
             entry
             for entry in book.spine
             if not (isinstance(entry, tuple) and not entry[0])
+            and not entry_is_our_colophon(book, entry)
         ]
         new_book.toc = backfill_toc_hrefs(self._fix_toc_uids(book.toc))
+
+        # The disclosure itself is *not* added here. It names the model the
+        # run used, and with --model_list that is not settled until the last
+        # paragraph is translated — so it is stamped on the finished book,
+        # just before each write. See _stamp_disclosure.
+        self._disclosure_language = tag or self.language
+        self._disclosure_source = source_uid
         return new_book
+
+    def _stamp_disclosure(self, new_book):
+        """Say the file is a machine translation, on the book about to be written.
+
+        Every write route calls this immediately before `write_epub`, which
+        is the only moment the model is finally known. Doing nothing twice
+        is safe: the second call finds the colophon already there.
+        """
+        if not getattr(self, "disclose", True):
+            return
+        stamp_disclosure(
+            new_book,
+            model_id(getattr(self, "translate_model", None)),
+            getattr(self, "_disclosure_language", None) or self.language,
+            source_identifier=getattr(self, "_disclosure_source", None),
+        )
 
     def _fix_toc_uids(self, toc, counter=None):
         """Fix TOC items that have uid=None to prevent TypeError when writing NCX."""
@@ -1929,7 +2048,10 @@ class EPUBBookLoader(BaseBookLoader):
                 target = t
 
         for item in complete_book.get_items():
-            if item.file_name != fixname:
+            # A previous output's translation note is replaced by this run's,
+            # not carried alongside it — two would be two ids and two members
+            # of the same zip.
+            if item.file_name != fixname and not is_our_colophon(item):
                 new_book.add_item(item)
         if soup_complete:
             complete_item.content = soup_complete.encode()
@@ -1944,6 +2066,7 @@ class EPUBBookLoader(BaseBookLoader):
             fixstart,
             fixend,
         )
+        self._stamp_disclosure(new_book)
         epub.write_epub(f"{name_fix}", new_book, {})
 
     def has_nest_child(self, element, trans_taglist):
@@ -2649,7 +2772,14 @@ class EPUBBookLoader(BaseBookLoader):
         self.batch_init_then_wait()
         new_book = self._make_new_book(self.origin_book)
         trans_taglist = self.translate_tags.split(",")
-        document_items = list(self.origin_book.get_items_of_type(ITEM_DOCUMENT))
+        # A book being run through the tool a second time already carries a
+        # colophon. It is replaced, not translated and kept beside the new
+        # one — two of them would be two manifest entries under one id.
+        document_items = [
+            item
+            for item in self.origin_book.get_items_of_type(ITEM_DOCUMENT)
+            if not is_our_colophon(item)
+        ]
         chapter_plans = self._build_translation_plan(document_items, trans_taglist)
         self._planned_job_ids = [
             job.job_id for plan in chapter_plans for job in plan.jobs
@@ -2830,11 +2960,13 @@ class EPUBBookLoader(BaseBookLoader):
 
                 if self.accumulated_num > 1:
                     name, _ = os.path.splitext(self.epub_name)
+                    self._stamp_disclosure(new_book)
                     epub.write_epub(f"{name}_bilingual.epub", new_book, {})
             name, _ = os.path.splitext(self.epub_name)
             if self.batch_flag:
                 self.translate_model.batch()
             else:
+                self._stamp_disclosure(new_book)
                 epub.write_epub(f"{name}_bilingual.epub", new_book, {})
         except KeyboardInterrupt as e:
             print(e)
@@ -2915,12 +3047,24 @@ class EPUBBookLoader(BaseBookLoader):
         origin_book_temp = epub.read_epub(self.epub_name)
         new_temp_book = self._make_new_book(origin_book_temp)
         trans_taglist = self.translate_tags.split(",")
-        document_items = list(origin_book_temp.get_items_of_type(ITEM_DOCUMENT))
+        document_items = [
+            item
+            for item in origin_book_temp.get_items_of_type(ITEM_DOCUMENT)
+            if not is_our_colophon(item)
+        ]
         chapter_plans = iter(
             self._build_translation_plan(document_items, trans_taglist)
         )
         try:
             for item in origin_book_temp.get_items():
+                # A previous run's note is dropped, not carried: it has no
+                # plan (asking for one ended the recovery save with
+                # StopIteration), and copying it into the book anyway left
+                # the stamp below thinking the book was already stamped —
+                # so the recovery book kept the *last* run's claim, and
+                # --no_disclosure kept it too.
+                if is_our_colophon(item):
+                    continue
                 if item.get_type() == ITEM_DOCUMENT:
                     # one plan per document, consumed in document order: the
                     # replay must walk exactly the selection the processing
@@ -2954,6 +3098,7 @@ class EPUBBookLoader(BaseBookLoader):
                             )
                     item.content = chapter_plan.soup.encode()
                 new_temp_book.add_item(item)
+            self._stamp_disclosure(new_temp_book)
             epub.write_epub(temp_path, new_temp_book, {})
         except Exception as e:
             # The recovery book is the only artifact a crashed run leaves

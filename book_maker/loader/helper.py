@@ -1,5 +1,7 @@
 import posixpath
 import re
+import zipfile
+from dataclasses import dataclass
 import backoff
 import logging
 import uuid
@@ -25,6 +27,93 @@ SINGLETON_TAGS = frozenset(["figcaption", "caption", "legend", "summary"])
 VOID_TAGS = frozenset(
     ["area", "br", "col", "embed", "hr", "img", "input", "source", "track", "wbr"]
 )
+
+
+CONTAINER_PATH = "META-INF/container.xml"
+CONTAINER_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
+OPF_NS = "{http://www.idpf.org/2007/opf}"
+
+
+DC_NS = "{http://purl.org/dc/elements/1.1/}"
+
+
+@dataclass(frozen=True)
+class PackageInfo:
+    """What the source's `<package>` element says, read from the zip.
+
+    ebooklib's reader drops both of these, each for its own reason, and
+    both matter:
+
+    - `prefixes`: EPUB 3 resolves a `property` like `tdm:reservation`
+      through the package's `prefix` attribute. A translated book that
+      copies the metas without it declares nothing they refer to and the
+      property is undefined (epubcheck OPF-028).
+    - `unique_identifier`: the value of the `dc:identifier` the package
+      *names* as the book's identity. ebooklib's `book.uid` is the last
+      identified `dc:identifier` it happened to read instead (see
+      `derive_translation_identity`), which is a different string on any
+      book carrying an ISBN after its UUID — and the font-obfuscation key
+      is derived from this one, so the difference decides whether an
+      embedded font comes out readable.
+
+    `opf_dir` is where the package document lives, the coordinate system
+    every manifest href is relative to.
+    """
+
+    prefixes: dict
+    unique_identifier: str | None
+    opf_dir: str
+
+
+EMPTY_PACKAGE = PackageInfo(prefixes={}, unique_identifier=None, opf_dir="")
+
+
+def read_package(epub_path):
+    """Parse the source's package document straight out of the zip.
+
+    Anything unreadable — not a zip, no container, no package — comes back
+    as `EMPTY_PACKAGE` rather than raising: every caller has a defined
+    answer for "the book does not say", and the reader that opens the book
+    next reports a broken file far better than this would.
+    """
+    try:
+        with zipfile.ZipFile(epub_path) as archive:
+            container = etree.fromstring(archive.read(CONTAINER_PATH))
+            rootfile = container.find(f".//{CONTAINER_NS}rootfile")
+            full_path = rootfile.get("full-path") if rootfile is not None else None
+            if not full_path:
+                return EMPTY_PACKAGE
+            package = etree.fromstring(archive.read(full_path))
+    except Exception:
+        return EMPTY_PACKAGE
+
+    # The attribute is a flat whitespace-separated list of `name: uri`
+    # pairs. A trailing name with no URI is not a mapping and is dropped
+    # rather than guessed at.
+    tokens = (package.get("prefix") or "").split()
+    prefixes = {}
+    for index in range(0, len(tokens) - 1, 2):
+        name = tokens[index]
+        if name.endswith(":"):
+            prefixes[name[:-1]] = tokens[index + 1]
+
+    named = package.get("unique-identifier")
+    unique_identifier = None
+    for element in package.iter(f"{DC_NS}identifier"):
+        if named and element.get("id") == named:
+            unique_identifier = (element.text or "").strip()
+            break
+
+    return PackageInfo(
+        prefixes=prefixes,
+        unique_identifier=unique_identifier or None,
+        opf_dir=posixpath.dirname(full_path),
+    )
+
+
+def package_prefixes(epub_path):
+    """The `prefix` declarations on the source's `<package>`, as name -> URI."""
+    return read_package(epub_path).prefixes
 
 
 def derive_translation_identity(new_book, source_book, *facets):
