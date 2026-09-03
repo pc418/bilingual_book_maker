@@ -303,10 +303,6 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
   例如 `--exclude-translate-tags code,pre`；传入空字符串
   `--exclude-translate-tags ""` 可取消默认排除。
 
-- `--book_from`
-
-  选项指定电子阅读器类型（现在只有 kobo 可用），并使用 `--device_path` 指定挂载点。
-
 - `--api_base ${url}`
 
   如果你遇到了墙需要用 Cloudflare Workers 替换 api_base 请使用 `--api_base ${url}` 来替换。
@@ -487,9 +483,6 @@ python3 make_book.py --book_name test_books/animal_farm.epub --plan-classify all
 python3 make_book.py --book_name test_books/animal_farm.epub --prompt prompt_template_sample.txt
 # 或者
 python3 make_book.py --book_name test_books/animal_farm.epub --prompt "Please translate \`{text}\` to {language}"
-# 翻译 kobo e-reader 中，來自 Rakuten Kobo 的书籍
-python3 make_book.py --book_from kobo --device_path /tmp/kobo
-
 # 翻译 txt 文件
 python3 make_book.py --book_name test_books/the_little_prince.txt --test
 # 聚合多行翻译 txt 文件

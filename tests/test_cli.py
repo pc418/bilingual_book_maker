@@ -13,7 +13,7 @@ import pytest
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
@@ -454,30 +454,6 @@ def test_quiet_flag_is_accepted(tmp_path):
     proc, plan = _run(tmp_path, "--plan-dry-run", "--quiet")
     assert proc.returncode == 0
     assert plan.exists()
-
-
-def test_kobo_mode_does_not_require_book_name(tmp_path, monkeypatch):
-    src = tmp_path / BOOK.name
-    src.write_bytes(BOOK.read_bytes())
-    fake_obok = ModuleType("book_maker.obok")
-    fake_obok.cli_main = lambda device_path: str(src)
-    monkeypatch.setitem(sys.modules, "book_maker.obok", fake_obok)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "make_book.py",
-            "--book_from",
-            "kobo",
-            "--device_path",
-            "/mounted/kobo",
-            "--plan-dry-run",
-        ],
-    )
-
-    main()
-
-    assert (tmp_path / f"{src.stem}_plan.json").exists()
 
 
 def test_prompt_json_accepts_a_style_field():
