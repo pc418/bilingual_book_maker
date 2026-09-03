@@ -234,20 +234,32 @@ def translate_legacy_argv(argv):
         elif alias in _NATIVE_FORMATS:
             fmt, alias_model, env_key = _NATIVE_FORMATS[alias]
             if has_format and given_format != fmt:
-                # The alias names one route and --api_format another. There
-                # is no faithful reading: honouring the format would send
-                # this alias's key to a host it does not belong to, and
-                # honouring the alias would ignore what the user typed.
-                _fail(
-                    f"--model {alias} selects the {fmt} route, but "
-                    f"--api_format {given_format} selects another one. Pass "
-                    f"one of them: --api_format {fmt} for that route, or "
-                    f"drop --model {alias} and name the model id the "
-                    f"{given_format} endpoint uses."
-                )
-            api_format, model = fmt, alias_model
-            env_keys.append(env_key)
-            route_source = f"--model {alias}"
+                if key_flag != _ALIAS_KEY_FLAG.get(alias):
+                    # Nothing says the old route was meant: an endpoint may
+                    # legitimately serve a model called `groq` or `gemini`
+                    # (a LiteLLM config names its backends whatever it
+                    # likes), and the format and any base were given
+                    # explicitly. Hand the id back untouched.
+                    passthrough_model = alias
+                    route_source = None
+                else:
+                    # The alias's own key flag is here, so the old route was
+                    # meant — and there is no faithful reading: honouring
+                    # the format would send that vendor's key to a host it
+                    # does not belong to, and honouring the alias would
+                    # ignore what the user typed.
+                    _fail(
+                        f"--model {alias} with {_ALIAS_KEY_FLAG[alias]} "
+                        f"selects the {fmt} route, but --api_format "
+                        f"{given_format} selects another one. Pass one of "
+                        f"them: --api_format {fmt} for that route, or drop "
+                        f"--model {alias} and name the model id the "
+                        f"{given_format} endpoint uses."
+                    )
+            else:
+                api_format, model = fmt, alias_model
+                env_keys.append(env_key)
+                route_source = f"--model {alias}"
         elif alias in _MT_FORMATS:
             api_format = _MT_FORMATS[alias]
             route_source = f"--model {alias}"

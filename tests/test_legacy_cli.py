@@ -142,16 +142,61 @@ class TestVendorRoutes:
             "--model": "gemini-flash-latest",
         }
 
-    @pytest.mark.parametrize("alias", ["gemini", "geminipro", "qwen", "groq", "xai"])
-    def test_an_alias_and_a_conflicting_format_is_refused_not_guessed(self, alias):
-        # honouring --api_format openai here would send this alias's key to
-        # api.openai.com; honouring the alias would ignore what was typed
+    @pytest.mark.parametrize(
+        "alias,key_flag",
+        [
+            ("gemini", "--gemini_key"),
+            ("geminipro", "--gemini_key"),
+            ("qwen", "--qwen_key"),
+            ("groq", "--groq_key"),
+            ("xai", "--xai_key"),
+        ],
+    )
+    def test_an_alias_with_its_key_flag_and_another_format_is_refused(
+        self, alias, key_flag
+    ):
+        # the vendor key flag proves the old route was meant; honouring
+        # --api_format openai would send that key to api.openai.com, and
+        # honouring the alias would ignore what was typed
         with pytest.raises(SystemExit) as err:
             translate_legacy_argv(
-                ["--api_format", "openai", "--model", alias, "--key", "sk-vendor"]
+                ["--api_format", "openai", "--model", alias, key_flag, "sk-vendor"]
             )
         message = str(err.value)
         assert alias in message and "openai" in message
+
+    def test_an_alias_word_with_no_vendor_key_is_a_model_id(self):
+        # a LiteLLM config may name a backend `groq`; the format and the
+        # address were both given explicitly, and no vendor key says
+        # otherwise, so there is nothing to rewrite
+        assert flags(
+            "--api_format",
+            "openai",
+            "--api_base",
+            "http://localhost:4000",
+            "--model",
+            "groq",
+            "--key",
+            "local",
+        ) == {
+            "--model": "groq",
+            "--api_format": "openai",
+            "--api_base": "http://localhost:4000",
+            "--key": "local",
+        }
+        assert (
+            notices(
+                "--api_format",
+                "openai",
+                "--api_base",
+                "http://localhost:4000",
+                "--model",
+                "groq",
+                "--key",
+                "local",
+            )
+            == ""
+        )
 
     def test_an_alias_beside_its_own_format_only_supplies_the_model(self):
         assert flags("--api_format", "gemini", "--model", "gemini") == {

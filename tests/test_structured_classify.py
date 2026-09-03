@@ -592,6 +592,28 @@ class TestRestoredRoutesMeetTodaysBase:
         assert gemini.usage.requests == 1
         assert gemini.usage.prompt == 120 and gemini.usage.completion == 45
 
+    def test_a_classification_request_is_priced_as_the_model_it_named(self):
+        # --plan-classify-model may name another model; charging its tokens
+        # to the translation model prices them wrong
+        from book_maker.translator.base_translator import PriceTable
+
+        gemini = self._gemini()
+        gemini.usage.prices = PriceTable(
+            {"gemini-pro-latest": {"input": 1.0, "output": 2.0}}, "USD"
+        )
+        gemini._note_usage(
+            SimpleNamespace(
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=5,
+                    candidates_token_count=1,
+                    cached_content_token_count=0,
+                )
+            ),
+            model="gemini-pro-latest",
+        )
+        assert gemini.usage.unpriced == set()
+        assert gemini.usage.spent > 0
+
     def test_a_response_with_no_usage_is_skipped_not_counted(self):
         gemini = self._gemini()
         gemini._note_usage(SimpleNamespace())
@@ -636,6 +658,40 @@ class TestRestoredRoutesMeetTodaysBase:
         from book_maker.translator import FORMAT_DICT
 
         assert FORMAT_DICT[fmt].SUPPORTS_PARALLEL_CONTEXT
+
+    @pytest.mark.parametrize("loader_class", ["EPUBBookLoader", "MarkdownBookLoader"])
+    def test_every_clone_path_gives_gemini_its_own_conversation(self, loader_class):
+        # gemini's context is the chat object, not the window lists: a
+        # shallow copy would share one conversation across parallel units,
+        # which is a thread race and cross-unit context bleed
+        from book_maker.loader.epub_loader import EPUBBookLoader
+        from book_maker.loader.md_loader import MarkdownBookLoader
+
+        cls = {
+            "EPUBBookLoader": EPUBBookLoader,
+            "MarkdownBookLoader": MarkdownBookLoader,
+        }[loader_class]
+
+        class FakeGemini:
+            def __init__(self):
+                self.context_flag = True
+                self.context_list = ["carried over"]
+                self.context_translated_list = ["carried over"]
+                self.convo = "shared conversation"
+
+            def create_convo(self):
+                self.convo = "fresh conversation"
+
+        loader = cls.__new__(cls)
+        loader.parallel_workers = 2
+        loader.translate_model = FakeGemini()
+
+        clone = cls._clone_translator_for_context(loader)
+
+        assert clone is not loader.translate_model
+        assert clone.context_list == [] and clone.context_translated_list == []
+        assert clone.convo == "fresh conversation"
+        assert loader.translate_model.convo == "shared conversation"
 
     @pytest.mark.parametrize("fmt", ["gemini", "qwen"])
     def test_neither_claims_a_session_history_or_the_batch_api(self, fmt):
