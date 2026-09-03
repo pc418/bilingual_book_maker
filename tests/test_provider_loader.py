@@ -164,7 +164,7 @@ class TestApiStyles:
         route = resolve_provider("p")
         assert (route.api_format, route.api_base) == (api_format, api_base)
 
-    def test_an_entrys_own_base_url_wins_over_the_styles(self, configs):
+    def test_the_entry_base_url_wins_over_the_style(self, configs):
         _write(
             configs.local_file,
             {"p": {"api_style": "gemini", "base_url": "https://gw.example/v1"}},
