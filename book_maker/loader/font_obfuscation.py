@@ -36,10 +36,9 @@ from xml.sax.saxutils import escape
 from urllib.parse import unquote
 
 from .helper import read_package
+from .rights import local_name
 
 ENCRYPTION_PATH = "META-INF/encryption.xml"
-
-ENC_NS = "{http://www.w3.org/2001/04/xmlenc#}"
 
 
 @dataclass(frozen=True)
@@ -93,13 +92,34 @@ def _unscramble(data, key, window):
     return bytes(out)
 
 
+def _child(element, name):
+    """The first direct child with this local name, or None."""
+    return next((el for el in element if local_name(el.tag) == name), None)
+
+
+def _descendant(element, name):
+    """The first descendant with this local name, or None."""
+    return next((el for el in element.iter() if local_name(el.tag) == name), None)
+
+
 def _declarations(archive):
-    """(algorithm, container-relative URI) for every encrypted resource."""
+    """(algorithm, container-relative URI) for every encrypted resource.
+
+    Matched by local name, and `EncryptionMethod` among direct children
+    only — the rule `rights.check_epub` gates on. Requiring the xmlenc
+    namespace here read *less* than the gate accepted: a producer who wrote
+    `EncryptedData` in the container namespace (or in none) cleared the
+    gate as font obfuscation and then had nothing restored and nothing
+    reported, so the output shipped a scrambled font with no declaration
+    left to explain it.
+    """
     root = ET.fromstring(archive.read(ENCRYPTION_PATH))
     found = []
-    for data in root.iter(f"{ENC_NS}EncryptedData"):
-        method = data.find(f"{ENC_NS}EncryptionMethod")
-        reference = data.find(f"{ENC_NS}CipherData/{ENC_NS}CipherReference")
+    for data in root.iter():
+        if local_name(data.tag) != "EncryptedData":
+            continue
+        method = _child(data, "EncryptionMethod")
+        reference = _descendant(data, "CipherReference")
         if method is None or reference is None:
             continue
         uri = reference.get("URI")

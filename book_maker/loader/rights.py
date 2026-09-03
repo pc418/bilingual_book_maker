@@ -45,7 +45,7 @@ FONT_OBFUSCATION = frozenset(
 )
 
 
-def _local_name(tag):
+def local_name(tag):
     """The element name without its namespace.
 
     Matching by local name is deliberate. The two elements below are only
@@ -53,6 +53,10 @@ def _local_name(tag):
     check that trusts the namespace lets a non-conforming one hide an AES
     declaration in plain sight — and this check exists precisely for files
     that are not playing fair.
+
+    `font_obfuscation` reads the same file by the same rule: a declaration
+    this gate accepted as font obfuscation has to be one the read path can
+    see, or the font stays scrambled with nothing said about it.
     """
     return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
 
@@ -95,7 +99,7 @@ def check_epub(path):
     # method somewhere the reader did not look is protection as far as this
     # tool is concerned — the cost of being wrong the other way is helping
     # circumvent something.
-    entries = [el for el in root.iter() if _local_name(el.tag) == "EncryptedData"]
+    entries = [el for el in root.iter() if local_name(el.tag) == "EncryptedData"]
     if not entries:
         # A declaration that declares nothing is malformed, and malformed
         # fails closed exactly like an unparsable one.
@@ -110,7 +114,7 @@ def check_epub(path):
         algorithms = [
             el.get("Algorithm")
             for el in entry
-            if _local_name(el.tag) == "EncryptionMethod"
+            if local_name(el.tag) == "EncryptionMethod"
         ]
         if not algorithms:
             return "drm"

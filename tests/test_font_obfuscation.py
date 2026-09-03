@@ -518,3 +518,101 @@ def test_a_font_name_with_an_ampersand_yields_well_formed_encryption_xml():
         for el in root.iter("{http://www.w3.org/2001/04/xmlenc#}CipherReference")
     ]
     assert uris == ["EPUB/fonts/A&B.otf"]
+
+
+
+# ------------- finding 1: the gate matches by local name, so must the read
+
+
+CONTAINER_NAMESPACED_ENCRYPTION = """<?xml version="1.0" encoding="UTF-8"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData>
+    <EncryptionMethod Algorithm="{algorithm}"/>
+    <CipherData><CipherReference URI="{uri}"/></CipherData>
+  </EncryptedData>
+</encryption>
+"""
+
+UNNAMESPACED_ENCRYPTION = """<?xml version="1.0" encoding="UTF-8"?>
+<encryption>
+  <EncryptedData>
+    <EncryptionMethod Algorithm="{algorithm}"/>
+    <CipherData><CipherReference URI="{uri}"/></CipherData>
+  </EncryptedData>
+</encryption>
+"""
+
+
+def _with_encryption(path, declaration):
+    """Rebuild `path` with `declaration` as its encryption.xml."""
+    replacement = path.with_suffix(".redeclared.epub")
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(replacement, "w") as target:
+        for info in source.infolist():
+            target.writestr(
+                info,
+                (
+                    declaration.encode("utf-8")
+                    if info.filename == ENCRYPTION_PATH
+                    else source.read(info.filename)
+                ),
+            )
+    replacement.replace(path)
+    return path
+
+
+@pytest.mark.parametrize(
+    "template",
+    [CONTAINER_NAMESPACED_ENCRYPTION, UNNAMESPACED_ENCRYPTION],
+    ids=["container-ns", "no-ns"],
+)
+def test_a_declaration_the_gate_accepted_is_read_by_the_same_rule(tmp_path, template):
+    """The DRM gate matches EncryptedData by local name; the read path used
+    to require the xmlenc namespace. A producer who wrote the elements in
+    the container namespace (or none) cleared the gate as font obfuscation
+    and then had *nothing* restored and nothing reported — the output
+    shipped a scrambled font with no declaration left to explain it."""
+    from book_maker.loader.rights import check_epub
+
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    _with_encryption(
+        path, template.format(algorithm=IDPF_ALGORITHM, uri="EPUB/fonts/obfuscated.otf")
+    )
+
+    assert check_epub(str(path)) == "ok", "the fixture must clear the gate"
+
+    book = epub.read_epub(str(path))
+    restored, unresolved = deobfuscate_fonts(book, str(path))
+
+    assert unresolved == []
+    assert [font.uri for font in restored] == ["EPUB/fonts/obfuscated.otf"]
+    assert book.get_item_with_id("font").content == LONG_FONT
+
+
+def test_an_oddly_namespaced_declaration_still_writes_a_conforming_one(tmp_path):
+    """Reading a loose declaration must not make us write one: the output's
+    encryption.xml is still xmlenc, and re-readable."""
+    path = _write_source(tmp_path / "book.epub", LONG_FONT, IDPF_ALGORITHM)
+    _with_encryption(
+        path,
+        CONTAINER_NAMESPACED_ENCRYPTION.format(
+            algorithm=IDPF_ALGORITHM, uri="EPUB/fonts/obfuscated.otf"
+        ),
+    )
+    loader = _load(path)
+    loader.quiet = True
+    loader.make_bilingual_book()
+
+    output = tmp_path / "book_bilingual.epub"
+    member = "EPUB/fonts/obfuscated.otf"
+    with zipfile.ZipFile(output) as archive:
+        declaration = archive.read(ENCRYPTION_PATH)
+        shipped = archive.read(member)
+
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(declaration)
+    assert [
+        el.get("URI")
+        for el in root.iter("{http://www.w3.org/2001/04/xmlenc#}CipherReference")
+    ] == [member]
+    assert _obfuscate(shipped, IDPF_ALGORITHM, _output_identifier(output)) == LONG_FONT
