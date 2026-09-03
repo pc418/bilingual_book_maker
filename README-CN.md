@@ -43,14 +43,14 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 ## 翻译服务
 
-支持 OpenAI 和 Anthropic 的 API 格式。
-
-- `--api_format` 可用来选常规翻译引擎
-（`google`、`caiyun`、`deepl`、`deeplfree`、`tencent`、`customapi`），`codex` 或以 `openai`/`anthropic`指定API格式。
-- **OpenAI 兼容 API**: `--api_base`（以 `/v1` 结尾）、
+- `--api_format` 指定接口说的 API：`openai`、`anthropic`、`gemini`、`qwen`、
+  `groq`、`xai`、`litellm`、`codex`，或常规翻译引擎（`google`、`caiyun`、
+  `deepl`、`deeplfree`、`tencent`、`customapi`）。属于某一家的格式本身就带着
+  那家的地址，所以格式加一个 `--key` 就是一条完整命令。
+- **其他 OpenAI 兼容 API**: `--api_base`（以 `/v1` 结尾）、
   `--key`即 API key，以及模型标识符 `--model`。省略 `--api_base`即使用openai官方API，
   省略`--model`即使用gpt-5.6-luna。
-- 或使用`--provider`进行翻译: `bbm_providers.example.json` 里预设了以下厂家（Gemini、Qwen、xAI、Groq、OrcaRouter、Ollama、DeepSeek、
+- 或使用`--provider`进行翻译: `bbm_providers.example.json` 里预设了以下厂家（Gemini、Qwen、xAI、Groq、OrcaRouter、Ollama、LiteLLM、DeepSeek、
   SiliconFlow、OpenRouter）：复制为 `bbm_providers.json`，并修改其中的key，
   例如`--provider gemini` 就是使用其中 Gemini 的api。
 - `--key` 可以写多个 key，英文逗号分隔，轮换使用。
@@ -95,16 +95,21 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * Gemini
 
+  走 Gemini 官方接口。可以指定任意 Gemini 模型 ID，不写 `--model` 就是
+  `gemini-flash-latest`。`--interval` 设置请求间隔，免费额度靠它避开限流。
+
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format gemini --key ${gemini_key} --model gemini-flash-latest
   ```
 
 * Qwen
 
-  使用 [Qwen](https://www.aliyun.com/product/dashscope) 模型进行翻译，支持 qwen-mt-turbo 和 qwen-mt-plus 模型。
+  百炼上的 [Qwen-MT](https://www.aliyun.com/product/dashscope)：它是翻译模型而不是
+  对话模型，请求里写的是源语言和目标语言而不是提示词。支持 qwen-mt-turbo（默认）
+  和 qwen-mt-plus，不想自动检测源语言时用 `--source_lang` 指定。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format qwen --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
   ```
 
 * 腾讯交互翻译
@@ -116,7 +121,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 * [xAI](https://x.ai)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-beta
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-beta
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -138,10 +143,20 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 * [Groq](https://console.groq.com/keys)
 
-  GroqCloud 当前支持的模型可以查看[Supported Models](https://console.groq.com/docs/models)
+  必须写 `--model`：GroqCloud 的模型表更新很快，当前支持的模型见
+  [Supported Models](https://console.groq.com/docs/models)。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.groq.com/openai/v1 --key [your_key] --model llama-3.3-70b-versatile
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format groq --key [your_key] --model llama-3.3-70b-versatile
+  ```
+
+* [LiteLLM](https://docs.litellm.ai/docs/simple_proxy)
+
+  LiteLLM 代理，后端由它自己的配置决定，`--model` 写的是那份配置里的名字。
+  默认地址是本机上代理的默认端口，代理在别处就用 `--api_base` 指定。
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format litellm --model ${name_in_your_litellm_config}
   ```
 
 * [Codex](https://developers.openai.com/codex/cli)
@@ -183,7 +198,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
   | 字段 | 必填 | 说明 |
   |------|------|------|
-  | `api_style` | 是 | API请求格式，`openai` 或 `anthropic` |
+  | `api_style` | 是 | API请求格式：`openai`、`anthropic`、`gemini`、`qwen`、`groq`、`xai` 或 `litellm` |
   | `base_url` | 否 | API 地址。不填则使用该 api_style 的默认地址 |
   | `default_models` | 否 | 默认模型列表。不填则必须通过 `--model_list` 指定 |
   | `env_key` | 否 | 读取 API key 的环境变量名。不填则必须通过 `--api_key` 传入 |
@@ -225,16 +240,21 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - `--key`:
 
-  接口的 API key。多个 key 用英文逗号分隔会轮换使用，绕开单 key 限流。不写时依次读取 `$BBM_API_KEY`，再读取该格式自己的变量：`$OPENAI_API_KEY`、`$ANTHROPIC_API_KEY`、`$BBM_CAIYUN_API_KEY`、`$BBM_DEEPL_API_KEY`。旧的各家 key 参数（`--openai_key` 等）仍然可用。`--api_key` 是同一个参数的旧名字。
+  接口的 API key。多个 key 用英文逗号分隔会轮换使用，绕开单 key 限流。不写时依次读取 `$BBM_API_KEY`，再读取该格式自己的变量：`$OPENAI_API_KEY`、`$ANTHROPIC_API_KEY`、`$BBM_GOOGLE_GEMINI_KEY`、`$BBM_QWEN_API_KEY`、`$BBM_GROQ_API_KEY`、`$BBM_XAI_API_KEY`、`$BBM_CAIYUN_API_KEY`、`$BBM_DEEPL_API_KEY`。旧的各家 key 参数（`--openai_key` 等）仍然可用。`--api_key` 是同一个参数的旧名字。
 
 - `--api_format`:
 
-  接口说的 API。省略时自动推断：`anthropic.com` 的地址，或没写 `--api_base` 且模型 ID 含 `claude`，视为 `anthropic`；其余为 `openai`。推断不对或要选引擎时才需要写。
+  接口说的 API。省略时自动推断：`anthropic.com` 的地址，或没写 `--api_base` 且模型 ID 含 `claude`，视为 `anthropic`；其余为 `openai`。推断不对、想直接点名某一家而不写地址、或者要选引擎时才需要写。
 
   | 格式 | key | 说明 |
   |------|-----|------|
-  | `openai`（默认） | 需要：`--key`，或 `$BBM_API_KEY`、`$OPENAI_API_KEY`；本地地址（如 Ollama）不需要 | 任何 OpenAI 兼容接口：OpenAI 官方、DeepSeek、Gemini、Qwen、xAI、Groq、OpenRouter、Ollama…… 地址写在 `--api_base` |
+  | `openai`（默认） | 需要：`--key`，或 `$BBM_API_KEY`、`$OPENAI_API_KEY`；本地地址（如 Ollama）不需要 | 任何 OpenAI 兼容接口：OpenAI 官方、DeepSeek、OpenRouter、Ollama…… 地址写在 `--api_base` |
   | `anthropic` | 需要：`--key`，或 `$BBM_API_KEY`、`$ANTHROPIC_API_KEY` | Anthropic 官方，以及说 Messages API 的网关 |
+  | `gemini` | 需要：`--key`，或 `$BBM_API_KEY`、`$BBM_GOOGLE_GEMINI_KEY`、`$GEMINI_API_KEY` | Gemini 官方接口，默认 `gemini-flash-latest`；`--interval` 控制节奏 |
+  | `qwen` | 需要：`--key`，或 `$BBM_API_KEY`、`$BBM_QWEN_API_KEY`、`$DASHSCOPE_API_KEY` | 百炼上的 Qwen-MT，默认 `qwen-mt-turbo`；读 `--source_lang` |
+  | `groq` | 需要：`--key`，或 `$BBM_API_KEY`、`$BBM_GROQ_API_KEY`、`$GROQ_API_KEY` | GroqCloud；必须写 `--model` |
+  | `xai` | 需要：`--key`，或 `$BBM_API_KEY`、`$BBM_XAI_API_KEY`、`$XAI_API_KEY` | xAI；必须写 `--model` |
+  | `litellm` | 本机代理不需要；否则 `--key` 或 `$LITELLM_MASTER_KEY` | LiteLLM 代理，不写 `--api_base` 就是 `http://localhost:4000`；必须写 `--model` |
   | `codex` | 不需要：`codex login`（Codex CLI） | 本地 `codex app-server` 侧车，消耗 ChatGPT/Codex 套餐额度，默认 `gpt-5.6-luna` |
   | `google` | 不需要 | 免费谷歌翻译 |
   | `caiyun` | 需要：`--key` 或 `$BBM_CAIYUN_API_KEY` | 彩云小译 |
@@ -243,7 +263,9 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
   | `tencent` | 不需要 | 腾讯交互翻译，免费 |
   | `customapi` | 不需要；`--api_base` 是你的翻译接口地址 | 自定义翻译 API |
 
-- `--source_lang`: 源语言，只有需要显式声明的接口才用（目前只有 `--api_format customapi`），默认自动检测。
+- `--source_lang`: 源语言，给需要显式声明的路线用：`--api_format qwen`（请求里就是一对语言）和 `--api_format customapi`，默认自动检测。
+
+- `--interval`: 请求之间等待的秒数，例如 `--interval 0.1` 就是 100ms。只有 `--api_format gemini` 会按它控制节奏，其余路线忽略。默认 `0.01`。
 
 - `--test`:
 
@@ -339,7 +361,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 - `--use_context`:
   使用上下文模式翻译。
   模型提示词将创建三段摘要。如果是翻译的开始，它将总结发送的整个段落（大小取决于`--accumulated_num`）。
-  对于后续的段落，它将修改摘要，以包括最近段落的细节，创建一个完整的段落上下文负载，包含整个翻译作品的重要细节。 这提高了整个翻译过程中的流畅性和语气的一致性。 此选项适用于所有ChatGPT兼容型号和Gemini型号。
+  对于后续的段落，它将修改摘要，以包括最近段落的细节，创建一个完整的段落上下文负载，包含整个翻译作品的重要细节。 这提高了整个翻译过程中的流畅性和语气的一致性。 这段摘要是 `openai`、`groq`、`xai`、`litellm` 和 `anthropic` 格式的做法；`gemini` 格式改为保留自己的对话历史，`qwen` 则保留最近若干条原文/译文作为翻译记忆——同一个参数，各走各自的机制。
 
   - `--context_paragraph_limit`:
 
@@ -430,7 +452,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 - `--extra_body`:
 
   以 JSON 字符串向 ChatGPT/OpenAI 衍生请求路径透传额外参数，包括 OpenAI 风格的
-  自定义 provider 和 xAI。Claude、Gemini、Qwen、Groq 等其他翻译器目前会忽略该参数。例如：
+  自定义 provider。其余格式会明说并忽略该参数。例如：
 
   ```shell
   python3 make_book.py --book_name book.epub --extra_body '{"chat_template_kwargs":{"enable_thinking":false}}'
@@ -455,8 +477,8 @@ python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key}
 # 或翻译完整本书
 python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --language zh-hans
 
-# 通过 Gemini 的 OpenAI 兼容接口翻译整本书
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
+# 用 Gemini 翻译整本书
+python3 make_book.py --book_name test_books/animal_farm.epub --api_format gemini --key ${gemini_key} --model gemini-flash-latest
 
 # 指定环境变量来略过 --key
 export OPENAI_API_KEY=${your_api_key}

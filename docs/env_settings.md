@@ -17,11 +17,17 @@ export for that vendor:
 |---|---|
 | `openai` | `OPENAI_API_KEY`, `BBM_OPENAI_API_KEY` |
 | `anthropic` | `ANTHROPIC_API_KEY`, `BBM_CLAUDE_API_KEY` |
+| `gemini` | `BBM_GOOGLE_GEMINI_KEY`, `GEMINI_API_KEY` |
+| `qwen` | `BBM_QWEN_API_KEY`, `DASHSCOPE_API_KEY` |
+| `groq` | `BBM_GROQ_API_KEY`, `GROQ_API_KEY` |
+| `xai` | `BBM_XAI_API_KEY`, `XAI_API_KEY` |
+| `litellm` | `BBM_LITELLM_API_KEY`, `LITELLM_MASTER_KEY` |
 | `caiyun` | `BBM_CAIYUN_API_KEY` |
 | `deepl` | `BBM_DEEPL_API_KEY` |
 
 `google`, `deeplfree`, `tencent` and `customapi` need no key, and neither
-does an endpoint on localhost.
+does an endpoint on localhost — a LiteLLM proxy there included, which is
+where `--api_format litellm` points unless `--api_base` says otherwise.
 
 The CLI does not read `.env` files. Export the variables first, or source a
 git-ignored file before running: `set -a; source .env; set +a; bbook_maker ...`
@@ -38,11 +44,12 @@ See [Endpoints, models and languages](./model_lang.md#named-endpoints---provider
 
 ## Old per-vendor variables
 
-`BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, `BBM_XAI_API_KEY` and
-`BBM_QWEN_API_KEY` are still read when an old-style command implies that
-route (see [Migrating from the old flags](migration.md)). They are not
-consulted for a command written in the new flags, where `--api_base` decides
-the endpoint and the key must match it.
+The four vendor variables above are also read when an old-style command
+implies that route — `--model gemini` consults `BBM_GOOGLE_GEMINI_KEY` even
+though the rewritten command names the format (see [Migrating from the old
+flags](migration.md)). What they are never consulted for is a command whose
+`--api_base` names some other endpoint: there the key must match the address,
+and only `BBM_API_KEY` and the format's own variables apply.
 
 ## Prompt overrides
 

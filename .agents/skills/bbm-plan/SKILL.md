@@ -65,7 +65,7 @@ Read the answer into the `ROUTE` array every later step uses:
 
 | the user picks | `ROUTE` | format |
 |---|---|---|
-| a provider entry `NAME` | `(--provider NAME)` — add `--model "$MODEL"` only if they named a different one | the entry's `api_style`: `openai` → openai, `anthropic` (`claude` in older files) → anthropic |
+| a provider entry `NAME` | `(--provider NAME)` — add `--model "$MODEL"` only if they named a different one | the entry's `api_style`, which is the format: `openai`, `anthropic` (`claude` in older files), `gemini`, `qwen`, `groq`, `xai`, `litellm` |
 | a bare `OPENAI_API_KEY` | `(--provider openai)` after step 0b | openai |
 | a bare `ANTHROPIC_API_KEY` | `(--provider anthropic)` after step 0b | anthropic |
 | `BBM_ORCAROUTER_API_KEY` | `(--model orcarouter)` | openai |
@@ -93,8 +93,9 @@ Then tell them exactly what to edit and stop until they say it is done:
   `default_models` (the exact id the endpoint spells) and `env_key`; delete
   the `FILL-ME` entry if unused. The file holds no secrets — `env_key`
   only names a variable. The shape is `{"providers": {NAME: {...}}}`;
-  `api_style` is `openai` or `anthropic`; a vendor such as Gemini is
-  `openai` plus its `base_url`, and the example file ships those entries.
+  `api_style` is the format: `openai`, `anthropic`, `gemini`, `qwen`,
+  `groq`, `xai` or `litellm`, and the example file ships an entry for each.
+  A vendor with no style of its own is `openai` plus its `base_url`.
   An optional
   `prices` block (`{"<model id>": {"input", "output", "cached_input"}}`,
   per million tokens; `currency` defaults to USD) makes the progress bar
@@ -240,11 +241,12 @@ legal alternatives.
 
 | format | `ROUTE` | `CONTEXT` | why |
 |---|---|---|---|
-| openai (any OpenAI-shaped entry, `orcarouter`) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
+| openai (any OpenAI-shaped entry, `orcarouter`, and `groq`/`xai`/`litellm`, which are that route at their own address) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
 | anthropic (`api_style: anthropic`) | `(--provider NAME)` | `(--use_context session)` | the same history, and this route keeps it |
+| gemini, qwen | `(--provider NAME)` | `(--use_context)` | neither keeps a re-sendable session history, so `--use_context session` is refused; window mode is what they have — Gemini's own chat history, Qwen's translation memory |
 | codex | `(--model codex)` | `()` | the thread is the context; a context flag has nothing to add to it |
 
-Common to all three, per step: `--plan-classify agent` always; the smoke
+Common to all of them, per step: `--plan-classify agent` always; the smoke
 adds `--quiet --test --test_num 8`; the full run adds `--quiet --resume`.
 Nothing from the "Never pass in plan mode" list, ever.
 
