@@ -518,9 +518,10 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 - `--extra_body`:
 
-  Pass additional JSON parameters on the `openai` request path, including
-  OpenAI-style custom providers. Every other format says so and ignores it.
-  Provide a JSON string with the desired parameters.
+  Pass additional JSON parameters on the routes built on the OpenAI request
+  path — `openai` and the OpenAI-style custom providers, and so also
+  `groq`, `xai`, `litellm` and `--model orcarouter`. Every other format says
+  so and ignores it. Provide a JSON string with the desired parameters.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'

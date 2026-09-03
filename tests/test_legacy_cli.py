@@ -142,6 +142,23 @@ class TestVendorRoutes:
             "--model": "gemini-flash-latest",
         }
 
+    @pytest.mark.parametrize("alias", ["gemini", "geminipro", "qwen", "groq", "xai"])
+    def test_an_alias_and_a_conflicting_format_is_refused_not_guessed(self, alias):
+        # honouring --api_format openai here would send this alias's key to
+        # api.openai.com; honouring the alias would ignore what was typed
+        with pytest.raises(SystemExit) as err:
+            translate_legacy_argv(
+                ["--api_format", "openai", "--model", alias, "--key", "sk-vendor"]
+            )
+        message = str(err.value)
+        assert alias in message and "openai" in message
+
+    def test_an_alias_beside_its_own_format_only_supplies_the_model(self):
+        assert flags("--api_format", "gemini", "--model", "gemini") == {
+            "--model": "gemini-flash-latest",
+            "--api_format": "gemini",
+        }
+
     def test_a_qwen_model_id_beside_an_explicit_format_is_not_rewritten(self):
         # `qwen-mt-plus` is a real id on the qwen route, so a command that
         # already names the format is a modern one with nothing to apologise
@@ -151,6 +168,12 @@ class TestVendorRoutes:
             "--model": "qwen-mt-plus",
         }
         assert notices("--api_format", "qwen", "--model", "qwen-mt-plus") == ""
+        # and the same id at a gateway on the openai format, which is a real
+        # command too: DashScope's compatibility base serves it
+        assert flags("--api_format", "openai", "--model", "qwen-mt-plus") == {
+            "--model": "qwen-mt-plus",
+            "--api_format": "openai",
+        }
 
     @pytest.mark.parametrize(
         "alias,fmt",

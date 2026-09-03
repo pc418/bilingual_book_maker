@@ -773,6 +773,56 @@ class TestVendorFormats:
         assert f"--model is required for the {fmt} format" in output
         assert example in output
 
+    def test_a_format_that_overrides_a_provider_drops_its_key(self, provider_entry):
+        # a groq entry used with --api_format xai would otherwise put
+        # GROQ_KEY first while the request goes to api.x.ai
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="groq", env_key="BBM_TEST_PROVIDER_KEY")
+        options = _options(provider="p", api_format="xai", model="grok-beta")
+        _, api_format, env_keys = resolve_endpoint(options)
+
+        assert api_format == "xai"
+        assert options.api_base == "https://api.x.ai/v1"
+        assert env_keys == ()
+
+    def test_a_provider_whose_format_is_kept_still_leads_with_its_key(
+        self, provider_entry
+    ):
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="groq", env_key="BBM_TEST_PROVIDER_KEY")
+        options = _options(provider="p", api_format="groq", model="llama-3.3-70b")
+        _, _, env_keys = resolve_endpoint(options)
+
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
+
+    @pytest.mark.parametrize("fmt", ["groq", "xai", "litellm"])
+    def test_extra_body_reaches_the_routes_built_on_the_openai_path(
+        self, tmp_path, fmt
+    ):
+        # gating on the format name told a groq run its fields were dropped
+        # when the request path it inherits sends them
+        src = tmp_path / BOOK.name
+        src.write_bytes(BOOK.read_bytes())
+        proc = _cli(
+            "--book_name",
+            str(src),
+            "--api_format",
+            fmt,
+            "--key",
+            "sk-test",
+            "--model",
+            "m",
+            "--extra_body",
+            '{"a": 1}',
+            "--test",
+            "--test_num",
+            "1",
+        )
+        output = proc.stdout + proc.stderr
+        assert "--extra_body is ignored" not in output, output
+
     def test_every_format_that_defaults_a_model_can_be_asked_for_one(self):
         # a default model on a format whose class refuses --model would be a
         # command that cannot run
@@ -1061,6 +1111,36 @@ def test_the_file_filter_gate_runs_before_any_model_setup(tmp_path):
     assert proc.returncode == 1
     assert "--exclude_filelist" in " ".join(proc.stdout.split())
     assert "Codex:" not in proc.stdout
+
+
+def test_batch_is_refused_on_every_route_without_the_batch_api(tmp_path):
+    # the loader calls batch_init / add_to_batch_translate_queue /
+    # is_completed_batch on the translator, so a route that has none of them
+    # used to accept the flag and die on AttributeError partway through
+    from book_maker.translator import FORMAT_DICT
+
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    for fmt, cls in FORMAT_DICT.items():
+        if cls.SUPPORTS_BATCH_API:
+            continue
+        proc = _cli(
+            "--book_name",
+            str(src),
+            "--api_format",
+            fmt,
+            "--key",
+            "sk-test",
+            "--model",
+            "m",
+            "--batch",
+            "--test",
+            "--test_num",
+            "1",
+        )
+        output = " ".join((proc.stdout + proc.stderr).split())
+        assert proc.returncode != 0, fmt
+        assert f"the {fmt} format does not have" in output, output
 
 
 def test_batch_is_refused_on_the_codex_format(tmp_path):

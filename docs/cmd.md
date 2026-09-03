@@ -54,9 +54,9 @@ sections after it provide additional notes for selected workflows.
 | `--block_size N` | Merge paragraphs into delimiter-translated blocks. |
 | `--sentence_mode` | Translate EPUB paragraphs sentence by sentence; incompatible with plan mode. |
 | `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. Refused with `--use_context session` (one history) and on the `codex` format (one thread). |
-| `--batch` | Submit an EPUB ChatGPT Batch API job; incompatible with plan mode. |
+| `--batch` | Submit an EPUB ChatGPT Batch API job; incompatible with plan mode, and refused on a route that does not implement the Batch API. |
 | `--batch-use` | Consume a previously submitted batch job; incompatible with plan mode. |
-| `--extra_body JSON` | Extra request fields for the `openai` route; other formats ignore it and say so. |
+| `--extra_body JSON` | Extra request fields for the routes built on the OpenAI request path (`openai`, `groq`, `xai`, `litellm`, `--model orcarouter`); the others ignore it and say so. |
 | `--quiet` | Suppress EPUB progress bars and paragraph echoes, not reports/errors. |
 | `--proxy URL` | Set HTTP/HTTPS proxy environment variables for the run. |
 

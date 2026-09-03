@@ -95,7 +95,10 @@ bbook_maker --book_name book.epub --provider nvidia --language ja
 `anthropic`, `gemini`, `qwen`, `groq`, `xai`, `litellm` — plus `claude` as
 the older spelling of `anthropic`. Any other OpenAI-compatible host is
 `openai` with its address in `base_url`. The shipped
-`bbm_providers.example.json` has an entry for each. `default_models` supplies `--model` when it
+`bbm_providers.example.json` has an entry for each. An explicit `--api_format` still wins over the entry's `api_style`, but
+then the run is calling a different endpoint than the entry describes, so
+the entry's `env_key` is not read for it — the key would belong to the
+other vendor. The run says so. `default_models` supplies `--model` when it
 holds one id and `--model_list` when it holds several, and `env_key` names
 the variable to read the key from; no secret goes in the file. Anything
 passed explicitly wins, so `--provider nvidia --model <id>` keeps that
