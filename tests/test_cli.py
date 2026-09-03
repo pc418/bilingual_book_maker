@@ -834,6 +834,29 @@ class TestVendorFormats:
 
         assert env_keys == ()
 
+    def test_two_formats_with_no_address_are_two_hosts(self, provider_entry):
+        # openai and anthropic have no address written down here, and
+        # treating both as "no address" made them compare equal, so an
+        # openai entry asked for the anthropic format kept its key and sent
+        # it to api.anthropic.com
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="openai", env_key="BBM_TEST_PROVIDER_KEY")
+        options = _options(provider="p", api_format="anthropic", model="claude-x")
+        _, api_format, env_keys = resolve_endpoint(options)
+
+        assert api_format == "anthropic"
+        assert env_keys == ()
+
+    def test_a_base_less_entry_on_its_own_format_keeps_its_key(self, provider_entry):
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="openai", env_key="BBM_TEST_PROVIDER_KEY")
+        options = _options(provider="p", model="gpt-5-mini")
+        _, _, env_keys = resolve_endpoint(options)
+
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
+
     def test_the_same_address_retyped_is_still_the_entrys(self, provider_entry):
         # a trailing slash is not a different host
         from book_maker.cli import resolve_endpoint
