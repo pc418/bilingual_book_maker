@@ -338,10 +338,6 @@ The OpenAI and the Anthropic API formats are supported.
 
   **Tip**: Use `--exclude-translate-tags ""` to translate all content including code blocks (overrides the default exclusion).
 
-- `--book_from`:
-
-  Use `--book_from` option to specify e-reader type (Now only `kobo` is available), and use `--device_path` to specify the mounting point.
-
 - `--api_base`:
 
   If you want to change api_base like using Cloudflare Workers, use `--api_base <URL>` to support it.
@@ -564,9 +560,6 @@ python3 make_book.py --book_name test_books/animal_farm.epub --prompt prompt_tem
 python3 make_book.py --book_name test_books/animal_farm.epub --prompt prompt_template_sample.json
 # or
 python3 make_book.py --book_name test_books/animal_farm.epub --prompt "Please translate \`{text}\` to {language}"
-
-# Translate books download from Rakuten Kobo on kobo e-reader
-python3 make_book.py --book_from kobo --device_path /tmp/kobo
 
 # translate txt file
 python3 make_book.py --book_name test_books/the_little_prince.txt --test --language zh-hans

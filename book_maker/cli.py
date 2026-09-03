@@ -423,20 +423,6 @@ def build_parser():
         type=str,
         help="path of the book/source file to be translated",
     )
-    parser.add_argument(
-        "--book_from",
-        dest="book_from",
-        type=str,
-        choices=["kobo"],  # support kindle later
-        metavar="E-READER",
-        help="e-reader type, available: {%(choices)s}",
-    )
-    parser.add_argument(
-        "--device_path",
-        dest="device_path",
-        type=str,
-        help="Path of e-reader device",
-    )
     ########## ENDPOINT ##########
     parser.add_argument(
         "--key",
@@ -859,17 +845,6 @@ def main():
     if options.plan_classify == "most":
         print("[yellow]--plan-classify most is now --plan-classify all[/yellow]")
         options.plan_classify = "all"
-
-    # Kobo mode supplies the source book itself. Resolve it before validating
-    # --book_name so users do not need a meaningless placeholder file.
-    if options.book_from == "kobo":
-        from book_maker import obok
-
-        if options.device_path is None:
-            raise Exception(
-                "Device path is not given, please specify the path by --device_path <DEVICE_PATH>",
-            )
-        options.book_name = obok.cli_main(options.device_path)
 
     if not options.book_name:
         print("Error: please provide the path of your book using --book_name <path>")

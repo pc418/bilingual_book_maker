@@ -11,8 +11,6 @@ sections after it provide additional notes for selected workflows.
 | Option | Purpose |
 |---|---|
 | `--book_name PATH` | Input EPUB, TXT, Markdown, SRT, or PDF path (required). |
-| `--book_from kobo` | Import from a Kobo device instead of a normal source path. |
-| `--device_path PATH` | Kobo mount path used with `--book_from`. |
 | `--language LANGUAGE` | Target language; default `zh-hans`. |
 | `--source_lang LANGUAGE` | Source language for models such as Qwen; default `auto`. |
 | `--single_translate` | Output translation only instead of bilingual text. |
