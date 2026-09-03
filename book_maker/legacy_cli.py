@@ -1,7 +1,7 @@
 """Rewrite old command lines into the endpoint surface.
 
 This fork selects a translator by endpoint (`--api_base`, `--key`,
-`--api_format`, `--model_list`) rather than by model name. Every flag that
+`--api_format`, `--model`) rather than by model name. Every flag that
 change removed is still accepted here and rewritten before argparse runs, so
 commands, scripts and CI written against the old CLI keep working.
 
@@ -24,13 +24,10 @@ from dataclasses import dataclass, field
 
 from book_maker.provider_loader import DASHSCOPE_BASE, GEMINI_BASE
 
-# Legacy `--model` value -> what it becomes. `fmt` is an --api_format,
-# `base` an --api_base, `model` the head of that alias's old preset list.
-# Only the aliases whose model is still served are kept. The rest —
-# `gpt4`, `gpt5mini`, `o1`, `o1mini`, `o1preview` — named models the
-# endpoint has retired, so translating them bought a command that parsed
-# and then failed at the model check anyway. Unlisted values travel
-# verbatim as model ids, and that same check names them.
+# Legacy `--model` value -> the head of its old preset list. Only aliases
+# whose model is still served are kept; `gpt4`, `gpt5mini`, `o1`, `o1mini`
+# and `o1preview` named retired models, and now travel verbatim to the
+# endpoint's own model check like any unknown value.
 _OPENAI_PRESETS = {
     "gpt4omini": "gpt-4o-mini",
     "gpt4o": "gpt-4o",
@@ -91,10 +88,7 @@ _ALIAS_KEY_FLAG = {
     "qwen-mt-plus": "--qwen_key",
     "caiyun": "--caiyun_key",
     "deepl": "--deepl_key",
-    # not a legacy alias — `--model orcarouter` is a live route (see
-    # translator/orcarouter_translator.py) — but the key flag it was
-    # documented with is old, and must not reach argparse unrecognized:
-    # that error echoes the key.
+    # a live route, not a legacy alias; only its key flag is old
     "orcarouter": "--orcarouter_key",
 }
 
@@ -207,10 +201,6 @@ def translate_legacy_argv(argv):
     preferred = _ALIAS_KEY_FLAG.get(alias)
     if alias.lower().startswith("claude"):
         preferred = "--claude_key"
-    elif alias.lower().startswith("orcarouter/"):
-        # `orcarouter/<id>` addresses the same gateway as the bare alias, and
-        # the exact-name map above cannot list every model id it serves
-        preferred = "--orcarouter_key"
     key_flag = next((f for f in (preferred,) + _KEY_FLAGS if f and f in legacy), None)
     if key_flag:
         rest = ["--key", legacy[key_flag]] + rest
@@ -284,12 +274,6 @@ def translate_legacy_argv(argv):
                 "Azure now goes through its OpenAI-compatible endpoint; "
                 f"--api_base became {api_base}"
             )
-
-    # The old parser defaulted to --model chatgptapi, so a command with only
-    # a key named no model at all. Nothing is injected for it here: the
-    # openai format now has its own default (cli.DEFAULT_MODELS), so such a
-    # command still runs, and naming a model here would only override the
-    # format's default with a retired one.
 
     if passthrough_model is not None:
         rest = ["--model", passthrough_model] + rest

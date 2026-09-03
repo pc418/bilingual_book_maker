@@ -6,17 +6,17 @@ live gateway on 2026-08-07.
 
 ## The one rule that decides everything
 
-There is no model-name whitelist any more. A route is three flags plus the
-model id the endpoint itself uses:
+There is no model-name whitelist. A route is three flags plus the model id
+the endpoint itself uses:
 
 ```
 --api_base "$ROOT"  --key "$KEY"  [--api_format ...]  --model "$MODEL"
 ```
 
-`--api_format` is inferred: the `--api_base` host first (`*.anthropic.com` →
-`anthropic`, else `openai`), then the model id (`claude`/`anthropic` in it →
-`anthropic`). Pass it only to correct a wrong guess. Any model id reaches any
-endpoint; nothing needs to be registered first.
+`--api_format` is inferred from the `--api_base` host first (`*.anthropic.com`
+means `anthropic`, anything else `openai`), then from the model id (`claude`
+or `anthropic` in it means `anthropic`). Pass it only to correct a wrong
+guess. Any model id reaches any endpoint; nothing has to be registered.
 
 | the endpoint speaks | flags |
 |---|---|
@@ -24,32 +24,32 @@ endpoint; nothing needs to be registered first.
 | the anthropic shape, on an anthropic.com host | `--api_base "$ROOT" --model "$MODEL"` |
 | the anthropic shape, on a gateway domain | the same plus `--api_format anthropic` |
 | an entry in `bbm_providers.json` / `~/.bbm/providers.json` | `--provider NAME`, optionally `--model "$MODEL"` |
-| the OrcaRouter gateway | `--model orcarouter` (or `orcarouter/<id>`), no `--api_base` |
-| nothing — a local Codex sidecar on the user's plan | `--model codex`, no key, no base (SKILL.md §1c) |
+| the OrcaRouter gateway | `--model orcarouter`, no `--api_base` |
+| nothing: a local Codex sidecar on the user's plan | `--model codex`, no key, no base (SKILL.md §1c) |
 
-On the openai format `--model` may be left out entirely: it defaults to
+On the openai format `--model` may be left out; it defaults to
 `gpt-5.6-luna`. Every other format wants an id, and the anthropic format
 errors without one.
 
-`codex` is the one route with no endpoint to probe: it is not a model id and
+`codex` is the one route with no endpoint to probe. It is not a model id and
 not a host, so none of the probes below apply to it. `--model codex` and
 `--api_format codex` select the same thing.
 
-A wrong anthropic guess costs one request: the endpoint answers 404/405 and
-the run switches to `openai` for good, saying so. `--api_format openai` skips
-that attempt. `--api_base` may be pasted with its path (`.../v1/chat/completions`).
+A gateway asked for the anthropic shape it does not serve answers 404, and
+the run stops naming `--api_format openai` as the fix. `--api_base` may be
+pasted with its path (`.../v1/chat/completions`); the path is trimmed.
 
 Gemini, Groq, xAI, Qwen and every aggregator are reached through the OpenAI
-shape — their native wrappers were removed, and their OpenAI-compatible
-endpoints are better served by the universal translator (it probes for
-structured output, keeps context, and can run async and batch).
+shape. Their native wrappers are gone; the OpenAI translator probes for
+structured output, keeps context, and can run async and batch, which the
+wrappers could not.
 
 ## `--provider NAME`: the same route, written once
 
-An endpoint that is used repeatedly belongs in a provider file instead of on
-every command line. `bbm_providers.json` in the working directory is read
-first, then `~/.bbm/providers.json`; a project entry wins on a shared name.
-Each entry is the route spelled out:
+An endpoint used more than once belongs in a provider file, not on every
+command line. `bbm_providers.json` in the working directory is read first,
+then `~/.bbm/providers.json`; a project entry wins on a shared name. Each
+entry is the route spelled out:
 
 ```json
 {
@@ -64,25 +64,24 @@ Each entry is the route spelled out:
 }
 ```
 
-The `providers` wrapper is required — the loader reads nothing from a file
+The `providers` wrapper is required; the loader reads nothing from a file
 without it.
 
-`api_style` is `openai`, `claude` (→ `--api_format anthropic`), `gemini` or
+`api_style` is `openai`, `claude` (the `anthropic` format), `gemini` or
 `qwen` (both the openai format at their compatibility bases, so `base_url`
 is optional for them). `default_models` becomes `--model` when it holds one
-id and `--model_list` when it holds several; `env_key` is consulted for the
-key ahead of `BBM_API_KEY` and the format's conventional variables. **Anything passed
-explicitly wins**, so `--provider nvidia --model <id>` keeps the user's
-model. An unknown name is an error that names both files.
+id and `--model_list` when it holds several. `env_key` is read for the key
+ahead of `BBM_API_KEY` and the format's own variables. **Explicit flags
+win**, so `--provider nvidia --model <id>` keeps the user's model. An
+unknown name is an error that names both files.
 
 ## `--model orcarouter`: a gateway with no address to type
 
-`--model orcarouter` routes to OrcaRouter's OpenAI-shaped base and asks for
-its smart-routing pseudo-model; `--model orcarouter/<id>` pins one model
-there. Neither needs `--api_base`, and an `--api_base` you do pass wins.
-The key comes from `BBM_ORCAROUTER_API_KEY` (then the usual fallbacks). It
-is a shortcut, not a legacy alias — no deprecation notice is printed. Probe
-it as any OpenAI-shaped endpoint, against
+`--model orcarouter` sends the run to OrcaRouter's OpenAI-shaped endpoint
+and asks for its smart-routing model, `orcarouter/auto`. It needs no
+`--api_base`; one you pass wins. The key comes from
+`BBM_ORCAROUTER_API_KEY`. It is a supported route, not a legacy alias, so
+nothing is rewritten. Probe it as any OpenAI-shaped endpoint, against
 `https://api.orcarouter.ai/v1`.
 
 ## Binding `$KEY`, `$ROOT`, `$MODEL` from the entry before any probe
@@ -137,12 +136,11 @@ false negative twice over: gateways reject caps below their own floor
 (measured: `max_tokens must be greater than 2` on *every* model of one
 gateway), and OpenAI's own o-series/gpt-5 models reject `max_tokens`
 outright in favour of `max_completion_tokens`. A probe must test one thing.
-The repo's internal probes send no cap for exactly this reason
-(`translator/capabilities.py::probe_structured_output` and
-`probe_model_route`); match them. Measured 260902: a capped route probe
-against this fork's own default model came back "Unsupported parameter:
-'max_tokens' is not supported with this model", confirming nothing. The reply is
-a few tokens of "Hi!".
+The repo's own probes send no cap for exactly this reason
+(`translator/capabilities.py`, `probe_structured_output` and
+`probe_model_route`); match them. A capped probe against gpt-5.6-luna came
+back "'max_tokens' is not supported with this model" and confirmed nothing.
+The reply is a few tokens of "Hi!".
 
 **OpenAI shape** — the universal one. Most gateways serve every model they
 host on it, whoever made the model.
@@ -179,7 +177,7 @@ resolved to (`claude-haiku-4.5` → `claude-haiku-4-5-20251001`). Real Anthropic
 inference API paths"; a trailing `/v1` is now trimmed automatically (with a
 printed note), so either form works — but say `https://host` and mean it.
 
-**Gemini** has no separate route: use its OpenAI-compatible base,
+**Gemini** has no route of its own. Use its OpenAI-compatible base,
 `https://generativelanguage.googleapis.com/v1beta/openai/`, and probe it with
 the OpenAI-shape call above.
 
@@ -190,25 +188,21 @@ the OpenAI-shape call above.
 | `claude-` | OpenAI if a gateway base is set; else anthropic | the other one |
 | anything else (`gpt-`, `o1`, `o3`, `gemini-`, `grok-`, `llama`, `qwen`, `deepseek`, …) | OpenAI | — |
 
-Why OpenAI-first whenever the entry's `base_url` is a gateway: aggregators
-serve Claude and Gemini models on `/chat/completions` too. Go native only
-when the endpoint is Anthropic's own, or when the gateway rejects the OpenAI
-shape.
+OpenAI first at a gateway because aggregators serve Claude and Gemini
+models on `/chat/completions` too. Go native only when the endpoint is
+Anthropic's own, or when the gateway rejects the OpenAI shape.
 
 **The chat call is the verdict; the listing is only a hint.** `GET
 $ROOT/v1/models` (Bearer auth) is free on OpenAI-shaped endpoints and
-returns `{"data":[{"id":…}]}`, but it is not the authority on what the
-endpoint will serve: gateways routinely serve a model they do not list, or
-list it under another id, so a name missing from the listing is no reason
-to give up. Run the chat probe above; a reply is the answer. Fetch the
-listing when the probe fails, to tell a typo'd id from an unsupported path
-— both return 404, and only the listing separates them. The repo does the
-same thing internally (`translator/capabilities.py::probe_model_route`,
-run once at the first paid call), so what you check here is what the run
-checks. Some gateways add `supported_endpoint_types` per row — measured on
-one aggregator, every row read `['openai', 'anthropic']`. When that field
-is there it answers the shape question outright; read it instead of
-guessing.
+returns `{"data":[{"id":…}]}`, but gateways routinely serve a model they do
+not list, or list it under another id. A name missing from the listing is
+no reason to give up: run the chat probe, and a reply is the answer. Fetch
+the listing when the probe fails, to tell a typo'd id from an unsupported
+path; both return 404, and only the listing separates them. The run does
+the same (`translator/capabilities.py`, `probe_model_route`, once at the
+first paid call). Some gateways add `supported_endpoint_types` per row (on
+one aggregator every row read `['openai', 'anthropic']`); when it is there
+it answers the shape question outright.
 
 ## Capability caveats per route
 
@@ -223,9 +217,8 @@ Classification capability does not gate *this* skill — `--plan-classify
 agent` makes no API call, you are the classifier. It matters only if someone
 switches to `--plan-classify model`.
 
-The machine-translation engines have one channel and it translates whatever
-it is handed rather than answering it. They translate fine and cannot be
-asked a question.
+The machine-translation engines have one channel, and it translates
+whatever it is handed. They cannot be asked a question.
 
 ## What the run's own probe does later
 

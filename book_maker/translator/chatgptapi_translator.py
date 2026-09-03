@@ -176,12 +176,9 @@ def single_translation_schema(language):
     }
 
 
-# How long one request may hang before the SDK gives up on it, and how many
-# times the SDK retries on its own. The SDK's defaults (600 s, 3 tries) let a
-# router that accepts a request and never answers hold a run for half an
-# hour with nothing printed; a stall on a third-party gateway is what the
-# 260902 router test found, and 5 min × 2 tries is long enough for a
-# reasoning model's longest paragraph.
+# Per-request timeout and SDK retries. The SDK defaults (600 s, 3 tries) let
+# a gateway that accepts a request and never answers hold a run for half an
+# hour with nothing printed.
 REQUEST_LIMITS = {"timeout": 300.0, "max_retries": 1}
 
 
@@ -210,16 +207,11 @@ class ChatGPTAPI(Base):
     handoff_path = None
     context_compact_at = None
     no_context_compact = False
-    # Every model --model_list rotates through, not just the current one: the
-    # history is shared across all of them, so an auto budget has to be one
-    # the smallest window survives.
+    # Every model --model_list rotates through, not just the current one.
     _model_names = ()
-    # The models this run was given and has not yet confirmed the endpoint
-    # will serve, plus the refusal if it turned out not to. It is one dict,
-    # not two attributes, because parallel workers each translate through a
-    # *shallow copy* of this object: rebinding an attribute would settle the
-    # question on one clone and leave the others to buy the same probes
-    # again. Mutating one shared dict settles it for all of them.
+    # Models not yet confirmed served, and the refusal if one was. One dict,
+    # not two attributes: parallel workers translate through shallow copies,
+    # and a shared dict settles the question for all of them at once.
     _route_state = None
     context_mode = "window"
 
@@ -318,21 +310,20 @@ class ChatGPTAPI(Base):
     def _ensure_models_routable(self):
         """Confirm the endpoint serves the models this run was given. Once.
 
-        Deliberately not part of `set_model_list`: a run that never
-        translates — `--plan-dry-run`, or `--plan-classify agent`, which
-        writes the plan and exits — must not buy a startup round trip for a
-        request it will never make. Naming a model the endpoint does not
-        serve first costs something at the first paid call, so that is where
-        it is caught.
-
-        Settled under the API lock, so N parallel workers issue one probe per
-        model rather than N. A refusal is kept and re-raised rather than
-        re-probed: `get_translation` retries three times, and a model does not
-        become available in between.
+        Not part of `set_model_list`: a run that only writes a plan must not
+        pay for a probe. Settled under the API lock, so parallel workers issue
+        one probe per model, and a refusal is re-raised rather than re-probed
+        across `get_translation`'s retries.
         """
         state = self._route_state
         if state is None:
-            return
+            if not self._model_names:
+                return
+            # a subclass that named its models in __init__ (OrcaRouterTranslator)
+            state = self._route_state = {
+                "pending": list(self._model_names),
+                "failure": None,
+            }
         with self._api_lock:
             if state["failure"] is not None:
                 raise state["failure"]
@@ -368,15 +359,10 @@ class ChatGPTAPI(Base):
     def _probe_verdict(self, model=None):
         """The endpoint's graded schema support, probed once per model.
 
-        One of "strict", "shape", "json" or False. Subclasses that do not route
-        through `self.openai_client` probe nothing: sending the capability
-        request to the wrong endpoint would answer about the wrong server.
-
-        Also the narrowest point every paid path in this class passes: the
-        single paragraph, the batch and the classifier each ask for a verdict
-        before they spend. So this is where the run confirms the endpoint
-        serves the models it was given — before the model name is read, since
-        the check may drop the one currently in hand.
+        One of "strict", "shape", "json" or False. Every paid path asks for
+        a verdict before it spends, so this is also where the route check
+        runs — before the model name is read, since the check may drop the
+        one in hand.
         """
         self._ensure_models_routable()
         model = model or self.model
@@ -738,17 +724,9 @@ class ChatGPTAPI(Base):
         at the first compaction would learn a book too late — and would learn
         it after the money was spent.
 
-        Only when there is a history to size: window mode never reads the
-        budget, and the CLI has already said the flag is being ignored there,
-        so a lookup that can end the run would contradict it.
-
-        The route check comes first here, and only here. Sizing asks the
-        endpoint about every model in play, so an id it will not serve would
-        end the run as "no context window reported" when the real answer is
-        that the model does not exist — and a list of two, one good, would
-        die on the bad one instead of narrowing to the good one. Everywhere
-        else the check stays lazy; a run that passes `0` has already asked
-        for a lookup before the first request.
+        Only with a history to size: window mode ignores the budget and the
+        CLI has said so. The route check runs first, so a model the endpoint
+        does not serve is reported as that rather than as a missing window.
         """
         if self.context_compact_at == 0 and self.session is not None:
             self._ensure_models_routable()
@@ -780,12 +758,7 @@ class ChatGPTAPI(Base):
         return min(self._learn_context_window(m) for m in models) * 9 // 10
 
     def _learn_context_window(self, model):
-        """The window this endpoint reports for `model`. Asked once per run.
-
-        The lookup itself lives in `capabilities`, with everything else this
-        endpoint is asked about; what belongs here is only the memo, because
-        "once" means once for this translator's client.
-        """
+        """The window this endpoint reports for `model`. Asked once per run."""
         if model not in self._model_windows:
             self._model_windows[model] = learn_context_window(self.openai_client, model)
         return self._model_windows[model]

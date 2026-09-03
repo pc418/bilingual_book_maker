@@ -6,12 +6,13 @@ from book_maker.translator.custom_api_translator import CustomAPI
 from book_maker.translator.deepl_translator import DeepL
 from book_maker.translator.deepl_free_translator import DeepLFree
 from book_maker.translator.google_translator import Google
+from book_maker.translator.orcarouter_translator import OrcaRouterTranslator
 from book_maker.translator.tencent_transmart_translator import TencentTranSmart
 
 # A translator is chosen by the *wire format* its endpoint speaks, never by a
 # model name. `openai` and `anthropic` reach any host serving those shapes —
 # vendor, gateway, or something on localhost — and the model is whatever
-# --model_list names. The rest are fixed-endpoint machine-translation
+# --model names. The rest are fixed-endpoint machine-translation
 # services that speak only their own protocol and take no model at all.
 FORMAT_DICT = {
     "openai": ChatGPTAPI,
@@ -26,6 +27,10 @@ FORMAT_DICT = {
     "tencent": TencentTranSmart,
     "customapi": CustomAPI,
 }
+
+# Model names that select a route of their own rather than a format. The
+# class carries the endpoint's address and its default model.
+ROUTE_DICT = {"orcarouter": OrcaRouterTranslator}
 
 # Formats that talk to a model and therefore take one. `codex` differs from
 # the other two in that it can resolve its own default, so --model is optional

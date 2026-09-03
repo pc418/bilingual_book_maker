@@ -17,9 +17,9 @@ Two rules follow from that and are load-bearing everywhere below:
 
 When the history reaches `--context-compact-at`, we ask the model for a
 translator handoff report, start a new window seeded with it, and keep going.
-Budgets come from the cost model in
-`docs/260827-feat-CODEX_TRANSLATOR_PROVIDER.md`; they are the point where
-session mode spends what window mode spent, while carrying ~5-10x the context.
+The default budget is the point where session mode spends about what window
+mode spent while carrying several times the context; see DEFAULT_COMPACT_BUDGET
+below for the measured figures.
 """
 
 from __future__ import annotations
@@ -50,8 +50,9 @@ _CJK_CHARS_PER_TOKEN = 1.7
 # who wants the cheapest setting can pass --context-compact-at 2500, which
 # measures at ~0.4-0.5x on both tiers.
 #
-# Derivation and the measured report sizes behind it:
-# docs/260827-feat-CODEX_TRANSLATOR_PROVIDER.md
+# The figures come from measured handoff reports: 333/362/313 tokens of prose
+# over three windows, so a report costs about a third of a paragraph and the
+# budget is what decides how often one is paid for.
 DEFAULT_COMPACT_BUDGET = 8000
 
 

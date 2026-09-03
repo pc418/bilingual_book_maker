@@ -612,28 +612,9 @@ def test_orcarouter_needs_no_endpoint_and_reads_its_own_key(tmp_path):
         BBM_ORCAROUTER_API_KEY="sk-orca",
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "offline model list: ['orcarouter/auto']" in proc.stdout
-    # a supported shortcut, not a legacy alias: nothing is deprecated here
+    assert (tmp_path / "animal_farm_bilingual.epub").exists()
+    # a supported route, not a legacy alias: nothing is deprecated here
     assert "deprecated" not in proc.stdout
-
-
-def test_an_orcarouter_model_id_is_kept_as_named(tmp_path):
-    src = tmp_path / BOOK.name
-    src.write_bytes(BOOK.read_bytes())
-    proc = _cli_in(
-        tmp_path,
-        "--book_name",
-        str(src),
-        "--model",
-        "orcarouter/openai/gpt-5-mini",
-        "--orcarouter_key",
-        "sk-orca",
-        "--test",
-        "--test_num",
-        "1",
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "offline model list: ['orcarouter/openai/gpt-5-mini']" in proc.stdout
 
 
 def _options(**kwargs):
@@ -742,9 +723,9 @@ class TestProviderPrecedence:
         assert models == ["codex"]
 
     def test_model_orcarouter_keeps_its_own_gateway_at_a_provider(self, provider_entry):
-        # the OrcaRouter key would otherwise be sent to the provider's base
+        # the OrcaRouter key would otherwise be sent to the provider's base;
+        # the route's class supplies the address, so none is filled in here
         from book_maker.cli import resolve_endpoint
-        from book_maker.translator import orcarouter_translator as orcarouter
 
         provider_entry(
             api_style="openai",
@@ -754,18 +735,18 @@ class TestProviderPrecedence:
         options = _options(provider="p", model="orcarouter")
         models, api_format, env_keys = resolve_endpoint(options)
 
-        assert models == ["orcarouter/auto"]
-        assert options.api_base == orcarouter.API_BASE
+        assert models == ["orcarouter"]
+        assert not options.api_base
         assert api_format == "openai"
-        assert env_keys[0] == orcarouter.ENV_KEY
+        assert env_keys == ("BBM_ORCAROUTER_API_KEY",)
 
-    def test_an_explicit_api_base_still_outranks_the_orcarouter_shortcut(self):
+    def test_an_explicit_api_base_still_reaches_the_orcarouter_class(self):
         from book_maker.cli import resolve_endpoint
 
-        options = _options(model="orcarouter/openai/gpt-5", api_base="https://mine/v1")
+        options = _options(model="OrcaRouter", api_base="https://mine/v1/")
         models, _, _ = resolve_endpoint(options)
 
-        assert models == ["orcarouter/openai/gpt-5"]
+        assert models == ["orcarouter"]
         assert options.api_base == "https://mine/v1"
 
     def test_an_explicit_api_format_still_outranks_a_route_selecting_model(self):
@@ -775,40 +756,6 @@ class TestProviderPrecedence:
         _, api_format, _ = resolve_endpoint(options)
 
         assert api_format == "openai"
-
-
-class TestOrcaRouterModelList:
-    """A rotation list at the gateway is a list of gateway model ids."""
-
-    def test_every_entry_is_redirected_once_the_list_selects_orcarouter(self):
-        # only the first entry used to be redirected, so the ordered dedupe
-        # downstream saw `orcarouter/auto` and `orcarouter` as two models and
-        # the endpoint's model check could reject the bare alias
-        from book_maker.cli import resolve_endpoint
-
-        options = _options(model_list="orcarouter,orcarouter")
-        models, _, _ = resolve_endpoint(options)
-
-        assert models == ["orcarouter/auto", "orcarouter/auto"]
-
-    def test_ids_already_naming_the_gateway_are_left_as_written(self):
-        from book_maker.cli import resolve_endpoint
-        from book_maker.translator import orcarouter_translator as orcarouter
-
-        options = _options(model_list="orcarouter,orcarouter/openai/gpt-5-mini")
-        models, _, _ = resolve_endpoint(options)
-
-        assert models == ["orcarouter/auto", "orcarouter/openai/gpt-5-mini"]
-        assert options.api_base == orcarouter.API_BASE
-
-    def test_a_list_that_does_not_start_at_the_gateway_is_untouched(self):
-        from book_maker.cli import resolve_endpoint
-
-        options = _options(model_list="gpt-5-mini,orcarouter")
-        models, _, _ = resolve_endpoint(options)
-
-        assert models == ["gpt-5-mini", "orcarouter"]
-        assert options.api_base == ""
 
 
 # --------------------------------------------------------------------------
