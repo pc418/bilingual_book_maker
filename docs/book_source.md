@@ -19,9 +19,3 @@ epub is made of html files. By default, we only translate contents in `<p>`. Use
 
 If you want to translate strings in an e-book that aren't labeled with any tags, you can use the `--allow_navigable_strings` parameter. This will add the strings to the translation queue. <br>
 **Note that it's best to look for e-books that are more standardized if possible.**
-
-## e-reader
-Use `--book_from` option to specify e-reader type (Now only `kobo` is available), and use `--device_path` to specify the mounting point.
-
-    # Translate books download from Rakuten Kobo on kobo e-reader
-    bbook_maker --book_from kobo --device_path /tmp/kobo
