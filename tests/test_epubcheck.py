@@ -303,10 +303,31 @@ def test_a_carried_prefix_declaration_validates(epubcheck, tdm_book):
     _assert_valid(epubcheck, tdm_book, "the tdm-prefix book")
 
 
-def test_a_deobfuscated_font_validates(epubcheck, font_book):
+def test_a_reobfuscated_font_validates(epubcheck, font_book):
+    """The font goes out obfuscated again, under the output's own identifier,
+    with the OCF declaration that describes it — and epubcheck reads the
+    declaration, the manifest and the archive as consistent."""
     _assert_valid(epubcheck, font_book, "the obfuscated-font book")
     with zipfile.ZipFile(font_book) as archive:
-        assert "META-INF/encryption.xml" not in archive.namelist()
+        names = archive.namelist()
+        assert "META-INF/encryption.xml" in names
+        declaration = archive.read("META-INF/encryption.xml").decode("utf-8")
+        assert "http://www.idpf.org/2008/embedding" in declaration
+        assert "EPUB/fonts/obfuscated.otf" in declaration
+        # OCF: mimetype first and stored, after the post-write rewrite
+        first = archive.infolist()[0]
+        assert first.filename == "mimetype"
+        assert first.compress_type == zipfile.ZIP_STORED
+
+
+def test_a_round_tripped_book_validates(epubcheck, font_book, tmp_path):
+    """Translating an output again: its fonts are unscrambled with its own
+    key and scrambled with the next book's. Both books must validate."""
+    again = _translate(font_book)
+
+    _assert_valid(epubcheck, again, "the twice-translated obfuscated-font book")
+    with zipfile.ZipFile(again) as archive:
+        assert "META-INF/encryption.xml" in archive.namelist()
 
 
 def test_copied_rights_metadata_validates(epubcheck, rights_book):
