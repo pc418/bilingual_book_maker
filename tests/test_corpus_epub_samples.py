@@ -56,6 +56,12 @@ ROUND_TRIP_BOOKS = [
     # other prefix-bearing book here (mahabharata) only uses cc: via a
     # <link rel> a separate rule drops, so without this book the gate
     # cannot see the deliberate prefix drop at all.
+    "wasteland-otf-obf.epub",  # three obfuscated fonts: the only book here
+    # that exercises the font round trip (unscramble on read, scramble again
+    # under the output's own identifier, and write META-INF/encryption.xml
+    # back). Synthetic fixtures cannot catch a producer's real spelling of
+    # the declaration — this one nests EncryptionMethod under a default
+    # xmlenc namespace.
     "kusamakura-japanese-vertical-writing.epub",  # NCX in a subdirectory
     # (xhtml/toc.ncx) — the regenerated NCX must rebase its srcs to that
     # location or every EPUB 2 TOC link is dead (RSC-007); also a second
@@ -76,21 +82,9 @@ KNOWN_PACKAGE_FINDINGS = {
             '"scripted" should be declared in the OPF file.': 1,
         }
     ),
-    # The deliberate package-prefix drop (see
-    # docs/260813-fix-PR554_PACKAGE_DOCUMENT_AND_INLINE_BR.md) orphans the
-    # cc: property this book's metadata uses. Restoring prefix preservation
-    # makes this pin stale and the gate red — by design.
-    "wasteland.epub": Counter(
-        {
-            'OPF-028: Undeclared prefix: "cc".': 1,
-        }
-    ),
-    # same prefix drop, different prefix: six foaf: meta properties
-    "kusamakura-japanese-vertical-writing.epub": Counter(
-        {
-            'OPF-028: Undeclared prefix: "foaf".': 6,
-        }
-    ),
+    # wasteland (cc:) and kusamakura (foaf:) pinned OPF-028 while the package
+    # prefix declarations were deliberately dropped (260813). Prefix carrying
+    # returned with the rights work (260903), so those pins are gone.
 }
 
 
