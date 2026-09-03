@@ -177,10 +177,14 @@ def _entry_address(api_base, api_format):
     """The host a (base, format) pair actually calls, for comparing two of them.
 
     An empty base means the format's own address — which for the vendor
-    formats is a real URL, and for openai/anthropic is the SDK's default.
+    formats is a real URL. `openai` and `anthropic` have none written down
+    here (their SDK holds the vendor host), so the format itself stands in:
+    two formats with no address are two different hosts, not one empty one,
+    and an openai entry asked for the anthropic format is calling Anthropic.
     Trailing slashes are noise here: `.../v1` and `.../v1/` are one host.
     """
-    return (api_base or FORMAT_DEFAULT_BASES.get(api_format, "")).rstrip("/")
+    base = (api_base or FORMAT_DEFAULT_BASES.get(api_format, "")).rstrip("/")
+    return base or f"the {api_format} endpoint's own host"
 
 
 def apply_provider(options):
