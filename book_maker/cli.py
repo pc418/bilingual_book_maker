@@ -75,6 +75,16 @@ DEFAULT_MODELS = {
     "qwen": "qwen-mt-turbo",
 }
 
+# One id each endpoint actually serves, for the "--model is required"
+# message. Naming a model from the wrong vendor there sends the reader to
+# an id that endpoint will refuse.
+MODEL_EXAMPLES = {
+    "anthropic": "claude-sonnet-4-6",
+    "groq": "llama-3.3-70b-versatile",
+    "xai": "grok-beta",
+    "litellm": "<the model_name in your proxy's config>",
+}
+
 # `--model codex` selects the format rather than a model id. The sidecar then
 # picks its own default, exactly as `--api_format codex` with no --model does.
 CODEX_MODEL_ALIASES = ("codex",)
@@ -1282,7 +1292,8 @@ def main():
         if not model_names and api_format not in MODEL_OPTIONAL_FORMATS:
             raise SystemExit(
                 f"--model is required for the {api_format} format. Pass the "
-                f"model id the endpoint uses, e.g. --model claude-sonnet-4-6"
+                f"model id the endpoint uses, e.g. --model "
+                f"{MODEL_EXAMPLES.get(api_format, 'gpt-5-mini')}"
             )
         # Only the gemini route paces itself between requests; --interval
         # is described as ignored everywhere else, so it is not offered
