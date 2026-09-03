@@ -259,6 +259,13 @@ class Base(ABC):
     # what was sent, which is a broken cache prefix.
     BATCH_CONTEXT_PER_LINE = True
 
+    # Does this route implement the OpenAI Batch API — `--batch` to submit a
+    # book and `--batch-use` to collect it? Only the OpenAI translator does.
+    # A route that does not gets the flag refused: the loader calls
+    # batch_init/add_to_batch_translate_queue/is_completed_batch on the
+    # translator, so accepting it would be an AttributeError partway in.
+    SUPPORTS_BATCH_API = False
+
     # Refusals of one rung, by one model, before we stop offering it.
     RUNG_REFUSAL_THRESHOLD = 2
 

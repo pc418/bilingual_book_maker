@@ -16,16 +16,15 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 | `--model openai --model_list X` | `--model_list X` |
 | `--model claude` | `--model claude-haiku-4-5-20251001` |
 | an exact `claude-*` id | unchanged; the anthropic format is inferred from the id |
-| `--model gemini` / `geminipro` | `--api_base https://generativelanguage.googleapis.com/v1beta/openai/ --model gemini-flash-latest` / `gemini-pro-latest` |
-| `--model groq --model_list X` | `--api_base https://api.groq.com/openai/v1 --model_list X` |
-| `--model xai` | `--api_base https://api.x.ai/v1 --model grok-beta` |
-| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --model qwen-mt-*` |
+| `--model gemini` / `geminipro` | `--api_format gemini --model gemini-flash-latest` / `gemini-pro-latest` |
+| `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_format qwen --model qwen-mt-*` |
+| `--model groq --model_list X` | `--api_format groq --model_list X` |
+| `--model xai` | `--api_format xai --model grok-beta` |
 | `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
 | `--custom_api URL` | `--api_format customapi --api_base URL` |
 | `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--orcarouter_key` | `--key` (`--api_key` is the same flag and was never renamed) |
 | `--ollama_model M` | `--api_base http://localhost:11434/v1 --model M` |
 | `--deployment_id D` | `--model D`, with `--api_base` rewritten to the deployment's `/openai/v1` path |
-| `--interval` | dropped; it only applied to the removed gemini route |
 
 Notes:
 
@@ -34,6 +33,15 @@ Notes:
   for a rewritten `--model gemini`, and so on.
 - Flags you pass yourself win. `--model gemini --api_base https://my-gateway/v1`
   keeps your gateway.
+- `--interval` is not a legacy flag: it is still in the parser and still
+  paces the gemini route, which is still a route.
+- `qwen-mt-turbo` and `qwen-mt-plus` are real model ids, so a command that
+  also passes `--api_format` is left alone and nothing is printed about it.
+- The other route aliases are not model ids anywhere. `--model gemini`
+  together with an `--api_format` naming a different route is refused rather
+  than resolved one way or the other: honouring the format would send that
+  alias's key to a host it does not belong to, and honouring the alias would
+  ignore what you typed. The error names both and the two ways out.
 - A rewritten command runs the model it used to run, taken from the old
   preset list, not a newer one. Some of those models have since been
   retired, and the endpoint's model check says so.

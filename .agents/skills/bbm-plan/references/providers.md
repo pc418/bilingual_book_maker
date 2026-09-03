@@ -39,10 +39,20 @@ A gateway asked for the anthropic shape it does not serve answers 404, and
 the run stops naming `--api_format openai` as the fix. `--api_base` may be
 pasted with its path (`.../v1/chat/completions`); the path is trimmed.
 
-Gemini, Groq, xAI, Qwen and every aggregator are reached through the OpenAI
-shape. Their native wrappers are gone; the OpenAI translator probes for
-structured output, keeps context, and can run async and batch, which the
-wrappers could not.
+Groq, xAI, a LiteLLM proxy and every aggregator are reached through the
+OpenAI shape. The first three are also `--api_format groq` / `xai` /
+`litellm`, which is the same OpenAI route with that vendor's address filled
+in, so everything the OpenAI translator does — the structured-output probe,
+context, async, batch — applies to them.
+
+Gemini and Qwen are the two exceptions: each has a translator of its own
+because neither protocol is the OpenAI shape. `--api_format gemini` talks to
+the Gemini API (native constrained decoding, its own chat history, paced by
+`--interval`), and `--api_format qwen` talks to Qwen-MT on DashScope, whose
+request states a source and target language instead of carrying a prompt.
+Both vendors *also* serve an OpenAI-compatible base, which the `openai`
+route reaches — use that when the run needs the OpenAI translator's batch
+and session-context machinery.
 
 ## `--provider NAME`: the same route, written once
 
@@ -67,10 +77,11 @@ entry is the route spelled out:
 The `providers` wrapper is required; the loader reads nothing from a file
 without it.
 
-`api_style` is `openai` or `anthropic` (`claude` in older files means
-`anthropic`; `gemini`/`qwen` are refused, the error prints the entry to
-write). Gemini or Qwen is `openai` plus its `base_url`, and the shipped
-example file has an entry per vendor. `default_models` becomes `--model` when it holds one
+`api_style` is any `--api_format` that names an endpoint — `openai`,
+`anthropic`, `gemini`, `qwen`, `groq`, `xai`, `litellm` — plus `claude`,
+which older files use for `anthropic`. Any other OpenAI-compatible host is
+`openai` with its address in `base_url`; an unrecognised style is refused
+with that entry printed. The shipped example file has an entry per vendor. `default_models` becomes `--model` when it holds one
 id and `--model_list` when it holds several. `env_key` is read for the key
 ahead of `BBM_API_KEY` and the format's own variables. **Explicit flags
 win**, so `--provider nvidia --model <id>` keeps the user's model. An
@@ -104,10 +115,22 @@ for f in (pathlib.Path.home()/".bbm"/"providers.json", pathlib.Path("bbm_provide
 if entry is None:
     print(f'echo "no provider entry named {name}" >&2; return 1'); sys.exit()
 style = entry.get("api_style")
-if style not in ("openai", "anthropic", "claude"):
+# gemini and qwen speak their own protocols: the probes below would send this
+# entry's key to the wrong endpoint in the wrong shape, so refuse rather than
+# guess a shape for them.
+OPENAI_SHAPED = {
+    "openai": "https://api.openai.com",
+    "groq": "https://api.groq.com/openai",
+    "xai": "https://api.x.ai",
+    "litellm": "http://localhost:4000",
+}
+if style in ("gemini", "qwen"):
+    print(f'echo "provider {name}: api_style {style!r} is a protocol of its own; run it with --provider {name}, these probes do not apply" >&2; return 1'); sys.exit()
+if style not in OPENAI_SHAPED and style not in ("anthropic", "claude"):
     print(f'echo "provider {name}: api_style {style!r} is not a format; the loader refuses this entry" >&2; return 1'); sys.exit()
 shape = "anthropic" if style in ("anthropic", "claude") else "openai"
-root = (entry.get("base_url") or {"anthropic": "https://api.anthropic.com"}.get(shape, "https://api.openai.com")).rstrip("/")
+default_root = "https://api.anthropic.com" if shape == "anthropic" else OPENAI_SHAPED[style]
+root = (entry.get("base_url") or default_root).rstrip("/")
 root = root[:-3] if root.endswith("/v1") else root
 key_var = entry.get("env_key") or "BBM_API_KEY"
 model = (entry.get("default_models") or [""])[0] or ("gpt-5.6-luna" if shape == "openai" else "")
@@ -179,9 +202,13 @@ resolved to (`claude-haiku-4.5` → `claude-haiku-4-5-20251001`). Real Anthropic
 inference API paths"; a trailing `/v1` is now trimmed automatically (with a
 printed note), so either form works — but say `https://host` and mean it.
 
-**Gemini** has no route of its own. Use its OpenAI-compatible base,
-`https://generativelanguage.googleapis.com/v1beta/openai/`, and probe it with
-the OpenAI-shape call above.
+**Gemini** has a route of its own — `--api_format gemini`, over the Gemini
+API — which the OpenAI-shape and anthropic-shape probes here do not reach.
+To probe from a shell, use its OpenAI-compatible base instead,
+`https://generativelanguage.googleapis.com/v1beta/openai/`, with the
+OpenAI-shape call above; that base is also the one to run against when the
+translation wants batching or session context. **Qwen-MT** is the same
+story at `https://dashscope.aliyuncs.com/compatible-mode/v1`.
 
 ## Inferring which shape to try first, from the model name
 

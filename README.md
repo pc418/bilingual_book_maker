@@ -60,18 +60,20 @@ python3 make_book.py --book_name test_books/animal_farm.epub --model codex --tes
 
 ## Translate Service
 
-The OpenAI and the Anthropic API formats are supported.
-
-- `--api_format` picks a machine-translation engine (`google`, `caiyun`,
-  `deepl`, `deeplfree`, `tencent`, `customapi`), `codex`, or names the API
-  format as `openai` / `anthropic`.
-- **OpenAI-compatible API**: `--api_base` (ending in `/v1`), `--key` the API
-  key, and the model id in `--model`. Omit `--api_base` for OpenAI's own
-  API, and `--model` for `gpt-5.6-luna`.
+- `--api_format` names the API the endpoint speaks: `openai`, `anthropic`,
+  `gemini`, `qwen`, `groq`, `xai`, `litellm`, `codex`, or one of the
+  machine-translation engines (`google`, `caiyun`, `deepl`, `deeplfree`,
+  `tencent`, `customapi`). A format that belongs to one vendor already
+  knows that vendor's address, so the format and a `--key` are a whole
+  command.
+- **Any other OpenAI-compatible API**: `--api_base` (ending in `/v1`),
+  `--key` the API key, and the model id in `--model`. Omit `--api_base` for
+  OpenAI's own API, and `--model` for `gpt-5.6-luna`.
 - Or translate through `--provider`: `bbm_providers.example.json` has an
   entry for each vendor below (Gemini, Qwen, xAI, Groq, OrcaRouter, Ollama,
-  DeepSeek, SiliconFlow, OpenRouter). Copy it to `bbm_providers.json`, set
-  the key in it, and `--provider gemini` uses the Gemini API from it.
+  LiteLLM, DeepSeek, SiliconFlow, OpenRouter). Copy it to
+  `bbm_providers.json`, set the key in it, and `--provider gemini` uses the
+  Gemini API from it.
 - `--key` takes several keys separated by commas and rotates them.
 - `--use_context session` translates in session mode and compacts at an 8k
   context.
@@ -113,18 +115,25 @@ The OpenAI and the Anthropic API formats are supported.
 
 * Gemini
 
-  Google [Gemini](https://aistudio.google.com/app/apikey) is reached through its OpenAI-compatible endpoint; name any Gemini model id.
+  Google [Gemini](https://aistudio.google.com/app/apikey), over the Gemini
+  API itself. Name any Gemini model id; without `--model` it is
+  `gemini-flash-latest`. `--interval` sets the pause between requests, which
+  is how the free tier's rate limit is stayed under.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format gemini --key ${gemini_key} --model gemini-flash-latest
   ```
 
 * Qwen
 
-  Translate with [Qwen](https://www.aliyun.com/product/dashscope) models; `qwen-mt-turbo` and `qwen-mt-plus` are supported.
+  [Qwen-MT](https://www.aliyun.com/product/dashscope) on DashScope, a
+  translation model rather than a chat model: the request states a source
+  and a target language instead of carrying a prompt. `qwen-mt-turbo` (the
+  default) and `qwen-mt-plus` are supported, and `--source_lang` states the
+  source language when auto-detection is not wanted.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://dashscope.aliyuncs.com/compatible-mode/v1 --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format qwen --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
   ```
 
 * [Tencent TranSmart](https://transmart.qq.com)
@@ -136,7 +145,7 @@ The OpenAI and the Anthropic API formats are supported.
 * [xAI](https://x.ai)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.x.ai/v1 --key ${xai_key} --model grok-beta
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-beta
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -159,10 +168,21 @@ The OpenAI and the Anthropic API formats are supported.
 
 * [groq](https://console.groq.com/keys)
 
-  GroqCloud currently supports models: you can find from [Supported Models](https://console.groq.com/docs/models)
+  `--model` is required: GroqCloud's catalogue turns over, so pick a current
+  id from [Supported Models](https://console.groq.com/docs/models).
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.groq.com/openai/v1 --key [your_key] --model llama-3.3-70b-versatile
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format groq --key [your_key] --model llama-3.3-70b-versatile
+  ```
+
+* [LiteLLM](https://docs.litellm.ai/docs/simple_proxy)
+
+  A LiteLLM proxy, which fans out to whatever backends its own config names.
+  `--model` is the name that config gives one of them. The default address is
+  the proxy's own, on this machine; elsewhere it is `--api_base`.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format litellm --model ${name_in_your_litellm_config}
   ```
 
 * [Codex](https://developers.openai.com/codex/cli)
@@ -213,7 +233,7 @@ The OpenAI and the Anthropic API formats are supported.
 
   | Field | Required | Description |
   |-------|----------|-------------|
-  | `api_style` | Yes | API request format, `openai` or `anthropic` |
+  | `api_style` | Yes | API request format: `openai`, `anthropic`, `gemini`, `qwen`, `groq`, `xai` or `litellm` |
   | `base_url` | No | The API address. Omitted means the api_style's default address |
   | `default_models` | No | Default model list. Required if `--model_list` is not provided |
   | `env_key` | No | Environment variable name for API key. Required if `--api_key` is not provided |
@@ -250,6 +270,9 @@ The OpenAI and the Anthropic API formats are supported.
   | `claude-sonnet-4-6` | `anthropic` | Anthropic's own address |
   | `gpt-4o-mini` | `openai` | OpenAI |
   | `~deepseek/deepseek-v4-flash-latest` | `openai` | with the matching `--api_base` |
+  | `gemini-flash-latest` | `gemini` | the default there, at Google's own address |
+  | `qwen-mt-turbo` | `qwen` | the default there, on DashScope |
+  | `llama-3.3-70b-versatile` | `groq` | Groq's own address |
   | `codex` | same as `--api_format codex` | through the Codex CLI |
   | `orcarouter` | `openai` | OrcaRouter, key from `BBM_ORCAROUTER_API_KEY` |
 
@@ -257,16 +280,21 @@ The OpenAI and the Anthropic API formats are supported.
 
 - `--key`:
 
-  API key for the endpoint. Several keys separated by commas are rotated, which gets past per-key rate limits. Without the flag the key is read from `$BBM_API_KEY`, then from the format's own variable: `$OPENAI_API_KEY`, `$ANTHROPIC_API_KEY`, `$BBM_CAIYUN_API_KEY` or `$BBM_DEEPL_API_KEY`. The old per-vendor flags (`--openai_key` and the rest) still work. `--api_key` is the same flag under its older name.
+  API key for the endpoint. Several keys separated by commas are rotated, which gets past per-key rate limits. Without the flag the key is read from `$BBM_API_KEY`, then from the format's own variable: `$OPENAI_API_KEY`, `$ANTHROPIC_API_KEY`, `$BBM_GOOGLE_GEMINI_KEY`, `$BBM_QWEN_API_KEY`, `$BBM_GROQ_API_KEY`, `$BBM_XAI_API_KEY`, `$BBM_CAIYUN_API_KEY` or `$BBM_DEEPL_API_KEY`. The old per-vendor flags (`--openai_key` and the rest) still work. `--api_key` is the same flag under its older name.
 
 - `--api_format`:
 
-  The API the endpoint speaks. When omitted it is inferred: an `anthropic.com` host, or a model id containing `claude` with no `--api_base`, means `anthropic`; anything else means `openai`. Pass it when the guess is wrong, or to pick an engine.
+  The API the endpoint speaks. When omitted it is inferred: an `anthropic.com` host, or a model id containing `claude` with no `--api_base`, means `anthropic`; anything else means `openai`. Pass it when the guess is wrong, to reach a vendor without typing its address, or to pick an engine.
 
   | format | key | notes |
   |--------|-----|-------|
-  | `openai` (default) | required: `--key`, else `$BBM_API_KEY`, `$OPENAI_API_KEY`; not for a local address such as Ollama | any OpenAI-compatible endpoint: OpenAI itself, DeepSeek, Gemini, Qwen, xAI, Groq, OpenRouter, Ollama and the rest, the address in `--api_base` |
+  | `openai` (default) | required: `--key`, else `$BBM_API_KEY`, `$OPENAI_API_KEY`; not for a local address such as Ollama | any OpenAI-compatible endpoint: OpenAI itself, DeepSeek, OpenRouter, Ollama and the rest, the address in `--api_base` |
   | `anthropic` | required: `--key`, else `$BBM_API_KEY`, `$ANTHROPIC_API_KEY` | Anthropic itself, and gateways that speak the Messages API |
+  | `gemini` | required: `--key`, else `$BBM_API_KEY`, `$BBM_GOOGLE_GEMINI_KEY`, `$GEMINI_API_KEY` | the Gemini API, default `gemini-flash-latest`; paced by `--interval` |
+  | `qwen` | required: `--key`, else `$BBM_API_KEY`, `$BBM_QWEN_API_KEY`, `$DASHSCOPE_API_KEY` | Qwen-MT on DashScope, default `qwen-mt-turbo`; reads `--source_lang` |
+  | `groq` | required: `--key`, else `$BBM_API_KEY`, `$BBM_GROQ_API_KEY`, `$GROQ_API_KEY` | GroqCloud; `--model` required |
+  | `xai` | required: `--key`, else `$BBM_API_KEY`, `$BBM_XAI_API_KEY`, `$XAI_API_KEY` | xAI; `--model` required |
+  | `litellm` | none for a proxy on this machine, else `--key` or `$LITELLM_MASTER_KEY` | a LiteLLM proxy, `http://localhost:4000` unless `--api_base` says otherwise; `--model` required |
   | `codex` | none: `codex login` (Codex CLI) | the local `codex app-server` sidecar on a ChatGPT/Codex plan, default `gpt-5.6-luna` |
   | `google` | none | Google Translate, free |
   | `caiyun` | required: `--key` or `$BBM_CAIYUN_API_KEY` | Caiyun |
@@ -277,7 +305,11 @@ The OpenAI and the Anthropic API formats are supported.
 
 - `--source_lang`:
 
-  Source language, for endpoints that want it stated (currently only `--api_format customapi`). Default: auto-detect.
+  Source language, for the routes that want it stated: `--api_format qwen`, whose request names a language pair, and `--api_format customapi`. Default: auto-detect.
+
+- `--interval`:
+
+  Seconds to wait between requests, e.g. `--interval 0.1` for 100ms. Only `--api_format gemini` paces itself with it; every other route ignores it. Default: `0.01`.
 
 - `--test`:
 
@@ -385,7 +417,7 @@ The OpenAI and the Anthropic API formats are supported.
 
   Translate with context.
   Prompts the model to create a three-paragraph summary. If it's the beginning of the translation, it will summarize the entire passage sent (the size depending on `--accumulated_num`).
-  For subsequent passages, it will amend the summary to include details from the most recent passage, creating a running one-paragraph context payload of the important details of the entire translated work. This improves consistency of flow and tone throughout the translation. This option is available for all ChatGPT-compatible models and Gemini models.
+  For subsequent passages, it will amend the summary to include details from the most recent passage, creating a running one-paragraph context payload of the important details of the entire translated work. This improves consistency of flow and tone throughout the translation. The running summary is what the `openai`, `groq`, `xai`, `litellm` and `anthropic` formats do with this flag. The `gemini` format keeps its own chat history instead, and `qwen` keeps a window of recent translation pairs as translation memory — the same flag, the mechanism each route has.
 
 - `--context_paragraph_limit`:
 
@@ -486,9 +518,10 @@ The OpenAI and the Anthropic API formats are supported.
 
 - `--extra_body`:
 
-  Pass additional JSON parameters on ChatGPT/OpenAI-derived request paths, including
-  OpenAI-style custom providers and xAI. Claude, Gemini, Qwen, Groq, and other translators
-  currently ignore this option. Provide a JSON string with the desired parameters.
+  Pass additional JSON parameters on the routes built on the OpenAI request
+  path — `openai` and the OpenAI-style custom providers, and so also
+  `groq`, `xai`, `litellm` and `--model orcarouter`. Every other format says
+  so and ignores it. Provide a JSON string with the desired parameters.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
@@ -516,8 +549,8 @@ python3 make_book.py --book_name test_books/Lex_Fridman_episode_322.srt --key ${
 # Or translate the whole book
 python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --language zh-hans
 
-# Gemini, through its OpenAI-compatible endpoint
-python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://generativelanguage.googleapis.com/v1beta/openai/ --key ${gemini_key} --model gemini-flash-latest
+# Gemini
+python3 make_book.py --book_name test_books/animal_farm.epub --api_format gemini --key ${gemini_key} --model gemini-flash-latest
 
 # Translate an EPUB with parallel chapter processing
 python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --parallel-workers 4

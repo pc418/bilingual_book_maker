@@ -30,6 +30,9 @@ class OfflineTranslator:
     TRANSLATION_ERROR_MARKER = None
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
+    # it has none of the Batch API methods, and the CLI's refusal of --batch
+    # on a route without them is part of the contract these tests exercise
+    SUPPORTS_BATCH_API = False
     context_paragraph_limit = 3
 
     def __init__(self, *args, **kwargs):

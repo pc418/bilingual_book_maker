@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 from anthropic import BadRequestError as AnthropicBadRequest
+from google.genai import errors as genai_errors
 
 from book_maker.structured import (
     RungRejected,
@@ -28,6 +29,7 @@ from book_maker.structured import (
 from book_maker.translator.base_translator import Base
 from book_maker.translator.capabilities import CapabilityLedger
 from book_maker.translator.claude_translator import Claude, _sdk_base_url
+from book_maker.translator.gemini_translator import Gemini, _openapi_schema
 from book_maker.loader.classify.model import (
     PAGE_SIZE,
     PlanClassifyError,
@@ -506,6 +508,285 @@ class TestClaudeWiring:
         claude = self._claude(Mock(side_effect=_http_error(AnthropicBadRequest, 400)))
         with pytest.raises(RungRejected):
             claude._chat_completion("classify this")
+
+
+class TestGeminiWiring:
+    def test_the_schema_is_converted_to_geminis_dialect(self):
+        cands = [{"key": key_of("p.header"), "units": 9, "chars": 81, "samples": ["G"]}]
+        converted = _openapi_schema(build_schema(cands))
+
+        assert converted["type"] == "OBJECT"
+        # gemini's dialect has neither of these and 400s on both
+        assert "additionalProperties" not in json.dumps(converted)
+        assert "strict" not in converted
+        verdict = converted["properties"][key_of("p.header")]["properties"]["verdict"]
+        assert verdict["type"] == "STRING"
+        assert verdict["enum"] == ["translate", "skip", "unsure"]
+
+    def _gemini(self, generate_content):
+        gemini = Gemini.__new__(Gemini)
+        Base.__init__(gemini, "k", "zh-hans")
+        gemini.model = "gemini-3-flash"
+        gemini.convo = SimpleNamespace(
+            send_message=Mock(side_effect=AssertionError("used the translation chat"))
+        )
+        gemini.client = SimpleNamespace(
+            models=SimpleNamespace(generate_content=generate_content)
+        )
+        return gemini
+
+    def test_classification_never_enters_the_translation_conversation(self):
+        # self.convo carries context for the paragraphs still to come; a
+        # classification question and its answer must not become part of it
+        generate = Mock(
+            return_value=SimpleNamespace(text='{"p.h": {"verdict": "skip"}}')
+        )
+        gemini = self._gemini(generate)
+
+        gemini._chat_completion("classify this")
+
+        assert generate.call_args.kwargs["contents"] == "classify this"
+
+    def test_the_native_rung_comes_first_and_the_prompt_rung_backs_it(self):
+        gemini = self._gemini(Mock())
+        names = [name for name, _ in gemini.structured_rungs("q", {"schema": {}})]
+        assert names == ["response_schema", "prompt"]
+
+    def test_a_rejected_schema_descends_but_a_dead_key_does_not(self):
+        class _Err(genai_errors.ClientError):
+            def __init__(self, code):
+                Exception.__init__(self, f"{code}")
+                self.code = code
+
+        gemini = self._gemini(Mock(side_effect=_Err(400)))
+        with pytest.raises(RungRejected):
+            gemini._chat_completion("q")
+
+        gemini = self._gemini(Mock(side_effect=_Err(403)))
+        with pytest.raises(genai_errors.ClientError):
+            gemini._chat_completion("q")
+
+
+class TestRestoredRoutesMeetTodaysBase:
+    """The two native classes predate half of what Base and the loaders do."""
+
+    def _gemini(self):
+        gemini = Gemini.__new__(Gemini)
+        Base.__init__(gemini, "k", "zh-hans")
+        gemini.model = "gemini-3-flash"
+        return gemini
+
+    def test_gemini_records_what_a_response_cost(self):
+        # without this the progress bar and the closing line show nothing,
+        # and a provider entry's prices are never applied
+        gemini = self._gemini()
+        gemini._note_usage(
+            SimpleNamespace(
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=120,
+                    candidates_token_count=45,
+                    cached_content_token_count=None,
+                )
+            )
+        )
+        assert gemini.usage.requests == 1
+        assert gemini.usage.prompt == 120 and gemini.usage.completion == 45
+
+    def test_a_classification_request_is_priced_as_the_model_it_named(self):
+        # --plan-classify-model may name another model; charging its tokens
+        # to the translation model prices them wrong
+        from book_maker.translator.base_translator import PriceTable
+
+        gemini = self._gemini()
+        gemini.usage.prices = PriceTable(
+            {"gemini-pro-latest": {"input": 1.0, "output": 2.0}}, "USD"
+        )
+        gemini._note_usage(
+            SimpleNamespace(
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=5,
+                    candidates_token_count=1,
+                    cached_content_token_count=0,
+                )
+            ),
+            model="gemini-pro-latest",
+        )
+        assert gemini.usage.unpriced == set()
+        assert gemini.usage.spent > 0
+
+    def test_a_response_with_no_usage_is_skipped_not_counted(self):
+        gemini = self._gemini()
+        gemini._note_usage(SimpleNamespace())
+        assert gemini.usage.requests == 0
+
+    def test_qwen_records_what_a_completion_cost(self):
+        from book_maker.translator.qwen_translator import QwenTranslator
+
+        qwen = QwenTranslator.__new__(QwenTranslator)
+        Base.__init__(qwen, "k", "zh-hans")
+        qwen.model = "qwen-mt-turbo"
+        qwen._note_usage(
+            SimpleNamespace(
+                usage=SimpleNamespace(
+                    prompt_tokens=30,
+                    completion_tokens=10,
+                    prompt_tokens_details=SimpleNamespace(cached_tokens=4),
+                )
+            )
+        )
+        assert (qwen.usage.prompt, qwen.usage.completion, qwen.usage.cached) == (
+            30,
+            10,
+            4,
+        )
+
+    def test_gemini_keeps_a_readable_model_list_for_the_disclosure(self):
+        # model_list is an endless cycle; the translation note cannot read it
+        from book_maker.loader.disclosure import model_id
+
+        gemini = self._gemini()
+        gemini.create_convo = lambda: None
+        gemini.set_model_list(["gemini-2.5-flash", "gemini-2.0-flash"])
+
+        assert gemini._model_names == ("gemini-2.5-flash", "gemini-2.0-flash")
+        assert model_id(gemini) == "gemini-2.5-flash, gemini-2.0-flash"
+
+    @pytest.mark.parametrize("fmt", ["gemini", "qwen"])
+    def test_both_carry_per_chapter_context_a_worker_can_clone(self, fmt):
+        # _clone_translator_for_context resets the window lists and calls
+        # create_convo; declaring False here made that path unreachable
+        from book_maker.translator import FORMAT_DICT
+
+        assert FORMAT_DICT[fmt].SUPPORTS_PARALLEL_CONTEXT
+
+    @pytest.mark.parametrize("loader_class", ["EPUBBookLoader", "MarkdownBookLoader"])
+    def test_every_clone_path_gives_gemini_its_own_conversation(self, loader_class):
+        # gemini's context is the chat object, not the window lists: a
+        # shallow copy would share one conversation across parallel units,
+        # which is a thread race and cross-unit context bleed
+        from book_maker.loader.epub_loader import EPUBBookLoader
+        from book_maker.loader.md_loader import MarkdownBookLoader
+
+        cls = {
+            "EPUBBookLoader": EPUBBookLoader,
+            "MarkdownBookLoader": MarkdownBookLoader,
+        }[loader_class]
+
+        class FakeGemini:
+            def __init__(self):
+                self.context_flag = True
+                self.context_list = ["carried over"]
+                self.context_translated_list = ["carried over"]
+                self.convo = "shared conversation"
+
+            def create_convo(self):
+                self.convo = "fresh conversation"
+
+        loader = cls.__new__(cls)
+        loader.parallel_workers = 2
+        loader.translate_model = FakeGemini()
+
+        clone = cls._clone_translator_for_context(loader)
+
+        assert clone is not loader.translate_model
+        assert clone.context_list == [] and clone.context_translated_list == []
+        assert clone.convo == "fresh conversation"
+        assert loader.translate_model.convo == "shared conversation"
+
+    @pytest.mark.parametrize("fmt", ["gemini", "qwen"])
+    def test_neither_claims_a_session_history_or_the_batch_api(self, fmt):
+        from book_maker.translator import FORMAT_DICT
+
+        assert not FORMAT_DICT[fmt].SUPPORTS_SESSION_CONTEXT
+        assert not FORMAT_DICT[fmt].SUPPORTS_BATCH_API
+
+
+class TestQwenConfiguration:
+    """Qwen-MT cannot classify, but it must still be configured correctly."""
+
+    def test_a_zero_context_limit_means_the_default_not_no_context(self):
+        # the loaders pass 0 when the command named no limit; storing it
+        # made save_context evict every pair as soon as it stored one
+        from book_maker.translator.qwen_translator import QwenTranslator
+
+        qwen = QwenTranslator(
+            key="k", language="zh-hans", context_flag=True, context_paragraph_limit=0
+        )
+        assert qwen.context_paragraph_limit == 5
+
+        qwen.save_context("a", "b")
+        qwen.save_context("c", "d")
+        assert qwen.context_list == ["a", "c"]
+
+    def test_the_model_survives_construction(self):
+        # `self.model = self.set_qwen_model(model)` assigned the setter's
+        # return over the value it had just set; every request went out with
+        # model=None
+        from book_maker.translator.qwen_translator import QwenTranslator
+
+        qwen = QwenTranslator(key="k", language="zh-hans", model="qwen-mt-plus")
+        assert qwen.model == "qwen-mt-plus"
+        assert qwen.terminology == [] and qwen.domain_hint == ""
+
+    def test_an_unknown_model_is_refused_not_substituted(self):
+        from book_maker.translator.qwen_translator import QwenTranslator
+
+        qwen = QwenTranslator(key="k", language="zh-hans")
+        with pytest.raises(ValueError, match="qwen-mt-turbo"):
+            qwen.set_model_list(["qwen-mt-ultra"])
+        # billing a whole book to a model the user did not choose is not a
+        # recovery from a typo
+        assert qwen.model == "qwen-mt-turbo"
+
+
+class TestOpenAIShapedVendorFormats:
+    """groq, xai and litellm are the OpenAI route at another address.
+
+    The point of keeping them as formats rather than as a base URL people
+    have to remember is that `--api_format groq` is a complete route. The
+    point of *not* giving them a client of their own is that everything the
+    OpenAI translator has grown — the structured-output ladder, session
+    context, batching, the model check, the usage meter — applies to them.
+    """
+
+    @pytest.mark.parametrize(
+        "fmt,base",
+        [
+            ("groq", "https://api.groq.com/openai/v1"),
+            ("xai", "https://api.x.ai/v1"),
+            ("litellm", "http://localhost:4000"),
+        ],
+    )
+    def test_the_format_carries_its_address(self, fmt, base):
+        from book_maker.translator import FORMAT_DEFAULT_BASES, FORMAT_DICT
+
+        assert FORMAT_DEFAULT_BASES[fmt] == base
+        assert FORMAT_DICT[fmt].DEFAULT_API_BASE == base
+
+    @pytest.mark.parametrize("fmt", ["groq", "xai", "litellm"])
+    def test_the_route_keeps_what_the_openai_route_has(self, fmt):
+        from book_maker.translator import FORMAT_DICT
+        from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+        cls = FORMAT_DICT[fmt]
+        assert issubclass(cls, ChatGPTAPI)
+        # a wrapper that swapped the client out had to opt out of these
+        assert cls.SUPPORTS_STRUCTURED_OUTPUTS
+        assert cls.SUPPORTS_SESSION_CONTEXT
+        assert cls.SUPPORTS_AUTO_COMPACT_BUDGET
+
+    def test_a_command_that_names_an_address_keeps_it(self):
+        from book_maker.translator.groq_translator import GroqClient
+
+        groq = GroqClient("k", "zh-hans", api_base="https://gw.example/v1")
+        assert groq.api_base == "https://gw.example/v1"
+
+    def test_the_openai_route_itself_still_has_no_address_of_its_own(self):
+        from book_maker.translator import FORMAT_DEFAULT_BASES
+
+        # the SDK's own default is api.openai.com; naming it here would
+        # override a gateway the provider entry left to the SDK
+        assert "openai" not in FORMAT_DEFAULT_BASES
 
 
 class TestModelListAcrossFormats:
