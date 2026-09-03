@@ -1,11 +1,13 @@
-"""The memory cap covers the process *tree*, not just the direct child.
+"""The memory cap covers the whole process group, not just the direct child.
 
 The smoke matrix runs each cell under `tools/memcap.py`, and the codex
 route spawns a `codex app-server` sidecar (`codex_client._spawn_codex`).
 A cap that read only the direct child's RSS could not see the sidecar's
 memory at all, and a kill that signalled only the direct child left the
 sidecar running with launchd as its parent — the exact leak the cap
-exists to prevent.
+exists to prevent. The group is the unit because it survives the cell
+exiting: a sidecar the cell forgot to reap is still in the group, and
+`killpg` reaches it without a pid list that could go stale.
 """
 
 import os
@@ -39,6 +41,16 @@ grandchild = subprocess.Popen(
 with open(os.path.join(out, "parent.pid"), "w") as handle:
     handle.write(str(os.getpid()))
 time.sleep(60)
+"""
+
+# the same spawn, and then the parent leaves at once: the memory lives on
+# in a process the cap's direct child no longer has any relation to
+DESERTING_PARENT = """
+import os, subprocess, sys
+out = sys.argv[1]
+subprocess.Popen([sys.executable, os.path.join(out, "grandchild.py"), out])
+with open(os.path.join(out, "parent.pid"), "w") as handle:
+    handle.write(str(os.getpid()))
 """
 
 
@@ -76,10 +88,10 @@ def _wait_gone(pids, deadline=3.0):
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="ps -axo layout is macOS's")
-def test_the_cap_measures_and_kills_the_whole_tree(tmp_path):
+def test_the_cap_measures_and_kills_the_whole_group(tmp_path):
     """The parent is small and the grandchild is huge: nothing is killed at
-    all unless the cap adds up the tree, and the grandchild survives the
-    kill unless the kill walks it."""
+    all unless the cap adds up the group, and the grandchild survives the
+    kill unless the kill reaches the group."""
     (tmp_path / "grandchild.py").write_text(GRANDCHILD)
     (tmp_path / "parent.py").write_text(PARENT)
 
@@ -126,3 +138,35 @@ def test_a_command_inside_the_cap_passes_its_status_through():
     assert done.returncode == 3
     assert "memcap: peak" in done.stderr
     assert "killed past" not in done.stderr
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -axo layout is macOS's")
+def test_memory_left_behind_by_a_departed_child_is_still_cleaned_up(tmp_path):
+    """The command exits immediately and leaves its grandchild holding
+    300 MB. Waiting on the direct child is not enough: whether the cap
+    fired while the parent still lived or the parent was gone first, the
+    grandchild must not outlive the run, and stderr has to say so."""
+    (tmp_path / "grandchild.py").write_text(GRANDCHILD)
+    (tmp_path / "parent.py").write_text(DESERTING_PARENT)
+
+    done = subprocess.run(
+        [
+            sys.executable,
+            str(MEMCAP),
+            "--limit-mb",
+            "150",
+            "--",
+            sys.executable,
+            str(tmp_path / "parent.py"),
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_plain_env(),
+    )
+
+    grandchild = int((tmp_path / "grandchild.pid").read_text())
+    assert _wait_gone([grandchild]) == [], "the abandoned memory outlived the cap"
+    assert "killed past 150 MB" in done.stderr or "survivor" in done.stderr, done.stderr
+    assert "memcap: peak" in done.stderr
