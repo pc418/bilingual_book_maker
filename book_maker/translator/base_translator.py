@@ -204,6 +204,23 @@ class BatchTranslationResult:
     context: TranslationContext
 
 
+def service_name(translator):
+    """The `--api_format` or `--provider` key a translator is registered
+    under, or its class name for one registered nowhere.
+
+    Imported lazily: the registries live in the package `__init__`, which
+    imports every translator, which imports this module.
+    """
+    from . import FORMAT_DICT, ROUTE_DICT
+
+    cls = type(translator)
+    for registry in (FORMAT_DICT, ROUTE_DICT):
+        for key, registered in registry.items():
+            if registered is cls:
+                return key
+    return cls.__name__
+
+
 class Base(ABC):
     # Default values for fatal error handling - subclasses can override
     TRANSLATION_ERROR_MARKER = None
@@ -266,10 +283,11 @@ class Base(ABC):
         Every LLM translator here settles on `self.model` — the endpoint
         needs a model id to call, so the attribute is not optional for
         them. The ones that call a single fixed service (Google, DeepL,
-        Caiyun, TranSmart) have no model to name, and the class name is the
+        Caiyun, TranSmart) have no model to name, and the name the service
+        is selected by — its `--api_format` or `--provider` key — is the
         honest answer: it says which service, and claims no more.
         """
-        return getattr(self, "model", None) or type(self).__name__
+        return getattr(self, "model", None) or service_name(self)
 
     def usage_postfix(self):
         return self.usage.postfix()

@@ -355,10 +355,57 @@ def test_the_llm_translators_report_the_model_they_were_given():
         assert translator.model_name == "vendor/some-model", name
 
 
-def test_a_service_with_no_model_names_the_service():
-    from book_maker.translator import Google
+def _keys_of(cls):
+    """Every `--api_format` / `--provider` key `cls` is registered under.
 
-    assert Google.__new__(Google).model_name == "Google"
+    A set, because the hermetic stand-in is registered under more than one
+    key; a translator answers with one of them.
+    """
+    from book_maker.translator import FORMAT_DICT, ROUTE_DICT
+
+    return {
+        key
+        for registry in (FORMAT_DICT, ROUTE_DICT)
+        for key, registered in registry.items()
+        if registered is cls
+    }
+
+
+def test_a_service_with_no_model_names_the_service():
+    """No model to name → the `--api_format` key the service is selected
+    by, not the Python class name."""
+    from book_maker.translator import FORMAT_DICT
+
+    for key, cls in FORMAT_DICT.items():
+        translator = cls.__new__(cls)
+        translator.model = None
+        assert translator.model_name in _keys_of(cls), key
+        assert translator.model_name != cls.__name__, key
+
+
+def test_a_provider_route_with_no_model_names_the_provider():
+    from book_maker.translator import ROUTE_DICT
+
+    for key, cls in ROUTE_DICT.items():
+        translator = cls.__new__(cls)
+        translator.model = None
+        assert translator.model_name in _keys_of(cls), key
+
+
+def test_a_translator_registered_nowhere_names_its_class():
+    from book_maker.translator.base_translator import Base
+
+    class Unregistered(Base):
+        def __init__(self):
+            pass
+
+        def rotate_key(self):
+            pass
+
+        def translate(self, text):
+            return text
+
+    assert Unregistered().model_name == "Unregistered"
 
 
 # ------------------------------- findings 3, 4, 9: names that do not collide
