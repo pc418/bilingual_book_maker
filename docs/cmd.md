@@ -68,12 +68,15 @@ A route is an endpoint, not a model name.
 | `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Defaults to `gpt-5.6-luna` on the `openai` format; the `anthropic` format needs one. Old alias values are rewritten with a note. |
 | `--api_base URL` | The endpoint. Defaults to the format's official host. A pasted `…/v1/chat/completions` or a trailing slash is trimmed. |
 | `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's own variable. |
-| `--api_format FORMAT` | The API the endpoint speaks: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id. |
+| `--api_format FORMAT` | The API the endpoint speaks: `openai` (default), `anthropic`, `gemini`, `qwen`, `groq`, `xai`, `litellm`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id — the vendor formats are never inferred, so they are named. |
+| `--api_format gemini` \| `qwen` | Google's and Alibaba's own protocols, each with its own translator: Gemini's native constrained decoding and chat history, and Qwen-MT's language-pair request. Defaults `gemini-flash-latest` and `qwen-mt-turbo`. |
+| `--api_format groq` \| `xai` \| `litellm` | The OpenAI shape at Groq, xAI and a LiteLLM proxy (`http://localhost:4000`). Each carries its address, so the format and a key are the whole route. `--model` is required: those catalogues turn over, so none is assumed. |
 | `--model codex` | The Codex CLI sidecar on a ChatGPT plan, the same as `--api_format codex`. It runs `gpt-5.6-luna`; `--api_format codex --model <id>` names another (the sidecar also offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.2`). |
 | `--model orcarouter` | The OrcaRouter gateway and its smart-routing model `orcarouter/auto`. Needs no `--api_base`; one you pass wins. The key comes from `BBM_ORCAROUTER_API_KEY`. Not a legacy alias: nothing is rewritten. |
 | `--model_list IDS` | Several model ids to rotate across, comma-separated. A single model belongs in `--model`; naming a model in both flags is an error. |
-| `--source_lang LANG` | Source language, for endpoints that want it stated; default `auto`. |
-| `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name. Its `base_url`, `api_style` (`openai` or `anthropic`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Flags you pass yourself win. |
+| `--source_lang LANG` | Source language, for the routes that want it stated (`qwen`, `customapi`); default `auto`. |
+| `--interval SECONDS` | Pause between requests, default `0.01`. Only the `gemini` route paces itself with it. |
+| `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name. Its `base_url`, `api_style` (`openai`, `anthropic`, `gemini`, `qwen`, `groq`, `xai` or `litellm`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Flags you pass yourself win. |
 
 A gateway that serves Claude models speaks the OpenAI shape, and a gateway
 `--api_base` is taken to be that shape. The anthropic format is inferred only
@@ -82,13 +85,15 @@ gateway asked for the anthropic shape it does not serve answers 404, and the
 run stops naming `--api_format openai` as the fix.
 
 Key lookup order: `--key` (`--api_key` is the same flag), then `BBM_API_KEY`,
-then `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` /
-`BBM_DEEPL_API_KEY` depending on the format. Endpoints on localhost need no
+then the format's own: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`BBM_GOOGLE_GEMINI_KEY`, `BBM_QWEN_API_KEY`, `BBM_GROQ_API_KEY`,
+`BBM_XAI_API_KEY`, `BBM_CAIYUN_API_KEY`, `BBM_DEEPL_API_KEY` (each with the
+vendor's own conventional variable after it). Endpoints on localhost need no
 key.
 
 The old `--model` preset names, the per-vendor `--*_key` flags,
-`--ollama_model`, `--deployment_id` and `--interval` are no longer in the
-parser, but old command lines still run: `book_maker/legacy_cli.py` rewrites
+`--ollama_model` and `--deployment_id` are no longer in the parser, but old
+command lines still run: `book_maker/legacy_cli.py` rewrites
 them into the flags above before the run starts and prints each rewrite. The
 table is in [Migrating from the old flags](migration.md). The old
 per-vendor key variables (`BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, …) are
