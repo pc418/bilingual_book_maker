@@ -230,3 +230,40 @@ def test_a_declaration_that_declares_nothing_is_drm(tmp_path):
     and malformed fails closed like an unparseable one."""
     path = _epub(tmp_path, members={"META-INF/encryption.xml": _raw_encryption("")})
     assert check_epub(str(path)) == "drm"
+
+
+def test_a_decoy_method_below_cipher_data_does_not_clear_the_file(tmp_path):
+    """Finding 1 (re-review): the search walked every descendant, so a font
+    algorithm parked anywhere inside the entry — including under CipherData,
+    where an EncryptionMethod has no meaning — cleared it. Only a direct
+    child of EncryptedData declares how that resource is encrypted."""
+    path = _epub(
+        tmp_path,
+        members={
+            "META-INF/encryption.xml": _raw_encryption(
+                "<enc:EncryptedData><enc:CipherData>"
+                '<enc:CipherReference URI="OEBPS/ch0.xhtml"/>'
+                '<enc:EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/>'
+                "</enc:CipherData></enc:EncryptedData>"
+            )
+        },
+    )
+    assert check_epub(str(path)) == "drm"
+
+
+def test_a_direct_child_method_still_clears_a_font(tmp_path):
+    """Finding 1 (re-review): tightening to direct children must not turn the
+    ordinary font declaration into a refusal."""
+    path = _epub(
+        tmp_path,
+        members={
+            "META-INF/encryption.xml": _raw_encryption(
+                "<enc:EncryptedData>"
+                '<enc:EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/>'
+                "<enc:CipherData>"
+                '<enc:CipherReference URI="OEBPS/fonts/x.otf"/>'
+                "</enc:CipherData></enc:EncryptedData>"
+            )
+        },
+    )
+    assert check_epub(str(path)) == "ok"

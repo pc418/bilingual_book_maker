@@ -20,6 +20,7 @@ from book_maker.loader.disclosure import (
     COLOPHON_FILE,
     COLOPHON_ID,
     CONTRIBUTOR_ID,
+    DESCRIPTION_TAIL,
 )
 from book_maker.loader.epub_loader import EPUBBookLoader
 
@@ -615,10 +616,11 @@ TOOL_NAME_IN_A_CREDIT = "bilingual_book_maker"
 
 
 class RotatingModel(StubModel):
-    """A run given --model_list may use any of them."""
+    """A run given --model_list may use any of them — the openai translator's
+    shape, where `_model_names` is the readable list beside the cycle."""
 
     model = "a"
-    model_list = ["a", "b"]
+    _model_names = ["a", "b"]
 
 
 def test_a_model_list_run_names_every_model_it_could_have_used(tmp_path):
@@ -662,3 +664,118 @@ def test_model_id_never_iterates_a_cycle():
     260902 smoke matrix took a 16 GB machine down with it)."""
     assert model_id(_RotatingStub(["a", "b"])) == "a, b"
     assert model_id(_CycleOnlyStub()) == "a"
+
+
+# --------------------- finding 2 (re-review): whose description is it
+
+
+def test_a_publishers_own_machine_translation_note_survives(tmp_path):
+    """Finding 2 (re-review): the matcher keyed on the opening words alone,
+    so a publisher's `<dc:description>Machine translation (French edition)`
+    — a statement about the book — was deleted as though this tool had
+    written it."""
+    source = _source_with(
+        extra_metadata=[
+            ("DC", "description", "Machine translation (French edition)", None)
+        ]
+    )
+
+    members, opf = _members_and_opf(_output_of(tmp_path, source))
+
+    _assert_sound(members, opf)
+    assert "Machine translation (French edition)" in opf
+    # ours is written beside it, not instead of it
+    assert opf.count("<dc:description>") == 2
+    assert DESCRIPTION_TAIL in opf
+
+
+def test_our_own_description_is_still_replaced_on_a_rerun(tmp_path):
+    """Finding 2 (re-review): recognising the whole sentence must not stop
+    the tool from owning what it wrote."""
+    source = tmp_path / "book.epub"
+    epub.write_epub(str(source), _source())
+    once = _translate_file(source)
+
+    loader = EPUBBookLoader(str(once), ModelB, key="", resume=False, language="zh-hans")
+    loader.quiet = True
+    loader.make_bilingual_book()
+
+    _, opf = _members_and_opf(once.with_name(f"{once.stem}_bilingual.epub"))
+
+    assert opf.count(DESCRIPTION_TAIL) == 1
+    assert "vendor/b" in opf
+    assert "x/y" not in opf
+
+
+# ------------- finding 3 (re-review): the recovery save still copied the note
+
+
+def _interrupted_loader(tmp_path, disclose=True, model=ModelB):
+    """A loader part-way through translating a previous output."""
+    source = tmp_path / "book.epub"
+    epub.write_epub(str(source), _source())
+    once = _translate_file(source)
+
+    loader = EPUBBookLoader(
+        str(once),
+        model,
+        key="",
+        resume=False,
+        language="zh-hans",
+        disclose=disclose,
+    )
+    loader.quiet = True
+    loader.make_bilingual_book()
+    loader.p_to_save = loader.p_to_save[:1]
+    return loader, once
+
+
+def test_the_recovery_book_carries_this_runs_note_not_the_last_ones(tmp_path):
+    """Finding 3 (re-review): the replay skipped the old note when handing
+    out plans but added it to the book anyway, so the stamp saw a note
+    already there and left the previous run's claim standing."""
+    loader, once = _interrupted_loader(tmp_path)
+
+    loader._save_temp_book()
+
+    temp = once.with_name(f"{once.stem}_bilingual_temp.epub")
+    members, opf = _members_and_opf(temp)
+    _assert_sound(members, opf)
+    notes = [m for m in members if "translation_note" in m]
+    assert len(notes) == 1
+    with zipfile.ZipFile(temp) as archive:
+        page = archive.read(notes[0]).decode("utf-8")
+    assert "vendor/b" in page
+    assert "x/y" not in page
+
+
+def test_the_recovery_book_carries_no_note_with_disclosure_off(tmp_path):
+    """Finding 3 (re-review): --no_disclosure kept the previous run's note,
+    which is the one outcome the flag exists to prevent."""
+    loader, once = _interrupted_loader(tmp_path, disclose=False)
+
+    loader._save_temp_book()
+
+    temp = once.with_name(f"{once.stem}_bilingual_temp.epub")
+    members, opf = _members_and_opf(temp)
+    _assert_sound(members, opf)
+    assert not [m for m in members if "translation_note" in m]
+    assert DESCRIPTION_TAIL not in opf
+
+
+# ------------------ finding 4 (re-review): only a rotating run names several
+
+
+class _StoredListStub:
+    """Codex's shape: `set_model_list` keeps every name, but every request
+    goes to `self.model`. Naming them all would be a false claim."""
+
+    model = "a"
+    model_name = "a"
+    model_list = ["a", "b"]
+
+
+def test_a_stored_model_list_without_rotation_names_one_model():
+    """Finding 4 (re-review): a finite `model_list` was read as rotation.
+    Only `_model_names`, which the rotating translator keeps, means that."""
+    assert model_id(_StoredListStub()) == "a"
