@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from ebooklib import epub
 
-from book_maker.loader.disclosure import COLOPHON_FILE
+from book_maker.loader.disclosure import COLOPHON_FILE, COLOPHON_ID
 from book_maker.loader.epub_loader import EPUBBookLoader
 
 REPO = Path(__file__).resolve().parent.parent
@@ -323,7 +323,7 @@ def test_every_output_carries_the_colophon(request, fixture):
         opf_name = next(n for n in archive.namelist() if n.endswith(".opf"))
         opf = archive.read(opf_name).decode("utf-8")
     assert opf.count(f'href="{COLOPHON_FILE}"') == 1
-    assert opf.index('idref="colophon"') > opf.rindex("<spine")
+    assert opf.index(f'idref="{COLOPHON_ID}"') > opf.rindex("<spine")
 
 
 @pytest.fixture

@@ -47,11 +47,13 @@ from .helper import (
     strip_duplicate_ids,
 )
 from .disclosure import (
-    add_translation_credit,
-    attach_colophon,
+    entry_is_our_colophon,
     is_calibre_metadata,
-    is_colophon,
+    is_our_colophon,
+    is_prior_disclosure,
     model_id,
+    stamp_disclosure,
+    tool_contributor_ids,
 )
 from .font_obfuscation import deobfuscate_fonts
 from .rights import DRM_MESSAGE, check_epub
@@ -420,6 +422,11 @@ class EPUBBookLoader(BaseBookLoader):
             "single" if self.single_translate else "bilingual",
         )
         allowed_ns = set(epub.NAMESPACES.keys()) | set(epub.NAMESPACES.values())
+        # What a previous run of this tool stamped is this tool's to rewrite:
+        # stripped here and, when disclosure is on, written again from *this*
+        # run's facts at write time. Left in place, a book translated twice
+        # would claim both models and carry two colophons.
+        prior_ids = tool_contributor_ids(book)
 
         for namespace, metas in book.metadata.items():
             # Only keep namespaces recognized by ebooklib
@@ -452,6 +459,9 @@ class EPUBBookLoader(BaseBookLoader):
                         continue
                 else:
                     # Unexpected metadata format; skip gracefully
+                    continue
+
+                if is_prior_disclosure(name, value, others, prior_ids):
                     continue
 
                 if is_calibre_metadata(namespace, name, others):
@@ -539,24 +549,33 @@ class EPUBBookLoader(BaseBookLoader):
             entry
             for entry in book.spine
             if not (isinstance(entry, tuple) and not entry[0])
+            and not entry_is_our_colophon(book, entry)
         ]
         new_book.toc = backfill_toc_hrefs(self._fix_toc_uids(book.toc))
 
-        # Last, because it appends to the spine the block above just built:
-        # the file says, in metadata and on one page, that it is a machine
-        # translation. Off only through --no_disclosure; there is no path where
-        # the tool is credited but the page is missing, or the reverse.
-        if getattr(self, "disclose", True):
-            model = model_id(getattr(self, "translate_model", None))
-            add_translation_credit(new_book, model)
-            attach_colophon(
-                new_book,
-                model,
-                tag or self.language,
-                source_identifier=source_uid,
-                source_book=book,
-            )
+        # The disclosure itself is *not* added here. It names the model the
+        # run used, and with --model_list that is not settled until the last
+        # paragraph is translated — so it is stamped on the finished book,
+        # just before each write. See _stamp_disclosure.
+        self._disclosure_language = tag or self.language
+        self._disclosure_source = source_uid
         return new_book
+
+    def _stamp_disclosure(self, new_book):
+        """Say the file is a machine translation, on the book about to be written.
+
+        Every write route calls this immediately before `write_epub`, which
+        is the only moment the model is finally known. Doing nothing twice
+        is safe: the second call finds the colophon already there.
+        """
+        if not getattr(self, "disclose", True):
+            return
+        stamp_disclosure(
+            new_book,
+            model_id(getattr(self, "translate_model", None)),
+            getattr(self, "_disclosure_language", None) or self.language,
+            source_identifier=getattr(self, "_disclosure_source", None),
+        )
 
     def _fix_toc_uids(self, toc, counter=None):
         """Fix TOC items that have uid=None to prevent TypeError when writing NCX."""
@@ -2025,7 +2044,10 @@ class EPUBBookLoader(BaseBookLoader):
                 target = t
 
         for item in complete_book.get_items():
-            if item.file_name != fixname:
+            # A previous output's translation note is replaced by this run's,
+            # not carried alongside it — two would be two ids and two members
+            # of the same zip.
+            if item.file_name != fixname and not is_our_colophon(item):
                 new_book.add_item(item)
         if soup_complete:
             complete_item.content = soup_complete.encode()
@@ -2040,6 +2062,7 @@ class EPUBBookLoader(BaseBookLoader):
             fixstart,
             fixend,
         )
+        self._stamp_disclosure(new_book)
         epub.write_epub(f"{name_fix}", new_book, {})
 
     def has_nest_child(self, element, trans_taglist):
@@ -2751,7 +2774,7 @@ class EPUBBookLoader(BaseBookLoader):
         document_items = [
             item
             for item in self.origin_book.get_items_of_type(ITEM_DOCUMENT)
-            if not is_colophon(item)
+            if not is_our_colophon(item)
         ]
         chapter_plans = self._build_translation_plan(document_items, trans_taglist)
         self._planned_job_ids = [
@@ -2933,11 +2956,13 @@ class EPUBBookLoader(BaseBookLoader):
 
                 if self.accumulated_num > 1:
                     name, _ = os.path.splitext(self.epub_name)
+                    self._stamp_disclosure(new_book)
                     epub.write_epub(f"{name}_bilingual.epub", new_book, {})
             name, _ = os.path.splitext(self.epub_name)
             if self.batch_flag:
                 self.translate_model.batch()
             else:
+                self._stamp_disclosure(new_book)
                 epub.write_epub(f"{name}_bilingual.epub", new_book, {})
         except KeyboardInterrupt as e:
             print(e)
@@ -3021,14 +3046,18 @@ class EPUBBookLoader(BaseBookLoader):
         document_items = [
             item
             for item in origin_book_temp.get_items_of_type(ITEM_DOCUMENT)
-            if not is_colophon(item)
+            if not is_our_colophon(item)
         ]
         chapter_plans = iter(
             self._build_translation_plan(document_items, trans_taglist)
         )
         try:
             for item in origin_book_temp.get_items():
-                if item.get_type() == ITEM_DOCUMENT:
+                # The same selection the plan was built from: a document
+                # filtered out above has no plan, and asking for one would
+                # end the recovery save with StopIteration on the very run
+                # that most needs it written.
+                if item.get_type() == ITEM_DOCUMENT and not is_our_colophon(item):
                     # one plan per document, consumed in document order: the
                     # replay must walk exactly the selection the processing
                     # pass walked or global_index lands on unrelated text
@@ -3061,6 +3090,7 @@ class EPUBBookLoader(BaseBookLoader):
                             )
                     item.content = chapter_plan.soup.encode()
                 new_temp_book.add_item(item)
+            self._stamp_disclosure(new_temp_book)
             epub.write_epub(temp_path, new_temp_book, {})
         except Exception as e:
             # The recovery book is the only artifact a crashed run leaves

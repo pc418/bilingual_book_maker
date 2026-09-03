@@ -14,8 +14,10 @@ we want, since the translated book encrypts nothing. But dropping the
 declaration while keeping scrambled bytes would ship a font no reading
 system can parse. Unscrambling on read is what makes the drop correct.
 
-Stdlib only: this runs on the raw OCF zip, beside the reader rather than
-inside it.
+This runs on the raw OCF zip, beside the reader rather than inside it — the
+package document is read directly (`helper.read_package`) rather than
+through ebooklib, because the key is derived from the identifier the
+package *names*, which is not the one ebooklib reports.
 """
 
 import hashlib
@@ -24,10 +26,10 @@ import xml.etree.ElementTree as ET
 import zipfile
 from urllib.parse import unquote
 
-CONTAINER_PATH = "META-INF/container.xml"
+from .helper import read_package
+
 ENCRYPTION_PATH = "META-INF/encryption.xml"
 
-CONTAINER_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
 ENC_NS = "{http://www.w3.org/2001/04/xmlenc#}"
 
 IDPF_ALGORITHM = "http://www.idpf.org/2008/embedding"
@@ -61,13 +63,6 @@ def _unscramble(data, key, window):
     return bytes(out)
 
 
-def _opf_directory(archive):
-    container = ET.fromstring(archive.read(CONTAINER_PATH))
-    rootfile = container.find(f".//{CONTAINER_NS}rootfile")
-    full_path = rootfile.get("full-path") if rootfile is not None else None
-    return posixpath.dirname(full_path or "")
-
-
 def _declarations(archive):
     """(algorithm, container-relative URI) for every encrypted resource."""
     root = ET.fromstring(archive.read(ENCRYPTION_PATH))
@@ -98,12 +93,20 @@ def deobfuscate_fonts(book, epub_path):
         with zipfile.ZipFile(epub_path) as archive:
             if ENCRYPTION_PATH not in archive.namelist():
                 return [], []
-            opf_dir = _opf_directory(archive)
             declarations = _declarations(archive)
     except Exception:
         # check_epub already read this file; anything failing here is a race
         # or a truncation the reader below will report far better.
         return [], []
+
+    # The OCF key is derived from the identifier the package names as
+    # `unique-identifier`. `book.uid` is ebooklib's guess at that — the last
+    # identified dc:identifier it read — which on a book carrying an ISBN
+    # after its UUID is a different string and therefore a wrong key. It
+    # stays only as a last resort, for a package this could not read at all.
+    package = read_package(epub_path)
+    opf_dir = package.opf_dir
+    identifier = package.unique_identifier or getattr(book, "uid", None) or ""
 
     # A CipherReference URI is relative to the container root, while an
     # ebooklib item's file_name is relative to the OPF. Both spellings are
@@ -116,7 +119,6 @@ def deobfuscate_fonts(book, epub_path):
         items.setdefault(posixpath.normpath(posixpath.join(opf_dir, name)), item)
         items.setdefault(posixpath.normpath(name), item)
 
-    identifier = getattr(book, "uid", None) or ""
     restored, unresolved = [], []
     for algorithm, uri in declarations:
         if algorithm == IDPF_ALGORITHM:
