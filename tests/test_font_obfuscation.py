@@ -616,3 +616,50 @@ def test_an_oddly_namespaced_declaration_still_writes_a_conforming_one(tmp_path)
         for el in root.iter("{http://www.w3.org/2001/04/xmlenc#}CipherReference")
     ] == [member]
     assert _obfuscate(shipped, IDPF_ALGORITHM, _output_identifier(output)) == LONG_FONT
+
+
+# -------------- finding 2: no identifier is no key, not an empty-string key
+
+
+def _identifierless_source(tmp_path):
+    """A package that names no `unique-identifier` at all."""
+    path = _write_source(tmp_path / "anonymous.epub", LONG_FONT, IDPF_ALGORITHM)
+    member, opf = _opf_of(path)
+    import re
+
+    opf = re.sub(r'\sunique-identifier="[^"]*"', "", opf, count=1)
+    opf = re.sub(r"<dc:identifier[^>]*>[^<]*</dc:identifier>", "", opf)
+
+    replacement = path.with_suffix(".anon.epub")
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(replacement, "w") as target:
+        for info in source.infolist():
+            target.writestr(
+                info,
+                (
+                    opf.encode("utf-8")
+                    if info.filename == member
+                    else source.read(info.filename)
+                ),
+            )
+    replacement.replace(path)
+    return path
+
+
+def test_a_book_with_no_identifier_leaves_its_idpf_font_alone(tmp_path):
+    """`sha1(b"")` is a perfectly computable key and a completely wrong one:
+    the font was XORed with it, counted as restored, then re-scrambled under
+    the output's identifier — a silently corrupt font and nothing said. No
+    identifier means no key, exactly as it already does for Adobe."""
+    path = _identifierless_source(tmp_path)
+    book = epub.read_epub(str(path))
+    # ebooklib's `reset()` invents a uuid for a book that names none, so the
+    # last-resort fallback has to be emptied out by hand to model a book
+    # with no resolvable identifier at all.
+    book.uid = None
+
+    scrambled = book.get_item_with_id("font").content
+    restored, unresolved = deobfuscate_fonts(book, str(path))
+
+    assert restored == []
+    assert unresolved == ["EPUB/fonts/obfuscated.otf"]
+    assert book.get_item_with_id("font").content == scrambled
