@@ -619,22 +619,6 @@ class TestLoaderWiring:
         assert loader.translate_model.session is None
 
 
-class TestFallbackKeepsTheSession:
-    def test_the_openai_fallback_carries_history_budget_and_meter(self):
-        """Codex review of the trunk merge: a gateway that answers the
-        anthropic shape with a 404 switches the run to the openai shape, and
-        the switch used to build a window-mode translator with an empty
-        history — the session silently became a rolling window."""
-        t = _translator(context_compact_at=4321)
-        t.save_context("one", "一")
-        fb = t._build_openai_fallback()
-        assert fb.session is t.session
-        assert fb.context_mode == "session"
-        assert fb.context_compact_at == 4321
-        assert fb.usage is t.usage
-        assert [m["content"] for m in fb.session.messages()][-1] == "一"
-
-
 class TestCompactionDisabled:
     """`--no-context-compact` rolls the window over with no summary at all."""
 

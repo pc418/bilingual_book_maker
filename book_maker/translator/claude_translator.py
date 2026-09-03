@@ -1,5 +1,4 @@
 import re
-from itertools import cycle
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -9,7 +8,6 @@ from anthropic import (
     Anthropic,
     APIStatusError,
     BadRequestError,
-    NotFoundError,
     UnprocessableEntityError,
 )
 
@@ -86,22 +84,7 @@ def _sdk_base_url(api_base):
     return base
 
 
-# A gateway that does not serve /v1/messages answers like this. Auth, quota
-# and transport errors say nothing about the wire format and must not trigger
-# a second endpoint being tried with the same key.
-_WRONG_SHAPE_STATUSES = (404, 405)
-
-# Anthropic's own hosts serve no OpenAI route, so a 404 from one is an answer
-# about the *model*, not the wire format. Retrying elsewhere would bury it.
-_ANTHROPIC_HOSTS = ("anthropic.com",)
-
-
 class Claude(Base):
-    # Class-level defaults so a partially built instance (tests, subclasses)
-    # still answers the questions every request path asks.
-    requested_api_base = None
-    _fallback = None
-
     DEFAULT_PROMPT = (
         "Help me translate the text within triple backticks into {language} "
         "and provide only the translated result.\n```{text}```"
@@ -157,14 +140,8 @@ class Claude(Base):
         super().__init__(key, language)
         base_url = _sdk_base_url(api_base)
         self.api_url = base_url or "https://api.anthropic.com"
-        # Kept as given: the OpenAI fallback needs the user's own URL, not the
-        # trimmed one this SDK wants.
-        self.requested_api_base = api_base
-        self.key_string = key
         # One key, not the whole comma-separated list; rotate_key advances it.
         self.client = Anthropic(base_url=base_url, api_key=next(self.keys), timeout=20)
-        # Set on the first wrong-shape answer; every later call goes through it.
-        self._fallback = None
         self.model = "claude-haiku-4-5-20251001"  # default it for now
         self.language = language
         self.prompt_template = prompt_template or self.DEFAULT_PROMPT
@@ -193,9 +170,9 @@ class Claude(Base):
         self.no_context_compact = no_context_compact
         self.style_note = style_note
         self.handoff_path = Path(handoff_path) if handoff_path else None
-        self._compact_failures = 0
         self._auto_budget = None
         self._window_asked = False
+        self._compact_failures = 0
 
     # Both of these turn off exactly what session mode cannot afford, and both
     # are the same question — is a byte-stable prefix being maintained? — so
@@ -255,71 +232,22 @@ class Claude(Base):
             )
         self.model = models[0]
 
-    def _is_wrong_shape(self, error):
-        """Whether `error` says this endpoint does not speak the anthropic shape."""
-        if not self.requested_api_base:
-            # The default host is Anthropic's own. A 404 there means the model
-            # does not exist, and retrying on /chat/completions cannot help.
-            return False
-        host = (urlparse(self.requested_api_base).hostname or "").lower()
-        if any(host == h or host.endswith(f".{h}") for h in _ANTHROPIC_HOSTS):
-            # Named explicitly, as the documented command does, but still the
-            # one host where the OpenAI shape does not exist.
-            return False
-        if isinstance(error, NotFoundError):
-            return True
-        return (
-            isinstance(error, APIStatusError)
-            and getattr(error, "status_code", None) in _WRONG_SHAPE_STATUSES
-        )
+    def _explain_wrong_shape(self, error):
+        """Re-raise `error`, naming the fix when a gateway does not serve this shape.
 
-    def _build_openai_fallback(self):
-        """The same endpoint, model and key, spoken as OpenAI instead."""
-        from .chatgptapi_translator import ChatGPTAPI
-
-        base = (self.requested_api_base or "").rstrip("/")
-        if not base.endswith("/v1"):
-            # `_sdk_base_url` trimmed /v1 for the anthropic SDK, which appends
-            # its own path; the OpenAI SDK expects the /v1 to be there.
-            base = f"{base}/v1"
-        fallback = ChatGPTAPI(
-            self.key_string,
-            self.language,
-            api_base=base,
-            prompt_template=self.prompt_template,
-            prompt_sys_msg=self.prompt_sys_msg,
-            temperature=self.temperature,
-            context_flag=self.context_flag,
-            context_paragraph_limit=self.context_paragraph_limit,
-            context_mode=self.context_mode,
-            context_compact_at=self.context_compact_at,
-            no_context_compact=self.no_context_compact,
-        )
-        # Straight assignment rather than set_model_list, which would echo a
-        # model list the user never typed. The route check is still owed, and
-        # owed to *this* shape: the anthropic 404 that sent us here was about
-        # the wire format, so it says nothing about the model, and the
-        # endpoint that does answer is the one worth asking.
-        fallback.model_list = cycle([self.model])
-        fallback.model = self.model
-        fallback._model_names = [self.model]
-        fallback._route_state = {"pending": [self.model], "failure": None}
-        # One history and one meter across the switch: the pairs the
-        # anthropic shape collected go on being replayed, and the bar keeps
-        # counting instead of freezing at the request that switched.
-        if self.session is not None:
-            fallback.session = self.session
-        fallback.usage = self.usage
-        return fallback
-
-    def _switch_to_openai(self, error):
-        self._fallback = self._build_openai_fallback()
-        print(
-            f"[yellow]ℹ this endpoint does not answer the anthropic shape "
-            f"({error}); switching to the openai format for the rest of the "
-            f"run. Pass --api_format openai to skip this attempt.[/yellow]"
-        )
-        return self._fallback
+        A 404 or 405 from a host other than Anthropic's own usually means the
+        endpoint speaks the OpenAI shape only. On api.anthropic.com a 404 is
+        about the model, so it is passed through untouched.
+        """
+        host = (urlparse(self.api_url).hostname or "").lower()
+        status = getattr(error, "status_code", None)
+        if host.endswith("anthropic.com") or status not in (404, 405):
+            raise error
+        raise RuntimeError(
+            f"{self.api_url} does not answer the anthropic shape at "
+            f"/v1/messages ({error}). If it is an OpenAI-compatible endpoint, "
+            f"pass --api_format openai."
+        ) from error
 
     def _user_content(self, text):
         """The user message for one unit.
@@ -397,6 +325,30 @@ class Claude(Base):
             return {}
         return {"cache_control": {"type": "ephemeral"}}
 
+    def _note_usage(self, message, model=None):
+        """Add what the endpoint billed for this request to the meter.
+
+        Anthropic's `input_tokens` leaves the cached part out, so the prompt
+        total is the three input counts together; `cache_read_input_tokens`
+        is the number a gateway that drops `cache_control` never reports.
+        """
+        try:
+            usage = getattr(message, "usage", None)
+            if usage is None:
+                return
+            read = getattr(usage, "cache_read_input_tokens", 0) or 0
+            written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            self.usage.note(
+                (getattr(usage, "input_tokens", 0) or 0) + read + written,
+                getattr(usage, "output_tokens", 0),
+                read,
+                model=model or self.model,
+            )
+        except Exception:
+            # a readout, not a gate: a usage record shaped strangely by a
+            # gateway is not a reason to stop a paid run
+            return
+
     def _session_budget(self):
         """How large a window may grow before it rolls over.
 
@@ -430,9 +382,6 @@ class Claude(Base):
         every outcome here is announced rather than raised — a budget the user
         did not ask for is worth one line.
 
-        The field reading is `detect_context_window`, deliberately not
-        `learn_context_window`: the latter's contract is to end the run, which
-        is the openai route's answer to this question and not this one's.
         """
         default = compact_budget_for(self.model)
         try:
@@ -470,21 +419,6 @@ class Claude(Base):
             self._start_empty_window()
         else:
             self._compact_session()
-
-    def _start_empty_window(self):
-        """Roll over with no handoff report, because the user asked for none.
-
-        Continuity across the seam is what the report buys, and
-        `--no-context-compact` declines to buy it — so this is a plain reset,
-        not a cheaper summary.
-        """
-        self.session.reset(seed="")
-        if self.quiet:
-            return
-        print(
-            f"[bold cyan]— context window {self.session.windows}, started "
-            f"empty (--no-context-compact) —[/bold cyan]"
-        )
 
     def _compact_session(self):
         """Ask for a handoff report, then start the next window seeded with it.
@@ -589,6 +523,21 @@ class Claude(Base):
             self._compact_failures = 0
             self.session.reset(seed="")
 
+    def _start_empty_window(self):
+        """Roll over with no handoff report, because the user asked for none.
+
+        Continuity across the seam is what the report buys, and
+        `--no-context-compact` declines to buy it — so this is a plain reset,
+        not a cheaper summary.
+        """
+        self.session.reset(seed="")
+        if self.quiet:
+            return
+        print(
+            f"[bold cyan]— context window {self.session.windows}, started "
+            f"empty (--no-context-compact) —[/bold cyan]"
+        )
+
     def _show_handoff(self, report):
         """Print the report the next window will inherit.
 
@@ -618,8 +567,6 @@ class Claude(Base):
         Deliberately outside the translation flow: no context pairs, no
         prompt template, no saved history.
         """
-        if self._fallback:
-            return self._fallback._chat_completion(prompt, model)
         try:
             r = self.client.messages.create(
                 max_tokens=4096,
@@ -629,42 +576,13 @@ class Claude(Base):
         except (BadRequestError, UnprocessableEntityError) as e:
             raise RungRejected(e) from e
         except APIStatusError as e:
-            if not self._is_wrong_shape(e):
-                raise
-            return self._switch_to_openai(e)._chat_completion(prompt, model)
+            self._explain_wrong_shape(e)
         self._note_usage(r, model)
         return "".join(
             block.text for block in r.content if getattr(block, "type", "") == "text"
         )
 
-    def _note_usage(self, message, model=None):
-        """Add what the endpoint billed for this request to the meter.
-
-        Anthropic's `input_tokens` leaves the cached part out, so the prompt
-        total is the three input counts together; `cache_read_input_tokens`
-        is the number a gateway that drops `cache_control` never reports.
-        """
-        try:
-            usage = getattr(message, "usage", None)
-            if usage is None:
-                return
-            read = getattr(usage, "cache_read_input_tokens", 0) or 0
-            written = getattr(usage, "cache_creation_input_tokens", 0) or 0
-            self.usage.note(
-                (getattr(usage, "input_tokens", 0) or 0) + read + written,
-                getattr(usage, "output_tokens", 0),
-                read,
-                model=model or self.model,
-            )
-        except Exception:
-            # a readout, not a gate: a usage record shaped strangely by a
-            # gateway is not a reason to stop a paid run
-            return
-
     def translate(self, text):
-        if self._fallback:
-            return self._fallback.translate(text)
-
         self.rotate_key()
 
         # Create messages with context
@@ -680,9 +598,7 @@ class Claude(Base):
                 **self._cache_kwargs(),
             )
         except APIStatusError as e:
-            if not self._is_wrong_shape(e):
-                raise
-            return self._switch_to_openai(e).translate(text)
+            self._explain_wrong_shape(e)
         self._note_usage(r)
         t_text = r.content[0].text
 

@@ -14,10 +14,9 @@ from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
 from book_maker.provider_loader import resolve_provider
-from book_maker.translator import FORMAT_DICT, LLM_FORMATS
+from book_maker.translator import FORMAT_DICT, LLM_FORMATS, ROUTE_DICT
 from book_maker.translator.base_translator import PriceTable
 from book_maker.translator.capabilities import ModelUnavailable
-from book_maker.translator import orcarouter_translator as orcarouter
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
 # Where each format looks for a key when --key is absent. $BBM_API_KEY is the
@@ -46,9 +45,7 @@ CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 MODEL_OPTIONAL_FORMATS = ("codex",)
 
 # The model a format falls back to when the command names none. Only the
-# openai format has one: it has an obvious cheapest current model, and that
-# is what a command carrying nothing but a key used to run before the model
-# presets went away. Anthropic has no equivalent, so it keeps asking.
+# openai format has an obvious one; the anthropic format asks for an id.
 DEFAULT_MODELS = {"openai": "gpt-5.6-luna"}
 
 # `--model codex` selects the format rather than a model id. The sidecar then
@@ -59,22 +56,13 @@ CODEX_MODEL_ALIASES = ("codex",)
 def infer_api_format(api_base, model=""):
     """Which wire format the endpoint speaks, guessed from host then model.
 
-    The address is the stronger signal: whoever names an endpoint has said
-    where the request goes. Only when no endpoint is named does the model id
-    decide, and there the giveaway is `claude` or `anthropic` — including a
-    namespaced `anthropic/claude-sonnet-4-6`, which is still an Anthropic
-    model however it is addressed.
-
-    Guessing wrong is cheap: a gateway that serves those ids over the OpenAI
-    shape answers the first anthropic request with a 404, and the route falls
-    back once (see `Claude._build_openai_fallback`). `--api_format` overrides
-    all of this outright.
+    The host is the stronger signal: a gateway serves Claude models over the
+    OpenAI shape too. Only without an endpoint does the model id decide, and
+    there `claude` or `anthropic` in it means Anthropic. `--api_format`
+    overrides both.
     """
     name = (model or "").strip().lower()
-    # `codex` is not an endpoint, so an --api_base cannot imply it and it must
-    # be recognised before the host is consulted. Naming it as the model is
-    # also how upstream spells this, and how the other non-endpoint engines
-    # have always been selected.
+    # `codex` is a sidecar, not an endpoint, so no --api_base can imply it.
     if name in CODEX_MODEL_ALIASES:
         return "codex"
     if api_base:
@@ -207,32 +195,19 @@ def resolve_endpoint(options):
         )
     model_names = named_models(options)
 
-    # A model name that selects a route — `codex`, `orcarouter`,
-    # `orcarouter/<id>` — is resolved before `--provider` fills anything in.
-    # Such a name says where the request goes; a provider entry only says
-    # where it would have gone otherwise, so the endpoint it stands for must
-    # not be allowed to capture a route the command named. OrcaRouter is one
-    # gateway at one address, so its model id is enough to address it.
-    orcarouter_env_keys = ()
-    if model_names:
-        route = orcarouter.resolve(model_names[0], options.api_base)
-        if route:
-            model_names[0], options.api_base = route
-            orcarouter_env_keys = (orcarouter.ENV_KEY,)
-            # the whole list rotates against that one gateway, so every entry
-            # goes through the same redirect: the translator dedupes by
-            # string, and `orcarouter` beside `orcarouter/auto` is one model
-            # named twice, which the endpoint's model check would reject
-            model_names = [
-                (orcarouter.resolve(name, options.api_base) or (name,))[0]
-                for name in model_names
-            ]
-        if route or model_names[0].lower() in CODEX_MODEL_ALIASES:
-            # settled from the route itself, so the provider's api_style
-            # cannot answer a question the model name already answered
-            options.api_format = options.api_format or infer_api_format(
-                options.api_base, model_names[0]
-            )
+    # A model name that selects a route says where the request goes, so a
+    # provider entry must not capture it. `--model orcarouter` is upstream's
+    # OrcaRouter route: its class carries the gateway's address and its
+    # smart-routing model, and the key comes from BBM_ORCAROUTER_API_KEY.
+    if len(model_names) == 1 and model_names[0].lower() in ROUTE_DICT:
+        options.api_base = normalize_api_base(options.api_base, "openai")
+        return [model_names[0].lower()], "openai", ("BBM_ORCAROUTER_API_KEY",)
+    if model_names and model_names[0].lower() in CODEX_MODEL_ALIASES:
+        # settled from the route itself, so the provider's api_style
+        # cannot answer a question the model name already answered
+        options.api_format = options.api_format or infer_api_format(
+            options.api_base, model_names[0]
+        )
 
     provider_env_keys = apply_provider(options)
     if not model_names:
@@ -245,7 +220,7 @@ def resolve_endpoint(options):
     options.api_base = normalize_api_base(options.api_base, api_format)
     if not model_names and api_format in DEFAULT_MODELS:
         model_names = [DEFAULT_MODELS[api_format]]
-    return model_names, api_format, orcarouter_env_keys + provider_env_keys
+    return model_names, api_format, provider_env_keys
 
 
 def get_book_type(book_name):
@@ -367,12 +342,9 @@ def compact_budget(value):
     """argparse type for --context-compact-at: a usable budget, or 0 for auto.
 
     `0` means "size it from the model": the translator asks the endpoint for
-    the model's context window and compacts at 90% of it. What silence means
-    is the route's to say. On the openai route it ends the run, because
-    `/v1/models` is a static record and a miss will not become a hit later.
-    The anthropic route (a gateway may serve the shape without the field)
-    and the codex route (the sidecar only learns a window after a turn has
-    spent tokens) announce the miss and fall back to the default.
+    the model's context window and compacts at 90% of it. What a miss means
+    is the route's call: the openai route ends the run, the anthropic and
+    codex routes say so and use the default.
     """
     try:
         budget = int(value)
@@ -427,15 +399,10 @@ def resolve_plan_mode(book_type, api_format, translate_tags_given, probe):
     try:
         verdict = probe()
     except ModelUnavailable:
-        # Not a verdict about schemas at all: the endpoint will not serve the
-        # model, so there is no run to fall back to. Reporting it as "plan
-        # mode off" would print a reason that names the wrong thing and then
-        # fail anyway at the first request.
-        raise
+        raise  # no model to fall back to; the message names it
     except Exception as e:
-        # A probe failure is not a reason to stop: the run has a working
-        # answer (tag mode) and whatever is wrong with the endpoint will
-        # surface loudly at the first translation request.
+        # tag mode still works; the endpoint's trouble surfaces at the first
+        # translation request
         return "none", f"the JSON-schema probe failed: {e}"
     if verdict != "strict":
         return "none", (
@@ -504,11 +471,10 @@ def build_parser():
         help="model id, exactly as the endpoint names it (e.g. gpt-5-mini, "
         "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Two values "
         "name a route instead of a model: 'codex' translates on a ChatGPT "
-        "subscription through the Codex CLI, and 'orcarouter' (or "
-        "orcarouter/<id>) sends the run to the OrcaRouter endpoint. Old "
-        "alias values are translated to their model with a note. Defaults "
-        "to gpt-5.6-luna on the openai format; the anthropic format needs "
-        "an id",
+        "subscription through the Codex CLI, and 'orcarouter' sends the run "
+        "to the OrcaRouter gateway. Old alias values are translated to their "
+        "model with a note. Defaults to gpt-5.6-luna on the openai format; "
+        "the anthropic format needs an id",
     )
     parser.add_argument(
         "--api_format",
@@ -582,10 +548,8 @@ def build_parser():
         "--translate-tags",
         dest="translate_tags",
         type=str,
-        # None, not "p", so a run can tell a typed selection from an
-        # untouched flag: naming tags is how a user opts out of the automatic
-        # plan, and `--translate-tags p` must mean that too. Normalized to
-        # "p" immediately after parsing.
+        # None, not "p": a typed selection opts out of the automatic plan,
+        # even `--translate-tags p`. Normalized to "p" after parsing.
         default=None,
         help="which tags to translate, example --translate-tags p,blockquote "
         "(default: p). Ignored in plan mode — see --plan-classify",
@@ -619,8 +583,7 @@ def build_parser():
         "--plan-classify",
         dest="plan_classify",
         # "most" is the old name of "all", still parsed and mapped in main()
-        # with a notice. The metavar is what --help and the usage line show,
-        # so a retired spelling stays out of the advertised surface.
+        # with a notice; the metavar keeps it out of --help.
         choices=["auto", "none", "all", "model", "agent", "most"],
         metavar="{auto,none,all,model,agent}",
         default="auto",
@@ -746,15 +709,8 @@ So you are close to reaching the limit. You have to choose your own value, there
         "source/translation pairs, costing ~200 extra tokens per request. "
         "'session': keep one append-only history instead, so an endpoint "
         "with prompt caching re-reads it at its cache rate and the context "
-        "can grow to chapter length for less money — compacted into a "
+        "can grow to chapter length for less money -- compacted into a "
         "handoff report at --context-compact-at",
-    )
-    parser.add_argument(
-        "--context_paragraph_limit",
-        dest="context_paragraph_limit",
-        type=int,
-        default=0,
-        help="window mode only: how many paragraph pairs to re-send",
     )
     parser.add_argument(
         "--context-compact-at",
@@ -795,6 +751,13 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="glossary_auto",
         action="store_true",
         help=argparse.SUPPRESS,  # see --glossary above
+    )
+    parser.add_argument(
+        "--context_paragraph_limit",
+        dest="context_paragraph_limit",
+        type=int,
+        default=0,
+        help="window mode only: how many paragraph pairs to re-send",
     )
     parser.add_argument(
         "--temperature",
@@ -887,8 +850,6 @@ def main():
     if not translate_tags_given:
         options.translate_tags = "p"
     if options.plan_classify == "most":
-        # renamed: the mode translates the whole partition, and "all" is what
-        # that is. Old command lines keep working, quietly corrected once.
         print("[yellow]--plan-classify most is now --plan-classify all[/yellow]")
         options.plan_classify = "all"
 
@@ -973,12 +934,12 @@ def main():
         os.environ["https_proxy"] = PROXY
 
     model_names, api_format, endpoint_env_keys = resolve_endpoint(options)
-    translate_model = FORMAT_DICT.get(api_format)
+    route = ROUTE_DICT.get(model_names[0]) if len(model_names) == 1 else None
+    translate_model = route or FORMAT_DICT.get(api_format)
     assert translate_model is not None, f"unsupported api format: {api_format}"
 
-    # What the endpoint alone decides, decided before a key is read, a book
-    # is parsed or the codex sidecar is started: a run that cannot honor the
-    # flags it was given must say so while nothing has been paid for.
+    # Refusals the endpoint alone decides, before a key is read, a book is
+    # parsed or the codex sidecar is started.
 
     # Batch translation is OpenAI's Batch API. The codex format has no such
     # thing, and reached it anyway: `AttributeError: batch_init` partway into
@@ -1005,12 +966,8 @@ def main():
         )
         exit(1)
 
-    # Sizing the budget from the model's own window is something the route
-    # has to be able to *ask*: an OpenAI-shaped endpoint and an anthropic one
-    # answer from their model record, the codex sidecar reports it on a usage
-    # push, and the machine-translation engines have no model to ask about.
-    # `0` on those meant "no budget at all", silently, which is a compact per
-    # paragraph.
+    # Only a route with a model to ask about can size the budget from its
+    # window; `0` on the others meant no budget at all, a compact per paragraph.
     if options.context_compact_at == 0 and not getattr(
         translate_model, "SUPPORTS_AUTO_COMPACT_BUDGET", False
     ):
@@ -1022,10 +979,8 @@ def main():
         )
         exit(1)
 
-    # One codex thread is the route's whole context. A second worker would
-    # interleave chapters into it (measured: 225 document switches in 416
-    # turns), and serializing the turns only hides that. Refused here,
-    # before the sidecar is started for nothing.
+    # One codex thread is the route's whole context; workers would interleave
+    # chapters into it.
     if options.parallel_workers > 1 and api_format == "codex":
         print(
             "[bold red]Error: --parallel-workers is not supported on the codex "
@@ -1034,12 +989,8 @@ def main():
         )
         exit(1)
 
-    # Session mode is one growing history: the renderings it establishes,
-    # the handoff report and the cached prefix all live in it. Workers
-    # cannot share one — chapters would interleave and the byte-stable
-    # prefix would be gone — so each would start its own, cold at every
-    # chapter, paying session prices for the chapter-local context bare
-    # --use_context already gives. Refused rather than sold as session mode.
+    # Session mode is one growing history. Workers cannot share it, and one
+    # each is window mode at session prices.
     if options.parallel_workers > 1 and options.context_mode == "session":
         print(
             "[bold red]Error: --parallel-workers is not supported with "
@@ -1091,10 +1042,8 @@ def main():
             raise SystemExit(f"Could not read --glossary: {err}")
         print(f"[green]Glossary: {len(glossary)} pinned terms loaded[/green]")
 
-    # These need a context window to act on. Session mode is one; so is the
-    # codex format, where the thread *is* the window and compaction is not
-    # optional — so the warning must not fire there, or it tells the user a
-    # flag was ignored when it was in fact obeyed.
+    # Compaction flags act on a session history, or on the codex thread,
+    # which is always one. Anywhere else they do nothing, and say so.
     if options.context_mode != "session" and api_format != "codex":
         for flag, value in (
             ("--context-compact-at", options.context_compact_at),
@@ -1125,8 +1074,6 @@ def main():
     model_api_base = options.api_base
 
     loader_kwargs = {}
-    if book_type == "pdf":
-        loader_kwargs["pdf_layout"] = options.pdf_layout
     if book_type in CONTEXT_AWARE_BOOK_TYPES:
         loader_kwargs.update(
             context_mode=options.context_mode,
@@ -1153,6 +1100,8 @@ def main():
             f"{'is' if len(ignored) == 1 else 'are'} not supported for "
             f"{book_type} books; ignoring."
         )
+    if book_type == "pdf":
+        loader_kwargs["pdf_layout"] = options.pdf_layout
 
     e = book_loader(
         options.book_name,
@@ -1202,9 +1151,7 @@ def main():
     # model mode; asking for it alongside a no-classification mode is a
     # contradiction, not a preference to resolve silently.
     classify_mode = options.plan_classify
-    # 'auto' cannot be settled yet: its answer comes from the endpoint's
-    # capability probe, and the model this run uses is only known once the
-    # model list has been validated. Held as tag mode until then.
+    # 'auto' is settled last, by the endpoint's probe; tag mode until then
     plan_auto = classify_mode == "auto"
     if plan_auto:
         classify_mode = "none"
@@ -1263,13 +1210,11 @@ def main():
         # made rather than infer it from the absence of one.
         e.plan_classify = classify_mode
         e.plan_classify_model = options.plan_classify_model or None
-    if options.quiet:
-        if hasattr(e, "quiet"):
-            e.quiet = True
-        # The translator does its own echoing in session mode (the handoff
-        # report). Guarded rather than set blindly, so a translator that does
-        # not honor it is not given an attribute it will silently ignore.
-        if hasattr(e.translate_model, "quiet"):
+    if options.quiet and hasattr(e, "quiet"):
+        e.quiet = True
+        # The translator prints echoes of its own — handoff reports, window
+        # rollovers — and cannot see the loader's flag.
+        if hasattr(getattr(e, "translate_model", None), "quiet"):
             e.translate_model.quiet = True
     if options.exclude_filelist:
         e.exclude_filelist = options.exclude_filelist
@@ -1304,25 +1249,19 @@ def main():
     if options.retranslate:
         e.retranslate = options.retranslate
     if api_format in LLM_FORMATS:
-        # No preset lists any more: the endpoint names its own models. Only
-        # the formats in DEFAULT_MODELS have one obvious id to fall back on;
-        # `codex` resolves its own from its config. Everything else must be
-        # told, rather than have a whole book billed to a guess.
         if not model_names and api_format not in MODEL_OPTIONAL_FORMATS:
             raise SystemExit(
                 f"--model is required for the {api_format} format. Pass the "
                 f"model id the endpoint uses, e.g. --model claude-sonnet-4-6"
             )
-        try:
-            e.translate_model.set_model_list(model_names)
-        except Exception as ex:
-            print(f"[red]Error: {ex}[/red]")
-            exit(1)
-        # Everything that must be settled before the first paid request, now
-        # that the model list is known: the codex sidecar is up and signed
-        # in. A login prompt after ten minutes of work is the wrong time to
-        # find out — and a failure the user can act on is one line, not a
-        # traceback.
+        if route is None:  # a route's class names its own model
+            try:
+                e.translate_model.set_model_list(model_names)
+            except Exception as ex:
+                print(f"[red]Error: {ex}[/red]")
+                exit(1)
+        # Settled before the first paid request: the codex sidecar is up and
+        # signed in, an auto budget has its number.
         if hasattr(e.translate_model, "preflight"):
             try:
                 e.translate_model.preflight()
@@ -1347,9 +1286,7 @@ def main():
         e.batch_use_flag = options.batch_use_flag
 
     if plan_auto:
-        # Last, because the probe needs the model this run settled on. The
-        # verdict costs one sub-cent request and is cached, so the first
-        # translation does not pay for it again.
+        # the verdict is cached, so the first translation does not pay again
         try:
             mode, reason = resolve_plan_mode(
                 book_type,
@@ -1358,10 +1295,8 @@ def main():
                 getattr(e.translate_model, "_probe_verdict", None),
             )
         except Exception as err:
-            # Asking for the verdict is also what confirms the endpoint
-            # serves the model, so a refusal arrives here. It is the whole
-            # explanation; a traceback on top of it buries the model id the
-            # reader has to fix.
+            # a model the endpoint will not serve is refused here; the
+            # message is the whole explanation
             if not getattr(err, "user_facing", False):
                 raise
             print(f"[bold red]{escape(str(err))}[/bold red]")

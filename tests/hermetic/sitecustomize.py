@@ -15,7 +15,7 @@ is explicitly about talking to real providers.
 
 import os
 
-from book_maker.translator import FORMAT_DICT
+from book_maker.translator import FORMAT_DICT, ROUTE_DICT
 
 
 class OfflineTranslator:
@@ -94,3 +94,4 @@ FORMAT_DICT["google"] = OfflineTranslator
 # The openai format too: it is the default route, so the contract tests for
 # what a bare command does have no other way to stay offline.
 FORMAT_DICT["openai"] = OfflineLLM
+ROUTE_DICT["orcarouter"] = OfflineLLM

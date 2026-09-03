@@ -216,14 +216,9 @@ class Base(ABC):
     # history it sizes.
     SUPPORTS_SESSION_CONTEXT = False
 
-    # Can `--context-compact-at 0` be honored here — can this route be asked
-    # what context window the model has? An OpenAI-shaped `/models` record
-    # answers it, an anthropic one carries `max_input_tokens`, and the codex
-    # sidecar reports it on a token-usage push. A machine-translation engine
-    # has no model to ask about, and `0` there would mean no budget at all,
-    # so the CLI refuses it up front rather than compacting after every
-    # paragraph. What a miss costs is the route's own call: the openai route
-    # ends the run, the other two announce a fallback to the default.
+    # Can this route be asked what context window the model has, for
+    # `--context-compact-at 0`? A machine-translation engine has no model to
+    # ask about, so the CLI refuses `0` there.
     SUPPORTS_AUTO_COMPACT_BUDGET = False
 
     # Does this format survive `--parallel-workers` with `--use_context`?

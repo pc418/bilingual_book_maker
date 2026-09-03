@@ -1,22 +1,15 @@
-"""Runtime verification of what an endpoint can actually do.
+"""What an endpoint can actually do, established by asking it.
 
-A model's *name* says nothing about whether the server behind it applies a
-JSON Schema, or accepts an explicit temperature. Both are properties of the
-endpoint — an OpenAI-compatible proxy in front of the same model routinely
-answers differently from the vendor — so both are established by asking, once
-per model, and remembered here.
-
-Kept out of the translator on purpose: the translator's job is turning text
-into other text, and every feature gate it consults lives in this module
-instead of being tangled into the request paths. What the translator keeps is
-the client; what this module keeps is the verdict.
-
-The probe is written against the OpenAI wire format, which is the shape the
-universal translator speaks; providers with a native format (anthropic) supply
-their own rungs and never come through here.
+A model's name says nothing about whether the server behind it applies a JSON
+Schema, accepts an explicit temperature, serves the model at all, or reports
+its context window. A proxy in front of the same model routinely answers
+differently from the vendor, so each is asked once per model and remembered
+here. Written against the OpenAI wire format; the anthropic route reads only
+`detect_context_window`.
 """
 
 import json
+import re
 from threading import RLock
 
 from openai import (
@@ -30,8 +23,6 @@ from openai import (
     UnprocessableEntityError,
 )
 from rich import print
-import re
-
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -113,29 +104,19 @@ STRUCTURED_PROBE_SCHEMA = {
     },
 }
 
-# Route probe. One tiny chat request per model, asking for a single word —
-# the cheapest question that can be put to a route. Nothing about the answer
-# is read: what is being established is that the endpoint served this model at
-# all, not what it is good at. No schema, no temperature and no token cap,
-# because a probe must test one thing: every one of those is refused by some
-# model somewhere, and a refusal of the question is not an answer about the
-# model. The cap was the live proof of it — OpenAI's gpt-5 family rejects
-# `max_tokens` outright ("use max_completion_tokens instead"), so a capped
-# probe confirmed nothing about the fork's own default model.
+# Route probe: one tiny chat request per model, answer unread. No schema,
+# temperature or token cap — each is refused by some model somewhere, and a
+# refusal of the question is not an answer about the model (gpt-5 rejects
+# `max_tokens` outright, so a capped probe confirmed nothing).
 ROUTE_PROBE_PROMPT = "Reply with the single word: PONG."
 
 # How many listed model ids an error message may carry. A gateway lists
 # hundreds; the listing is a hint under the refusal, not the finding.
 LISTING_HINT_LIMIT = 12
 
-# What an endpoint says when it will not route a model. The status is the
-# reliable half; the phrases are for the gateways that answer 400 instead of
-# 404. Everything else a request can fail with — a bad key, a quota, a dropped
-# connection, a parameter this particular model does not take — says nothing
-# about whether the model exists, and reporting one of those as a missing
-# model sends the user hunting for a typo that is not there.
-# A 400 that complains about a request field is never an answer about the
-# model, even when the sentence names the model too.
+# What an endpoint says when it will not route a model: a 404, or for the
+# gateways that answer 400 instead, one of the phrases below. A 400 about a
+# request field is never about the model, even when it names the model too.
 PARAMETER_COMPLAINT_WORDS = (
     "parameter",
     "unsupported_parameter",
@@ -329,13 +310,10 @@ def detect_context_window(client, model):
 def learn_context_window(client, model):
     """The window this endpoint reports for `model`, or no run at all.
 
-    Raises `ContextWindowUnknown` on any answer that is not a usable number: a
-    404 or a record without the field is definitive, and a transport failure
-    is retried up to `CONTEXT_WINDOW_LOOKUP_ATTEMPTS` before it becomes one
-    too. Nothing here falls back to a default — the caller passed `0` to stop
-    guessing, and a guess is the one answer that would betray that.
-
-    Not memoized: the caller decides what "asked once" means for its run.
+    Raises `ContextWindowUnknown` on any answer that is not a usable number:
+    a 404 or a record without the field is definitive, and a transport
+    failure is retried `CONTEXT_WINDOW_LOOKUP_ATTEMPTS` times first. Nothing
+    falls back to a default: the caller passed `0` to stop guessing.
     """
     last_error = None
     for _ in range(CONTEXT_WINDOW_LOOKUP_ATTEMPTS):
@@ -402,12 +380,9 @@ def fetch_endpoint_models(client):
 def names_missing_model(error, model):
     """Whether `error` is the endpoint refusing to route `model` at all.
 
-    A 404 on the chat route is unambiguous. A 400 is not: endpoints answer
-    400 for a schema they will not compile, a parameter this model does not
-    take, a payload they will not size — so a 400 counts only when it both
-    names the model and says it is not one. Without that second half, an
-    endpoint refusing `max_tokens` for a reasoning model (a message that
-    names it too) would be reported as a missing model.
+    A 404 is unambiguous. A 400 counts only when the field it blames is the
+    model, or, absent a named field, when it names the model and says it
+    does not exist without complaining about a parameter.
     """
     if isinstance(error, NotFoundError) or getattr(error, "status_code", None) == 404:
         return True
@@ -416,27 +391,17 @@ def names_missing_model(error, model):
     text = str(error).lower()
     if "model_not_found" in text:
         return True
-    # An endpoint that says which field it is complaining about has settled
-    # the question: `param: model` is about the model, `param: max_tokens` is
-    # not, however much the sentence goes on to name the model.
     param = _named_param(text)
     if param is not None:
         return param == "model"
     if any(word in text for word in PARAMETER_COMPLAINT_WORDS):
-        # "parameter 'max_tokens' does not exist for model 'gpt-5'" names the
-        # model and says "does not exist", and is not about the model at all.
         return False
     named = bool(model) and model.lower() in text
     return named and any(phrase in text for phrase in MODEL_NOT_FOUND_PHRASES)
 
 
 def _named_param(text):
-    """The field an error blames, when it says so: `'param': 'max_tokens'`.
-
-    OpenAI-shaped errors carry the offending field beside the message. When
-    it is there it is the whole answer, and reading the prose instead is how
-    a parameter complaint gets mistaken for a missing model.
-    """
+    """The field an error blames, when it says so: `'param': 'max_tokens'`."""
     match = re.search(r"['\"]param['\"]:\s*['\"]([\w.\-\[\]]+)['\"]", text)
     return match.group(1) if match else None
 
@@ -444,14 +409,10 @@ def _named_param(text):
 def probe_model_route(client, model):
     """Ask this endpoint to serve `model` once, as cheaply as a request can be.
 
-    A model listing is not the authority it looks like: OpenAI-compatible
-    gateways routinely serve a model they do not list, or list it under
-    another id, so a listing gate refuses models that work. The route is the
-    authority, and this is the whole question put to it.
-
-    Returns None when the endpoint answered. Raises `ModelUnavailable` when it
-    said there is no such model; every other failure is re-raised untouched,
-    because it is not an answer about the model.
+    Gateways routinely serve models they do not list, so the route is asked,
+    not the listing. Raises `ModelUnavailable` when the endpoint says there
+    is no such model; any other failure is re-raised untouched, since it is
+    not an answer about the model.
     """
     try:
         client.chat.completions.create(
@@ -468,12 +429,7 @@ def probe_model_route(client, model):
 
 
 def _listing_hint(client):
-    """What the endpoint admits to serving, for an error message. Best effort.
-
-    The listing is no longer the gate, so a listing that cannot be fetched
-    must not turn a refusal into a crash — the refusal is the finding, and
-    this is only the sentence after it.
-    """
+    """What the endpoint admits to serving, for an error message. Best effort."""
     try:
         return fetch_endpoint_models(client)
     except Exception:
@@ -481,11 +437,7 @@ def _listing_hint(client):
 
 
 def describe_listing(api_models, limit=LISTING_HINT_LIMIT):
-    """A listing short enough to read under an error message.
-
-    Gateways list hundreds of models. Printing all of them buries the
-    refusal that the listing is only a hint for.
-    """
+    """A listing short enough to read under an error message."""
     names = list(api_models or [])
     if len(names) <= limit:
         return f"{names}"
@@ -504,8 +456,7 @@ def verify_model_routes(client, model_list):
     rotation order stays the order the user typed.
     """
     model_list = list(model_list)
-    # Silent when every model answers: the probe costs about ten tokens and
-    # says nothing a reader has to act on. Only a refusal is news.
+    # silent when every model answers: only a refusal is news
     available, unavailable = [], []
     for model_name in model_list:
         try:
@@ -521,8 +472,7 @@ def verify_model_routes(client, model_list):
             )
         available.append(model_name)
 
-    # The one place a listing is still worth fetching: a hint under a refusal,
-    # never a gate in front of one.
+    # a listing is a hint under a refusal, never a gate in front of one
     api_models = _listing_hint(client) if unavailable else None
     if unavailable and api_models:
         print(f"[yellow]This endpoint lists: {describe_listing(api_models)}[/yellow]")

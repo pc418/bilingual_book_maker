@@ -30,8 +30,8 @@ sections after it provide additional notes for selected workflows.
 
 | Option | Purpose |
 |---|---|
-| `--plan-dry-run` | Build and print the EPUB plan, write `<book>_plan.json` with every `action` still `null`, and exit before classification. Needs no credentials. |
-| `--plan-classify {auto,none,all,model,agent}` | Select no plan, `all` (the whole partition), model triage, or coding-agent triage. Default `auto`: model triage on an epub whose endpoint is verified to apply a strict JSON schema, tag mode otherwise. |
+| `--plan-dry-run` | Build and print the EPUB plan, write `<book>_plan.json` with every `action` still `null`, and exit. No credentials needed. |
+| `--plan-classify {auto,none,all,model,agent}` | No plan, the whole partition, model triage, or coding-agent triage. Default `auto`: model triage on an epub whose endpoint is verified to apply a strict JSON schema, tag mode otherwise. |
 | `--plan-classify-model MODEL` | Classification model; implies model mode and conflicts with `all`/`agent`. |
 | `--plan-min-coverage FRACTION` | Fail if selected planned text is below this fraction; default `0.5`. |
 | `--poetry-group-size N` | Maximum verse lines per planned translation request; default `8`. |
@@ -43,17 +43,17 @@ sections after it provide additional notes for selected workflows.
 | `--test` | Translate only a preview sample. |
 | `--test_num N` | Number of test units; default `10`. |
 | `--resume` | Continue from the loader's saved checkpoint. |
-| `--prompt VALUE_OR_FILE` | Prompt config: `user` (requires `{text}`), `system`, and `style`. A `style` is applied to every request and written into each handoff report verbatim, and stops the report asking the model to describe the style itself. On the `codex` format `system` is appended to the built-in instructions rather than replacing them. |
+| `--prompt VALUE_OR_FILE` | Prompt config: `user` (must contain `{text}`), `system`, and `style`. A `style` goes into every request and verbatim into each handoff report. On the `codex` format `system` is appended to the built-in instructions. |
 | `--temperature FLOAT` | Sampling temperature; default `1.0`. |
 | `--use_context [window\|session]` | Send earlier paragraphs as context. Bare or `window`: re-send the last few source/translation pairs (the long-standing behaviour). `session`: one append-only history, re-read at the endpoint's prompt-cache rate. |
 | `--context_paragraph_limit N` | Window mode only: context history limit. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
-| `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`. `2500` is the cheapest setting; `8000` costs 0.5-1.1x what window mode costs and carries several times the context. `0` sizes the budget from the model's own context window (90% of it, and of the smallest one when several models are in play), on the openai, anthropic and codex routes. A miss ends the openai run rather than guessing (its `/v1/models` answer will not change later) and is announced-then-defaulted on the other two. |
-| `--no-context-compact` | Session mode only: never buy a handoff report. The window still rolls over at the budget, but the next one starts empty instead of inheriting a summary. |
+| `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`; `2500` is the cheapest setting. `0` sizes the budget from the model's context window (90% of it, of the smallest window when several models are in play) on the openai, anthropic and codex routes. When the window cannot be read, the openai route stops; the other two say so and use the default. |
+| `--no-context-compact` | Session mode only: skip the handoff report. The window still rolls over at the budget, but the next one starts empty. |
 | `--accumulated_num N` | EPUB token/character accumulation and SRT subtitle-block character batching (capped at 512 for SRT); ignored in EPUB plan mode. |
 | `--batch_size N` | Aggregated unit count for loaders that support it. |
 | `--block_size N` | Merge paragraphs into delimiter-translated blocks. |
 | `--sentence_mode` | Translate EPUB paragraphs sentence by sentence; incompatible with plan mode. |
-| `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. Refused with `--use_context session` and with the `codex` format, which keep one history and one thread. |
+| `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. Refused with `--use_context session` (one history) and on the `codex` format (one thread). |
 | `--batch` | Submit an EPUB ChatGPT Batch API job; incompatible with plan mode. |
 | `--batch-use` | Consume a previously submitted batch job; incompatible with plan mode. |
 | `--extra_body JSON` | Extra request fields for the `openai` route; other formats ignore it and say so. |
@@ -66,33 +66,34 @@ A route is an endpoint, not a model name.
 
 | Option | Purpose |
 |---|---|
-| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Defaults to `gpt-5.6-luna` on the `openai` format; the `anthropic` format needs one. Old alias values are translated with a note. |
-| `--api_base URL` | The endpoint to translate against. Defaults to the format's official host. A pasted `…/v1/chat/completions` or trailing slash is trimmed. |
-| `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's conventional variable. |
-| `--api_format FORMAT` | Wire format: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id; `codex` must be named explicitly. |
-| `--model codex` | Selects the codex format, equivalent to `--api_format codex`; the sidecar then uses its default model. |
-| `--model` with `codex` | Optional — defaults to `gpt-5.6-luna`. Other ids the sidecar offers: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.2`. |
-| `--model orcarouter` | Routes to the OrcaRouter gateway and asks for its smart-routing model; `--model orcarouter/<id>` pins one model there. Neither needs `--api_base`, and one you pass wins. The key comes from `BBM_ORCAROUTER_API_KEY` first. Not a legacy alias — no substitution notice is printed. |
-| `--model_list IDS` | Several model IDs to rotate across, comma-separated. Kept for compatibility and for rotation; a single model belongs in `--model`. Naming a model in both flags is an error. |
-| `--source_lang LANG` | Source language for endpoints that want it stated; default `auto`. |
-| `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name. Its `base_url`, `api_style` (`openai`, `claude`, `gemini`, `qwen`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Anything passed explicitly wins. |
+| `--model MODEL` | The model id, exactly as the endpoint names it (`gpt-5-mini`, `claude-sonnet-4-6`, `openai/gpt-5-mini`). Defaults to `gpt-5.6-luna` on the `openai` format; the `anthropic` format needs one. Old alias values are rewritten with a note. |
+| `--api_base URL` | The endpoint. Defaults to the format's official host. A pasted `…/v1/chat/completions` or a trailing slash is trimmed. |
+| `--key KEY` | API key; comma-separate several to rotate them. Prefer `BBM_API_KEY` or the format's own variable. |
+| `--api_format FORMAT` | The API the endpoint speaks: `openai` (default), `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`. Inferred from the `--api_base` host, else from a `claude`/`anthropic` model id. |
+| `--model codex` | The Codex CLI sidecar on a ChatGPT plan, the same as `--api_format codex`. It runs `gpt-5.6-luna`; `--api_format codex --model <id>` names another (the sidecar also offers `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.2`). |
+| `--model orcarouter` | The OrcaRouter gateway and its smart-routing model `orcarouter/auto`. Needs no `--api_base`; one you pass wins. The key comes from `BBM_ORCAROUTER_API_KEY`. Not a legacy alias: nothing is rewritten. |
+| `--model_list IDS` | Several model ids to rotate across, comma-separated. A single model belongs in `--model`; naming a model in both flags is an error. |
+| `--source_lang LANG` | Source language, for endpoints that want it stated; default `auto`. |
+| `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name. Its `base_url`, `api_style` (`openai`, `claude`, `gemini`, `qwen`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Flags you pass yourself win. |
 
-If the anthropic format is inferred from a model id but the endpoint does not
-serve `/v1/messages`, the first request falls back to the `openai` format for
-the rest of the run and says so. `--api_format` skips that attempt.
+A gateway that serves Claude models speaks the OpenAI shape, and a gateway
+`--api_base` is taken to be that shape. The anthropic format is inferred only
+on Anthropic's own host, or from a `claude` model id with no `--api_base`. A
+gateway asked for the anthropic shape it does not serve answers 404, and the
+run stops naming `--api_format openai` as the fix.
 
-Key lookup order: `--key` (spelled `--api_key` if you prefer; the two are
-one flag), then `BBM_API_KEY`, then `OPENAI_API_KEY` /
-`ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` / `BBM_DEEPL_API_KEY` depending on
-the format. Endpoints on localhost need no key.
+Key lookup order: `--key` (`--api_key` is the same flag), then `BBM_API_KEY`,
+then `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `BBM_CAIYUN_API_KEY` /
+`BBM_DEEPL_API_KEY` depending on the format. Endpoints on localhost need no
+key.
 
 The old `--model` preset names, the per-vendor `--*_key` flags,
-`--ollama_model`, `--deployment_id` and `--interval` are no longer part of the
+`--ollama_model`, `--deployment_id` and `--interval` are no longer in the
 parser, but old command lines still run: `book_maker/legacy_cli.py` rewrites
-them into the flags above before the run starts and prints each substitution.
-The mapping table is in the README's "Migrating from the old flags". Old
+them into the flags above before the run starts and prints each rewrite. The
+table is in the README under "Migrating from the old flags". The old
 per-vendor key variables (`BBM_GROQ_API_KEY`, `BBM_GOOGLE_GEMINI_KEY`, …) are
-still consulted for the route that implied them.
+still read for the route that used them.
 
 Do not put secrets directly on a shared command line. Environment variables are safer for
 agent and CI use. The CLI does **not** load `.env` files itself: export the variables first,
@@ -172,7 +173,7 @@ If you want to change api_base like using Cloudflare Workers, use this option to
 
 ## Microsoft Azure Endpoints
 
-Azure has no dedicated flag. Point `--api_base` at the deployment's
+Azure has no flag of its own. Point `--api_base` at the deployment's
 OpenAI-compatible URL and name the deployment in `--model`:
 
     bbook_maker --book_name 'animal_farm.epub' --key XXXXX --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --model 'deployment-name'
