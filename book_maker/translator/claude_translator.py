@@ -84,6 +84,26 @@ def _sdk_base_url(api_base):
     return base
 
 
+def _text_blocks(message):
+    """The text of a reply: its `text` blocks joined, other blocks skipped.
+
+    A model with extended thinking answers with a `thinking` block before
+    its text, so `content[0]` is not the reply. Empty when no block is text.
+    """
+    return "".join(
+        block.text for block in message.content if getattr(block, "type", "") == "text"
+    )
+
+
+def _reply_text(message):
+    """`_text_blocks`, but a reply with no text at all is an error, not ""."""
+    text = _text_blocks(message)
+    if not text:
+        kinds = ", ".join(getattr(b, "type", "?") for b in message.content) or "none"
+        raise ValueError(f"the reply carried no text block (blocks: {kinds})")
+    return text
+
+
 class Claude(Base):
     DEFAULT_PROMPT = (
         "Help me translate the text within triple backticks into {language} "
@@ -446,11 +466,7 @@ class Claude(Base):
                 **self._cache_kwargs(),
             )
             self._note_usage(r)
-            report_text = "".join(
-                block.text
-                for block in r.content
-                if getattr(block, "type", "") == "text"
-            )
+            report_text = _text_blocks(r)
         except Exception as e:
             self._compact_failed(e, budget)
             return
@@ -575,9 +591,7 @@ class Claude(Base):
         except APIStatusError as e:
             self._explain_wrong_shape(e)
         self._note_usage(r, model)
-        return "".join(
-            block.text for block in r.content if getattr(block, "type", "") == "text"
-        )
+        return _reply_text(r)
 
     def translate(self, text):
         self.rotate_key()
@@ -597,7 +611,7 @@ class Claude(Base):
         except APIStatusError as e:
             self._explain_wrong_shape(e)
         self._note_usage(r)
-        t_text = r.content[0].text
+        t_text = _reply_text(r)
 
         if self.context_flag:
             self.save_context(text, t_text)

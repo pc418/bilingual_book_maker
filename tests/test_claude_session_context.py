@@ -655,3 +655,41 @@ class TestCompactionDisabled:
         )
         t.translate("a" * 200)
         assert HANDOFF_MARKER in t.sent[-1]["messages"][-1]["content"]
+
+
+class TestReplyBlocks:
+    """A reply is a list of blocks; only the text ones are the translation.
+
+    A model with extended thinking puts a `thinking` block before its text
+    (OpenRouter's `anthropic/claude-opus-5` does so by default), so
+    `content[0]` is not the translation. Seen live 260903: the anthropic
+    route crashed on the first paragraph with "'ThinkingBlock' object has no
+    attribute 'text'".
+    """
+
+    @staticmethod
+    def _answering(*blocks):
+        t = _translator(context_flag=False)
+        reply = _message("unused")
+        reply.content = list(blocks)
+        t.client.messages.create = Mock(return_value=reply)
+        return t
+
+    def test_a_thinking_block_before_the_text_is_skipped(self):
+        t = self._answering(
+            SimpleNamespace(type="thinking", thinking="…"),
+            SimpleNamespace(type="text", text="译文"),
+        )
+        assert t.translate("text") == "译文"
+
+    def test_two_text_blocks_are_joined(self):
+        t = self._answering(
+            SimpleNamespace(type="text", text="译"),
+            SimpleNamespace(type="text", text="文"),
+        )
+        assert t.translate("text") == "译文"
+
+    def test_a_reply_without_text_fails_loudly(self):
+        t = self._answering(SimpleNamespace(type="thinking", thinking="…"))
+        with pytest.raises(ValueError, match="no text block.*thinking"):
+            t.translate("text")
