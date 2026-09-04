@@ -84,7 +84,7 @@ cd bilingual_book_maker
 codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.epub into a bilingual Chinese-English edition, thanks."
 ```
 
-## Flags
+## Endpoint flags
 
 - `--api_format` names the API the endpoint speaks: `openai`, `anthropic`,
   `gemini`, `qwen`, `groq`, `xai`, `litellm`, `codex`, or one of the
@@ -178,10 +178,12 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 * [OrcaRouter](https://www.orcarouter.ai)
 
   Support [OrcaRouter](https://www.orcarouter.ai) gateway, defaulting to the
-  `orcarouter/auto` smart-routing model.
+  `orcarouter/auto` smart-routing model. `--model orcarouter` is the same
+  endpoint under a shorter name, and so is `--provider orcarouter` from
+  `bbm_providers.example.json`.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.orcarouter.ai/v1 --key ${orcarouter_key} --model orcarouter/auto
   ```
 
 * [Ollama](https://github.com/ollama/ollama)
@@ -219,7 +221,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   it runs sandboxed, with shell, MCP servers and browsing off, but hooks may still fire.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format codex --language zh-hans
   ```
 
 ## Custom API Provider
@@ -262,8 +264,8 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   |-------|----------|-------------|
   | `api_style` | Yes | API request format: `openai`, `anthropic`, `gemini`, `qwen`, `groq`, `xai` or `litellm` |
   | `base_url` | No | The API address. Omitted means the api_style's default address |
-  | `default_models` | No | Default model list. Required if `--model_list` is not provided |
-  | `env_key` | No | Environment variable name for API key. Required if `--api_key` is not provided |
+  | `default_models` | No | Default model list. Required if `--model` is not provided |
+  | `env_key` | No | Environment variable name for API key. Required if `--key` is not provided |
   | `prices` | No | Prices per million tokens, per model: `{"<model id>": {"input": …, "output": …, "cached_input": …}}`. When every model in the run has a price, the progress bar shows money spent (`spent=$0.012`) instead of token counts, and the closing line shows both. Without `cached_input`, cache reads are charged at the input price. A model without a price puts the bar back on tokens, and the closing line names it |
   | `currency` | No | Currency code for the prices, default `USD`. `USD`, `EUR`, `GBP`, `CNY` and `JPY` print with their symbol; any other code prints after the amount, as in `0.500 CHF` |
 
@@ -272,12 +274,12 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   `--model` names a model at that provider; without it the first of `default_models` is used.
 
   ```shell
-  python3 make_book.py --provider deepseek --api_key sk-xxx --book_name test_books/animal_farm.epub
+  python3 make_book.py --provider deepseek --key sk-xxx --book_name test_books/animal_farm.epub
 
   export BBM_DEEPSEEK_API_KEY=sk-xxx
   python3 make_book.py --provider deepseek --book_name test_books/animal_farm.epub
 
-  python3 make_book.py --provider deepseek --api_key sk-xxx --model_list deepseek-reasoner --book_name test_books/animal_farm.epub
+  python3 make_book.py --provider deepseek --key sk-xxx --model deepseek-reasoner --book_name test_books/animal_farm.epub
   ```
 
 ## Usage

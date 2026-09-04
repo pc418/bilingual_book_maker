@@ -2,7 +2,7 @@ from .chatgptapi_translator import ChatGPTAPI
 
 # orcarouter/auto is OrcaRouter's smart routing endpoint: it picks the best
 # model for each request instead of pinning one. Specific model IDs can be
-# used through `--model openai --api_base https://api.orcarouter.ai/v1`.
+# used through `--api_format openai --api_base https://api.orcarouter.ai/v1`.
 ORCAROUTER_MODEL_LIST = [
     "orcarouter/auto",
 ]

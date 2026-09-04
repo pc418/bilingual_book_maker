@@ -83,7 +83,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 [^token]: 你可以在 [OpenAI](https://platform.openai.com/account/api-keys) 或 [Anthropic](https://console.anthropic.com/account/api-keys) 申请到 token。
 
-## 常用参数
+## 接口参数
 
 - `--api_format` 指定接口说的 API：`openai`、`anthropic`、`gemini`、`qwen`、
   `groq`、`xai`、`litellm`、`codex`，或常规翻译引擎（`google`、`caiyun`、
@@ -105,7 +105,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   使用 DeepL 封装的 api 进行翻译，需要付费。[DeepL Translator](https://rapidapi.com/splintPRO/api/dpl-translator) 来获得 token
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model deepl --deepl_key ${deepl_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format deepl --key ${deepl_key}
   ```
 
 * DeepL free
@@ -116,7 +116,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   python3 make_book.py --book_name test_books/animal_farm.epub --api_format deeplfree
   ```
 
-* Claude
+* [Claude](https://console.anthropic.com/docs)
 
   `claude-*` 的模型 ID 会自动选中 anthropic 格式。
 
@@ -155,7 +155,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   python3 make_book.py --book_name test_books/animal_farm.epub --api_format qwen --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
   ```
 
-* 腾讯交互翻译
+* [腾讯交互翻译](https://transmart.qq.com)
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --api_format tencent
@@ -170,9 +170,11 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 * [OrcaRouter](https://www.orcarouter.ai)
 
   支持 [OrcaRouter](https://www.orcarouter.ai) 网关，默认使用 `orcarouter/auto` 智能路由模型。
+  `--model orcarouter` 是同一个接口的简写，`bbm_providers.example.json` 里的
+  `--provider orcarouter` 也一样。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.orcarouter.ai/v1 --key ${orcarouter_key} --model orcarouter/auto
   ```
 
 * [Ollama](https://github.com/ollama/ollama)
@@ -209,7 +211,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   运行在沙箱中，shell、MCP 服务器、浏览全部关闭。但hooks可能仍会触发。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format codex --language zh-hans
   ```
 
 ## 自定义 API Provider
@@ -243,20 +245,20 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   |------|------|------|
   | `api_style` | 是 | API请求格式：`openai`、`anthropic`、`gemini`、`qwen`、`groq`、`xai` 或 `litellm` |
   | `base_url` | 否 | API 地址。不填则使用该 api_style 的默认地址 |
-  | `default_models` | 否 | 默认模型列表。不填则必须通过 `--model_list` 指定 |
-  | `env_key` | 否 | 读取 API key 的环境变量名。不填则必须通过 `--api_key` 传入 |
+  | `default_models` | 否 | 默认模型列表。不填则必须通过 `--model` 指定 |
+  | `env_key` | 否 | 读取 API key 的环境变量名。不填则必须通过 `--key` 传入 |
 
   优先级：项目级 `./bbm_providers.json` 覆盖全局 `~/.bbm/providers.json`。
 
   `--model` 指定该 provider 下的模型；不写就用 `default_models` 的第一个。
 
   ```shell
-  python3 make_book.py --provider deepseek --api_key sk-xxx --book_name test_books/animal_farm.epub
+  python3 make_book.py --provider deepseek --key sk-xxx --book_name test_books/animal_farm.epub
 
   export BBM_DEEPSEEK_API_KEY=sk-xxx
   python3 make_book.py --provider deepseek --book_name test_books/animal_farm.epub
 
-  python3 make_book.py --provider deepseek --api_key sk-xxx --model_list deepseek-reasoner --book_name test_books/animal_farm.epub
+  python3 make_book.py --provider deepseek --key sk-xxx --model deepseek-reasoner --book_name test_books/animal_farm.epub
   ```
 
 ## 使用说明
@@ -536,6 +538,9 @@ python3 make_book.py --book_name test_books/animal_farm.epub --api_format custom
 
 # 使用自定义 provider（如 DeepSeek）
 python3 make_book.py --book_name test_books/animal_farm.epub --provider deepseek --language ja
+
+# 在多个模型之间轮换
+python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --model_list gpt-5-mini,gpt-4o-mini
 
 # Translate contents in <div> and <p>
 python3 make_book.py --book_name test_books/animal_farm.epub --translate-tags div,p
