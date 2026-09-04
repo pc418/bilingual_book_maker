@@ -23,38 +23,32 @@ pip install -r requirements.txt      # 或：pip install -U bbook_maker
 
 ```shell
 cp bbm_providers.example.json bbm_providers.json
-# 按你的接口改 base_url、default_models、env_key
-export OPENAI_API_KEY=sk-...
+# 在 ./bbm_providers.json 改 base_url、default_models、env_key
 python3 make_book.py --book_name test_books/animal_farm.epub --provider openai --test
 ```
 
-或者直接在CLI里传 key：
+也可直接在CLI里传 key：
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub \
-  --key sk-... --model gpt-5.6-luna --test
+  --key sk-... --model gpt-5.6-luna --api_base https://api.openai.com/v1 --test
 ```
 
-使用[Codex CLI](https://developers.openai.com/codex/cli)额度：
+使用[Codex](https://developers.openai.com/codex/cli)订阅：
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
 ```
 
-### 或者交给 coding agent
+或者交给 coding agent
 
-仓库里带了一个 skill：`bbm-plan`，把整套流程教给 coding agent——选线路、切分
-全书、判断哪些要翻哪些要跳过、后台跑完、把成品 epub 交回给你。Claude Code
-在 `.claude/skills/bbm-plan` 已经注册好；其他读 `.agents/` 的 agent 走
-[`.agents/skills/bbm-plan/`](./.agents/skills/bbm-plan/SKILL.md)。
+```shell
+git clone https://github.com/yihong0618/bilingual_book_maker.git
+cd bilingual_book_maker
+codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epub，翻译为中英双语，谢谢。"
+```
 
-在本仓库里打开你的 agent，把书放到它能读到的位置，然后说：
-
-> 请使用 bbm-plan skill，帮我把 xxx.epub 翻译成中文。
-
-它会先看你已有的 key 或 provider 配置，需要什么只问一次，把计划和预计花费
-给你确认，然后才开始翻译。它执行的都是普通的 `make_book.py` 命令——下面各节
-就是同样这些参数，你想自己来也可以。
+[^token]: 你可以在 [OpenAI](https://platform.openai.com/account/api-keys) 或 [Anthropic](https://console.anthropic.com/account/api-keys) 申请到 token。
 
 ## 翻译服务
 
