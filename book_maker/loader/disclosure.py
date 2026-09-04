@@ -355,30 +355,22 @@ def stamp_disclosure(book, model, language, source_identifier=None, when=None):
     used is not known until the last paragraph is done.
 
     Idempotent, because one route writes the book twice.
+
+    Everything that reads the book is done before anything writes to it, so
+    a failure leaves the book exactly as it arrived. The caller is allowed
+    to give up on the stamp and write the book anyway (see
+    `EPUBBookLoader._stamp_disclosure`), and a half-applied stamp is the one
+    outcome that would make that worse than useless: a credit naming a
+    translator with no note behind it says less than saying nothing.
     """
     if any(is_our_colophon(item) for item in book.get_items()):
         return None
 
-    contributor_id = allocate_contributor_id(book)
-    book.add_metadata("DC", "contributor", TOOL_NAME, {"id": contributor_id})
-    book.add_metadata(
-        None,
-        "meta",
-        CONTRIBUTOR_ROLE,
-        {
-            "refines": f"#{contributor_id}",
-            "property": "role",
-            "scheme": MARC_SCHEME,
-        },
-    )
+    # ---- read the book, decide everything, touch nothing
     when = when or date.today()
-    book.add_metadata(
-        "DC",
-        "description",
-        f"{DESCRIPTION_PREFIX}{model}, {when.year}{DESCRIPTION_TAIL}",
-    )
-
+    contributor_id = allocate_contributor_id(book)
     item_id, file_name = allocate_colophon_names(book)
+    description = f"{DESCRIPTION_PREFIX}{model}, {when.year}{DESCRIPTION_TAIL}"
     item = build_colophon(
         model,
         language,
@@ -392,6 +384,20 @@ def stamp_disclosure(book, model, language, source_identifier=None, when=None):
         # and nothing else, so the property is carried on the item until the
         # OPF is built. See `_write_opf_spine_patch` in epub_loader.
         item.spine_properties = [REFLOWABLE_PROPERTY]
+
+    # ---- commit: appends to a list and a dict, nothing that can decide to fail
+    book.add_metadata("DC", "contributor", TOOL_NAME, {"id": contributor_id})
+    book.add_metadata(
+        None,
+        "meta",
+        CONTRIBUTOR_ROLE,
+        {
+            "refines": f"#{contributor_id}",
+            "property": "role",
+            "scheme": MARC_SCHEME,
+        },
+    )
+    book.add_metadata("DC", "description", description)
     book.add_item(item)
     book.spine.append(item)
     return item

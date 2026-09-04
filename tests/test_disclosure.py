@@ -915,3 +915,133 @@ def test_the_wrapper_is_an_addition_not_a_replacement(tmp_path, monkeypatch):
     opf = _written_opf(tmp_path, _rebuild(_source(metadata=[FIXED_LAYOUT_META])))
 
     assert f'<itemref idref="{COLOPHON_ID}"/>' in opf
+
+
+# ------------------------------- a bad entry costs a line, never the book
+
+
+def _said(capsys):
+    """Everything printed, with rich's terminal wrapping folded away."""
+    return " ".join(capsys.readouterr().out.split())
+
+
+def test_an_unreadable_metadata_entry_is_skipped_and_named(capsys):
+    """`others` is meant to be a dict of attributes. A source that put
+    something else there used to take the whole translation down with it on
+    the first `.get()`."""
+    source = _source(metadata=[("DC", "subject", "Fables", "not-a-dict")])
+
+    rebuilt = _rebuild(source)
+
+    assert [value for value, _ in rebuilt.get_metadata("DC", "creator")] == [
+        "A. Author"
+    ]
+    said = _said(capsys)
+    assert "1 metadata entry could not be copied" in said
+    assert "subject" in said
+
+
+def test_the_book_survives_a_metadata_block_it_cannot_read_at_all(capsys):
+    """Several bad entries are one warning, not one warning each: a book
+    with a systematically odd metadata block would otherwise bury itself."""
+    source = _source(
+        metadata=[("DC", "subject", f"Subject {n}", "not-a-dict") for n in range(5)]
+    )
+
+    rebuilt = _rebuild(source)
+
+    assert rebuilt.get_metadata("DC", "title")
+    said = _said(capsys)
+    assert said.count("could not be copied") == 1
+    assert "5 metadata entries could not be copied" in said
+    assert "and 2 more" in said
+
+
+def test_a_failed_stamp_still_writes_the_book(tmp_path, capsys, monkeypatch):
+    """Hours of translation are not worth losing over the note at the end.
+    The book goes out unstamped and the run says so."""
+    from book_maker.loader import epub_loader
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("no room at the end of the book")
+
+    monkeypatch.setattr(epub_loader, "stamp_disclosure", boom)
+    opf = _written_opf(tmp_path, _rebuild(_source()))
+
+    assert "bilingual_book_maker" not in opf
+    assert DESCRIPTION_TAIL not in opf
+    said = _said(capsys)
+    assert "could not be marked as a machine translation" in said
+    assert "no room at the end of the book" in said
+    # The warning has to say what is missing, not just that something is.
+    assert "nothing in the file will say it was translated by a machine" in said
+
+
+def test_a_stamp_that_fails_halfway_leaves_nothing_behind(monkeypatch):
+    """The credit and the note stand or fall together. A `dc:contributor`
+    naming a translator with no note behind it says less than saying
+    nothing, and the caller is entitled to write the book after a failure."""
+    from book_maker.loader import disclosure
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("cannot build the note")
+
+    monkeypatch.setattr(disclosure, "build_colophon", boom)
+    # Built with the stamp off, so this exercises `stamp_disclosure` alone
+    # and not the loader's own guard around it.
+    book = _rebuild(_source(), disclose=False)
+    before = len(book.spine)
+
+    with pytest.raises(RuntimeError):
+        disclosure.stamp_disclosure(book, "x/y", "zh-hans")
+
+    assert not book.get_metadata("DC", "contributor")
+    assert not book.get_metadata("DC", "description")
+    assert len(book.spine) == before
+
+
+def test_unreadable_prefix_declarations_do_not_stop_the_book(capsys, monkeypatch):
+    """The prefixes are read straight from the source's OPF, so a package
+    this cannot parse arrives here."""
+    from book_maker.loader import epub_loader
+
+    def boom(*args, **kwargs):
+        raise ValueError("not an OPF")
+
+    monkeypatch.setattr(epub_loader, "package_prefixes", boom)
+    rebuilt = _rebuild(_source())
+
+    assert rebuilt.get_metadata("DC", "title")
+    assert "prefix declarations could not be read" in _said(capsys)
+
+
+def test_an_unidentifiable_prior_stamp_does_not_stop_the_book(capsys, monkeypatch):
+    """Runs before the copy loop, on the same metadata and with the same
+    failure mode, where nothing else would catch it."""
+    from book_maker.loader import epub_loader
+
+    def boom(*args, **kwargs):
+        raise AttributeError("'str' object has no attribute 'get'")
+
+    monkeypatch.setattr(epub_loader, "tool_contributor_ids", boom)
+    rebuilt = _rebuild(_source())
+
+    assert rebuilt.get_metadata("DC", "title")
+    said = _said(capsys)
+    assert "an earlier translation stamp could not be identified" in said
+    assert "may now credit both runs" in said
+
+
+def test_an_underivable_identifier_does_not_stop_the_book(capsys, monkeypatch):
+    """ebooklib's fresh uuid stands in. That is a real loss — the same
+    translation run twice stops naming the same book — and is said so."""
+    from book_maker.loader import epub_loader
+
+    def boom(*args, **kwargs):
+        raise ValueError("no identifier to derive from")
+
+    monkeypatch.setattr(epub_loader, "derive_translation_identity", boom)
+    rebuilt = _rebuild(_source())
+
+    assert rebuilt.get_metadata("DC", "title")
+    assert "could not derive a stable identifier" in _said(capsys)

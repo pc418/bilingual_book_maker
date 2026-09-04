@@ -458,18 +458,50 @@ class EPUBBookLoader(BaseBookLoader):
         # Identity is derived from the *source* book even when rebuilding
         # from an earlier output (--retranslate), so the same source,
         # language and mode always name the same translated book.
-        identifier_id = derive_translation_identity(
-            new_book,
-            self.origin_book,
-            self.language,
-            "single" if self.single_translate else "bilingual",
-        )
+        try:
+            identifier_id = derive_translation_identity(
+                new_book,
+                self.origin_book,
+                self.language,
+                "single" if self.single_translate else "bilingual",
+            )
+        except Exception as e:
+            # Falls back to ebooklib's fresh uuid, which is a real loss —
+            # re-running the same translation then produces a book a library
+            # sees as a different one — but a book with an unstable id is
+            # still a book.
+            print(
+                "[bold yellow]Warning: could not derive a stable identifier "
+                f"for the translation ({type(e).__name__}: {escape(str(e))}); "
+                "this book gets a fresh one, so re-running will not produce "
+                "the same identifier.[/bold yellow]"
+            )
+            identifier_id = None
         allowed_ns = set(epub.NAMESPACES.keys()) | set(epub.NAMESPACES.values())
         # What a previous run of this tool stamped is this tool's to rewrite:
         # stripped here and, when disclosure is on, written again from *this*
         # run's facts at write time. Left in place, a book translated twice
         # would claim both models and carry two colophons.
-        prior_ids = tool_contributor_ids(book)
+        try:
+            prior_ids = tool_contributor_ids(book)
+        except Exception as e:
+            # Reads the same metadata the loop below does, and fails the same
+            # way on the same malformed entry — but before the loop, where
+            # nothing else would catch it. Without the ids, a previous run's
+            # stamp is copied instead of replaced, so the book may end up
+            # naming two translators. Said out loud, because that is a claim
+            # about the file that is now wrong.
+            print(
+                "[bold yellow]Warning: an earlier translation stamp could not "
+                f"be identified ({type(e).__name__}: {escape(str(e))}); if this "
+                "book was translated before, it may now credit both runs."
+                "[/bold yellow]"
+            )
+            prior_ids = set()
+        # Entries the copy could not carry, reported once at the end rather
+        # than once each: a book with a systematically odd metadata block
+        # would otherwise bury its own translation under warnings.
+        skipped = []
 
         for namespace, metas in book.metadata.items():
             # Only keep namespaces recognized by ebooklib
@@ -488,6 +520,15 @@ class EPUBBookLoader(BaseBookLoader):
             else:
                 entries = metas
 
+            try:
+                entries = list(entries)
+            except Exception as e:
+                # The unpacking above is a generator, so a malformed value
+                # raises here rather than at the entry that holds it. One
+                # namespace is lost, not the book.
+                skipped.append((f"the whole {namespace or 'default'} namespace", e))
+                continue
+
             for entry in entries:
                 if not entry:
                     continue
@@ -504,46 +545,53 @@ class EPUBBookLoader(BaseBookLoader):
                     # Unexpected metadata format; skip gracefully
                     continue
 
-                if is_prior_disclosure(name, value, others, prior_ids):
-                    continue
-
-                if is_calibre_metadata(namespace, name, others):
-                    # calibre's record describes the file calibre built —
-                    # a different file from this one, so it is not true of
-                    # it. Dropped whatever --no_disclosure says.
-                    continue
-
-                if name == "link":
-                    # ebooklib parses OPF <link rel=… href=…> into metadata
-                    # but writes every metadata entry back as <meta>, where
-                    # rel/href are not legal attributes — the book then
-                    # fails validation (RSC-005) over an accessibility
-                    # statement it merely copied. Dropping the link loses a
-                    # pointer; keeping it loses the book.
-                    continue
-
-                if (
-                    identifier_id
-                    and name == "identifier"
-                    and (others or {}).get("id") == identifier_id
-                ):
-                    # the derived identity above owns this id attribute
-                    # (RSC-005 otherwise); the source's value stays, as a
-                    # secondary identifier without it
-                    others = {k: v for k, v in others.items() if k != "id"}
-
-                # `others` can be {} or None
-                if others:
-                    new_book.add_metadata(namespace, name, value, others)
-                else:
-                    new_book.add_metadata(namespace, name, value)
+                try:
+                    self._copy_metadata_entry(
+                        new_book,
+                        namespace,
+                        name,
+                        value,
+                        others,
+                        prior_ids,
+                        identifier_id,
+                    )
+                except Exception as e:
+                    # One entry the source wrote in a shape nothing here can
+                    # read. Dropping it costs a line of metadata; letting it
+                    # out costs the translated book.
+                    skipped.append((name, e))
+        if skipped:
+            shown = ", ".join(
+                f"{escape(str(name))} ({type(e).__name__}: {escape(str(e))})"
+                for name, e in skipped[:3]
+            )
+            more = f" and {len(skipped) - 3} more" if len(skipped) > 3 else ""
+            print(
+                f"[bold yellow]Warning: {len(skipped)} metadata entr"
+                f"{'y' if len(skipped) == 1 else 'ies'} could not be copied "
+                f"from the source and {'is' if len(skipped) == 1 else 'are'} "
+                f"missing from the translation: {shown}{more}[/bold yellow]"
+            )
 
         # EPUB 3 resolves a `property` like `tdm:reservation` through the
         # package's `prefix` attribute, which ebooklib's reader does not
         # read: without this the copied metas name vocabularies the book
         # never declares. `rendition` is excluded because the writer always
         # emits it — a second copy is a duplicate declaration.
-        for name, uri in package_prefixes(getattr(self, "epub_name", None)).items():
+        try:
+            prefixes = package_prefixes(getattr(self, "epub_name", None))
+        except Exception as e:
+            # Read straight from the source's OPF, so a package this cannot
+            # parse ends up here. The copied metas then name vocabularies
+            # the output does not declare, which is a validation finding —
+            # and still a book, which not writing one is not.
+            print(
+                "[bold yellow]Warning: the source's prefix declarations "
+                f"could not be read ({type(e).__name__}: {escape(str(e))}); "
+                "any metadata using them is carried without them.[/bold yellow]"
+            )
+            prefixes = {}
+        for name, uri in prefixes.items():
             declaration = f"{name}: {uri}"
             if name in ("rendition", "calibre") or declaration in new_book.prefixes:
                 continue
@@ -604,6 +652,47 @@ class EPUBBookLoader(BaseBookLoader):
         self._disclosure_source = source_uid
         return new_book
 
+    def _copy_metadata_entry(
+        self, new_book, namespace, name, value, others, prior_ids, identifier_id
+    ):
+        """Carry one source metadata entry over, or decide it does not travel.
+
+        Split out of `_make_new_book` so one unreadable entry can be caught
+        and skipped there without the `try` swallowing the whole loop.
+        """
+        if is_prior_disclosure(name, value, others, prior_ids):
+            return
+
+        if is_calibre_metadata(namespace, name, others):
+            # calibre's record describes the file calibre built — a
+            # different file from this one, so it is not true of it.
+            # Dropped whatever --no_disclosure says.
+            return
+
+        if name == "link":
+            # ebooklib parses OPF <link rel=… href=…> into metadata but
+            # writes every metadata entry back as <meta>, where rel/href are
+            # not legal attributes — the book then fails validation
+            # (RSC-005) over an accessibility statement it merely copied.
+            # Dropping the link loses a pointer; keeping it loses the book.
+            return
+
+        if (
+            identifier_id
+            and name == "identifier"
+            and (others or {}).get("id") == identifier_id
+        ):
+            # the derived identity above owns this id attribute (RSC-005
+            # otherwise); the source's value stays, as a secondary
+            # identifier without it
+            others = {k: v for k, v in others.items() if k != "id"}
+
+        # `others` can be {} or None
+        if others:
+            new_book.add_metadata(namespace, name, value, others)
+        else:
+            new_book.add_metadata(namespace, name, value)
+
     def _stamp_disclosure(self, new_book):
         """Say the file is a machine translation, on the book about to be written.
 
@@ -613,12 +702,27 @@ class EPUBBookLoader(BaseBookLoader):
         """
         if not getattr(self, "disclose", True):
             return
-        stamp_disclosure(
-            new_book,
-            model_id(getattr(self, "translate_model", None)),
-            getattr(self, "_disclosure_language", None) or self.language,
-            source_identifier=getattr(self, "_disclosure_source", None),
-        )
+        try:
+            stamp_disclosure(
+                new_book,
+                model_id(getattr(self, "translate_model", None)),
+                getattr(self, "_disclosure_language", None) or self.language,
+                source_identifier=getattr(self, "_disclosure_source", None),
+            )
+        except Exception as e:
+            # A book that took hours and real money to translate is not
+            # worth losing over the note at the end of it, so the write goes
+            # ahead without it. Said out loud rather than logged quietly:
+            # what is missing is the file's own statement that a machine
+            # wrote it, and only the person running this can decide whether
+            # that is acceptable to ship.
+            print(
+                "[bold yellow]Warning: this book could not be marked as a "
+                f"machine translation ({type(e).__name__}: {escape(str(e))}). "
+                "It is written without the translator credit, the description "
+                "line and the closing translation note — nothing in the file "
+                "will say it was translated by a machine.[/bold yellow]"
+            )
 
     def _reobfuscate_written(self, path):
         """Put back the obfuscation the source shipped, on the file just written.
