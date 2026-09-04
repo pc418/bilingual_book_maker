@@ -620,6 +620,268 @@ def provider_entry(tmp_path, monkeypatch):
     return write
 
 
+class TestVendorFormats:
+    """The routes that name one vendor's endpoint.
+
+    `gemini` and `qwen` speak protocols of their own; `groq`, `xai` and
+    `litellm` are the OpenAI shape at another address. Either way the
+    format alone has to be a complete route, or the flag saves nobody
+    anything over typing the URL.
+    """
+
+    @pytest.mark.parametrize(
+        "fmt,model",
+        [("gemini", "gemini-flash-latest"), ("qwen", "qwen-mt-turbo")],
+    )
+    def test_a_native_format_names_the_model_its_alias_used_to_run(self, fmt, model):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(api_format=fmt)
+        models, api_format, _ = resolve_endpoint(options)
+
+        assert (models, api_format) == ([model], fmt)
+        # the SDK knows the vendor's host; naming it here would be a second
+        # answer to the same question
+        assert options.api_base == ""
+
+    @pytest.mark.parametrize(
+        "fmt,base",
+        [
+            ("groq", "https://api.groq.com/openai/v1"),
+            ("xai", "https://api.x.ai/v1"),
+            ("litellm", "http://localhost:4000"),
+        ],
+    )
+    def test_an_openai_shaped_format_fills_in_its_address(self, fmt, base):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(api_format=fmt)
+        models, api_format, _ = resolve_endpoint(options)
+
+        assert api_format == fmt
+        assert options.api_base == base
+        # no model: those catalogues turn over, and the CLI asks for one
+        assert models == []
+
+    def test_a_command_that_names_an_address_keeps_it(self):
+        from book_maker.cli import resolve_endpoint
+
+        options = _options(api_format="groq", api_base="https://gw.example/v1")
+        resolve_endpoint(options)
+
+        assert options.api_base == "https://gw.example/v1"
+
+    @pytest.mark.parametrize(
+        "fmt,variable",
+        [
+            ("gemini", "BBM_GOOGLE_GEMINI_KEY"),
+            ("qwen", "BBM_QWEN_API_KEY"),
+            ("groq", "BBM_GROQ_API_KEY"),
+            ("xai", "BBM_XAI_API_KEY"),
+        ],
+    )
+    def test_each_format_reads_its_own_key_variable(self, monkeypatch, fmt, variable):
+        from book_maker.cli import resolve_api_key
+
+        monkeypatch.delenv("BBM_API_KEY", raising=False)
+        monkeypatch.setenv(variable, "vendor-secret")
+
+        assert resolve_api_key(fmt, "", "") == "vendor-secret"
+
+    @pytest.mark.parametrize("fmt", ["gemini", "qwen", "groq", "xai"])
+    def test_a_missing_key_names_where_it_looked(self, monkeypatch, fmt):
+        from book_maker.cli import FORMAT_ENV_KEYS, resolve_api_key
+
+        for name in FORMAT_ENV_KEYS[fmt]:
+            monkeypatch.delenv(name, raising=False)
+        with pytest.raises(SystemExit) as err:
+            resolve_api_key(fmt, "", "")
+        assert FORMAT_ENV_KEYS[fmt][-1] in str(err.value)
+
+    def test_a_litellm_proxy_on_this_machine_needs_no_key(self, monkeypatch):
+        # the default address is localhost, so the run authenticates nobody
+        from book_maker.cli import resolve_api_key, resolve_endpoint
+
+        monkeypatch.delenv("BBM_API_KEY", raising=False)
+        monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+        options = _options(api_format="litellm", model="gpt-4o")
+        _, api_format, _ = resolve_endpoint(options)
+
+        assert resolve_api_key(api_format, "", options.api_base) == "local"
+
+    def test_a_remote_litellm_proxy_still_asks_for_one(self, monkeypatch):
+        from book_maker.cli import resolve_api_key
+
+        monkeypatch.delenv("BBM_API_KEY", raising=False)
+        monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+        monkeypatch.delenv("BBM_LITELLM_API_KEY", raising=False)
+        with pytest.raises(SystemExit):
+            resolve_api_key("litellm", "", "https://proxy.example.com")
+
+    def test_the_gemini_route_can_be_paced(self):
+        # --interval is applied on this route and described as ignored
+        # everywhere else; the CLI calls this method unconditionally there
+        from book_maker.translator import FORMAT_DICT
+        from book_maker.cli import build_parser
+
+        assert hasattr(FORMAT_DICT["gemini"], "set_interval")
+        assert build_parser().parse_args(["--book_name", "b.epub"]).interval == 0.01
+
+    @pytest.mark.parametrize(
+        "fmt,example",
+        [
+            ("groq", "llama-3.3-70b-versatile"),
+            ("xai", "grok-beta"),
+            ("anthropic", "claude-sonnet-4-6"),
+        ],
+    )
+    def test_asking_for_a_model_names_one_that_endpoint_serves(
+        self, tmp_path, fmt, example
+    ):
+        # a Claude id offered as the example for the groq format sends the
+        # reader to an id groq refuses
+        src = tmp_path / BOOK.name
+        src.write_bytes(BOOK.read_bytes())
+        proc = _cli("--book_name", str(src), "--key", "sk-test", "--api_format", fmt)
+
+        assert proc.returncode != 0
+        output = " ".join((proc.stdout + proc.stderr).split())
+        assert f"--model is required for the {fmt} format" in output
+        assert example in output
+
+    def test_a_format_that_moves_the_endpoint_drops_the_providers_key(
+        self, provider_entry
+    ):
+        # a groq entry with no base_url takes its address from its format, so
+        # --api_format xai moves the request to api.x.ai; leading with
+        # GROQ_KEY there would hand xAI the Groq credential
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="groq", env_key="BBM_TEST_PROVIDER_KEY")
+        options = _options(provider="p", api_format="xai", model="grok-beta")
+        _, api_format, env_keys = resolve_endpoint(options)
+
+        assert api_format == "xai"
+        assert options.api_base == "https://api.x.ai/v1"
+        assert env_keys == ()
+
+    def test_an_entry_that_writes_its_own_address_keeps_its_key(self, provider_entry):
+        # the key belongs to the host, and the host here is still the entry's
+        # whatever wire format the command asks for — `--api_format anthropic`
+        # at a gateway entry is a real command
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://gw.example/v1",
+            env_key="BBM_TEST_PROVIDER_KEY",
+        )
+        options = _options(provider="p", api_format="anthropic", model="claude-x")
+        _, api_format, env_keys = resolve_endpoint(options)
+
+        assert api_format == "anthropic"
+        assert options.api_base == "https://gw.example/v1"
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
+
+    def test_a_provider_whose_format_is_kept_still_leads_with_its_key(
+        self, provider_entry
+    ):
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="groq", env_key="BBM_TEST_PROVIDER_KEY")
+        options = _options(provider="p", api_format="groq", model="llama-3.3-70b")
+        _, _, env_keys = resolve_endpoint(options)
+
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
+
+    def test_an_explicit_address_takes_the_key_off_the_entry(self, provider_entry):
+        # the entry's key names the entry's host; --api_base moves the run
+        # off it, so leading with that variable would send the credential to
+        # whatever host was typed
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://gw.example/v1",
+            env_key="BBM_TEST_PROVIDER_KEY",
+        )
+        options = _options(provider="p", api_base="https://other.example/v1")
+        _, _, env_keys = resolve_endpoint(options)
+
+        assert env_keys == ()
+
+    def test_two_formats_with_no_address_are_two_hosts(self, provider_entry):
+        # openai and anthropic have no address written down here, and
+        # treating both as "no address" made them compare equal, so an
+        # openai entry asked for the anthropic format kept its key and sent
+        # it to api.anthropic.com
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="openai", env_key="BBM_TEST_PROVIDER_KEY")
+        options = _options(provider="p", api_format="anthropic", model="claude-x")
+        _, api_format, env_keys = resolve_endpoint(options)
+
+        assert api_format == "anthropic"
+        assert env_keys == ()
+
+    def test_a_base_less_entry_on_its_own_format_keeps_its_key(self, provider_entry):
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(api_style="openai", env_key="BBM_TEST_PROVIDER_KEY")
+        options = _options(provider="p", model="gpt-5-mini")
+        _, _, env_keys = resolve_endpoint(options)
+
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
+
+    def test_the_same_address_retyped_still_belongs_to_the_entry(self, provider_entry):
+        # a trailing slash is not a different host
+        from book_maker.cli import resolve_endpoint
+
+        provider_entry(
+            api_style="openai",
+            base_url="https://gw.example/v1",
+            env_key="BBM_TEST_PROVIDER_KEY",
+        )
+        options = _options(provider="p", api_base="https://gw.example/v1/")
+        _, _, env_keys = resolve_endpoint(options)
+
+        assert env_keys == ("BBM_TEST_PROVIDER_KEY",)
+
+    @pytest.mark.parametrize("fmt", ["groq", "xai", "litellm"])
+    def test_extra_body_reaches_the_routes_built_on_the_openai_path(
+        self, tmp_path, fmt
+    ):
+        # gating on the format name told a groq run its fields were dropped
+        # when the request path it inherits sends them
+        src = tmp_path / BOOK.name
+        src.write_bytes(BOOK.read_bytes())
+        proc = _cli(
+            "--book_name",
+            str(src),
+            "--api_format",
+            fmt,
+            "--key",
+            "sk-test",
+            "--model",
+            "m",
+            "--extra_body",
+            '{"a": 1}',
+            "--test",
+            "--test_num",
+            "1",
+        )
+        output = proc.stdout + proc.stderr
+        assert "--extra_body is ignored" not in output, output
+
+    def test_every_format_that_defaults_a_model_can_be_asked_for_one(self):
+        # a default model on a format whose class refuses --model would be a
+        # command that cannot run
+        from book_maker.cli import DEFAULT_MODELS
+        from book_maker.translator import LLM_FORMATS
+
+        assert set(DEFAULT_MODELS) <= set(LLM_FORMATS)
+
+
 class TestProviderPrecedence:
     """`--provider` is shorthand for flags, so it fills gaps and settles nothing.
 
@@ -901,6 +1163,36 @@ def test_the_file_filter_gate_runs_before_any_model_setup(tmp_path):
     assert "Codex:" not in proc.stdout
 
 
+def test_batch_is_refused_on_every_route_without_the_batch_api(tmp_path):
+    # the loader calls batch_init / add_to_batch_translate_queue /
+    # is_completed_batch on the translator, so a route that has none of them
+    # used to accept the flag and die on AttributeError partway through
+    from book_maker.translator import FORMAT_DICT
+
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    for fmt, cls in FORMAT_DICT.items():
+        if cls.SUPPORTS_BATCH_API:
+            continue
+        proc = _cli(
+            "--book_name",
+            str(src),
+            "--api_format",
+            fmt,
+            "--key",
+            "sk-test",
+            "--model",
+            "m",
+            "--batch",
+            "--test",
+            "--test_num",
+            "1",
+        )
+        output = " ".join((proc.stdout + proc.stderr).split())
+        assert proc.returncode != 0, fmt
+        assert f"the {fmt} format does not have" in output, output
+
+
 def test_batch_is_refused_on_the_codex_format(tmp_path):
     # codex has no Batch API; the run used to die partway through with
     # AttributeError: batch_init, after plan quota had already been spent
@@ -1027,69 +1319,17 @@ def test_the_old_mode_name_is_not_advertised():
     assert "'most'" not in proc.stdout
 
 
-def test_compact_budget_takes_zero_as_auto():
-    """0 is the auto sentinel: size the budget from the model's own window."""
-    from book_maker.cli import compact_budget
-
-    assert compact_budget("0") == 0
-
-
-def test_compact_budget_still_rejects_a_budget_too_small_to_use():
+def test_a_zero_compact_budget_is_refused_like_any_other_too_small_one():
+    # `0` used to mean "size it from the model's own context window". OpenAI's
+    # own endpoint never reported one, so the answer was a notice and a
+    # fallback on two routes and a dead run on the third; the flag now takes
+    # a number and nothing else.
     import argparse
 
     from book_maker.cli import compact_budget
 
     with pytest.raises(argparse.ArgumentTypeError):
-        compact_budget("499")
-
-
-def test_an_auto_sized_compact_budget_is_refused_where_nothing_can_size_it(tmp_path):
-    # 0 asks the route for the model's own context window; a route that has no
-    # way to ask has nothing to size with, and 0 there meant no budget at all
-    src = tmp_path / BOOK.name
-    src.write_bytes(BOOK.read_bytes())
-    proc = _cli(
-        "--book_name",
-        str(src),
-        "--api_format",
-        "google",
-        "--context-compact-at",
-        "0",
-    )
-    assert proc.returncode == 1
-    assert "--context-compact-at 0" in " ".join(proc.stdout.split())
-    assert "Traceback" not in proc.stderr
-
-
-def test_every_model_bearing_route_can_be_asked_for_a_window():
-    # codex used to be refused here: it keeps a session history but had no way
-    # to report a window. The sidecar reports one on its token-usage push and
-    # the anthropic model record carries `max_input_tokens`, so all three
-    # model-bearing routes now answer `0`. The classes are imported directly:
-    # the offline stand-in swaps two of them into FORMAT_DICT.
-    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
-    from book_maker.translator.claude_translator import Claude
-    from book_maker.translator.codex_translator import Codex
-
-    for cls in (ChatGPTAPI, Claude, Codex):
-        assert cls.SUPPORTS_AUTO_COMPACT_BUDGET is True, cls.__name__
-
-
-def test_the_engines_with_no_model_to_ask_about_still_refuse_it():
-    # the machine-translation engines have no model record and no session
-    # history; `0` there meant no budget at all, silently, which is a compact
-    # per paragraph
-    from book_maker.translator.caiyun_translator import Caiyun
-    from book_maker.translator.custom_api_translator import CustomAPI
-    from book_maker.translator.deepl_translator import DeepL
-    from book_maker.translator.deepl_free_translator import DeepLFree
-    from book_maker.translator.google_translator import Google
-    from book_maker.translator.tencent_transmart_translator import TencentTranSmart
-
-    for cls in (Caiyun, CustomAPI, DeepL, DeepLFree, Google, TencentTranSmart):
-        assert (
-            getattr(cls, "SUPPORTS_AUTO_COMPACT_BUDGET", False) is False
-        ), cls.__name__
+        compact_budget("0")
 
 
 def test_a_named_compact_budget_is_never_refused(tmp_path):

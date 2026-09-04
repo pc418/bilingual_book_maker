@@ -1,6 +1,6 @@
 ---
 name: bbm-plan
-description: Translate a whole EPUB into a bilingual book with bilingual_book_maker's plan mode - greedy partition, agent-reviewed classification plan, cheap smoke test, then a full resumable run. Use when the user wants a book translated well (running heads, page numbers, and apparatus skipped deliberately) rather than a quick --translate-tags pass, or asks for "plan mode" / "bbm" translation.
+description: Translate a whole EPUB into a bilingual book with bilingual_book_maker's plan mode - greedy partition, agent-reviewed classification plan, then a full resumable run. Use when the user wants a book translated well (running heads, page numbers, and apparatus skipped deliberately) rather than a quick --translate-tags pass, or asks for "plan mode" / "bbm" translation.
 ---
 
 # bbm-plan: plan-mode EPUB translation
@@ -23,7 +23,10 @@ and (if they have one) a prompt file, approves the plan and the cost, and
 gets a bilingual epub back — they are never asked to experiment with flags,
 halt semantics or resume mechanics.
 
-Three runs of one command with small flag changes: **plan → smoke → full**.
+Two runs of one command with small flag changes: **plan → full**. A smoke
+test sits between them, optional and skipped by default — §4 says when a
+book has earned one.
+
 All state lives on disk (`bbm_providers.json`, `.env`, `<book>_plan.json`,
 the resume cache, `run.log`), so any step can be redone after a crash or in
 a new session.
@@ -65,7 +68,7 @@ Read the answer into the `ROUTE` array every later step uses:
 
 | the user picks | `ROUTE` | format |
 |---|---|---|
-| a provider entry `NAME` | `(--provider NAME)` — add `--model "$MODEL"` only if they named a different one | the entry's `api_style`: `openai` → openai, `anthropic` (`claude` in older files) → anthropic |
+| a provider entry `NAME` | `(--provider NAME)` — add `--model "$MODEL"` only if they named a different one | the entry's `api_style`, which is the format: `openai`, `anthropic` (`claude` in older files), `gemini`, `qwen`, `groq`, `xai`, `litellm` |
 | a bare `OPENAI_API_KEY` | `(--provider openai)` after step 0b | openai |
 | a bare `ANTHROPIC_API_KEY` | `(--provider anthropic)` after step 0b | anthropic |
 | `BBM_ORCAROUTER_API_KEY` | `(--model orcarouter)` | openai |
@@ -93,8 +96,9 @@ Then tell them exactly what to edit and stop until they say it is done:
   `default_models` (the exact id the endpoint spells) and `env_key`; delete
   the `FILL-ME` entry if unused. The file holds no secrets — `env_key`
   only names a variable. The shape is `{"providers": {NAME: {...}}}`;
-  `api_style` is `openai` or `anthropic`; a vendor such as Gemini is
-  `openai` plus its `base_url`, and the example file ships those entries.
+  `api_style` is the format: `openai`, `anthropic`, `gemini`, `qwen`,
+  `groq`, `xai` or `litellm`, and the example file ships an entry for each.
+  A vendor with no style of its own is `openai` plus its `base_url`.
   An optional
   `prices` block (`{"<model id>": {"input", "output", "cached_input"}}`,
   per million tokens; `currency` defaults to USD) makes the progress bar
@@ -134,9 +138,19 @@ and tell the user to rotate it.
    `prompt*` files are the repo's shipped examples, not the user's voice.
    Found one? **Ask before doing anything with it** — never adopt or ignore
    it silently.
-3. Anything they want to change from the flag menu's defaults: bilingual vs
-   replaced text, a visual style for the translation, specific chapters
-   only.
+3. Anything they want to change from the flag menu's defaults: a visual
+   style for the translation, specific chapters only.
+
+**Bilingual is the assumption; do not ask.** The output keeps every original
+next to its translation unless the user has asked for a translated-only
+book in so many words ("just the Chinese", "replace the original", "not
+bilingual", "single language"). *"Translate this book to Chinese"* is not
+that request — it is the ordinary ask, and it means a bilingual book, which
+is what the tool is for and what `--single_translate` off already does.
+Never infer single-language output from the target language being named,
+from the book being short, or from the user sounding brisk. Say which one
+you are producing in the same line where you state the flag choices, so a
+user who wanted the other one can say so before anything is paid for.
 
 Base command — `ROUTE` from step 0, `CONTEXT` from §1d:
 
@@ -229,7 +243,7 @@ python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
 - Tell the user which allowance this spends: plan quota, not the API key in
   `.env`.
 
-Plan, classify, smoke and full run are otherwise identical.
+Plan, classify and the full run are otherwise identical.
 
 ## 1d. Default flag set, by format
 
@@ -240,13 +254,15 @@ legal alternatives.
 
 | format | `ROUTE` | `CONTEXT` | why |
 |---|---|---|---|
-| openai (any OpenAI-shaped entry, `orcarouter`) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
+| openai (any OpenAI-shaped entry, `orcarouter`, and `groq`/`xai`/`litellm`, which are that route at their own address) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
 | anthropic (`api_style: anthropic`) | `(--provider NAME)` | `(--use_context session)` | the same history, and this route keeps it |
+| gemini, qwen | `(--provider NAME)` | `(--use_context)` | neither keeps a re-sendable session history, so `--use_context session` is refused; window mode is what they have — Gemini's own chat history, Qwen's translation memory |
 | codex | `(--model codex)` | `()` | the thread is the context; a context flag has nothing to add to it |
 
-Common to all three, per step: `--plan-classify agent` always; the smoke
-adds `--quiet --test --test_num 8`; the full run adds `--quiet --resume`.
-Nothing from the "Never pass in plan mode" list, ever.
+Common to all of them, per step: `--plan-classify agent` always; the full
+run adds `--quiet`, and `--resume` only once a cache exists (§5); the
+optional smoke adds `--quiet --test --test_num 8`. Nothing from the "Never
+pass in plan mode" list, ever.
 
 ## 2. Plan (agent mode translates nothing)
 
@@ -254,8 +270,9 @@ Run the base command once. It partitions the whole book, writes
 `<book>_plan.json`, prints a handoff block, and exits without translating.
 
 **Offline on every route.** Nothing is asked of the endpoint until the
-first paid request, so a wrong model id or a dead gateway surfaces at the
-smoke, not here.
+first paid request, so a wrong model id or a dead gateway surfaces there,
+not here — with the smoke skipped, that is the first minute of the full
+run, and it costs nothing.
 
 What the report gives you, and what each part is for:
 
@@ -309,10 +326,35 @@ plan's defaults, not discover it in the output. Edit **only** the `action`,
 action, missing hash or edited book is a hard error on the next run, never a
 silent default.
 
-## 4. Smoke test (pennies)
+## 4. Smoke test — optional, skipped by default
 
-Base command + `--quiet --test --test_num 8 > smoke.log 2>&1`. You check
-results **after** the run, from files — never from live output.
+**Default: skip it and go to §5.** The plan step already caught the
+structural mistakes offline and for free, a dead endpoint or wrong model id
+fails in the first minute of the full run having paid nothing, and the
+markup checks the smoke exists for are done at delivery either way (§6). On
+most books a smoke buys a second start-up, a second plan load and a second
+epub write to learn what §6 tells you anyway.
+
+Say you are skipping it, in one line, when you state the flag choices.
+
+**Run one when the book has earned it.** Any of:
+
+- **The user brought a `--prompt` file**, or you are translating into a
+  language or register this repo has not produced before. A prompt applies
+  to every unit, and a prompt that reads well can still produce markup that
+  does not.
+- **You argued with the plan** — several resolved nulls, any non-null
+  override, or a book whose apparatus is tangled enough that you want to see
+  a `skip` hold before paying for the whole spine.
+- **The book is big enough that a wasted full run is real money.** The plan
+  report's char total is the number to judge on; when a full run would cost
+  dollars rather than cents, eight units first is cheap insurance.
+- **The user asks**, or asks what the output will look like before
+  committing.
+
+**How, when you do run one.** Base command + `--quiet --test --test_num 8 >
+smoke.log 2>&1`. Check results **after** the run, from files — never from
+live output.
 
 Units are consumed in **spine order**, so before running, check which
 documents the first 8 units come from. A large nav or title page can absorb
@@ -321,18 +363,11 @@ the smoke translated zero verse); when that happens, point the smoke at a
 body chapter with `--only_filelist <content doc>` rather than raising
 `--test_num`.
 
-**Verify from the epub itself, always** — a zero exit code and a clean log
-do not pass the smoke. Unzip the partial `<book>_bilingual.epub` and read
-the markup around a translated unit:
-
-- is it actually in the target language?
-- does the translation sit **next to** its original, carrying the same tag
-  and class (unless `--single_translate`)?
-- are `id` attributes and internal fragment links intact?
-- did the plan's `skip` decisions actually hold?
-
-Then check `smoke.log` for error lines. The cache carries into the full run,
-so nothing paid here is re-paid.
+Then read the partial `<book>_bilingual.epub` back with the §6 checklist —
+a zero exit code and a clean log do not pass a smoke — and check
+`smoke.log` for error lines. The cache carries into the full run, so
+nothing paid here is re-paid, and the full run that follows takes
+`--resume`.
 
 Not a failure at this step: the endpoint being graded below `strict` and the
 run announcing the delimiter method. That is the expected line on claude, on
@@ -340,17 +375,23 @@ most proxies, and on anything not natively OpenAI.
 
 ## 5. Full run
 
-Base command + `--quiet --resume`, minus `--test`. Always in the background
-with output to a log:
+Base command + `--quiet`, minus `--test`. Always in the background with
+output to a log:
 
 ```bash
-… --quiet --resume > run.log 2>&1
+… --quiet > run.log 2>&1                # first run: no cache yet
+… --quiet --resume > run.log 2>&1       # every rerun, and after a smoke
 ```
 
+**`--resume` goes on the second run, not the first.** With no
+`.<book>.temp.bin` it raises `can not load resume file` and translates
+nothing — so a run that follows a skipped smoke starts without it, and a run
+that follows a smoke or a crash carries it.
+
 (Bash `run_in_background: true`; poll with `tail -5 run.log`.) On any crash,
-rerun the identical command. If the run stops with a fatal translation error,
-fix the cause (key quota, endpoint down) and rerun; do not delete the cache
-unless the book or plan changed intentionally.
+rerun the same command with `--resume` added. If the run stops with a fatal
+translation error, fix the cause (key quota, endpoint down) and rerun; do
+not delete the cache unless the book or plan changed intentionally.
 
 ## Flag menu — every choice, with the recommended default
 
@@ -365,7 +406,7 @@ so you can honour a request without guessing at legal values.
 | `--model` | any model id the endpoint uses, verbatim; or `codex`; or `orcarouter` | the entry's `default_models`; unset on the openai format means `gpt-5.6-luna` | the user names a different model, wants their ChatGPT plan spent (`codex`, §1c), or wants the OrcaRouter gateway, which `--model orcarouter` reaches with no `--api_base` |
 | `--model_list` | several ids, comma-separated | *unset*; one model goes in `--model` | rate limits force rotation. Naming a model in both flags is an error. Each id keeps its own prompt cache, so every switch re-pays the `--use_context session` history at full price |
 | `--key` | one key, or several comma-separated to rotate past rate limits | **never passed**; the entry's `env_key` (then `$BBM_API_KEY`, then `$OPENAI_API_KEY` / `$ANTHROPIC_API_KEY`) is read from the environment | never; omit on the `codex` route too |
-| `--api_format` | `openai`, `anthropic`, `codex`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi` | *unset*; inferred from `--api_base`, then from the model id | step 1b proved the guess wrong. The machine-translation formats cannot answer a question, so they are translation-only |
+| `--api_format` | `openai`, `anthropic`, `codex`, `gemini`, `qwen`, `groq`, `xai`, `litellm`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi` | *unset*; inferred from `--api_base`, then from the model id | step 1b proved the guess wrong. The machine-translation formats cannot answer a question, so they are translation-only |
 | `--api_base` | endpoint URL | *unset*; the entry's `base_url` | a gateway, proxy or local server. The OpenAI shape wants `…/v1`; the anthropic shape wants the bare host |
 | `--provider` | a name from `bbm_providers.json` (repo root) or `~/.bbm/providers.json` | **the route, step 0** | the endpoint is an entry there: one word supplies `--api_base`, `--api_format`, the model(s) and the key variable. Explicit flags still win, so `--model` may ride along. An unknown name is an error naming both files |
 | `--proxy` | `http://127.0.0.1:7890`-style | *unset* | the user is behind one |
@@ -387,14 +428,14 @@ so you can honour a request without guessing at legal values.
 | `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8000** | the user asks for the cheapest setting (`2500`, compacts more often) or a longer window (raise it). **Needs `--use_context session`** on an API route; without it the flag is accepted and does nothing. On `codex` it always applies |
 | `--context_paragraph_limit` | integer | *unset* (the translator uses 3) | window mode only, when the user wants a different number of pairs re-sent |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it |
-| `--temperature` | float | *unset* | output is erratic; lower it and re-smoke. The openai format leaves an unset value out of the request and retries once without it if the model rejects one; the anthropic route sends `1.0` on every call; codex ignores it |
+| `--temperature` | float | *unset* | output is erratic; lower it and check the markup again. The openai format leaves an unset value out of the request and retries once without it if the model rejects one; the anthropic route sends `1.0` on every call; codex ignores it |
 
 ### Output form
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| *(bilingual)* | — | **bilingual: translation added beside the original** | — |
-| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced. `--translation_style` still applies |
+| *(bilingual)* | — | **bilingual: translation added beside the original.** The default, and the assumption — see §1 | — |
+| `--single_translate` | on/off | **off** | **only** when the user asked for a translated-only book in so many words. Naming a target language is not that request. The original is replaced, so there is nothing to compare against afterwards; `--translation_style` still applies |
 | `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"`. It is the whole declaration block, so it replaces `--translation_color` rather than merging with it (the run says so) |
 | `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS. Passing both: `--translation_style` wins, and the run says the colour was lost |
 
@@ -402,10 +443,10 @@ so you can honour a request without guessing at legal values.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames, **OPF-relative** (`s04.xhtml`, not `EPUB/s04.xhtml`) | *unset* (whole book) | the user wants specific chapters, or the smoke must skip front matter. A name the book does not have fails loud on either list, before anything is paid for. **An only-list wins outright**: pass both and the exclude-list is unreachable |
-| `--test` / `--test_num` | flag + integer | **`--test --test_num 8`** at the smoke step only | poetry-heavy books: ~20, once you have confirmed the first N units are body text |
+| `--only_filelist` / `--exclude_filelist` | comma-separated internal filenames, **OPF-relative** (`s04.xhtml`, not `EPUB/s04.xhtml`) | *unset* (whole book) | the user wants specific chapters, or a smoke must skip front matter. A name the book does not have fails loud on either list, before anything is paid for. **An only-list wins outright**: pass both and the exclude-list is unreachable |
+| `--test` / `--test_num` | flag + integer | *unset* — the smoke is optional and skipped by default (§4) | you are running a smoke: `--test --test_num 8`, or ~20 on poetry-heavy books once you have confirmed the first N units are body text |
 | `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
-| `--resume` | on/off | **on for the full run, once a cache exists** | never off after a crash — replay is positional and fingerprint-guarded. On a first run with no `.<book>.temp.bin` it raises an uncaught traceback, so do not add it to the smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
+| `--resume` | on/off | **off on the first run, on for every rerun** | never off after a crash — replay is positional and fingerprint-guarded. With no `.<book>.temp.bin` it raises an uncaught traceback, so it goes on neither a smoke nor a full run that follows a skipped smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
 | `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock matters more than consistency. Then drop to bare `--use_context`: **`--use_context session` is refused with it** (one history, which workers cannot share), and window context is per chapter anyway, so continuity stops at every chapter boundary. **Never on `codex`** (below) |
 | `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
 
@@ -442,9 +483,9 @@ so you can honour a request without guessing at legal values.
   a big parallel run, and use SIGKILL when a run must stop now.
 - **A halted run exits 130**, a finished one 0, the agent handoff 3, and
   every refusal 1. Read the code, not the log, when a background run ends.
-- **Resume = rerun the identical command with `--resume`.** Same book, same
-  plan, continues where it stopped. This is also why the smoke test is never
-  wasted money.
+- **Resume = rerun the same command with `--resume` added.** Same book, same
+  plan, continues where it stopped. This is also why a smoke test is never
+  wasted money, and why a full run that dies halfway is not either.
 - **Do not edit the plan or swap the book between halt and resume** — the
   fingerprint refusal protects against translations landing on the wrong
   paragraphs. Changed your mind mid-book? Finish the run, or delete
@@ -453,10 +494,24 @@ so you can honour a request without guessing at legal values.
 
 ## 6. Deliver
 
-Report the end-of-run coverage/skip stats, every classification decision you
-made (resolved nulls and any non-null overrides, with the name-then-rule
-reasoning), and hand over `<book>_bilingual.epub`. Suggest spot-checking one
-early and one late chapter.
+**Read the epub back before you hand it over.** With the smoke skipped this
+is the only look anyone takes at the markup, so it is not optional. Unzip
+`<book>_bilingual.epub` and read around a translated unit in one early and
+one late chapter:
+
+- is it actually in the target language?
+- does the translation sit **next to** its original, carrying the same tag
+  and class (unless `--single_translate`)?
+- are `id` attributes and internal fragment links intact?
+- did the plan's `skip` decisions actually hold?
+- is there any delimiter or JSON residue in the text?
+
+A zero exit code and a clean log do not answer any of those.
+
+Then report the end-of-run coverage/skip stats, every classification
+decision you made (resolved nulls and any non-null overrides, with the
+name-then-rule reasoning), what the read-back showed, and hand over
+`<book>_bilingual.epub`.
 
 ## Context hygiene
 
@@ -480,7 +535,6 @@ early and one late chapter.
 | `invalid action` on plan load | typo in a hand-edited `action` — fix the JSON, rerun |
 | coverage-gate error / empty plan | the plan skips nearly everything — re-check the plan |
 | `--only_filelist / --exclude_filelist names N document(s) this book does not have` | a typo, caught before anything is paid for; the message lists the near matches |
-| `--context-compact-at 0 sizes the budget … this endpoint reports no usable one` | that endpoint does not publish a context window for that model. Pass a number (8000 default, 2500 cheapest); nothing was paid |
 | `--use_context session is not implemented for the … route` | that route keeps no history; use bare `--use_context`, or a route that does (§1d) |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
 | `--use_context session` not supported for *txt/srt/pdf* | those loaders never hand context to the model; epub is where this workflow lives anyway |

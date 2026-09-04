@@ -19,18 +19,22 @@ from pathlib import Path
 GLOBAL_CONFIG_PATH = Path.home() / ".bbm" / "providers.json"
 LOCAL_CONFIG_FILENAME = "bbm_providers.json"
 
-GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
-DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
-# `api_style` -> `--api_format`. A style is a wire format and nothing else:
-# a vendor's address goes in `base_url`, never in a name. `claude` is the
-# older spelling of `anthropic` and stays accepted.
-API_STYLES = {"openai": "openai", "anthropic": "anthropic", "claude": "anthropic"}
-
-# Styles that once stood for a vendor address. An entry with one is refused
-# and told what to write; a config file is edited once, so it gets the fix
-# rather than a rewrite.
-RETIRED_STYLES = {"gemini": GEMINI_BASE, "qwen": DASHSCOPE_BASE}
+# `api_style` -> `--api_format`: what the host on the other end speaks, and
+# so which route calls it. Every `--api_format` that names an endpoint is a
+# style, plus `claude` as the older spelling of `anthropic`; `codex` is not,
+# having no address or key for an entry to carry. A host with no style of
+# its own — any of the many that serve the OpenAI shape — is `"openai"`
+# with its address in `base_url`.
+API_STYLES = {
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+    "gemini": "gemini",
+    "qwen": "qwen",
+    "groq": "groq",
+    "xai": "xai",
+    "litellm": "litellm",
+}
 
 REQUIRED_FIELDS = {"api_style"}
 OPTIONAL_FIELDS = {"base_url", "default_models", "env_key", "prices", "currency"}
@@ -98,19 +102,15 @@ def validate_provider(name, provider):
         raise ValueError(f"provider {name!r} has unknown fields: {sorted(unknown)}")
 
     api_style = provider["api_style"]
-    if api_style in RETIRED_STYLES:
-        # an entry that already names its own address keeps it
-        base = provider.get("base_url") or RETIRED_STYLES[api_style]
-        raise ValueError(
-            f"provider {name!r}: api_style {api_style!r} is a vendor, not a "
-            f"format. Write the address instead:\n"
-            f'  "api_style": "openai",\n'
-            f'  "base_url": "{base}"'
-        )
     if api_style not in API_STYLES:
+        # Almost always a vendor name for a host that speaks the OpenAI
+        # shape, so the fix is worth printing rather than describing.
         raise ValueError(
             f"provider {name!r} has unsupported api_style {api_style!r}. "
-            f"Supported: openai, anthropic"
+            f"Supported: {', '.join(sorted(API_STYLES))}. A host that serves "
+            f"the OpenAI shape at its own address is:\n"
+            f'  "api_style": "openai",\n'
+            f'  "base_url": "{provider.get("base_url") or "https://..."}"'
         )
 
     _validate_prices(name, provider)

@@ -21,8 +21,6 @@ class OrcaRouterTranslator(ChatGPTAPI):
         )
         self.model_list = ORCAROUTER_MODEL_LIST
         self.api_url = self.api_base
-        # known from the start: `preflight` may size a compact budget for
-        # every model in play before any request rotates one in
         self._model_names = tuple(ORCAROUTER_MODEL_LIST)
         self.model = ORCAROUTER_MODEL_LIST[0]
 

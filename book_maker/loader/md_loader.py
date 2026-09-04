@@ -533,6 +533,12 @@ class MarkdownBookLoader(BaseBookLoader):
             clone.context_list = []
         if hasattr(clone, "context_translated_list"):
             clone.context_translated_list = []
+        if hasattr(clone, "create_convo"):
+            # gemini keeps its context in the chat object, not those lists;
+            # a shallow copy would share one conversation across sections,
+            # which is a thread race and cross-section context bleed. The
+            # epub loader's clone does the same.
+            clone.create_convo()
         return clone
 
     def _assemble_render_items(self, render_items, batches, translated_batches):

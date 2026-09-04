@@ -18,6 +18,9 @@ dependencies = [
     "backoff",
     "bs4",
     "ebooklib",
+    # the gemini route's SDK; the groq, xai and litellm routes need none of
+    # their own, being the OpenAI shape at another address.
+    "google-genai",
     # chat.completions.parse (Structured Outputs) is unavailable before 1.92.
     "openai>=1.92.0",
     "pydantic>=2.0",

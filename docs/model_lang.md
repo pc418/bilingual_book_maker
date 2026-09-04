@@ -27,9 +27,28 @@ has the full table.
 `--model_list a,b` rotates across several models and is also what older
 commands used; name a model in one flag or the other, not both.
 
-`--api_format` is one of `openai` (default), `anthropic`, `codex`, or the
-fixed machine-translation engines `google`, `caiyun`, `deepl`, `deeplfree`,
-`tencent`, `customapi`.
+`--api_format` is one of `openai` (default), `anthropic`, `gemini`, `qwen`,
+`groq`, `xai`, `litellm`, `codex`, or the fixed machine-translation engines
+`google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi`.
+
+The five vendor formats each carry their own endpoint, so the format and a
+key are a whole route with no `--api_base` to look up:
+
+| Format | Endpoint | `--model` |
+|---|---|---|
+| `gemini` | the Gemini API | optional, default `gemini-flash-latest` |
+| `qwen` | Qwen-MT on DashScope | optional, default `qwen-mt-turbo` |
+| `groq` | `https://api.groq.com/openai/v1` | required |
+| `xai` | `https://api.x.ai/v1` | required |
+| `litellm` | `http://localhost:4000` | required, the name in the proxy's config |
+
+`gemini` and `qwen` are protocols of their own — Gemini's native
+constrained decoding, its safety settings and chat history; Qwen-MT's
+source/target language pair in place of a prompt — and `--interval` paces
+the gemini route, which is how the free tier's rate limit is stayed under.
+The other three are the OpenAI route at another address and keep everything
+it has. None of the five is ever inferred from a host: name the format, or
+give the vendor's OpenAI-compatible `--api_base` and get the `openai` route.
 
 `codex` is not an endpoint at all: it drives a local `codex app-server`
 sidecar and bills the run to your ChatGPT plan, so it takes no `--key` and no
@@ -72,9 +91,18 @@ An endpoint used more than once can be written down instead of retyped.
 bbook_maker --book_name book.epub --provider nvidia --language ja
 ```
 
-`api_style` is `openai` or `anthropic`. Gemini or Qwen is `openai` plus
-its `base_url`, and the shipped `bbm_providers.example.json` already has
-those entries. `default_models` supplies `--model` when it
+`api_style` is any `--api_format` that names an endpoint — `openai`,
+`anthropic`, `gemini`, `qwen`, `groq`, `xai`, `litellm` — plus `claude` as
+the older spelling of `anthropic`. Any other OpenAI-compatible host is
+`openai` with its address in `base_url`. The shipped
+`bbm_providers.example.json` has an entry for each. Explicit flags still win over the entry, and the entry's `env_key` travels
+exactly as far as the entry's address does. Asking for another wire format
+at the entry's own gateway moves nothing, so the key is still read. An
+`--api_base` pointing somewhere else does move the run, and so does an
+`--api_format` override on an entry with no `base_url`, since there the
+format is what supplies the address — the key is not read for another
+vendor's host, and the run says which two addresses it is comparing. Pass
+`--key` when you meant to reuse it. `default_models` supplies `--model` when it
 holds one id and `--model_list` when it holds several, and `env_key` names
 the variable to read the key from; no secret goes in the file. Anything
 passed explicitly wins, so `--provider nvidia --model <id>` keeps that
@@ -108,10 +136,10 @@ is cheaper.
 | Vendor | `--api_base` |
 |---|---|
 | OpenAI | `https://api.openai.com/v1` (default) |
-| Groq | `https://api.groq.com/openai/v1` |
-| xAI | `https://api.x.ai/v1` |
+| Groq | `https://api.groq.com/openai/v1`, or `--api_format groq` |
+| xAI | `https://api.x.ai/v1`, or `--api_format xai` |
 | DeepSeek | `https://api.deepseek.com/v1` |
-| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` |
+| Gemini (compatibility mode) | `https://generativelanguage.googleapis.com/v1beta/openai/` |
 | Alibaba Qwen (DashScope) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | SiliconFlow | `https://api.siliconflow.cn/v1` |
 | OpenRouter | `https://openrouter.ai/api/v1` |

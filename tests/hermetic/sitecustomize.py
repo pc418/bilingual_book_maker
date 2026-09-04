@@ -14,8 +14,30 @@ is explicitly about talking to real providers.
 """
 
 import os
+import sys
+from pathlib import Path
 
+# The checkout this file belongs to, ahead of everything else. `sitecustomize`
+# is imported during interpreter startup, before the script's own directory is
+# on `sys.path`, so a plain `import book_maker` here resolves against whatever
+# is installed site-wide. With a stale `pip install -e` in the environment that
+# is somebody else's checkout: the CLI subprocess then runs *that* code, and a
+# test asserting this branch's behaviour fails — or worse, passes — for reasons
+# nothing in the branch explains. Seen 260903, a whole worktree tested against
+# another one's translator.
+_REPO = Path(__file__).resolve().parent.parent.parent
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+import book_maker
 from book_maker.translator import FORMAT_DICT, ROUTE_DICT
+
+if not Path(book_maker.__file__).resolve().is_relative_to(_REPO):
+    # Loudly, not silently: a stand-in installed into the wrong package would
+    # leave the CLI tests translating over the network against other code.
+    raise RuntimeError(
+        f"hermetic harness loaded {book_maker.__file__}, outside {_REPO}"
+    )
 
 
 class OfflineTranslator:
@@ -30,6 +52,9 @@ class OfflineTranslator:
     TRANSLATION_ERROR_MARKER = None
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
+    # it has none of the Batch API methods, and the CLI's refusal of --batch
+    # on a route without them is part of the contract these tests exercise
+    SUPPORTS_BATCH_API = False
     context_paragraph_limit = 3
 
     def __init__(self, *args, **kwargs):
@@ -38,14 +63,6 @@ class OfflineTranslator:
 
     def rotate_key(self):
         pass
-
-    @property
-    def model_name(self):
-        # the same answer the real translators give: the model, else the
-        # api_format / provider key this stand-in is registered under
-        from book_maker.translator.base_translator import service_name
-
-        return getattr(self, "model", None) or service_name(self)
 
     def set_model_list(self, model_list=(), *args, **kwargs):
         # echoed so a CLI test can see which models the run selected —

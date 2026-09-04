@@ -13,8 +13,14 @@ from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
 from book_maker.provider_loader import resolve_provider
-from book_maker.translator import FORMAT_DICT, LLM_FORMATS, ROUTE_DICT
+from book_maker.translator import (
+    FORMAT_DEFAULT_BASES,
+    FORMAT_DICT,
+    LLM_FORMATS,
+    ROUTE_DICT,
+)
 from book_maker.translator.base_translator import PriceTable
+from book_maker.translator.chatgptapi_translator import ChatGPTAPI
 from book_maker.translator.capabilities import ModelUnavailable
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
@@ -24,6 +30,11 @@ from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 FORMAT_ENV_KEYS = {
     "openai": ("BBM_API_KEY", "OPENAI_API_KEY", "BBM_OPENAI_API_KEY"),
     "anthropic": ("BBM_API_KEY", "ANTHROPIC_API_KEY", "BBM_CLAUDE_API_KEY"),
+    "gemini": ("BBM_API_KEY", "BBM_GOOGLE_GEMINI_KEY", "GEMINI_API_KEY"),
+    "qwen": ("BBM_API_KEY", "BBM_QWEN_API_KEY", "DASHSCOPE_API_KEY"),
+    "groq": ("BBM_API_KEY", "BBM_GROQ_API_KEY", "GROQ_API_KEY"),
+    "xai": ("BBM_API_KEY", "BBM_XAI_API_KEY", "XAI_API_KEY"),
+    "litellm": ("BBM_API_KEY", "BBM_LITELLM_API_KEY", "LITELLM_MASTER_KEY"),
     "caiyun": ("BBM_API_KEY", "BBM_CAIYUN_API_KEY"),
     "deepl": ("BBM_API_KEY", "BBM_DEEPL_API_KEY"),
 }
@@ -31,7 +42,19 @@ FORMAT_ENV_KEYS = {
 # Formats that will not work at all without a credential. The others are
 # public endpoints (google, deeplfree, tencent) or carry their own address
 # instead of a key (customapi).
-FORMATS_REQUIRING_KEY = ("openai", "anthropic", "caiyun", "deepl")
+FORMATS_REQUIRING_KEY = (
+    "openai",
+    "anthropic",
+    "gemini",
+    "qwen",
+    "groq",
+    "xai",
+    # a proxy on this machine authenticates nobody, and is_local_endpoint
+    # answers that before this list is consulted
+    "litellm",
+    "caiyun",
+    "deepl",
+)
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal")
 
@@ -43,9 +66,24 @@ CONTEXT_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 # LLM formats that can resolve a model on their own, so --model is optional.
 MODEL_OPTIONAL_FORMATS = ("codex",)
 
-# The model a format falls back to when the command names none. Only the
-# openai format has an obvious one; the anthropic format asks for an id.
-DEFAULT_MODELS = {"openai": "gpt-5.6-luna"}
+# The model a format falls back to when the command names none. The anthropic
+# format asks for an id; the other three name what their own route used to
+# run by default, so `--api_format gemini` alone is a working command.
+DEFAULT_MODELS = {
+    "openai": "gpt-5.6-luna",
+    "gemini": "gemini-flash-latest",
+    "qwen": "qwen-mt-turbo",
+}
+
+# One id each endpoint actually serves, for the "--model is required"
+# message. Naming a model from the wrong vendor there sends the reader to
+# an id that endpoint will refuse.
+MODEL_EXAMPLES = {
+    "anthropic": "claude-sonnet-4-6",
+    "groq": "llama-3.3-70b-versatile",
+    "xai": "grok-beta",
+    "litellm": "<the model_name in your proxy's config>",
+}
 
 # `--model codex` selects the format rather than a model id. The sidecar then
 # picks its own default, exactly as `--api_format codex` with no --model does.
@@ -134,6 +172,20 @@ def resolve_api_key(api_format, explicit_key, api_base, extra_env_keys=()):
     return ""
 
 
+def _entry_address(api_base, api_format):
+    """The host a (base, format) pair actually calls, for comparing two of them.
+
+    An empty base means the format's own address — which for the vendor
+    formats is a real URL. `openai` and `anthropic` have none written down
+    here (their SDK holds the vendor host), so the format itself stands in:
+    two formats with no address are two different hosts, not one empty one,
+    and an openai entry asked for the anthropic format is calling Anthropic.
+    Trailing slashes are noise here: `.../v1` and `.../v1/` are one host.
+    """
+    base = (api_base or FORMAT_DEFAULT_BASES.get(api_format, "")).rstrip("/")
+    return base or f"the {api_format} endpoint's own host"
+
+
 def apply_provider(options):
     """Fill in the endpoint flags `--provider` covers, and name its key variable.
 
@@ -148,6 +200,24 @@ def apply_provider(options):
         route = resolve_provider(options.provider)
     except ValueError as err:
         raise SystemExit(str(err))
+    # The entry's key belongs to the entry's *address*, and travels only as
+    # far as that address does. Either flag can move it: --api_base says so
+    # outright, and --api_format moves an entry that has no base_url of its
+    # own, because then the format is what supplies the address. Asking for
+    # another wire format at the entry's own gateway moves nothing, and
+    # there the key is still the right one.
+    entry_address = _entry_address(route.api_base, route.api_format)
+    run_address = _entry_address(
+        options.api_base or route.api_base, options.api_format or route.api_format
+    )
+    entry_endpoint_kept = run_address == entry_address
+    if not entry_endpoint_kept:
+        print(
+            f"[bold yellow]Warning:[/bold yellow] provider "
+            f"{options.provider} names {entry_address}, but this run calls "
+            f"{run_address}; its key variable is not read for another "
+            f"endpoint."
+        )
     options.api_format = options.api_format or route.api_format
     options.api_base = options.api_base or route.api_base
     # Prices are the entry's to know and the meter's to apply; they ride
@@ -161,6 +231,8 @@ def apply_provider(options):
             options.model = route.models[0]
         else:
             options.model_list = ",".join(route.models)
+    if not entry_endpoint_kept:
+        return ()
     return (route.env_key,) if route.env_key else ()
 
 
@@ -217,6 +289,12 @@ def resolve_endpoint(options):
     api_format = options.api_format or infer_api_format(
         options.api_base, model_names[0] if model_names else ""
     )
+    # A format that stands for one vendor's endpoint carries its address, so
+    # the format alone is a complete route. Filled in here rather than left
+    # to the translator, so everything downstream — the local-endpoint check
+    # that skips the key, and the record the output file keeps — sees the
+    # address the run will actually call.
+    options.api_base = options.api_base or FORMAT_DEFAULT_BASES.get(api_format, "")
     options.api_base = normalize_api_base(options.api_base, api_format)
     if not model_names and api_format in DEFAULT_MODELS:
         model_names = [DEFAULT_MODELS[api_format]]
@@ -339,23 +417,16 @@ MIN_COMPACT_BUDGET = 500
 
 
 def compact_budget(value):
-    """argparse type for --context-compact-at: a usable budget, or 0 for auto.
-
-    `0` means "size it from the model": the translator asks the endpoint for
-    the model's context window and compacts at 90% of it. What a miss means
-    is the route's call: the openai route ends the run, the anthropic and
-    codex routes say so and use the default.
-    """
+    """argparse type for --context-compact-at: a budget a window can work to."""
     try:
         budget = int(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}")
-    if budget and budget < MIN_COMPACT_BUDGET:
+    if budget < MIN_COMPACT_BUDGET:
         raise argparse.ArgumentTypeError(
             f"a compact budget of {budget} is too small to be useful; use at "
             f"least {MIN_COMPACT_BUDGET} estimated tokens (2500 is the "
-            f"cheapest setting on most endpoints), or 0 to size the budget "
-            f"from the model's own context window"
+            f"cheapest setting on most endpoints)"
         )
     return budget
 
@@ -712,11 +783,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         help="session mode only: estimated-token budget for the history "
         "before it is compacted into a translator handoff report. Default: "
         "8000, which costs about what window mode costs for several times "
-        "the context; 2500 is the cheapest setting on most endpoints. 0 "
-        "sizes the budget from the model's own context window (90%% of it), "
-        "on the routes that have a model to ask about. What a miss costs "
-        "differs: the openai route stops rather than guess, the anthropic "
-        "and codex routes say so and use the default",
+        "the context; 2500 is the cheapest setting on most endpoints",
     )
     parser.add_argument(
         "--no-context-compact",
@@ -774,6 +841,14 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="batch_use_flag",
         action="store_true",
         help="Use pre-generated batch translations to create files. Run with --batch first before using this option",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=0.01,
+        help="seconds to wait between requests, e.g. 0.1 for 100ms. Only the "
+        "gemini format paces itself with it; every other route ignores it. "
+        "Default: 0.01",
     )
     parser.add_argument(
         "--parallel-workers",
@@ -907,11 +982,13 @@ def main():
     # Batch translation is OpenAI's Batch API. The codex format has no such
     # thing, and reached it anyway: `AttributeError: batch_init` partway into
     # a run that had already spent plan quota.
-    if api_format == "codex" and (options.batch_flag or options.batch_use_flag):
+    if (options.batch_flag or options.batch_use_flag) and not getattr(
+        translate_model, "SUPPORTS_BATCH_API", False
+    ):
         print(
-            "[bold red]Error: --batch / --batch-use are the OpenAI Batch "
-            "API, which the codex format does not have. Drop the flag, or "
-            "translate through an OpenAI-shaped endpoint.[/bold red]"
+            f"[bold red]Error: --batch / --batch-use are the OpenAI Batch "
+            f"API, which the {api_format} format does not have. Drop the "
+            f"flag, or translate through an OpenAI-shaped endpoint.[/bold red]"
         )
         exit(1)
 
@@ -926,19 +1003,6 @@ def main():
             f"the {api_format} format; it would be accepted and ignored. Use "
             f"bare --use_context for a re-sent window of paragraph "
             f"pairs.[/bold red]"
-        )
-        exit(1)
-
-    # Only a route with a model to ask about can size the budget from its
-    # window; `0` on the others meant no budget at all, a compact per paragraph.
-    if options.context_compact_at == 0 and not getattr(
-        translate_model, "SUPPORTS_AUTO_COMPACT_BUDGET", False
-    ):
-        print(
-            f"[bold red]Error: --context-compact-at 0 sizes the budget from "
-            f"the model's own context window, and only a route with a model "
-            f"to ask about can answer that. The {api_format} format needs a "
-            f"number instead.[/bold red]"
         )
         exit(1)
 
@@ -1077,7 +1141,10 @@ def main():
     # an arbitrary attribute on the other translators used to print success
     # and then silently drop the fields.
     if options.extra_body:
-        if api_format != "openai":
+        # The OpenAI request path is what reads it, so every route built on
+        # that path takes it — naming the format instead would have told a
+        # groq or xai run that its fields were dropped when they were not.
+        if not issubclass(translate_model, ChatGPTAPI):
             print(
                 f"[bold yellow]Warning:[/bold yellow] --extra_body is ignored "
                 f"by the {api_format} route"
@@ -1200,8 +1267,14 @@ def main():
         if not model_names and api_format not in MODEL_OPTIONAL_FORMATS:
             raise SystemExit(
                 f"--model is required for the {api_format} format. Pass the "
-                f"model id the endpoint uses, e.g. --model claude-sonnet-4-6"
+                f"model id the endpoint uses, e.g. --model "
+                f"{MODEL_EXAMPLES.get(api_format, 'gpt-5-mini')}"
             )
+        # Only the gemini route paces itself between requests; --interval
+        # is described as ignored everywhere else, so it is not offered
+        # to a translator that would silently drop it.
+        if api_format == "gemini":
+            e.translate_model.set_interval(options.interval)
         if route is None:  # a route's class names its own model
             try:
                 e.translate_model.set_model_list(model_names)
@@ -1209,7 +1282,7 @@ def main():
                 print(f"[red]Error: {ex}[/red]")
                 exit(1)
         # Settled before the first paid request: the codex sidecar is up and
-        # signed in, an auto budget has its number.
+        # signed in.
         if hasattr(e.translate_model, "preflight"):
             try:
                 e.translate_model.preflight()

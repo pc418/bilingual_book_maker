@@ -16,25 +16,24 @@
       "env_key": "ANTHROPIC_API_KEY"
     },
     "gemini": {
-      "api_style": "openai",
-      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "api_style": "gemini",
       "default_models": ["gemini-flash-latest"],
       "env_key": "BBM_GOOGLE_GEMINI_KEY"
     },
     "qwen": {
-      "api_style": "openai",
+      "api_style": "qwen",
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "default_models": ["qwen-mt-turbo"],
       "env_key": "BBM_QWEN_API_KEY"
     },
     "xai": {
-      "api_style": "openai",
+      "api_style": "xai",
       "base_url": "https://api.x.ai/v1",
       "default_models": ["grok-beta"],
       "env_key": "BBM_XAI_API_KEY"
     },
     "groq": {
-      "api_style": "openai",
+      "api_style": "groq",
       "base_url": "https://api.groq.com/openai/v1",
       "default_models": ["llama-3.3-70b-versatile"],
       "env_key": "BBM_GROQ_API_KEY"
@@ -67,6 +66,11 @@
       "api_style": "openai",
       "base_url": "http://localhost:11434/v1",
       "default_models": ["llama3.2"]
+    },
+    "litellm": {
+      "api_style": "litellm",
+      "base_url": "http://localhost:4000",
+      "default_models": ["FILL-ME-model-id"]
     },
     "gateway": {
       "api_style": "openai",

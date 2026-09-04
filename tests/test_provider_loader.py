@@ -15,8 +15,7 @@ import pytest
 from book_maker import provider_loader
 from book_maker.cli import apply_provider
 from book_maker.provider_loader import (
-    DASHSCOPE_BASE,
-    GEMINI_BASE,
+    API_STYLES,
     _merge_configs,
     get_provider,
     load_provider_config,
@@ -150,44 +149,52 @@ class TestUnknownProvider:
 class TestApiStyles:
     @pytest.mark.parametrize(
         "style,api_format",
-        [("openai", "openai"), ("anthropic", "anthropic"), ("claude", "anthropic")],
+        [
+            ("openai", "openai"),
+            ("anthropic", "anthropic"),
+            ("claude", "anthropic"),
+            ("gemini", "gemini"),
+            ("qwen", "qwen"),
+            ("groq", "groq"),
+            ("xai", "xai"),
+            ("litellm", "litellm"),
+        ],
     )
     def test_a_style_is_a_wire_format_and_nothing_else(
         self, configs, style, api_format
     ):
         _write(configs.local_file, {"p": {"api_style": style}})
         route = resolve_provider("p")
-        # no base: the CLI falls back to the format's official host
+        # no base: the CLI falls back to the format's own address
         assert (route.api_format, route.api_base) == (api_format, "")
 
-    @pytest.mark.parametrize(
-        "style,base", [("gemini", GEMINI_BASE), ("qwen", DASHSCOPE_BASE)]
-    )
-    def test_a_vendor_name_is_refused_with_the_entry_to_write(
-        self, configs, style, base
-    ):
-        _write(configs.local_file, {"p": {"api_style": style}})
-        with pytest.raises(ValueError) as err:
+    def test_every_style_names_a_format_the_cli_accepts(self):
+        # a style that resolves to a format --api_format would reject leaves
+        # the entry unusable, and the failure would arrive at argparse
+        from book_maker.translator import FORMAT_DICT
+
+        assert set(API_STYLES.values()) <= set(FORMAT_DICT)
+
+    def test_an_unknown_style_names_the_ones_that_exist(self, configs):
+        _write(configs.local_file, {"p": {"api_style": "grpc"}})
+        with pytest.raises(ValueError, match="openai") as err:
             resolve_provider("p")
         message = str(err.value)
-        assert style in message
-        assert '"api_style": "openai"' in message
-        assert f'"base_url": "{base}"' in message
+        for style in API_STYLES:
+            assert style in message
 
-    def test_a_refused_entry_keeps_the_address_it_already_names(self, configs):
+    def test_an_unknown_style_prints_the_openai_entry_to_write_instead(self, configs):
+        # almost always a vendor name for a host that speaks the OpenAI
+        # shape, and the entry keeps the address it already names
         _write(
             configs.local_file,
-            {"p": {"api_style": "qwen", "base_url": "https://gw.example/v1"}},
+            {"p": {"api_style": "fireworks", "base_url": "https://gw.example/v1"}},
         )
         with pytest.raises(ValueError) as err:
             resolve_provider("p")
-        assert '"base_url": "https://gw.example/v1"' in str(err.value)
-        assert DASHSCOPE_BASE not in str(err.value)
-
-    def test_an_unknown_style_names_the_two_that_exist(self, configs):
-        _write(configs.local_file, {"p": {"api_style": "grpc"}})
-        with pytest.raises(ValueError, match="openai, anthropic"):
-            resolve_provider("p")
+        message = str(err.value)
+        assert '"api_style": "openai"' in message
+        assert '"base_url": "https://gw.example/v1"' in message
 
 
 class TestApplyingToACommand:
