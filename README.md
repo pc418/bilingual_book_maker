@@ -177,14 +177,19 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
 * [OrcaRouter](https://www.orcarouter.ai)
 
-  Support [OrcaRouter](https://www.orcarouter.ai) gateway, defaulting to the
-  `orcarouter/auto` smart-routing model. `--model orcarouter` is the same
-  endpoint under a shorter name, and so is `--provider orcarouter` from
-  `bbm_providers.example.json`.
+  The [OrcaRouter](https://www.orcarouter.ai) gateway, on its smart-routing
+  model `orcarouter/auto`. The address belongs to the route, so there is no
+  `--api_base` to type; the key is `--key` or `BBM_ORCAROUTER_API_KEY`.
+  `--provider orcarouter` from `bbm_providers.example.json` reaches the same
+  place.
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.orcarouter.ai/v1 --key ${orcarouter_key} --model orcarouter/auto
+  python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
+
+  To pin one model there instead of letting the gateway route, address it as
+  the OpenAI-shaped endpoint it is: `--api_format openai --api_base
+  https://api.orcarouter.ai/v1 --model <id>`.
 
 * [Ollama](https://github.com/ollama/ollama)
 

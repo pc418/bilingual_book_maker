@@ -168,13 +168,17 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 * [OrcaRouter](https://www.orcarouter.ai)
 
-  支持 [OrcaRouter](https://www.orcarouter.ai) 网关，默认使用 `orcarouter/auto` 智能路由模型。
-  `--model orcarouter` 是同一个接口的简写，`bbm_providers.example.json` 里的
-  `--provider orcarouter` 也一样。
+  [OrcaRouter](https://www.orcarouter.ai) 网关，使用其 `orcarouter/auto` 智能路由模型。
+  地址由该路由自带，无需填写 `--api_base`；key 用 `--key` 或环境变量
+  `BBM_ORCAROUTER_API_KEY`。`bbm_providers.example.json` 里的
+  `--provider orcarouter` 指向同一处。
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_base https://api.orcarouter.ai/v1 --key ${orcarouter_key} --model orcarouter/auto
+  python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
+
+  若要指定具体模型而不走智能路由，就把它当作 OpenAI 格式的接口来填：
+  `--api_format openai --api_base https://api.orcarouter.ai/v1 --model <模型 id>`。
 
 * [Ollama](https://github.com/ollama/ollama)
 
