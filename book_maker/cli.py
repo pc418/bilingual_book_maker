@@ -418,23 +418,16 @@ MIN_COMPACT_BUDGET = 500
 
 
 def compact_budget(value):
-    """argparse type for --context-compact-at: a usable budget, or 0 for auto.
-
-    `0` means "size it from the model": the translator asks the endpoint for
-    the model's context window and compacts at 90% of it. What a miss means
-    is the route's call: the openai route ends the run, the anthropic and
-    codex routes say so and use the default.
-    """
+    """argparse type for --context-compact-at: a budget a window can work to."""
     try:
         budget = int(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}")
-    if budget and budget < MIN_COMPACT_BUDGET:
+    if budget < MIN_COMPACT_BUDGET:
         raise argparse.ArgumentTypeError(
             f"a compact budget of {budget} is too small to be useful; use at "
             f"least {MIN_COMPACT_BUDGET} estimated tokens (2500 is the "
-            f"cheapest setting on most endpoints), or 0 to size the budget "
-            f"from the model's own context window"
+            f"cheapest setting on most endpoints)"
         )
     return budget
 
@@ -791,11 +784,7 @@ So you are close to reaching the limit. You have to choose your own value, there
         help="session mode only: estimated-token budget for the history "
         "before it is compacted into a translator handoff report. Default: "
         "8000, which costs about what window mode costs for several times "
-        "the context; 2500 is the cheapest setting on most endpoints. 0 "
-        "sizes the budget from the model's own context window (90%% of it), "
-        "on the routes that have a model to ask about. What a miss costs "
-        "differs: the openai route stops rather than guess, the anthropic "
-        "and codex routes say so and use the default",
+        "the context; 2500 is the cheapest setting on most endpoints",
     )
     parser.add_argument(
         "--no-context-compact",
@@ -1033,19 +1022,6 @@ def main():
             f"the {api_format} format; it would be accepted and ignored. Use "
             f"bare --use_context for a re-sent window of paragraph "
             f"pairs.[/bold red]"
-        )
-        exit(1)
-
-    # Only a route with a model to ask about can size the budget from its
-    # window; `0` on the others meant no budget at all, a compact per paragraph.
-    if options.context_compact_at == 0 and not getattr(
-        translate_model, "SUPPORTS_AUTO_COMPACT_BUDGET", False
-    ):
-        print(
-            f"[bold red]Error: --context-compact-at 0 sizes the budget from "
-            f"the model's own context window, and only a route with a model "
-            f"to ask about can answer that. The {api_format} format needs a "
-            f"number instead.[/bold red]"
         )
         exit(1)
 
@@ -1347,7 +1323,7 @@ def main():
                 print(f"[red]Error: {ex}[/red]")
                 exit(1)
         # Settled before the first paid request: the codex sidecar is up and
-        # signed in, an auto budget has its number.
+        # signed in.
         if hasattr(e.translate_model, "preflight"):
             try:
                 e.translate_model.preflight()

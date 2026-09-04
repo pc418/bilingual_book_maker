@@ -773,7 +773,6 @@ class TestOpenAIShapedVendorFormats:
         # a wrapper that swapped the client out had to opt out of these
         assert cls.SUPPORTS_STRUCTURED_OUTPUTS
         assert cls.SUPPORTS_SESSION_CONTEXT
-        assert cls.SUPPORTS_AUTO_COMPACT_BUDGET
 
     def test_a_command_that_names_an_address_keeps_it(self):
         from book_maker.translator.groq_translator import GroqClient

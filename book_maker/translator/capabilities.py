@@ -1,11 +1,10 @@
 """What an endpoint can actually do, established by asking it.
 
 A model's name says nothing about whether the server behind it applies a JSON
-Schema, accepts an explicit temperature, serves the model at all, or reports
-its context window. A proxy in front of the same model routinely answers
-differently from the vendor, so each is asked once per model and remembered
-here. Written against the OpenAI wire format; the anthropic route reads only
-`detect_context_window`.
+Schema, accepts an explicit temperature, or serves the model at all. A proxy in
+front of the same model routinely answers differently from the vendor, so each
+is asked once per model and remembered here. Written against the OpenAI wire
+format.
 """
 
 import json
@@ -68,18 +67,6 @@ class ProbeDeferred(Exception):
     """The probe could not get an answer right now; ask again later."""
 
 
-class ContextWindowUnknown(Exception):
-    """`--context-compact-at 0` was asked for and the endpoint cannot answer.
-
-    There is no honest fallback: a default budget is a guess about the very
-    model nobody could size, and the flag exists to stop the user guessing.
-    The message is the whole explanation, so callers print it rather than a
-    traceback.
-    """
-
-    user_facing = True
-
-
 # The API's own default. Sending it explicitly changes nothing for models that
 # accept it, and is a hard 400 for models that only allow their default.
 DEFAULT_TEMPERATURE = 1.0
@@ -133,34 +120,6 @@ MODEL_NOT_FOUND_PHRASES = (
     "invalid model",
 )
 
-
-# --context-compact-at 0 compacts at 90% of the model's window, leaving room
-# for the tail the history does not cover: the fresh paragraph, its
-# translation, and the handoff report the compact turn asks for.
-#
-# What a context window is called across OpenAI-compatible endpoints.
-CONTEXT_WINDOW_FIELDS = (
-    "context_length",
-    "context_window",
-    "max_context_length",
-    "max_input_tokens",
-)
-
-# Bounds on a number that arrives over the wire and decides how much context a
-# whole book carries. Below the floor a window cannot hold one paragraph and
-# its translation, so 90% of it would compact on every unit; above the ceiling
-# it is a malformed answer, not a model.
-MIN_USABLE_CONTEXT_WINDOW = 1_000
-MAX_USABLE_CONTEXT_WINDOW = 10_000_000
-
-# A lookup that keeps erroring is an endpoint that will not answer this run.
-CONTEXT_WINDOW_LOOKUP_ATTEMPTS = 3
-
-# What to do instead, appended to every refusal below.
-AUTO_BUDGET_ADVICE = (
-    "Pass a number instead: 8000 is the default, 2500 the cheapest setting "
-    "on most endpoints."
-)
 
 # A permanent answer about this endpoint: no key, no access, no such model.
 # Nothing downstream recovers from these, and swallowing them would pin the whole
@@ -285,70 +244,6 @@ def classify_bad_request(error):
     if "response_format" in text or "json_schema" in text:
         return "schema"
     return "other"
-
-
-def detect_context_window(client, model):
-    """The model's context window, if the endpoint volunteers a usable one.
-
-    OpenAI's own `/models` does not carry it; OpenRouter-style gateways do,
-    under one of a few names. `True` is an `int` in Python and would yield a
-    budget of 0 — no rollover at all — so the type check is stricter than it
-    looks. Errors are the caller's to interpret and are not caught here.
-    """
-    record = client.models.retrieve(model)
-    for field in CONTEXT_WINDOW_FIELDS:
-        value = getattr(record, field, None)
-        if value is None and isinstance(record, dict):
-            value = record.get(field)
-        if isinstance(value, bool) or not isinstance(value, int):
-            continue
-        if MIN_USABLE_CONTEXT_WINDOW <= value <= MAX_USABLE_CONTEXT_WINDOW:
-            return value
-    return None
-
-
-def learn_context_window(client, model):
-    """The window this endpoint reports for `model`, or no run at all.
-
-    Raises `ContextWindowUnknown` on any answer that is not a usable number:
-    a 404 or a record without the field is definitive, and a transport
-    failure is retried `CONTEXT_WINDOW_LOOKUP_ATTEMPTS` times first. Nothing
-    falls back to a default: the caller passed `0` to stop guessing.
-    """
-    last_error = None
-    for _ in range(CONTEXT_WINDOW_LOOKUP_ATTEMPTS):
-        try:
-            reported = detect_context_window(client, model)
-        except Exception as e:
-            if isinstance(e, NotFoundError) or getattr(e, "status_code", None) == 404:
-                # Definitive: this endpoint has no such record, and asking
-                # again would collect the same 404.
-                raise ContextWindowUnknown(
-                    f"--context-compact-at 0 sizes the budget from the "
-                    f"model's own context window, and this endpoint has no "
-                    f"record of {model!r} to read one from. "
-                    f"{AUTO_BUDGET_ADVICE}"
-                ) from e
-            # Not an answer at all — a timeout, a refreshed token, a 5xx.
-            last_error = e
-            continue
-        if reported is None:
-            raise ContextWindowUnknown(
-                f"--context-compact-at 0 sizes the budget from the model's "
-                f"own context window, and this endpoint reports no usable one "
-                f"for {model!r}. {AUTO_BUDGET_ADVICE}"
-            )
-        print(
-            f"[cyan]ℹ {model} reports a {reported}-token context window; "
-            f"compacting at {reported * 9 // 10}[/cyan]"
-        )
-        return reported
-    raise ContextWindowUnknown(
-        f"--context-compact-at 0 sizes the budget from the model's own "
-        f"context window, and this endpoint could not be asked for {model!r} "
-        f"in {CONTEXT_WINDOW_LOOKUP_ATTEMPTS} attempts ({last_error}). "
-        f"{AUTO_BUDGET_ADVICE}"
-    )
 
 
 @retry(
