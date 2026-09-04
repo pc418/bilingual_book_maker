@@ -33,15 +33,25 @@ DEEPSEEK = {
 
 @pytest.fixture
 def configs(tmp_path, monkeypatch):
-    """Both config files, redirected into tmp_path and initially absent."""
+    """All three config files, redirected into tmp_path and initially absent.
+
+    The shipped example is redirected too: left pointing at the real one,
+    every test here would inherit its eleven vendor entries and stop being
+    about the files it writes.
+    """
     global_file = tmp_path / "home" / ".bbm" / "providers.json"
     global_file.parent.mkdir(parents=True)
     monkeypatch.setattr(provider_loader, "GLOBAL_CONFIG_PATH", global_file)
+    example_file = tmp_path / "shipped" / "bbm_providers.example.json"
+    example_file.parent.mkdir(parents=True)
+    monkeypatch.setattr(provider_loader, "EXAMPLE_CONFIG_PATH", example_file)
     local_dir = tmp_path / "project"
     local_dir.mkdir()
     monkeypatch.chdir(local_dir)
     return SimpleNamespace(
-        global_file=global_file, local_file=local_dir / "bbm_providers.json"
+        global_file=global_file,
+        local_file=local_dir / "bbm_providers.json",
+        example_file=example_file,
     )
 
 
@@ -309,3 +319,76 @@ def test_a_blank_currency_is_refused():
         validate_provider(
             "p", _entry(prices={"m": {"input": 1, "output": 2}}, currency=" ")
         )
+
+
+class TestShippedExample:
+    """`bbm_providers.example.json` is the lowest layer.
+
+    The READMEs advertise the vendors in it and tell the reader to copy the
+    file; a reader who skips the copy used to be told the name exists
+    nowhere. It is read, and every use of it is announced.
+    """
+
+    def test_an_example_entry_is_found_when_no_file_was_written(self, configs):
+        _write(configs.example_file, {"deepseek": DEEPSEEK})
+
+        assert get_provider("deepseek") == DEEPSEEK
+
+    def test_using_the_example_names_the_address_and_the_key(self, configs, capsys):
+        _write(configs.example_file, {"deepseek": DEEPSEEK})
+        get_provider("deepseek")
+        out = " ".join(capsys.readouterr().out.split())
+
+        # the two things the run would otherwise take without being asked
+        assert "https://api.deepseek.com/v1" in out
+        assert "BBM_DEEPSEEK_API_KEY" in out
+        assert "bbm_providers.example.json" in out
+
+    def test_a_written_entry_wins_and_is_not_announced(self, configs, capsys):
+        _write(configs.example_file, {"deepseek": DEEPSEEK})
+        _write(
+            configs.local_file,
+            {"deepseek": {**DEEPSEEK, "base_url": "https://mine/v1"}},
+        )
+
+        assert get_provider("deepseek")["base_url"] == "https://mine/v1"
+        assert "example" not in capsys.readouterr().out
+
+    def test_a_global_entry_also_wins_over_the_example(self, configs, capsys):
+        _write(configs.example_file, {"deepseek": DEEPSEEK})
+        _write(
+            configs.global_file,
+            {"deepseek": {**DEEPSEEK, "base_url": "https://glob/v1"}},
+        )
+
+        assert get_provider("deepseek")["base_url"] == "https://glob/v1"
+        assert "example" not in capsys.readouterr().out
+
+    def test_a_template_entry_is_not_an_endpoint(self, configs):
+        # honouring FILL-ME would send the run to a host that does not exist
+        _write(
+            configs.example_file,
+            {
+                "gateway": {
+                    "api_style": "openai",
+                    "base_url": "https://FILL-ME.example.com/v1",
+                    "default_models": ["FILL-ME-model-id"],
+                }
+            },
+        )
+
+        with pytest.raises(ValueError, match="no entry"):
+            get_provider("gateway")
+
+    def test_a_missing_example_is_not_an_error(self, configs):
+        # absent from a pip install, which packages only book_maker
+        assert load_provider_config()["providers"] == {}
+
+    def test_the_shipped_file_is_readable_and_valid(self):
+        # the real one, unredirected: every non-template entry it offers has
+        # to survive validate_provider, or the fallback hands out a failure
+        config = provider_loader._load_example_config()
+
+        assert config, "the shipped example should be present in a checkout"
+        for name, entry in config["providers"].items():
+            validate_provider(name, entry)
