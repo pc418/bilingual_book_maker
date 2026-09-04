@@ -62,9 +62,11 @@ class TestCompactBudgetFlag:
         with pytest.raises(SystemExit):
             _parse("--context-compact-at", "lots")
 
-    def test_zero_is_the_auto_sentinel(self):
-        """0 no longer means "no budget": it asks the model for its own window."""
-        assert _parse("--context-compact-at", "0").context_compact_at == 0
+    def test_rejects_zero(self):
+        """It once meant "size it from the model's own window"; too few
+        endpoints answered for that to be a setting anyone could rely on."""
+        with pytest.raises(SystemExit):
+            _parse("--context-compact-at", "0")
 
     def test_rejects_a_negative_budget(self):
         with pytest.raises(SystemExit):

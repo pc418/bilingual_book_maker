@@ -449,8 +449,6 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
   At `8000` a run is estimated at 0.5x to 1.1x what window mode costs, while carrying several times the context; the ratio depends on the cache discount. Our calculation (August 2026) found `--context-compact-at 2500` the cheapest for most model prices (about 0.4x to 0.5x).
 
-  `--context-compact-at 0` asks the model for its context window and takes 90% of it as the budget, that is, as much context as possible.
-
 - `--no-context-compact`:
 
   Session mode only. Skip the handoff report. The window still rolls over at the budget, but the next one starts empty instead of inheriting a summary. Cheaper, at the cost of continuity across the seam.

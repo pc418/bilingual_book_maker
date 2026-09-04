@@ -211,15 +211,8 @@ class Base(ABC):
     # Does this format implement `--use_context session` — one append-only
     # history, compacted into a handoff report at --context-compact-at? A
     # format that does not gets the flag refused rather than accepting it
-    # and translating as if it had never been passed. The same answer
-    # settles `--context-compact-at 0`, whose auto-sizing lives beside the
-    # history it sizes.
+    # and translating as if it had never been passed.
     SUPPORTS_SESSION_CONTEXT = False
-
-    # Can this route be asked what context window the model has, for
-    # `--context-compact-at 0`? A machine-translation engine has no model to
-    # ask about, so the CLI refuses `0` there.
-    SUPPORTS_AUTO_COMPACT_BUDGET = False
 
     # Does this format survive `--parallel-workers` with `--use_context`?
     # Each worker is handed a clone carrying its own chapter context, which

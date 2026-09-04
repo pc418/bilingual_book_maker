@@ -1343,69 +1343,17 @@ def test_the_old_mode_name_is_not_advertised():
     assert "'most'" not in proc.stdout
 
 
-def test_compact_budget_takes_zero_as_auto():
-    """0 is the auto sentinel: size the budget from the model's own window."""
-    from book_maker.cli import compact_budget
-
-    assert compact_budget("0") == 0
-
-
-def test_compact_budget_still_rejects_a_budget_too_small_to_use():
+def test_a_zero_compact_budget_is_refused_like_any_other_too_small_one():
+    # `0` used to mean "size it from the model's own context window". OpenAI's
+    # own endpoint never reported one, so the answer was a notice and a
+    # fallback on two routes and a dead run on the third; the flag now takes
+    # a number and nothing else.
     import argparse
 
     from book_maker.cli import compact_budget
 
     with pytest.raises(argparse.ArgumentTypeError):
-        compact_budget("499")
-
-
-def test_an_auto_sized_compact_budget_is_refused_where_nothing_can_size_it(tmp_path):
-    # 0 asks the route for the model's own context window; a route that has no
-    # way to ask has nothing to size with, and 0 there meant no budget at all
-    src = tmp_path / BOOK.name
-    src.write_bytes(BOOK.read_bytes())
-    proc = _cli(
-        "--book_name",
-        str(src),
-        "--api_format",
-        "google",
-        "--context-compact-at",
-        "0",
-    )
-    assert proc.returncode == 1
-    assert "--context-compact-at 0" in " ".join(proc.stdout.split())
-    assert "Traceback" not in proc.stderr
-
-
-def test_every_model_bearing_route_can_be_asked_for_a_window():
-    # codex used to be refused here: it keeps a session history but had no way
-    # to report a window. The sidecar reports one on its token-usage push and
-    # the anthropic model record carries `max_input_tokens`, so all three
-    # model-bearing routes now answer `0`. The classes are imported directly:
-    # the offline stand-in swaps two of them into FORMAT_DICT.
-    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
-    from book_maker.translator.claude_translator import Claude
-    from book_maker.translator.codex_translator import Codex
-
-    for cls in (ChatGPTAPI, Claude, Codex):
-        assert cls.SUPPORTS_AUTO_COMPACT_BUDGET is True, cls.__name__
-
-
-def test_the_engines_with_no_model_to_ask_about_still_refuse_it():
-    # the machine-translation engines have no model record and no session
-    # history; `0` there meant no budget at all, silently, which is a compact
-    # per paragraph
-    from book_maker.translator.caiyun_translator import Caiyun
-    from book_maker.translator.custom_api_translator import CustomAPI
-    from book_maker.translator.deepl_translator import DeepL
-    from book_maker.translator.deepl_free_translator import DeepLFree
-    from book_maker.translator.google_translator import Google
-    from book_maker.translator.tencent_transmart_translator import TencentTranSmart
-
-    for cls in (Caiyun, CustomAPI, DeepL, DeepLFree, Google, TencentTranSmart):
-        assert (
-            getattr(cls, "SUPPORTS_AUTO_COMPACT_BUDGET", False) is False
-        ), cls.__name__
+        compact_budget("0")
 
 
 def test_a_named_compact_budget_is_never_refused(tmp_path):

@@ -12,7 +12,6 @@ from anthropic import (
 )
 
 from .base_translator import Base
-from .capabilities import detect_context_window
 from ..config import config
 from ..session_context import (
     HandoffReport,
@@ -112,11 +111,6 @@ class Claude(Base):
 
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
-    # Anthropic's `/v1/models` record carries `max_input_tokens`, so this
-    # route can be asked what window the model has. Unlike the openai route,
-    # a miss here is not fatal: see `_learn_context_window`.
-    SUPPORTS_AUTO_COMPACT_BUDGET = True
-
     # Compact attempts before giving up on a summary and starting clean. More
     # than one so a transient error does not cost the accumulated context;
     # bounded so a broken endpoint cannot grow the history forever.
@@ -131,10 +125,6 @@ class Claude(Base):
     context_compact_at = None
     no_context_compact = False
     context_mode = "window"
-    # `--context-compact-at 0` state: the lookup happens once per run, and
-    # `None` afterwards means "asked, and the endpoint had no usable answer".
-    _auto_budget = None
-    _window_asked = False
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
     quiet = False
@@ -190,8 +180,6 @@ class Claude(Base):
         self.no_context_compact = no_context_compact
         self.style_note = style_note
         self.handoff_path = Path(handoff_path) if handoff_path else None
-        self._auto_budget = None
-        self._window_asked = False
         self._compact_failures = 0
 
     # Both of these turn off exactly what session mode cannot afford, and both
@@ -371,62 +359,10 @@ class Claude(Base):
             return
 
     def _session_budget(self):
-        """How large a window may grow before it rolls over.
-
-        `--context-compact-at 0` asks for the model's own size instead of a
-        number the user had to guess.
-        """
+        """How large a window may grow before it rolls over."""
         if self.context_compact_at is None:
             return compact_budget_for(self.model)
-        if self.context_compact_at == 0:
-            return self._model_sized_budget()
         return self.context_compact_at
-
-    def _model_sized_budget(self):
-        """0.9 x the context window this endpoint reports for the model.
-
-        Asked once, and once is enough: `/v1/models` is a static record, so a
-        miss will not become a hit later — unlike the codex sidecar, which
-        only learns a window after a turn has spent tokens.
-        """
-        if not self._window_asked:
-            self._window_asked = True
-            self._auto_budget = self._learn_context_window()
-        return self._auto_budget or compact_budget_for(self.model)
-
-    def _learn_context_window(self):
-        """The budget the endpoint's own answer implies, or None.
-
-        Anthropic's `/v1/models` carries `max_input_tokens`; a gateway serving
-        the anthropic shape may 404 or answer a record without it. Neither is
-        a reason to end a run that has a default budget to fall back on, so
-        every outcome here is announced rather than raised — a budget the user
-        did not ask for is worth one line.
-
-        """
-        default = compact_budget_for(self.model)
-        try:
-            window = detect_context_window(self.client, self.model)
-        except Exception as e:
-            print(
-                f"[yellow]ℹ could not ask this endpoint for {self.model}'s "
-                f"context window ({escape(str(e))}); compacting at the default "
-                f"{default} instead[/yellow]"
-            )
-            return None
-        if window is None:
-            print(
-                f"[yellow]ℹ this endpoint does not report a usable context "
-                f"window for {self.model}; compacting at the default "
-                f"{default} instead[/yellow]"
-            )
-            return None
-        budget = window * 9 // 10
-        print(
-            f"[cyan]ℹ {self.model} reports a {window}-token context window; "
-            f"compacting at {budget}[/cyan]"
-        )
-        return budget
 
     def _save_session_context(self, text, t_text):
         # Store what was *sent*, not the bare source. The next request replays

@@ -535,7 +535,6 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `invalid action` on plan load | typo in a hand-edited `action` — fix the JSON, rerun |
 | coverage-gate error / empty plan | the plan skips nearly everything — re-check the plan |
 | `--only_filelist / --exclude_filelist names N document(s) this book does not have` | a typo, caught before anything is paid for; the message lists the near matches |
-| `--context-compact-at 0 sizes the budget … this endpoint reports no usable one` | that endpoint does not publish a context window for that model. Pass a number (8000 default, 2500 cheapest); nothing was paid |
 | `--use_context session is not implemented for the … route` | that route keeps no history; use bare `--use_context`, or a route that does (§1d) |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
 | `--use_context session` not supported for *txt/srt/pdf* | those loaders never hand context to the model; epub is where this workflow lives anyway |
