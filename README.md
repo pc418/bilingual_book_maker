@@ -40,42 +40,30 @@ Then:
 
 ```shell
 cp bbm_providers.example.json bbm_providers.json
-# edit base_url, default_models and env_key for your endpoint
-export OPENAI_API_KEY=sk-...
+# edit base_url, default_models and env_key in ./bbm_providers.json
 python3 make_book.py --book_name test_books/animal_farm.epub --provider openai --test
 ```
 
-Or pass the key on the command line:
+You can also pass the key on the command line:
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub \
-  --key sk-... --model gpt-5.6-luna --test
+  --key sk-... --model gpt-5.6-luna --api_base https://api.openai.com/v1 --test
 ```
 
-To spend a [Codex CLI](https://developers.openai.com/codex/cli) plan:
+To spend a [Codex](https://developers.openai.com/codex/cli) subscription:
 
 ```shell
 python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
 ```
 
-### Or let a coding agent drive it
+Or hand it to a coding agent
 
-The repo ships a skill, `bbm-plan`, that teaches a coding agent the whole
-workflow: pick the route, partition the book, classify what to translate and
-what to skip, run it in the background and hand back the finished epub. It
-is registered for Claude Code at `.claude/skills/bbm-plan`, and lives at
-[`.agents/skills/bbm-plan/`](./.agents/skills/bbm-plan/SKILL.md) for any
-agent that reads `.agents/`.
-
-Open your agent in this repo, put the book somewhere it can reach, and ask:
-
-> please use the bbm-plan skill and help me translate xxx.epub to Chinese.
-
-It will find whatever key or provider entry you already have, ask once about
-anything it needs, show you the plan and what the run will cost, and only
-then start translating. Everything it does is a normal `make_book.py`
-command — the sections below are the same flags, if you would rather drive
-it yourself.
+```shell
+git clone https://github.com/yihong0618/bilingual_book_maker.git
+cd bilingual_book_maker
+codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.epub into a bilingual Chinese-English edition, thanks."
+```
 
 ## Translate Service
 
@@ -708,5 +696,5 @@ Thank you, that's enough.
 
 ![image](https://user-images.githubusercontent.com/15976103/222407199-1ed8930c-13a8-402b-9993-aaac8ee84744.png)
 
-[^token]: https://platform.openai.com/account/api-keys
+[^token]: You can get a token from [OpenAI](https://platform.openai.com/account/api-keys) or [Anthropic](https://console.anthropic.com/account/api-keys).
 [^black]: https://github.com/psf/black
