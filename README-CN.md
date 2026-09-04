@@ -6,7 +6,6 @@
 
 bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制作多语言版本的 epub/txt/md/srt/pdf 文件和图书。该工具仅适用于翻译进入公共版权领域的 epub/txt 图书，不适用于有版权的书籍。请在使用之前阅读项目的 **[免责声明](./disclaimer.md)**。
 
-[![Stars](https://img.shields.io/github/stars/yihong0618/bilingual_book_maker)](https://github.com/yihong0618/bilingual_book_maker/stargazers)
 [![CI](https://github.com/yihong0618/bilingual_book_maker/actions/workflows/make_test_ebook.yaml/badge.svg)](https://github.com/yihong0618/bilingual_book_maker/actions/workflows/make_test_ebook.yaml)
 [![PyPI](https://img.shields.io/pypi/v/bbook-maker.svg)](https://pypi.org/project/bbook-maker/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
@@ -95,7 +94,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   例如`--provider gemini` 就是使用其中 Gemini 的api。
 - `--key` 可以写多个 key，英文逗号分隔，轮换使用。
 - `--use_context session` 使用会话模式翻译，并在8k上下文时进行压缩。
-- 旧的预设名和 key 参数仍然可用，见[从旧参数迁移](./docs/migration.md)。
+- 旧的预设名和 key 参数仍然可用，见 [从旧参数迁移](./docs/migration.md)。
 
 ## 支持的翻译服务
 * DeepL
@@ -427,7 +426,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 - `--temperature`:
 
-  设置 openai / anthropic 格式的采样温度（codex 格式没有这个设置）。
+  设置 openai / anthropic 格式的采样温度（旧模型）。
   如 `--temperature 0.7`。
 
 - `--block_size`:
@@ -441,7 +440,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 - `--no_disclosure`:
 
-  epub 输出默认标注为机器翻译：工具作为译者写入 contributor，一行描述记录模型名，书末附一页翻译说明。`--no_disclosure` 去掉这三项。作者、版权与来源元数据无论如何都会保留。
+  epub 输出默认标注为机器翻译：工具作为译者写入 contributor，一行描述记录模型名，书末附一页翻译说明。`--no_disclosure` 去掉这三项。
 
 - `--translation_style`:
 
