@@ -826,3 +826,92 @@ def test_a_stored_model_list_without_rotation_names_one_model():
     """Finding 4 (re-review): a finite `model_list` was read as rotation.
     Only `_model_names`, which the rotating translator keeps, means that."""
     assert model_id(_StoredListStub()) == "a"
+
+
+# ------------------------------- a fixed-layout book has no page for the note
+
+
+FIXED_LAYOUT_META = ("OPF", "meta", "pre-paginated", {"property": "rendition:layout"})
+
+
+def _colophon_entry(book):
+    return next(
+        entry
+        for entry in book.spine
+        if getattr(entry, "file_name", "").startswith("bbm_translation_note")
+    )
+
+
+def test_the_note_declares_itself_reflowable_in_a_fixed_layout_book():
+    """A pre-paginated package requires page dimensions of every spine
+    document (epubcheck HTM-046), and the note has none to give: its length
+    is whatever the model id makes it. So it says it is not laid out like
+    the rest of the book — the same property the corpus's own fixed-layout
+    books put on their prose pages — instead of being handed an invented
+    page size."""
+    rebuilt = _rebuild(_source(metadata=[FIXED_LAYOUT_META]))
+
+    assert _colophon_entry(rebuilt).spine_properties == ["rendition:layout-reflowable"]
+
+
+def test_a_reflowable_book_says_nothing_about_the_note_s_layout():
+    """Nothing to override, so nothing is written: the property would be a
+    `rendition:` name in a book that has no reason to resolve one."""
+    rebuilt = _rebuild(_source())
+
+    assert not getattr(_colophon_entry(rebuilt), "spine_properties", None)
+
+
+def test_a_document_pinned_pre_paginated_does_not_make_the_book_so():
+    """Package level only. A reflowable book that pins individual documents
+    leaves everything it did not name reflowable, the note included."""
+    rebuilt = _rebuild(
+        _source(
+            metadata=[
+                (
+                    "OPF",
+                    "meta",
+                    "pre-paginated",
+                    {"refines": "#chapter", "property": "rendition:layout"},
+                )
+            ]
+        )
+    )
+
+    assert not getattr(_colophon_entry(rebuilt), "spine_properties", None)
+
+
+def test_the_spine_property_reaches_the_opf(tmp_path, monkeypatch):
+    """ebooklib's spine writer emits `idref` and `linear` and nothing else,
+    so the property only exists in the file because `epub_loader` wraps it.
+    Installed here explicitly: the wrapper is installed by
+    `EPUBBookLoader.__init__`, and these tests build their loader with
+    `__new__`."""
+    from book_maker.loader import epub_loader
+
+    monkeypatch.setattr(
+        epub.EpubWriter, "_write_opf_spine", epub_loader._write_opf_spine_patch
+    )
+    opf = _written_opf(tmp_path, _rebuild(_source(metadata=[FIXED_LAYOUT_META])))
+
+    assert (
+        f'<itemref idref="{COLOPHON_ID}" properties="rendition:layout-reflowable"/>'
+        in opf
+    )
+
+
+def test_the_wrapper_is_an_addition_not_a_replacement(tmp_path, monkeypatch):
+    """Under ebooklib's own writer the spine is exactly what it always was,
+    and an item carrying a property nobody reads is not an error. Pinned
+    explicitly rather than by leaving the class alone: any test in this
+    file that builds a real loader installs the wrapper process-wide."""
+    from book_maker.loader import epub_loader
+
+    monkeypatch.setattr(
+        epub.EpubWriter,
+        "_write_opf_spine",
+        epub_loader._EBOOKLIB_WRITE_OPF_SPINE,
+    )
+    opf = _written_opf(tmp_path, _rebuild(_source(metadata=[FIXED_LAYOUT_META])))
+
+    assert f'<itemref idref="{COLOPHON_ID}"/>' in opf

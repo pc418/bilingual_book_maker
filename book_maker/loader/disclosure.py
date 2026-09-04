@@ -48,6 +48,19 @@ MARC_SCHEME = "marc:relators"
 DESCRIPTION_PREFIX = "Machine translation ("
 DESCRIPTION_TAIL = "). Original text unaltered; translation quality not verified."
 
+# A fixed-layout book requires every spine document to declare its page
+# dimensions, and epubcheck enforces it (HTM-046). The note has none to
+# declare — it is text of whatever length the model id makes it — so it
+# says instead that it is not laid out like the rest of the book. That is
+# what the fixed-layout books in the corpus do for their own prose pages
+# (cole-voyage-of-life-tol.epub ships exactly this property on an itemref),
+# and it beats inventing a page size for someone else's book: the nine
+# fixed-layout books in `epub-sample` carry four different viewports
+# between them, and four of the nine declare none anywhere.
+FIXED_LAYOUT_PROPERTY = "rendition:layout"
+PRE_PAGINATED = "pre-paginated"
+REFLOWABLE_PROPERTY = "rendition:layout-reflowable"
+
 COLOPHON_ID = "bbm-translation-note"
 COLOPHON_STEM = "bbm_translation_note"
 COLOPHON_FILE = f"{COLOPHON_STEM}.xhtml"
@@ -217,6 +230,23 @@ def is_prior_disclosure(name, value, others, owned_ids):
 # ------------------------------------------------------------- allocating
 
 
+def is_fixed_layout(book):
+    """Whether the whole package is pre-paginated.
+
+    Package level only. A book that is reflowable by default and pins
+    individual documents pre-paginated leaves the note reflowable like
+    everything else it did not name, which is already right.
+    """
+    return any(
+        name == "meta" and (others or {}).get("property") == FIXED_LAYOUT_PROPERTY
+        # A `refines` makes the entry a statement about one document, not
+        # about the package: a book that pins a single page pre-paginated
+        # is still reflowable everywhere it did not say otherwise.
+        and not (others or {}).get("refines") and (value or "").strip() == PRE_PAGINATED
+        for _, name, value, others in _iter_metadata(book)
+    )
+
+
 def taken_ids(book):
     """Every id already spoken for in the package: metadata and manifest."""
     ids = {
@@ -357,6 +387,11 @@ def stamp_disclosure(book, model, language, source_identifier=None, when=None):
         item_id=item_id,
         file_name=file_name,
     )
+    if is_fixed_layout(book):
+        # Read back by the spine writer: ebooklib emits `idref` and `linear`
+        # and nothing else, so the property is carried on the item until the
+        # OPF is built. See `_write_opf_spine_patch` in epub_loader.
+        item.spine_properties = [REFLOWABLE_PROPERTY]
     book.add_item(item)
     book.spine.append(item)
     return item

@@ -296,7 +296,55 @@ def rights_book(tmp_path):
     return _translate(path)
 
 
+@pytest.fixture
+def fixed_layout_book(tmp_path):
+    """A pre-paginated package: every spine document owes page dimensions.
+
+    The nav is kept out of the spine and the one chapter carries a viewport,
+    so the source itself is a clean fixed-layout book and anything epubcheck
+    then says is about what the translation added.
+    """
+    path = tmp_path / "fixed.epub"
+    book = _base_book("urn:uuid:44444444-4444-4444-8444-444444444444")
+    book.add_metadata(None, "meta", "pre-paginated", {"property": "rendition:layout"})
+    book.spine = [book.get_item_with_href("chapter.xhtml")]
+    epub.write_epub(str(path), book)
+    # The viewport goes in after the write: ebooklib regenerates the head of
+    # an EpubHtml it created, so a meta set on `content` never reaches the
+    # file.
+    member = "EPUB/chapter.xhtml"
+    with zipfile.ZipFile(path) as archive:
+        chapter = archive.read(member).decode("utf-8")
+    _rewrite_member(
+        path,
+        member,
+        chapter.replace(
+            "<head>",
+            '<head><meta name="viewport" content="width=1200, height=1600"/>',
+            1,
+        ),
+    )
+    return _translate(path)
+
+
 # ------------------------------------------------------------------ the cases
+
+
+def test_a_fixed_layout_book_validates(epubcheck, fixed_layout_book):
+    """The note is the one page of a fixed-layout book with no page size to
+    declare, so it declares itself reflowable instead. Without that,
+    epubcheck rejects it with HTM-046 — measured on nine of the 45 books in
+    `epub-sample`, every one of them pre-paginated.
+    """
+    _assert_valid(epubcheck, fixed_layout_book, "the fixed-layout book")
+
+    with zipfile.ZipFile(fixed_layout_book) as archive:
+        opf_name = next(n for n in archive.namelist() if n.endswith(".opf"))
+        opf = archive.read(opf_name).decode("utf-8")
+    assert (
+        f'<itemref idref="{COLOPHON_ID}" properties="rendition:layout-reflowable"/>'
+        in opf
+    )
 
 
 def test_a_carried_prefix_declaration_validates(epubcheck, tdm_book):

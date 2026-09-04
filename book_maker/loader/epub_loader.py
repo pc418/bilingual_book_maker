@@ -197,6 +197,44 @@ def check_file_filters_against(book, only_filelist, exclude_filelist):
         raise SystemExit(1)
 
 
+# ebooklib's own spine writer, captured before the class attribute is
+# replaced, so reinstalling the wrapper below cannot wrap itself.
+_EBOOKLIB_WRITE_OPF_SPINE = epub.EpubWriter._write_opf_spine
+
+
+def _write_opf_spine_patch(obj, root, ncx_id):
+    """ebooklib's spine, plus the `properties` it has no way to write.
+
+    A spine property is how EPUB 3 says one document is not laid out like
+    the rest of the book, and the translation note needs exactly that: in a
+    fixed-layout book every spine document must declare page dimensions, and
+    a note about the translation has none to declare. See
+    `disclosure.REFLOWABLE_PROPERTY`.
+
+    Written as a wrapper rather than a copy of ebooklib's loop: `linear`,
+    the tuple form of a spine entry and the bare-idref form are all its
+    business, and duplicating them here would mean maintaining them here.
+    """
+    _EBOOKLIB_WRITE_OPF_SPINE(obj, root, ncx_id)
+
+    wanted = {}
+    for entry in obj.book.spine:
+        item = entry[0] if isinstance(entry, tuple) else entry
+        properties = getattr(item, "spine_properties", None)
+        if properties:
+            wanted[item.get_id()] = " ".join(properties)
+    if not wanted:
+        return
+
+    spine = root.find("spine")
+    if spine is None:
+        return
+    for itemref in spine.findall("itemref"):
+        value = wanted.get(itemref.get("idref"))
+        if value:
+            itemref.set("properties", value)
+
+
 class EPUBBookLoader(BaseBookLoader):
     # what `lang=` may carry for the target language; None stamps nothing
     language_tag = None
@@ -344,6 +382,7 @@ class EPUBBookLoader(BaseBookLoader):
             pass
 
         epub.EpubWriter._write_items = _write_items_patch
+        epub.EpubWriter._write_opf_spine = _write_opf_spine_patch
         epub.EpubReader._check_deprecated = _check_deprecated
 
         try:
