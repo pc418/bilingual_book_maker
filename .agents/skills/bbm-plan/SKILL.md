@@ -138,9 +138,19 @@ and tell the user to rotate it.
    `prompt*` files are the repo's shipped examples, not the user's voice.
    Found one? **Ask before doing anything with it** — never adopt or ignore
    it silently.
-3. Anything they want to change from the flag menu's defaults: bilingual vs
-   replaced text, a visual style for the translation, specific chapters
-   only.
+3. Anything they want to change from the flag menu's defaults: a visual
+   style for the translation, specific chapters only.
+
+**Bilingual is the assumption; do not ask.** The output keeps every original
+next to its translation unless the user has asked for a translated-only
+book in so many words ("just the Chinese", "replace the original", "not
+bilingual", "single language"). *"Translate this book to Chinese"* is not
+that request — it is the ordinary ask, and it means a bilingual book, which
+is what the tool is for and what `--single_translate` off already does.
+Never infer single-language output from the target language being named,
+from the book being short, or from the user sounding brisk. Say which one
+you are producing in the same line where you state the flag choices, so a
+user who wanted the other one can say so before anything is paid for.
 
 Base command — `ROUTE` from step 0, `CONTEXT` from §1d:
 
@@ -424,8 +434,8 @@ so you can honour a request without guessing at legal values.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| *(bilingual)* | — | **bilingual: translation added beside the original** | — |
-| `--single_translate` | on/off | **off** | the user wants a translated-only book, original replaced. `--translation_style` still applies |
+| *(bilingual)* | — | **bilingual: translation added beside the original.** The default, and the assumption — see §1 | — |
+| `--single_translate` | on/off | **off** | **only** when the user asked for a translated-only book in so many words. Naming a target language is not that request. The original is replaced, so there is nothing to compare against afterwards; `--translation_style` still applies |
 | `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"`. It is the whole declaration block, so it replaces `--translation_color` rather than merging with it (the run says so) |
 | `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS. Passing both: `--translation_style` wins, and the run says the colour was lost |
 
