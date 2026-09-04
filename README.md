@@ -187,8 +187,9 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
-  To pin one model instead of letting the gateway route: `--api_format openai
-  --api_base https://api.orcarouter.ai/v1 --model <id>`.
+  To pin one model instead of letting the gateway route:
+  `--provider orcarouter --model <id>`. The address stays in the provider
+  entry either way — there is never a reason to type it.
 
 * [Ollama](https://github.com/ollama/ollama)
 

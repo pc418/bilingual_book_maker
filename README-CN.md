@@ -176,8 +176,8 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
-  若要指定具体模型而不走智能路由：
-  `--api_format openai --api_base https://api.orcarouter.ai/v1 --model <模型 id>`。
+  若要指定具体模型而不走智能路由：`--provider orcarouter --model <模型 id>`。
+  地址始终由该路由或 provider 条目提供，不需要自己填。
 
 * [Ollama](https://github.com/ollama/ollama)
 

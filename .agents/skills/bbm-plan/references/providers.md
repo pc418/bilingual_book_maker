@@ -91,11 +91,17 @@ unknown name is an error that names both files.
 ## `--model orcarouter`: a gateway with no address to type
 
 `--model orcarouter` sends the run to OrcaRouter's OpenAI-shaped endpoint
-and asks for its smart-routing model, `orcarouter/auto`. It needs no
-`--api_base`; one you pass wins. The key comes from
-`BBM_ORCAROUTER_API_KEY`. It is a supported route, not a legacy alias, so
-nothing is rewritten. Probe it as any OpenAI-shaped endpoint, against
-`https://api.orcarouter.ai/v1`.
+and asks for its smart-routing model, `orcarouter/auto`. It is a supported
+route, not a legacy alias, so nothing is rewritten, and the key comes from
+`BBM_ORCAROUTER_API_KEY`.
+
+**Never put OrcaRouter's address in `--api_base`.** The route carries it and
+so does the `orcarouter` entry in the providers file; typing it turns a
+supported route into a hand-configured endpoint that merely looks the same.
+`orcarouter/auto` is the default, not a pin — to send the run to one named
+model instead of the smart router, use that entry:
+`--provider orcarouter --model <id>`. A probe reads the address
+(`https://api.orcarouter.ai/v1`) from there; it is never a flag you pass.
 
 ## Binding `$KEY`, `$ROOT`, `$MODEL` from the entry before any probe
 
