@@ -137,9 +137,6 @@ class FakeServer:
     def rate_limits(self):
         return None
 
-    def latest_model_context_window(self, thread_id=None):
-        return None
-
     def start_thread(self, model=None, base_instructions=None, cwd=None):
         self.threads.append(base_instructions)
         return f"th-{len(self.threads)}"
