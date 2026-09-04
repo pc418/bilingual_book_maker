@@ -370,6 +370,42 @@ def test_a_local_endpoint_needs_no_key(tmp_path, monkeypatch):
     assert resolve_api_key("openai", "", "http://localhost:11434/v1") == "local"
 
 
+def test_api_format_codex_needs_no_model(tmp_path):
+    # The skill and the README spell this route `--api_format codex`, with no
+    # --model: the sidecar picks its own default. If codex ever falls out of
+    # MODEL_OPTIONAL_FORMATS the run dies at the model gate instead, before
+    # anything codex-shaped is even tried.
+    #
+    # PATH is emptied so the sidecar cannot start: the run must get far
+    # enough to look for the binary, and no further. A machine with codex
+    # installed and signed in would otherwise spend the user's plan here.
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    env = _env()
+    env["PATH"] = str(tmp_path / "no-binaries-here")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "make_book.py",
+            "--book_name",
+            str(src),
+            "--api_format",
+            "codex",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    assert "--model is required" not in out
+    # and the missing binary is the one line it was written as, not a
+    # traceback: preflight exists to say this before any paid request
+    assert "Install the Codex CLI" in out
+    assert "Traceback" not in out
+    assert proc.returncode == 1
+
+
 def test_parallel_workers_is_refused_with_codex(tmp_path):
     # codex serializes every turn on one thread, and the parallel path then
     # reads a context attribute Codex does not have — an AttributeError that

@@ -111,11 +111,19 @@ class CodexError(Exception):
 
 
 class CodexUnavailable(CodexError):
-    """The `codex` binary is missing, too old, or would not start."""
+    """The `codex` binary is missing, too old, or would not start.
+
+    Its message says how to install it, so the run reports that line and
+    stops rather than printing a traceback about a spawn that failed.
+    """
+
+    user_facing = True
 
 
 class CodexLoginRequired(CodexError):
     """No usable ChatGPT session. Carries what the user must do about it."""
+
+    user_facing = True
 
 
 class CodexTurnFailed(CodexError):

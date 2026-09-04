@@ -607,3 +607,15 @@ class TestHardening:
             assert server.process is server.spawns[-1]
         finally:
             server.close()
+
+
+class TestUserFacingErrors:
+    """cli.py prints an error and stops only for `user_facing` exceptions.
+
+    Everything else it re-raises, so an unmarked startup error reaches the
+    user as a traceback with its carefully written instruction buried in it.
+    """
+
+    def test_the_startup_errors_are_marked_for_the_user(self):
+        assert CodexUnavailable.user_facing is True
+        assert CodexLoginRequired.user_facing is True
