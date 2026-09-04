@@ -219,8 +219,8 @@ class TestPartition:
             "h2.chapter_title",
             "div.poetry_line",
             "div.poetry_line_indented",
-            # the <sup> footnote marker splits its paragraph into two runs
-            "p",
+            # the <sup> footnote marker is short enough to travel as an
+            # inline marker, so the paragraph stays one unit
             "p",
         ]
 
@@ -267,12 +267,16 @@ class TestPartition:
 
     def test_sup_excluded_by_default(self):
         # The excluded <sup> stays in the document and renders between the
-        # words around it, so it is a run barrier: the paragraph becomes two
-        # segments and the marker keeps its place between their translations.
+        # words around it. Short enough to be atomic, it travels as one
+        # inline marker: its own text never reaches the model, the paragraph
+        # is not cut in two, and the marker holds the footnote's place.
         fp, _ = self._partition(MINI_GILGAMESH)
         paragraphs = [u for u in fp.units if u.signature == "p"]
         joined = " ".join(u.text for u in paragraphs)
-        assert "1" not in joined
+        assert len(paragraphs) == 1
+        token = next(iter(paragraphs[0].markers))
+        assert paragraphs[0].markers[token].name == "sup"
+        assert "1" not in joined.replace(token, "")
         assert "Prose paragraph" in joined and "footnote marker" in joined
 
     def test_total_partition_invariant(self):
@@ -490,11 +494,15 @@ class TestPoetryGrouping:
         assert prose and all(u.group_id is None for u in prose)
 
 
-class TestNoShortUnitSweep:
-    """Grouping means poetry only. A second tier that windowed leftover
-    short units was measured at 5-33 saved requests per book (0.5-4%) and
-    removed — not worth its nondeterministic window membership, and it
-    caused the tier-2/poetry classification conflation bug."""
+class TestShortRunBatching:
+    """Grouping is a length rule, not a genre one.
+
+    The tag-compatible window it replaced only ever caught runs whose units
+    shared a signature, which is poetry and little else. A batch is now any
+    consecutive run of short units, whatever their tags: the request count
+    is what grouping is for, and neighbouring short units are exactly the
+    ones a per-unit request is wasteful on.
+    """
 
     LONG = (
         "a fully formed prose sentence that runs well past the short-unit "
@@ -508,14 +516,23 @@ class TestNoShortUnitSweep:
         )
         return fp.units
 
-    def test_mixed_short_run_stays_solo(self):
-        # three different tags: not a poetry run, and no sweep exists to
-        # batch them — one request each, classifier judges each signature
+    def test_mixed_short_run_batches_together(self):
+        # three different tags, all short and consecutive: one request for
+        # the run, and the long paragraph that follows ends it and takes
+        # its own. Classification is per signature and is untouched by this.
         units = self._units(
             "<body><p class='pn'>42</p><div class='vn'>1.1.1</div>"
             f"<h3 class='lbl'>Ch.</h3><p>{self.LONG}</p></body>"
         )
-        assert [u.group_id for u in units] == [None, None, None, None]
+        assert [u.group_id for u in units] == [0, 0, 0, None]
+
+    def test_a_lone_short_unit_is_not_a_batch(self):
+        # a run of one is a single request either way; giving it a group id
+        # would only make the report claim a batch that never happened
+        units = self._units(
+            f"<body><p>{self.LONG}</p><p class='pn'>42</p><p>{self.LONG}</p></body>"
+        )
+        assert [u.group_id for u in units] == [None, None, None]
 
     def test_poetry_still_groups(self):
         stanza = "".join(f"<div class='line'>verse line {i}</div>" for i in range(4))
@@ -634,12 +651,15 @@ class TestPlanArtifact:
         data = json.loads(out.read_text())
         assert data["coverage"] == pytest.approx(plan.coverage)
         assert data["book_sha256"]
+        # the group size is not in here: it decides how many units share a
+        # request, never which units exist, so changing it used to invalidate
+        # a fully decided plan for nothing. It keeps its own top-level key.
         assert data["planning_settings"] == {
             "exclude_tags": ["code", "sup"],
-            "poetry_group_size": 8,
             "only_files": [],
             "exclude_files": [],
         }
+        assert data["poetry_group_size"] == 8
         rows = {s["key"]: s for s in data["signatures"]}
         # every row is a question until someone answers it
         assert rows["block:blockquote.calibre_17"]["action"] is None
@@ -690,8 +710,12 @@ class FakeModel:
 
     def __init__(self, key, language, **kwargs):
         self.list_calls = []
+        # a chunk of one goes through `translate` now, not a one-item
+        # `translate_list`, so counting requests means counting both
+        self.single_calls = []
 
     def translate(self, text, needprint=True):
+        self.single_calls.append(text)
         return f"T[{text}]"
 
     def translate_list(self, text_list):
@@ -1543,12 +1567,34 @@ class TestEpubHardening:
         trans = soup.find("span")
         assert trans.get_text() == "T1"
 
-    def test_bilingual_run_split_by_a_retained_skip_stays_paired(self, tmp_path):
-        """The other way an owner holds several runs: something retained
-        renders between them. Here an excluded <code> splits the sentence,
-        so the two halves must keep their own translations."""
+    def test_a_short_retained_skip_travels_as_an_inline_marker(self, tmp_path):
+        """An excluded <code> short enough to be atomic no longer cuts the
+        sentence in two: it goes out as one token, comes back in the
+        translation, and the node is put back where the token landed."""
         loader, _ = _make_loader(tmp_path, FakeModel)
         soup = bs("<body><p>before <code>ls</code> after</p></body>", "html.parser")
+        fp = partition_soup(soup, DisplayResolver([]), "x.html", exclude_tags=("code",))
+        unit = fp.units[0]
+        token = next(iter(unit.markers))
+        assert [u.text for u in fp.units] == [f"before {token} after"]
+
+        loader._insert_plan_translation(
+            unit, f"QIAN {token} HOU", single_translate=False
+        )
+
+        assert len(soup.find_all("code")) == 2  # the original and the clone
+        assert "\u27e6" not in soup.get_text()
+        assert soup.get_text().count("ls") == 2
+
+    def test_bilingual_run_split_by_a_retained_skip_stays_paired(self, tmp_path):
+        """The other way an owner holds several runs: something retained
+        renders between them. An excluded <code> too long to be atomic is
+        still a run barrier, so the two halves keep their own translations."""
+        loader, _ = _make_loader(tmp_path, FakeModel)
+        listing = "ls --color=always --literal /a/very/long/path/name/indeed"
+        soup = bs(
+            f"<body><p>before <code>{listing}</code> after</p></body>", "html.parser"
+        )
         fp = partition_soup(soup, DisplayResolver([]), "x.html", exclude_tags=("code",))
         assert [u.text for u in fp.units] == ["before", "after"]
 
@@ -1558,7 +1604,7 @@ class TestEpubHardening:
         assert list(soup.find("p").stripped_strings) == [
             "before",
             "QIAN",
-            "ls",
+            listing,
             "after",
             "HOU",
         ]
@@ -1759,8 +1805,12 @@ class TestEpubHardening:
             "appears here.</p>"
             "<svg><title>Diagram title</title><text>axis label</text></svg></body>"
         )
-        # <math> renders between the words, so it separates the two runs
-        assert [u.text for u in fp.units] == ["Formula", "appears here."]
+        # <math> renders between the words and is short enough to be atomic,
+        # so it holds its place as one marker instead of cutting the sentence
+        # into two units. Its own text is still charged to non-content.
+        assert len(fp.units) == 1
+        token = next(iter(fp.units[0].markers))
+        assert fp.units[0].text == f"Formula {token} appears here."
         assert fp.skipped["non-content"] > 0
 
     # -- item 7: role="doc-pagebreak" --------------------------------------
@@ -1944,7 +1994,9 @@ class TestEpubHardening:
         reference.make_bilingual_book()
         assert resumed.p_to_save == reference.p_to_save
         # what the checkpoint already holds must not be sent again
-        sent = [t for call in resumed.translate_model.list_calls for t in call]
+        sent = [t for call in resumed.translate_model.list_calls for t in call] + list(
+            resumed.translate_model.single_calls
+        )
         assert len(sent) == len(reference.p_to_save) - done
 
     def test_empty_filtered_plan_fails_loud(self, tmp_path):
@@ -3169,16 +3221,22 @@ class TestNumericSignatureSuffix:
         assert " " in sigs["190"]
 
     def test_fragments_left_by_an_excluded_tag_are_not_folios(self):
-        # epub30-spec.epub, verbatim: <code> is an excluded tag, so this one
-        # sentence survives as three runs — "0:", ", 30:", ", 38:" — and each
-        # fragment reads as a numeral while the sentence does not. A folio is
-        # a whole element's text.
+        # epub30-spec.epub, verbatim: <code> is an excluded tag. It used to
+        # cut this one sentence into three runs — "0:", ", 30:", ", 38:" —
+        # each of which reads as a numeral while the sentence does not. All
+        # three are short enough to be atomic, so the sentence now survives
+        # whole and the folio hazard cannot arise at all.
         fp, _ = self._partition(
             "<body><p>0: <code>PK</code>, 30: <code>mimetype</code>, "
             "38: <code>application/epub+zip</code></p></body>"
         )
-        assert len(fp.units) == 3
-        assert {u.signature for u in fp.units} == {"p"}
+        assert len(fp.units) == 1
+        # two markers, not three: the last <code> has no owned text after it,
+        # so it was never a barrier and gets no placeholder — it stays in the
+        # document untouched rather than being cloned onto the end of a
+        # translation that has no position for it
+        assert len(fp.units[0].markers) == 2
+        assert fp.units[0].signature == "p"
 
     def test_inline_parent_key_tracks_the_suffixed_row(self):
         # parents_of() drives the inline disposition; a parent_key naming a

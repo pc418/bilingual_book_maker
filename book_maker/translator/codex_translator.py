@@ -422,17 +422,17 @@ class Codex(Base):
     def translate_list(self, text_list):
         """Translate a group of paragraphs in one turn.
 
-        Plan mode hands whole poetry windows here, and the window is the
-        point: verse only survives if the lines are translated together, with
-        their neighbours in view. The inherited default loops over `translate`
-        and dissolves the group into isolated lines, which is the one thing
-        `--poetry-group-size` exists to prevent — and on a metered
+        Plan mode hands whole batches of short units here, and the batch is
+        the point: short lines only survive if they are translated together,
+        with their neighbours in view. The inherited default loops over
+        `translate` and dissolves the group into isolated lines, which is the
+        one thing `--poetry-group-size` exists to prevent — and on a metered
         subscription it also pays for a turn per line instead of per stanza.
 
-        The delimiter contract, the count check and the line-by-line retry all
-        come from the base, so this route and the openai one agree on what a
-        batch looks like and on what happens when the reply does not come back
-        in the right number of pieces. `BATCH_PROMPT` is the carrier the base
+        The delimiter contract and the count check come from the base, so
+        this route and the openai one agree on what a batch looks like — and
+        on raising `BatchMismatch` instead of repairing a bad reply here; the
+        loader's ladder owns the repair. `BATCH_PROMPT` is the carrier the base
         needs and nothing more: the thread instructions already say to
         translate whatever arrives, so the only thing worth adding on top of
         the source is the base's own segment count.

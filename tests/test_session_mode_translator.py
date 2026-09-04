@@ -279,7 +279,18 @@ class TestUsageMeter:
                 choices=[
                     SimpleNamespace(
                         message=SimpleNamespace(
-                            parsed=SimpleNamespace(**{BATCH_FIELD: ["一", "二"]}),
+                            parsed=SimpleNamespace(
+                                **{
+                                    BATCH_FIELD: [
+                                        SimpleNamespace(
+                                            **{"id": 0, SINGLE_FIELD: "一"}
+                                        ),
+                                        SimpleNamespace(
+                                            **{"id": 1, SINGLE_FIELD: "二"}
+                                        ),
+                                    ]
+                                }
+                            ),
                             refusal=None,
                             content=None,
                         ),

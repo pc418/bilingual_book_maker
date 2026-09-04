@@ -19,8 +19,13 @@ translation is impossible by construction.
 Invariant (checked by tests, reported to users):
     total_chars == sum(unit.chars) + sum(skipped[reason])
 
-Runs of short sibling units (poetry) are grouped into stanza-aligned windows
-so they can be sent to the model together for context.
+Runs of consecutive *short* units are grouped into batches so they reach the
+model in one request, with their neighbours in view (`assign_batches`).
+
+Short protected inline content — an excluded ``<code>``, a ``<sup>`` note
+reference, an ``<img>`` — no longer cuts its owner's run in two: it becomes an
+atomic marker inside the unit's text (see `markers.py`), restored to a clone
+of the original node at write-back.
 
 Partitioning is *greedy* (schema 3): only structurally free reasons skip text
 (whitespace, links, symbols, hidden/ruby/pagebreak/excluded markup). Content
@@ -34,7 +39,6 @@ import hashlib
 import os
 import posixpath
 import re
-import statistics
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -52,6 +56,7 @@ except ImportError:  # very old bs4
 from ebooklib import ITEM_DOCUMENT
 
 from .helper import is_pure_url
+from .markers import INLINE_MARKER_MAX_CHARS, Ordinals
 from .ledger import (
     # re-exported: the plan file's schema version is this module's API too —
     # callers ask .plan about the plan, not about its storage layer
@@ -698,6 +703,44 @@ def _renders_between(node, owner, resolver):
     return True
 
 
+def _marker_candidate(element, owned_ids, owner, resolver):
+    """Can this inline element be replaced by an atomic marker?
+
+    Only protected content that renders *something*, holds none of this
+    owner's translatable text, and is short enough to stand in a sentence:
+    an excluded ``<code>``, a ``<sup>`` note reference, an ``<img>``, an
+    inline signature a plan decision skipped. Everything else keeps the
+    barrier it has today — a nested block or a ``<br>`` genuinely separates
+    the text around it, and a long excluded listing appended at the end of a
+    translation (what a dropped marker costs) would be worse than the split.
+    """
+    if any(
+        id(n) in owned_ids for n in element.descendants if type(n) in TEXT_NODE_TYPES
+    ):
+        return False
+    rendered = _visible_text(element)
+    if len(rendered) >= INLINE_MARKER_MAX_CHARS:
+        return False
+    if element.name in RENDERED_VOID_TAGS:
+        return True
+    for node in element.descendants:
+        if isinstance(node, Tag) and (
+            resolver.is_block(node)
+            or node.name == "br"
+            or node.name in RENDERED_VOID_TAGS
+        ):
+            return False
+    # It has to render between the runs to be worth a placeholder at all: a
+    # hidden span or a ruby annotation is not a barrier today and must not
+    # become a token either.
+    return any(
+        type(n) in TEXT_NODE_TYPES
+        and str(n).strip()
+        and _renders_between(n, owner, resolver)
+        for n in element.descendants
+    )
+
+
 def _iter_owner_events(owner, owned_ids, resolver):
     """Walk one owner's own inline content, in document order.
 
@@ -708,7 +751,10 @@ def _iter_owner_events(owner, owned_ids, resolver):
                    merge across inline tag boundaries;
     ``invisible``  retained text that renders nothing here (hidden, ruby
                    annotation, <script>): it neither joins the text nor
-                   separates it, but its surrounding whitespace still does.
+                   separates it, but its surrounding whitespace still does;
+    ``marker``     a short protected inline *element* (see
+                   ``_marker_candidate``): it used to be a ``skipped``
+                   barrier, and is now a placeholder token inside the run.
 
     Text under a descendant block belongs to another owner and is not
     yielded at all; crossing one only records a barrier.
@@ -752,6 +798,10 @@ def _iter_owner_events(owner, owned_ids, resolver):
                     if child.find_parent("pre") is None:
                         state["pending"] = state["pending"] or "br"
                     continue
+                if _marker_candidate(child, owned_ids, owner, resolver):
+                    # deliberately no barrier: the token *is* the placement
+                    yield "marker", child, None
+                    continue
                 if child.name in RENDERED_VOID_TAGS:
                     # Replaced elements usually hold nothing, but <canvas>,
                     # <object>, <video> and <iframe> may carry fallback text
@@ -786,31 +836,70 @@ def _iter_owner_events(owner, owned_ids, resolver):
     yield from walk(owner)
 
 
-def _owner_segments(owner, owned_ids, resolver):
+def _owner_segments(owner, owned_ids, resolver, ordinals=None):
     """Split one owner's owned text into maximal barrier-free runs.
 
-    Returns ``[(nodes, text), ...]`` in document order. Each run is a place
-    in the document a translation can actually be written back to.
+    Returns ``[(nodes, text, markers), ...]`` in document order. Each run is a
+    place in the document a translation can actually be written back to;
+    ``markers`` is the ordered ``{token: source element}`` map of the atomic
+    placeholders planted in ``text`` (empty for the ordinary run).
+
+    A marker is only planted *between* two owned text nodes of the same run —
+    exactly where a barrier used to cut the sentence. One before the run's
+    first node or after its last was never a barrier in effect, and planting
+    it there would move protected content the write-back has no better place
+    for.
     """
+    ordinals = ordinals if ordinals is not None else Ordinals()
     segments = []
-    nodes, parts = [], []
+    nodes, parts, pending = [], [], []
     for kind, node, barrier in _iter_owner_events(owner, owned_ids, resolver):
         if kind == "owned":
             if barrier is not None and nodes:
                 segments.append((nodes, parts))
                 nodes, parts = [], []
+            else:
+                parts.extend(pending)
+            pending = []
             nodes.append(node)
             parts.append(str(node))
         elif not nodes:
             # leading whitespace of a run carries no separation of its own
             continue
+        elif kind == "marker":
+            # held back: a marker with no owned text after it in this run
+            # was never a barrier, and has no place to be restored to
+            pending.append(node)
         elif kind == "glue":
-            parts.append(str(node))
+            (pending if pending else parts).append(str(node))
         else:  # invisible: contributes no characters, may still separate
-            _append_glue(parts, node)
+            _append_glue(pending if pending else parts, node)
     if nodes:
         segments.append((nodes, parts))
-    return [(ns, _normalize_text("".join(ps))) for ns, ps in segments]
+    return [_resolve_segment(ns, ps, ordinals) for ns, ps in segments]
+
+
+def _resolve_segment(nodes, parts, ordinals):
+    """Turn a run's collected parts into ``(nodes, text, markers)``.
+
+    Tokens are allocated last, against the run's own finished text: a book
+    that prints ``⟦code1⟧`` verbatim gets a renumbered placeholder, so every
+    token planted here occurs exactly once in what is sent (BabelDOC's
+    collision avoidance).
+    """
+    literal = _normalize_text("".join(p for p in parts if isinstance(p, str)))
+    if not any(isinstance(p, Tag) for p in parts):
+        return nodes, literal, {}
+    markers = {}
+    out = []
+    for part in parts:
+        if isinstance(part, str):
+            out.append(part)
+            continue
+        token = ordinals.allocate(part.name, occupied=literal, taken=markers)
+        markers[token] = part
+        out.append(token)
+    return nodes, _normalize_text("".join(out)), markers
 
 
 def _append_glue(parts, node):
@@ -823,7 +912,8 @@ def _append_glue(parts, node):
     raw = str(node)
     if raw == raw.strip():
         return
-    if parts and parts[-1][-1:].isspace():
+    last = parts[-1] if parts else None
+    if isinstance(last, str) and last[-1:].isspace():
         return
     parts.append(" ")
 
@@ -849,7 +939,7 @@ def element_segments(element, resolver, exclude_tags=DEFAULT_EXCLUDE_TAGS):
     owned_ids = {id(n) for n in owned}
     return [
         (nodes, text)
-        for nodes, text in _owner_segments(element, owned_ids, resolver)
+        for nodes, text, _markers in _owner_segments(element, owned_ids, resolver)
         if classify_skip(text) is None
     ]
 
@@ -895,6 +985,10 @@ class Unit:
     # block/inline questions the partition asked, and asking a different
     # cascade would place the translation somewhere the plan never meant
     resolver: object = None
+    # ordered {marker token: source element} for the atomic placeholders in
+    # `text`. Empty for the ordinary unit; the write-back replaces each token
+    # with a clone of its element.
+    markers: dict = field(default_factory=dict)
 
     @property
     def key(self):
@@ -967,7 +1061,7 @@ def file_segment_hazards(fp):
         owned = {id(n) for unit in units for n in unit.nodes}
         expected = [
             [id(n) for n in nodes]
-            for nodes, _text in _owner_segments(element, owned, fp.resolver)
+            for nodes, _text, _markers in _owner_segments(element, owned, fp.resolver)
         ]
         actual = [[id(n) for n in unit.nodes] for unit in units]
         if expected == actual:
@@ -1093,11 +1187,15 @@ def partition_soup(
     # div/0, div/1, p instead of div/0, p, div/1 — which is the order every
     # positional consumer (checkpoints, context windows, --test) then means.
     found = []
+    # Marker ordinals are unique per document, which makes them unique inside
+    # any one request: a request never spans two documents, and grouping
+    # (which decides what shares a request) happens after this.
+    ordinals = Ordinals()
     for key in owner_order:
         owner, nodes = owners[key]
         owned_ids = {id(n) for n in nodes}
-        segments = _owner_segments(owner, owned_ids, resolver)
-        for run_index, (seg_nodes, text) in enumerate(segments):
+        segments = _owner_segments(owner, owned_ids, resolver, ordinals)
+        for run_index, (seg_nodes, text, markers) in enumerate(segments):
             found.append(
                 (
                     position[id(seg_nodes[0])],
@@ -1106,6 +1204,7 @@ def partition_soup(
                     len(segments),
                     seg_nodes,
                     text,
+                    markers,
                 )
             )
     found.sort(key=lambda s: s[0])
@@ -1114,11 +1213,11 @@ def partition_soup(
     # units — a dropped run is not text anybody will be asked about.
     numeral_kinds = _owner_numeral_kinds(
         (owner, text)
-        for _pos, owner, _ri, _or, _nodes, text in found
+        for _pos, owner, _ri, _or, _nodes, text, _m in found
         if classify_skip(text) is None
     )
 
-    for _pos, owner, run_index, owner_runs, seg_nodes, text in found:
+    for _pos, owner, run_index, owner_runs, seg_nodes, text, markers in found:
         chars = sum(len(str(n).strip()) for n in seg_nodes)
         reason = classify_skip(text)
         if reason is not None:
@@ -1135,6 +1234,7 @@ def partition_soup(
                 run_index=run_index,
                 owner_runs=owner_runs,
                 resolver=resolver,
+                markers=markers,
             )
         )
 
@@ -1180,94 +1280,63 @@ def partition_soup(
     return fp
 
 
-# --------------------------------------------------------- context windows
+# ---------------------------------------------------------------- batching
 
-# A window is a *batching* shape — a run of short, same-shaped siblings that
-# reads better translated together. It is deliberately not a claim about
-# genre: the shape-based "poetry" flag this replaced marked 49.5% of the
-# 45-book corpus, including thousands of table cells and list items, and
-# that label went on to suppress classification of everything it touched.
-# A false window now costs nothing: its members still translate
-# individually, they merely share one request's context.
-WINDOW_MIN_RUN = 3
-WINDOW_MAX_MEDIAN_CHARS = 70
+# A batch is a *transport* shape, not a claim about genre. The stanza-shaped
+# "poetry window" this replaces asked three structural questions — same tag,
+# same parent, a minority stanza-head class — and answered "no" for most of
+# the short text a book actually holds: a heading followed by two short
+# paragraphs, a run of list items with a caption in the middle, prose broken
+# into short lines. All of it is the same request-sized question, and a
+# false batch costs nothing: its members still translate individually, they
+# merely share one request.
+SHORT_UNIT_CHARS = 70
+# Characters a single request may carry from a batch. A group of eight
+# sixty-character lines is a different request from eight four-character
+# ones, and only the character cap tells them apart.
+GROUP_MAX_CHARS = 500
 
 
-def _run_compatible(prev, unit):
-    """Consecutive units continue a run if they are structural siblings.
+def assign_batches(units, group_size=8, next_group_id=0):
+    """Group consecutive short units so they share one request.
 
-    Same parent, or (Gilgamesh) parents that are themselves same-signature
-    siblings — verse lines living in per-stanza wrapper divs.
+    A run is consecutive units of fewer than `SHORT_UNIT_CHARS` characters,
+    whatever their tag or parent. A run of two or more is cut into groups at
+    `group_size` units **and** at `GROUP_MAX_CHARS` characters, whichever
+    comes first; each group gets a `group_id`. A long unit is its own
+    request (`group_id` stays None) and ends the run around it.
+
+    Returns the next unused group id. A pure function of unit order and
+    lengths, so the same book always partitions into the same requests.
     """
-    if prev.element.name != unit.element.name:
-        return False
-    pp, up = prev.element.parent, unit.element.parent
-    if pp is up:
-        return True
-    return _signature(pp) == _signature(up) and pp.parent is up.parent
 
+    def emit(run):
+        nonlocal next_group_id
+        if len(run) < 2:
+            return
+        group, total = [], 0
+        for unit in run:
+            if group and (
+                len(group) >= group_size or total + unit.chars > GROUP_MAX_CHARS
+            ):
+                for member in group:
+                    member.group_id = next_group_id
+                next_group_id += 1
+                group, total = [], 0
+            group.append(unit)
+            total += unit.chars
+        for member in group:
+            member.group_id = next_group_id
+        next_group_id += 1
 
-def assign_context_windows(units, group_size=8, next_group_id=0):
-    """Window runs of short sibling units so they share a request's context.
-
-    A qualifying run (>= WINDOW_MIN_RUN units, median line length <
-    WINDOW_MAX_MEDIAN_CHARS) is split into groups at stanza boundaries —
-    parent change, or recurrence of a minority "stanza head" class
-    (calibre_14 in Animal Farm) — capped at `group_size` lines.
-    Returns the next unused group id.
-
-    Stanza-shaped windows are the only grouping. A second tier that swept
-    leftover short units into windows was measured across four real books at
-    5-33 saved requests each (0.5-4%) — not worth its window-membership
-    nondeterminism, and it caused the tier-2/poetry classification
-    conflation bug. Removed; the classifier judges short apparatus
-    signature-by-signature instead.
-    """
-    runs = []
-    current = []
+    run = []
     for unit in units:
-        if current and _run_compatible(current[-1], unit):
-            current.append(unit)
-        else:
-            if current:
-                runs.append(current)
-            current = [unit]
-    if current:
-        runs.append(current)
-
-    for run in runs:
-        if len(run) < WINDOW_MIN_RUN:
+        if unit.chars < SHORT_UNIT_CHARS:
+            run.append(unit)
             continue
-        if statistics.median(u.chars for u in run) >= WINDOW_MAX_MEDIAN_CHARS:
-            continue
-
-        head_sig = run[0].signature
-        sig_counts = Counter(u.signature for u in run)
-        head_marks_stanza = (
-            len(sig_counts) > 1
-            and sig_counts[head_sig] >= 2
-            and sig_counts[head_sig] / len(run) < 0.4
-        )
-
-        group = [run[0]]
-        groups = [group]
-        for prev, unit in zip(run, run[1:]):
-            boundary = (
-                unit.element.parent is not prev.element.parent
-                or (head_marks_stanza and unit.signature == head_sig)
-                or len(group) >= group_size
-            )
-            if boundary:
-                group = [unit]
-                groups.append(group)
-            else:
-                group.append(unit)
-
-        for group in groups:
-            for unit in group:
-                unit.group_id = next_group_id
-            next_group_id += 1
-
+        emit(run)
+        run = []
+    emit(run)
     return next_group_id
 
 
@@ -1284,7 +1353,7 @@ def partition_file(
     fp = partition_soup(
         soup, resolver, file_name, exclude_tags=exclude_tags, overrides=overrides
     )
-    next_group_id = assign_context_windows(
+    next_group_id = assign_batches(
         fp.units, group_size=poetry_group_size, next_group_id=next_group_id
     )
     return fp, next_group_id
@@ -1293,13 +1362,17 @@ def partition_file(
 # ------------------------------------------------------------------- plan
 
 
-def planning_settings(
-    exclude_tags, poetry_group_size, only_files=None, exclude_files=None
-):
-    """Canonical settings whose selected occurrence evidence depends on them."""
+def planning_settings(exclude_tags, only_files=None, exclude_files=None):
+    """Canonical settings whose selected occurrence evidence depends on them.
+
+    The group size is deliberately absent: it decides how many units share a
+    request, never which units exist or what a row's evidence says, so
+    changing it used to invalidate a fully decided plan for nothing. The plan
+    JSON keeps its own `poetry_group_size` key (schema compatibility) — it is
+    simply not part of this comparison.
+    """
     return {
         "exclude_tags": sorted(exclude_tags),
-        "poetry_group_size": poetry_group_size,
         "only_files": sorted(only_files or ()),
         "exclude_files": sorted(exclude_files or ()),
     }
@@ -1481,10 +1554,21 @@ class TranslationPlan:
         if skipped:
             skip_desc = ", ".join(f"{k}={v}" for k, v in skipped.most_common())
             lines.append(f"skipped: {skip_desc}")
-        windowed = sum(1 for f in self.files for u in f.units if u.group_id is not None)
+        # Keyed by file as well as group id: `build_plan` threads one id
+        # supply through the whole book, but the loader partitions each file
+        # on its own and starts again at 0, so a bare id set would fold every
+        # book's groups down to the largest file's count.
+        groups = {
+            (f.file_name, u.group_id)
+            for f in self.files
+            for u in f.units
+            if u.group_id is not None
+        }
+        batched = [u for f in self.files for u in f.units if u.group_id is not None]
+        requests = len(groups)
         lines.append(
-            f"context windows: {windowed} unit(s) batched "
-            f"(window <= {self.poetry_group_size} lines)"
+            f"batches: {len(batched)} unit(s) in {requests} request(s) "
+            f"(<= {self.poetry_group_size} per request)"
         )
         return "\n".join(lines)
 
@@ -1503,7 +1587,6 @@ class TranslationPlan:
             "book_sha256": file_sha256(book_path),
             "planning_settings": planning_settings(
                 self.exclude_tags,
-                self.poetry_group_size,
                 self.only_files,
                 self.exclude_files,
             ),

@@ -44,7 +44,10 @@ import tempfile
 # order, count, or text), or the row contract itself: resume caches are
 # positional over the unit list, and a plan JSON written under a different
 # partition names rows that no longer exist.
-PLAN_SCHEMA_VERSION = 5
+# 6: atomic inline markers. A short excluded <code>/<sup>/<img> mid-sentence
+# stopped being a run barrier, so an owner that used to yield three units now
+# yields one — a different partition, and positional resume caches over it.
+PLAN_SCHEMA_VERSION = 6
 
 # Evidence carried per row. Enough that an agent (or a person) can rule on a
 # signature without unzipping the book; capped because the JSON is read into

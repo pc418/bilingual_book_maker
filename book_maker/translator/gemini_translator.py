@@ -16,7 +16,7 @@ from tenacity import (
     RetryCallState,
 )
 
-from .base_translator import Base
+from .base_translator import Base, BatchMismatch
 from ..structured import RungRejected, extract_json_object, unwrap_schema_echo
 
 
@@ -75,6 +75,11 @@ def _should_retry(exception: Exception) -> bool:
     """Determine if we should retry based on exception type."""
     # Never retry on user interrupt
     if isinstance(exception, KeyboardInterrupt):
+        return False
+    # A miscounted batch is not a transient failure: the same group asked
+    # again usually comes back miscounted again, and each attempt re-pays
+    # the whole group. The loader's ladder halves it instead.
+    if isinstance(exception, BatchMismatch):
         return False
     # Don't retry geo-restriction errors
     if isinstance(exception, errors.APIError):
@@ -511,6 +516,10 @@ class Gemini(Base):
             else:
                 self.rotate_key()
             raise
+        except BatchMismatch:
+            # Not retried and not repaired here: the loader divides. Rotating
+            # the key would blame the credential for a counting mistake.
+            raise
         except ValueError:
             # Parsing/response mismatch - retry without rotating key
             raise
@@ -557,6 +566,9 @@ class Gemini(Base):
             merged = list(text_list)
             for idx, value in zip(non_empty_indices, result):
                 merged[idx] = value
+            # count is not alignment — an empty slot for a non-empty source
+            # is the one symptom of a shifted batch
+            self._check_batch(text_list, merged)
             return merged
 
         # Fallback to one-by-one translation (only for non-fatal errors)
@@ -581,17 +593,20 @@ class Gemini(Base):
     def _parse_batch_response(
         self, response_text: str, expected_count: int
     ) -> list[str] | None:
-        """Parse and validate batch translation response."""
+        """Parse and validate batch translation response.
+
+        Raises `BatchMismatch` when the reply cannot be aligned — not a
+        retry, and not a per-line fallback: the loader's ladder halves the
+        chunk, which costs about twice the batch instead of N singles.
+        """
         try:
             result = json.loads(response_text)
             translated = result.get("translated_paragraphs", [])
 
             if len(translated) != expected_count:
-                print(
-                    f"Warning: Expected {expected_count} translations, got {len(translated)}. "
-                    f"Retrying..."
+                raise BatchMismatch(
+                    f"expected {expected_count} translations, " f"got {len(translated)}"
                 )
-                return None
 
             return [str(t) for t in translated]
 

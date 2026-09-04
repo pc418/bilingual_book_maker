@@ -379,7 +379,11 @@ class Claude(Base):
         # this message verbatim, so any difference — the prompt template, say —
         # would make the newest pair a cache miss, and the run would re-read a
         # paragraph at full input price every request.
-        self.session.append(self._user_content(text), t_text)
+        self._record_session_exchange(self._user_content(text), t_text)
+
+    def _record_session_exchange(self, user_content, reply_text):
+        """Append one exchange, given the strings the wire actually carried."""
+        self.session.append(user_content, reply_text)
         if not self.session.should_compact(self._session_budget()):
             return
         if self.no_context_compact:
@@ -552,7 +556,7 @@ class Claude(Base):
             r = self.client.messages.create(
                 max_tokens=4096,
                 messages=messages,
-                system=self.prompt_sys_msg,
+                system=self._augment_system_content(self.prompt_sys_msg, text),
                 temperature=self.temperature,
                 model=self.model,
                 extra_body=self.extra_body or None,
@@ -571,16 +575,17 @@ class Claude(Base):
     def translate_list(self, text_list):
         """Translate a group of paragraphs in one request.
 
-        Plan mode hands whole poetry windows here, and the window is the
-        point: verse only survives if the lines are translated together, with
-        their neighbours in view. The inherited default loops over `translate`
-        and dissolves the group into isolated lines, which is the one thing
-        `--poetry-group-size` exists to prevent.
+        Plan mode hands whole batches of short units here, and the batch is
+        the point: consecutive short lines only survive if they are
+        translated together, with their neighbours in view. The inherited
+        default loops over `translate` and dissolves the group into isolated
+        lines, which is the one thing `--poetry-group-size` exists to
+        prevent.
 
-        The delimiter contract, the count check and the line-by-line retry all
-        come from the base, so this route and the openai one agree on what a
-        batch looks like and on what happens when the reply does not come back
-        in the right number of pieces.
+        The delimiter contract and the count check come from the base, so
+        this route and the openai one agree on what a batch looks like — and
+        on raising `BatchMismatch` rather than repairing a bad reply here.
+        The loader's ladder owns the repair.
         """
         return self._do_batch_translate(
             text_list,

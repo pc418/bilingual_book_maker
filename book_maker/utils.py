@@ -166,3 +166,24 @@ def num_tokens_from_text(text, model="gpt-3.5-turbo-0301"):
             f"""num_tokens_from_messages() is not presently implemented for model {model}.
   See https://github.com/openai/openai-python/blob/main/chatml.md for information on how messages are converted to tokens."""
         )
+
+
+def parse_language_pair(value):
+    """Split ``--language`` into ``(source, target)``.
+
+    ``en:zh-hant`` names both halves; a bare ``zh-hant`` names only the
+    target and leaves the source for the model to work out, which is what
+    every run did before the pair form existed. The target half is the one
+    that drives everything — the prompt, the schema field names, the
+    language stamp on the output markup; the source half is evidence handed
+    to the model ("Translate from english …"), never a gate.
+
+    Only the first colon separates: a value with two of them is a typo, and
+    reading its tail as the target would translate a book into something
+    nobody asked for.
+    """
+    text = (value or "").strip()
+    if ":" not in text:
+        return None, text
+    source, _, target = text.partition(":")
+    return (source.strip() or None), target.strip()

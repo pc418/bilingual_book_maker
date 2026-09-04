@@ -174,14 +174,10 @@ class TestBatchMismatchContract:
         def create(**request):
             calls.append(request)
             return SimpleNamespace(
-                content=[
-                    SimpleNamespace(type="text", text="一行\n二行\n三行\n四行")
-                ]
+                content=[SimpleNamespace(type="text", text="一行\n二行\n三行\n四行")]
             )
 
-        claude.client = SimpleNamespace(
-            messages=SimpleNamespace(create=create)
-        )
+        claude.client = SimpleNamespace(messages=SimpleNamespace(create=create))
         stanza = ["one line", "two line", "three line", "four line"]
         with pytest.raises(BatchMismatch):
             claude.translate_list(stanza)
@@ -197,6 +193,11 @@ class TestStructuredIdEcho:
         from book_maker.translator.chatgptapi_translator import ChatGPTAPI
 
         t = ChatGPTAPI("k", "zh-hant")
+        # fixture only: the structured path is gated on the capability probe,
+        # and the probe goes through `create` — which this fixture nulls on
+        # purpose. Seed the verdict so the request under test is the batch
+        # one. No assertion below depends on this line.
+        t.capabilities.verdicts[t.model] = "strict"
         t.openai_client = SimpleNamespace(
             chat=SimpleNamespace(
                 completions=SimpleNamespace(
@@ -354,9 +355,7 @@ class TestInlineMarkers:
         from book_maker.loader.markers import INLINE_MARKER_MAX_CHARS
 
         long_code = "x" * (INLINE_MARKER_MAX_CHARS + 10)
-        fp = _partition(
-            f"<p>Before the listing <code>{long_code}</code> after it.</p>"
-        )
+        fp = _partition(f"<p>Before the listing <code>{long_code}</code> after it.</p>")
         texts = [u.text for u in fp.units]
         assert len(fp.units) == 2
         assert not MARKER_RE.findall(" ".join(texts))

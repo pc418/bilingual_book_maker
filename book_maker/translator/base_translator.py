@@ -21,6 +21,19 @@ from ..structured import (
 BATCH_DELIMITER = "\n\n@@\n\n"
 
 
+class BatchMismatch(Exception):
+    """A batch reply cannot be aligned with the texts that were sent.
+
+    The one contract every LLM route's `translate_list` keeps: exactly
+    `len(texts)` aligned items, or this. Nobody repairs it where it is
+    raised — the loader's `_translate_texts_aligned` ladder halves the chunk
+    and asks again, which costs about twice the batch instead of the N
+    single requests a per-route fallback used to pay. Retrying the same
+    group is not among the options either: a model that miscounted once
+    usually miscounts again, and each retry re-pays the whole group.
+    """
+
+
 def short_count(n):
     """12345 -> '12.3k', 1234567 -> '1.23M': a progress bar has no room for digits."""
     if n < 1000:
@@ -286,6 +299,54 @@ class Base(ABC):
     extra_body = {}
     extra_headers = {}
 
+    # The source half of `--language src:tgt`, when one was given. Class-level
+    # so every route answers, including the ones a test builds without
+    # __init__; None means "the model works it out from the text", which is
+    # what every run did before the pair form existed.
+    source_language = None
+
+    # Said only to requests that carry markers. A model told to preserve
+    # tokens in a text that has none is being taught to invent them.
+    MARKER_INSTRUCTION = (
+        "The text contains placeholder tokens written like ⟦code1⟧. Reproduce "
+        "every one of them exactly as written, each in the place the content "
+        "it stands for belongs in your translation. Never translate a token, "
+        "never change its spelling, and never invent one."
+    )
+
+    def _source_language_note(self):
+        """The sentence that names the source language, or ""."""
+        if not self.source_language:
+            return ""
+        return (
+            f"Translate from {self.source_language} into "
+            f"{self.language or 'the target language'}."
+        )
+
+    @staticmethod
+    def _carries_markers(text):
+        # Imported here: `book_maker.loader` pulls in the loaders, which
+        # import this module.
+        from ..loader.markers import MARKER_RE
+
+        return bool(MARKER_RE.search(text or ""))
+
+    def _augment_system_content(self, sys_content, request_text=""):
+        """The system message plus whatever *this* request needs said.
+
+        Two additions, both conditional, so a run that uses neither sends
+        byte-identical system messages and keeps its cached prefix: the
+        source language when `--language src:tgt` named one, and the marker
+        contract when the request actually carries markers.
+        """
+        extras = [self._source_language_note()]
+        if self._carries_markers(request_text):
+            extras.append(self.MARKER_INSTRUCTION)
+        extras = [part for part in extras if part]
+        if not extras:
+            return sys_content
+        return " ".join([(sys_content or "").strip(), *extras]).strip()
+
     def warn_if_extras_refused(self, error):
         """Say so when a request carrying the run's extras was refused.
 
@@ -461,6 +522,39 @@ class Base(ABC):
         """
         return [self.translate(t) for t in text_list]
 
+    @staticmethod
+    def _check_batch(texts, replies):
+        """Raise `BatchMismatch` unless `replies` aligns with `texts`.
+
+        Two symptoms, one check, used by every carrier:
+
+        *Wrong count* — the reply cannot be zipped with the source at all.
+
+        *An empty slot for a non-empty source* — count is not alignment. A
+        model that merges two source lines into one slot (routine on verse:
+        one sentence spans two pādas) keeps the count by shifting the rest
+        and padding with "", and that empty slot is the only unambiguous
+        symptom of the shift.
+
+        A wrong alignment at the right count with no empty slot is not
+        detected, by design: there is no signal to detect it by.
+        """
+        if len(replies) != len(texts):
+            raise BatchMismatch(
+                f"expected {len(texts)} translations, got {len(replies)}"
+            )
+        empty = [
+            i
+            for i, (src, out) in enumerate(zip(texts, replies))
+            if not str(out).strip() and str(src).strip()
+        ]
+        if empty:
+            raise BatchMismatch(
+                f"empty translation for non-empty paragraph(s) {empty}: "
+                f"batch alignment lost"
+            )
+        return None
+
     async def translate_async(
         self, text: str, *, context: TranslationContext | None = None
     ) -> TranslationResult:
@@ -575,18 +669,19 @@ class Base(ABC):
             # Filter out empty strings
             result_list = [p.strip() for p in parts if p.strip()]
 
-        # Final fallback: split by double newlines if still not matching
-        if len(result_list) != paragraph_count:
-            lines = text.splitlines()
-            result_list = [line.strip() for line in lines if line.strip() != ""]
-
+        # There used to be a last rung here: split on every non-blank line.
+        # It manufactured a plausible *wrong* count out of a perfectly correct
+        # multi-line reply — a four-line stanza answered as one paragraph of
+        # four lines came back as four "translations", each a fragment of the
+        # first source line. A reply carrying no delimiter now yields one
+        # item, which is a mismatch, which the loader's ladder divides.
         return result_list
 
     def _do_batch_translate(
         self, text_list, prompt_template, system_content, default_prompt, translate_func
     ):
         """
-        Perform batch translation with fallback to one-by-one translation.
+        Send one delimiter-separated request for a whole group.
 
         Args:
             text_list: List of texts to translate
@@ -596,7 +691,14 @@ class Base(ABC):
             translate_func: Function to call for actual translation (single or batch)
 
         Returns:
-            List of translated texts
+            List of exactly `len(text_list)` translations.
+
+        Raises:
+            BatchMismatch: the reply did not come back in `len(text_list)`
+                aligned pieces. Nothing is repaired here — the loader's
+                ladder halves the chunk and asks again, which is one place
+                instead of one per route, and costs ~2x the batch rather
+                than N singles.
         """
         plist_len = len(text_list)
 
@@ -636,6 +738,19 @@ class Base(ABC):
         # saving and nothing is suppressed.
         context_flag = getattr(self, "context_flag", False)
         per_line = context_flag and self.BATCH_CONTEXT_PER_LINE
+        # A replayed history records the batch as the one exchange it was —
+        # but only once the reply is known to be usable. A misaligned
+        # exchange left in the prefix is worse than the cache miss its
+        # absence costs, so the recording happens here, after the check,
+        # while the batch prompt is still installed: `_save_session_context`
+        # re-derives the user content from it and must derive exactly what
+        # was sent.
+        session_batch = (
+            context_flag
+            and not self.BATCH_CONTEXT_PER_LINE
+            and getattr(self, "session", None) is not None
+        )
+        translated_paragraphs = None
 
         try:
             # Set batch values
@@ -646,10 +761,17 @@ class Base(ABC):
                 and hasattr(self, sys_msg_attr)
             ):
                 setattr(self, sys_msg_attr, batch_sys_msg)
-            if per_line:
+            if per_line or session_batch:
                 self.context_flag = False
 
             translated_text = translate_func(batch_text)
+            if translated_text:
+                translated_paragraphs = self._extract_paragraphs(
+                    translated_text, plist_len
+                )
+                self._check_batch(text_list, translated_paragraphs)
+                if session_batch:
+                    self._save_session_context(batch_text, translated_text)
         finally:
             # Restore original values
             setattr(self, prompt_attr, original_prompt)
@@ -659,7 +781,7 @@ class Base(ABC):
             # describe "@@"-separated segments to every later request.
             if hasattr(self, sys_msg_attr):
                 setattr(self, sys_msg_attr, original_sys_msg)
-            if per_line:
+            if per_line or session_batch:
                 self.context_flag = True
 
         # Handle None or empty response
@@ -668,27 +790,6 @@ class Base(ABC):
                 f"[bold red]Error: Translation API returned empty response for batch request.[/bold red]"
             )
             raise Exception("Translation API returned empty response")
-
-        translated_paragraphs = self._extract_paragraphs(translated_text, plist_len)
-
-        # Fallback to one-by-one translation if paragraph count doesn't match
-        if len(translated_paragraphs) != plist_len:
-            print(
-                f"Warning: Expected {plist_len} translations, got {len(translated_paragraphs)}. Falling back to one-by-one translation."
-            )
-            print(f"\n[Debug] Input text_list ({plist_len} items):")
-            stripped_texts = [str(t).strip() for t in text_list]
-            for i, t in enumerate(stripped_texts, 1):
-                print(f"  [{i}] {t!r}")
-            print(f"\n[Debug] Model response ({len(translated_text)} chars):")
-            print(translated_text)
-            print(f"\n[Debug] Split result ({len(translated_paragraphs)} items):")
-            for i, p in enumerate(translated_paragraphs, 1):
-                print(f"  [{i}] {p!r}")
-            print()
-            # context_flag is restored here, so each single call saves its own
-            # pair — no extra bookkeeping needed on this path
-            return [translate_func(t) for t in stripped_texts]
 
         if per_line:
             for original, translated in zip(text_list, translated_paragraphs):

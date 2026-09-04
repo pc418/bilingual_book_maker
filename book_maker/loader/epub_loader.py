@@ -71,6 +71,8 @@ from .plan import (
     partition_file,
     planning_settings,
 )
+from .markers import marker_report, reconcile_markers, split_on_markers
+from ..translator.base_translator import BatchMismatch
 from .classify import (
     PlanClassifyError,
     PlanUnresolvedError,
@@ -974,7 +976,6 @@ class EPUBBookLoader(BaseBookLoader):
             exclude = {f for f in self.exclude_filelist.split(",") if f}
             expected_settings = planning_settings(
                 self._exclude_tags_tuple(),
-                self.poetry_group_size,
                 only,
                 exclude,
             )
@@ -1480,6 +1481,14 @@ class EPUBBookLoader(BaseBookLoader):
             and t_text == self.translate_model.TRANSLATION_ERROR_MARKER
         ):
             return
+        if unit.markers:
+            # Lenient by decision: a lost marker is reconciled and reported,
+            # never a failed unit and never a retry. Marker placement is not
+            # worth re-paying a request for.
+            note = marker_report(f"{unit.file_name}#{unit.ordinal}", unit.text, t_text)
+            if note:
+                print(f"[yellow]{note}[/yellow]")
+            t_text = reconcile_markers(unit.text, t_text)
         if single_translate and unit.nodes:
             # Ruby annotations of text that is about to disappear would
             # survive as orphaned furigana next to non-Japanese text. The
@@ -1529,6 +1538,62 @@ class EPUBBookLoader(BaseBookLoader):
             self._insert_trans_preserving_tags(
                 unit.element, t_text, translation_style, False
             )
+        if unit.markers:
+            self._restore_markers(unit, single_translate)
+
+    @staticmethod
+    def _restore_markers(unit, single_translate=False):
+        """Put each marker's source node back where its token landed.
+
+        Bilingual mode *clones* the node — the original is still standing in
+        the source paragraph beside the translation, so the copy is a second
+        rendering and must not be a second anchor (its ids go). Single
+        translate *moves* it: the source text it sat in has been replaced, so
+        there is nothing left to duplicate, and the node keeps its
+        attributes, its id among them — that id is a link target the rest of
+        the book points at.
+
+        A token the reply lost is not a problem here: reconciliation already
+        appended it, so it is somewhere in the text and gets its node.
+        """
+        tokens = list(unit.markers)
+        roots = [unit.element]
+        sibling = unit.element.next_sibling
+        while sibling is not None and not isinstance(sibling, Tag):
+            sibling = sibling.next_sibling
+        if sibling is not None:
+            # the bilingual clone of a code-bearing paragraph is inserted
+            # after the owner, not inside it
+            roots.append(sibling)
+        for root in roots:
+            if not isinstance(root, Tag):
+                continue
+            for text_node in list(root.descendants):
+                if not isinstance(text_node, NavigableString):
+                    continue
+                raw = str(text_node)
+                if not any(token in raw for token in tokens):
+                    continue
+                pieces = []
+                for kind, value in split_on_markers(raw, tokens):
+                    if kind == "text":
+                        pieces.append(NavigableString(value))
+                        continue
+                    source = unit.markers[value]
+                    if single_translate:
+                        source.extract()
+                        node = source
+                    else:
+                        node = copy(source)
+                        strip_duplicate_ids(node)
+                    pieces.append(node)
+                if not pieces:
+                    continue
+                text_node.replace_with(pieces[0])
+                anchor = pieces[0]
+                for piece in pieces[1:]:
+                    anchor.insert_after(piece)
+                    anchor = piece
 
     @staticmethod
     def _append_inline_translation(unit, t_text, translation_style="", language=None):
@@ -1705,8 +1770,14 @@ class EPUBBookLoader(BaseBookLoader):
     def _translate_texts_aligned(self, texts, translator=None):
         """translate_list with an alignment ladder: group -> halves -> singles.
 
-        A response with the wrong item count must never desync originals and
-        translations; instead we split and retry until counts match.
+        The one fallback in the system. Every LLM route's `translate_list`
+        returns exactly `len(texts)` aligned items or raises `BatchMismatch`;
+        none of them repairs a bad reply itself any more, and none retries
+        the same group (a model that miscounted once usually miscounts
+        again, and each retry re-pays the whole group). Halving costs about
+        twice the batch — 8 + 4 + 2 + 1 + 1 — where a per-line fallback paid
+        8 singles on top of the batch.
+
         `translator` defaults to the shared model; parallel chapters pass
         their own clone so --use_context stays chapter-local.
         """
@@ -1714,7 +1785,22 @@ class EPUBBookLoader(BaseBookLoader):
             return []
         translator = translator or self.translate_model
         try:
-            result = translator.translate_list(texts)
+            # A chunk of one is not a batch: it goes through `translate`,
+            # which is the bottom of the ladder and the only rung with
+            # nothing left to divide.
+            result = (
+                [translator.translate(texts[0])]
+                if len(texts) == 1
+                else translator.translate_list(texts)
+            )
+        except BatchMismatch as e:
+            # Not an error: the contract working. Say what happened once,
+            # then divide.
+            print(
+                f"[yellow]batch of {len(texts)} came back misaligned "
+                f"({e}); splitting[/yellow]"
+            )
+            return self._divide_and_translate(texts, translator)
         except Exception as e:
             if translator._fatal_error_detected:
                 # a clone's fatal flag must reach the shared model, or the
@@ -1735,10 +1821,17 @@ class EPUBBookLoader(BaseBookLoader):
             self.translate_model._fatal_error_detected = True
         if len(result) == len(texts):
             return result
+        # A belt for routes that still answer with the wrong count instead of
+        # raising — the MT engines translate one by one and cannot, but a
+        # gateway wrapper might.
         print(
             f"[bold red]alignment mismatch: sent {len(texts)} paragraphs, "
             f"received {len(result)} — splitting for realignment[/bold red]"
         )
+        return self._divide_and_translate(texts, translator)
+
+    def _divide_and_translate(self, texts, translator):
+        """Halve a chunk that came back misaligned; a chunk of 1 translates alone."""
         if len(texts) == 1:
             t = translator.translate(texts[0])
             if t is None:
