@@ -29,6 +29,8 @@ from tenacity import (
     wait_exponential,
 )
 
+from ..redaction import redact
+
 
 class ModelUnavailable(Exception):
     """This endpoint will not serve the named model.
@@ -231,7 +233,9 @@ def probe_structured_output(client, model, extra_body=None):
     except Exception as e:
         # Ambiguous (400 for an unknown param, 500 from a local server, ...):
         # not a usable endpoint for schemas either way, so degrade loudly.
-        return f"request rejected: {e}"
+        # redact: this request carries the client's --extra_headers, and a
+        # refusal routinely quotes what it objected to.
+        return f"request rejected: {redact(e)}"
 
     return grade_probe_response(completion)
 
@@ -273,7 +277,10 @@ def fetch_endpoint_models(client):
         )
         return None
     except Exception as e:
-        print(f"[yellow]Error checking model availability: {e}. Retrying...[/yellow]")
+        print(
+            f"[yellow]Error checking model availability: {redact(e)}. "
+            f"Retrying...[/yellow]"
+        )
         raise
 
 
@@ -327,7 +334,7 @@ def probe_model_route(client, model, extra_body=None):
     except Exception as e:
         if names_missing_model(e, model):
             raise ModelUnavailable(
-                f"This endpoint does not serve the model {model!r} ({e})."
+                f"This endpoint does not serve the model {model!r} " f"({redact(e)})."
             ) from e
         raise
     return None
@@ -367,13 +374,14 @@ def verify_model_routes(client, model_list, extra_body=None):
         try:
             probe_model_route(client, model_name, extra_body=extra_body)
         except ModelUnavailable as e:
-            print(f"[red]{e}[/red]")
+            print(f"[red]{redact(e)}[/red]")
             unavailable.append(model_name)
             continue
         except Exception as e:
             print(
-                f"[yellow]ℹ could not confirm {model_name!r} ({e}); that is no "
-                f"answer about the model, so the run keeps it[/yellow]"
+                f"[yellow]ℹ could not confirm {model_name!r} ({redact(e)}); "
+                f"that is no answer about the model, so the run keeps it"
+                f"[/yellow]"
             )
         available.append(model_name)
 

@@ -172,7 +172,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 * [xAI](https://x.ai)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-beta
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-4.3
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -578,8 +578,9 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   ```shell
   # openai route — disable a local/vLLM chat template's thinking block
   --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
-  # openai route — sampling override the flag does not expose
-  --extra_body '{"top_p": 0.9}'
+  # openai route (chat completions) — reasoning effort and a token ceiling,
+  # neither of which has its own flag (both model-dependent)
+  --extra_body '{"reasoning_effort": "low", "max_completion_tokens": 2000}'
   # anthropic route — turn extended thinking off, or on with a budget
   --extra_body '{"thinking": {"type": "disabled"}}'
   --extra_body '{"thinking": {"type": "enabled", "budget_tokens": 2000}}'

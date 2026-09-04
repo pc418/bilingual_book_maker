@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import zipfile
 from collections import Counter
 from io import StringIO
@@ -2862,6 +2863,53 @@ class TestPlanExitCodes:
     def test_the_handoff_code_collides_with_neither_ending(self):
         # 0 is a translated book and 1 is every refusal this project raises
         assert PLAN_HANDOFF_EXIT_CODE not in (0, 1, 130)
+
+
+class TestRerunCommandKeepsSecretsOut:
+    """`_rerun_command` reprints the user's own argv so the handoff names
+    their book and model — but a secret in that argv must never come back
+    with it. A key becomes its env variable; an `--extra_headers` value,
+    which may be a credential, is masked with its name kept."""
+
+    SECRET = "sk-should-never-appear-in-a-rerun-4242"
+
+    @staticmethod
+    def _rerun(argv):
+        from book_maker.loader.epub_loader import EPUBBookLoader
+
+        with mock.patch.object(sys, "argv", ["make_book.py", *argv]):
+            return EPUBBookLoader._rerun_command()
+
+    def test_a_key_becomes_its_env_variable(self):
+        cmd = self._rerun(["--openai_key", self.SECRET])
+        assert self.SECRET not in cmd
+        assert "$BBM_OPENAI_API_KEY" in cmd
+
+    def test_extra_headers_values_are_masked_names_kept(self):
+        cmd = self._rerun(
+            ["--extra_headers", f'{{"X-API-Key": "{self.SECRET}", "X-Title": "bbm"}}']
+        )
+        assert self.SECRET not in cmd
+        assert "X-API-Key" in cmd and "X-Title" in cmd  # names survive
+        assert "<redacted>" in cmd
+
+    def test_extra_headers_joined_form_is_masked(self):
+        cmd = self._rerun([f'--extra_headers={{"Authorization": "{self.SECRET}"}}'])
+        assert self.SECRET not in cmd
+
+    def test_an_abbreviated_extra_headers_flag_is_masked(self):
+        # argparse accepts any unambiguous prefix of a long option
+        cmd = self._rerun(["--extra_h", f'{{"X-Api-Key": "{self.SECRET}"}}'])
+        assert self.SECRET not in cmd
+
+    def test_masking_does_not_depend_on_the_value_being_registered(self):
+        # an unsupported route never parses or `remember`s the header, so the
+        # mask must be structural, not a lookup of known secrets
+        from book_maker import redaction
+
+        redaction.forget_all()
+        cmd = self._rerun(["--extra_headers", f'{{"X-API-Key": "{self.SECRET}"}}'])
+        assert self.SECRET not in cmd
 
 
 class TestFileSha256Cache:

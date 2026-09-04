@@ -161,7 +161,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 * [xAI](https://x.ai)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-beta
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-4.3
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -421,9 +421,9 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
     在 `8000` 下，整体花费预估为 window 模式的 0.5–1.1 倍，但携带数倍的上下文——具体比例取决于缓存折扣比例。我们计算发现（2026年8月），大部分模型价格`--context-compact-at 2500` 最省钱（约 0.4–0.5 倍）。
 
-- `--no-context-compact`:
+  - `--no-context-compact`:
 
-  仅 session 模式。跳过交接报告：历史仍在达到预算时滚动，但下一个窗口从空白开始，不继承摘要。更省钱，代价是接缝处的连续性。
+    仅 session 模式。跳过交接报告：历史仍在达到预算时滚动，但下一个窗口从空白开始，不继承摘要。更省钱，代价是接缝处的连续性。
 
 - `--temperature`:
 
@@ -519,8 +519,8 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   ```shell
   # openai 路径 —— 关闭本地/vLLM chat template 的思考块
   --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
-  # openai 路径 —— 覆盖 flag 未暴露的采样参数
-  --extra_body '{"top_p": 0.9}'
+  # openai 路径（chat completions）—— 推理力度与 token 上限，二者都没有独立 flag（是否支持视模型而定）
+  --extra_body '{"reasoning_effort": "low", "max_completion_tokens": 2000}'
   # anthropic 路径 —— 关闭扩展思考，或带预算开启
   --extra_body '{"thinking": {"type": "disabled"}}'
   --extra_body '{"thinking": {"type": "enabled", "budget_tokens": 2000}}'
