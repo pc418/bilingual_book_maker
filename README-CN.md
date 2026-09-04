@@ -1,4 +1,4 @@
-<div align="center">
+<div align="left">
 
 # Bilingual Book Maker
 
@@ -16,7 +16,26 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 AI 模型制作多语言
 
 </div>
 
+## 截图
+
 ![image](https://user-images.githubusercontent.com/15976103/222317531-a05317c5-4eee-49de-95cd-04063d9539d9.png)
+
+## 支持的接口
+
+支持 OpenAI 兼容以及 Anthropic 格式的接口。
+通常需要三个字段，使用官方接口时两个即可，模型如 `gpt-5.6-luna`（默认）、
+`claude-sonnet-4-6` 或 `deepseek-v4-flash-0731`。
+在 `--api_format` 填 `openai` 或 `anthropic` 即可指定 API 请求格式。
+该参数也可以选择常规翻译引擎（`google`、`caiyun`、`deepl`、`deeplfree`、
+`tencent`、`customapi`），或填 `codex` 以使用你的 Codex 额度。
+
+`--provider` 是另一种传凭据的方式，通过 JSON 配置文件 `bbm_providers.json`。
+
+epub 标签分类仅在支持 JSON Schema 的接口上自动开启；不支持时只翻译 `p` 标签，
+因此诗歌等内容可能不会被翻译。详见计划模式。
+
+已废弃的参数（`--model gpt4o`、`--model gemini`、`--openai_key` 等）仍然可用：见
+[从旧参数迁移](./docs/migration.md)与[模型与语言](./docs/model_lang.md)。
 
 ## 准备
 
@@ -51,7 +70,7 @@ python3 make_book.py --book_name test_books/animal_farm.epub \
 使用[Codex](https://developers.openai.com/codex/cli)订阅：
 
 ```shell
-python3 make_book.py --book_name test_books/animal_farm.epub --model codex --test
+python3 make_book.py --book_name test_books/animal_farm.epub --model gpt-5.6-luna --api_format codex --test
 ```
 
 或者交给 coding agent
@@ -64,7 +83,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 [^token]: 你可以在 [OpenAI](https://platform.openai.com/account/api-keys) 或 [Anthropic](https://console.anthropic.com/account/api-keys) 申请到 token。
 
-## 翻译服务
+## 常用参数
 
 - `--api_format` 指定接口说的 API：`openai`、`anthropic`、`gemini`、`qwen`、
   `groq`、`xai`、`litellm`、`codex`，或常规翻译引擎（`google`、`caiyun`、
@@ -80,6 +99,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 - `--use_context session` 使用会话模式翻译，并在8k上下文时进行压缩。
 - 旧的预设名和 key 参数仍然可用，见[从旧参数迁移](./docs/migration.md)。
 
+## 支持的翻译服务
 * DeepL
 
   使用 DeepL 封装的 api 进行翻译，需要付费。[DeepL Translator](https://rapidapi.com/splintPRO/api/dpl-translator) 来获得 token
@@ -192,7 +212,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   python3 make_book.py --book_name test_books/animal_farm.epub --model codex --language zh-hans
   ```
 
-* 自定义 API Provider
+## 自定义 API Provider
 
   内置模型不满足需求时，可以通过 JSON 配置文件自定义 provider。不需要改代码，就能使用任何 OpenAI 兼容 / Anthropic 格式的 API（DeepSeek、SiliconFlow、本地代理等）。
 
@@ -320,15 +340,16 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   指定需要翻译的标签，使用逗号分隔多个标签。epub 由 html 文件组成，默认情况下，只翻译 `<p>` 中的内容。例如: `--translate-tags h1,h2,h3,p,div`
 
 - `--plan-classify`
-  **计划模式（仅 epub）**：使用进行翻译的模型或你的 codex / claude code 进行分类。
+  **计划模式（仅 epub）**：使用进行翻译的模型，或 codex / claude code，对 epub 标签进行分类。
 
-  取值决定由谁判断需要翻译的epub标签：
+  取值决定每个标签的翻译与否如何判断：
 
   - `auto`（默认）：书籍是 epub、且端点可应用 JSON Schema 时，问LLM该翻哪段。否则，以及计划失败时，仅翻译 `--translate-tags` 选中的标签。
   - `none`：不建计划，仅 `--translate-tags` 选中的标签。
   - `all`：翻译整个分区，不做分类。
   - `model`：使用进行翻译的 LLM 进行判断，然后翻译。可用 `--plan-classify-model X` 指定分类用的模型。
-  - `agent`：对选中书籍输出分类计划。并输出指引，直接复制至你的coding tool进行分类。
+  - `agent`：对选中书籍输出分类计划。并输出指引，直接复制至你的coding tool进行分类
+  （也可以自己手工完成）。之后再次以 `--plan-classify agent` 运行翻译。
 
   - `--plan-dry-run`：仅打印按标签签名分组的表格，写出 `<book>_plan.json` 后退出。同时遵守 `--only_filelist` / `--exclude_filelist`。
   - `<book>_plan.json`：翻译计划；想重新分类请先删除该文件。
