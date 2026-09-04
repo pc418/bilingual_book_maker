@@ -95,9 +95,6 @@ and asks for its smart-routing model, `orcarouter/auto`. It is a supported
 route, not a legacy alias, so nothing is rewritten, and the key comes from
 `BBM_ORCAROUTER_API_KEY`.
 
-**Never put OrcaRouter's address in `--api_base`.** The route carries it and
-so does the `orcarouter` entry in the providers file; typing it turns a
-supported route into a hand-configured endpoint that merely looks the same.
 `orcarouter/auto` is the default, not a pin — to send the run to one named
 model instead of the smart router, use that entry:
 `--provider orcarouter --model <id>`. A probe reads the address
