@@ -114,7 +114,7 @@ class TestVendorRoutes:
         [
             ("gemini", "gemini", "gemini-flash-latest"),
             ("geminipro", "gemini", "gemini-pro-latest"),
-            ("xai", "xai", "grok-beta"),
+            ("xai", "xai", "grok-4.3"),
             ("qwen", "qwen", "qwen-mt-turbo"),
             ("qwen-mt-plus", "qwen", "qwen-mt-plus"),
         ],
@@ -450,3 +450,36 @@ class TestOrcaRouter:
         assert "K-secret" not in notices(
             "--model", "orcarouter", "--orcarouter_key", "K-secret"
         )
+
+
+class TestCodex:
+    """`--model codex` named the sidecar; `--api_format codex` does now."""
+
+    def test_the_route_name_becomes_the_format(self):
+        assert rewrite("--model", "codex") == ["--api_format", "codex"]
+        assert "--model codex is now --api_format codex" in notices("--model", "codex")
+
+    def test_the_name_is_matched_however_it_was_capitalised(self):
+        assert rewrite("-m", "Codex") == ["--api_format", "codex"]
+        assert rewrite("--model", "CODEX") == ["--api_format", "codex"]
+
+    def test_a_named_model_still_rides_on_the_explicit_format(self):
+        assert rewrite("--api_format", "codex", "--model", "gpt-5.4-mini") == [
+            "--model",
+            "gpt-5.4-mini",
+            "--api_format",
+            "codex",
+        ]
+        assert notices("--api_format", "codex", "--model", "gpt-5.4-mini") == ""
+
+    def test_an_explicit_other_format_keeps_codex_as_a_model_id(self):
+        # codex has no key flag, so the old route can never be proven meant
+        # against a different explicit format: the id is handed through, and
+        # nothing crashes on the missing key flag
+        assert rewrite("--api_format", "openai", "--model", "codex") == [
+            "--model",
+            "codex",
+            "--api_format",
+            "openai",
+        ]
+        assert notices("--api_format", "openai", "--model", "codex") == ""

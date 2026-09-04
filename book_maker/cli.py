@@ -81,13 +81,9 @@ DEFAULT_MODELS = {
 MODEL_EXAMPLES = {
     "anthropic": "claude-sonnet-4-6",
     "groq": "llama-3.3-70b-versatile",
-    "xai": "grok-beta",
+    "xai": "grok-4.3",
     "litellm": "<the model_name in your proxy's config>",
 }
-
-# `--model codex` selects the format rather than a model id. The sidecar then
-# picks its own default, exactly as `--api_format codex` with no --model does.
-CODEX_MODEL_ALIASES = ("codex",)
 
 
 def infer_api_format(api_base, model=""):
@@ -99,9 +95,6 @@ def infer_api_format(api_base, model=""):
     overrides both.
     """
     name = (model or "").strip().lower()
-    # `codex` is a sidecar, not an endpoint, so no --api_base can imply it.
-    if name in CODEX_MODEL_ALIASES:
-        return "codex"
     if api_base:
         host = (urlparse(api_base).hostname or "").lower()
         official = host == "anthropic.com" or host.endswith(".anthropic.com")
@@ -225,7 +218,16 @@ def apply_provider(options):
     options.price_table = (
         PriceTable(route.prices, route.currency) if route.prices else None
     )
-    if route.models and not options.model and not options.model_list:
+    # The codex sidecar is not the entry's HTTP endpoint: it ignores the
+    # entry's base and key and resolves its own default model, so a provider's
+    # model list is not its to take. On that route a model comes only from an
+    # explicit --model/--model_list.
+    if (
+        route.models
+        and not options.model
+        and not options.model_list
+        and options.api_format != "codex"
+    ):
         # One model belongs in --model; several rotate, first one first.
         if len(route.models) == 1:
             options.model = route.models[0]
@@ -274,11 +276,15 @@ def resolve_endpoint(options):
     if len(model_names) == 1 and model_names[0].lower() in ROUTE_DICT:
         options.api_base = normalize_api_base(options.api_base, "openai")
         return [model_names[0].lower()], "openai", ("BBM_ORCAROUTER_API_KEY",)
-    if model_names and model_names[0].lower() in CODEX_MODEL_ALIASES:
-        # settled from the route itself, so the provider's api_style
-        # cannot answer a question the model name already answered
-        options.api_format = options.api_format or infer_api_format(
-            options.api_base, model_names[0]
+    # `--model codex` is rewritten to `--api_format codex` by the legacy shim;
+    # `--model_list` is not, so a bare `codex` here came from --model_list and
+    # names the route, not a model to rotate to. Say what to type instead of
+    # sending `codex` on as a model id the endpoint will refuse.
+    listed = [n.strip() for n in (options.model_list or "").split(",") if n.strip()]
+    if len(listed) == 1 and listed[0].lower() == "codex":
+        raise SystemExit(
+            "--model_list codex names the codex route, not a model. Use "
+            "--api_format codex instead, and --model only to name a model on it."
         )
 
     provider_env_keys = apply_provider(options)
@@ -526,11 +532,11 @@ def build_parser():
         default=None,
         metavar="MODEL",
         help="model id, exactly as the endpoint names it (e.g. gpt-5-mini, "
-        "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). Two values "
-        "name a route instead of a model: 'codex' translates on a ChatGPT "
-        "subscription through the Codex CLI, and 'orcarouter' sends the run "
-        "to the OrcaRouter gateway. Old alias values are translated to their "
-        "model with a note. Defaults to gpt-5.6-luna on the openai format; "
+        "claude-sonnet-4-6, or a namespaced openai/gpt-5-mini). One value "
+        "names a route instead of a model: 'orcarouter' sends the run to the "
+        "OrcaRouter gateway. Old alias values, 'codex' among them, are "
+        "translated to their format or model with a note; prefer "
+        "'--api_format codex'. Defaults to gpt-5.6-luna on the openai format; "
         "the anthropic format needs an id",
     )
     parser.add_argument(

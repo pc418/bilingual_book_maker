@@ -49,7 +49,12 @@ _NATIVE_FORMATS = {
     "qwen-mt-turbo": ("qwen", "qwen-mt-turbo", "BBM_QWEN_API_KEY"),
     "qwen-mt-plus": ("qwen", "qwen-mt-plus", "BBM_QWEN_API_KEY"),
     "groq": ("groq", None, "BBM_GROQ_API_KEY"),
-    "xai": ("xai", "grok-beta", "BBM_XAI_API_KEY"),
+    "xai": ("xai", "grok-4.3", "BBM_XAI_API_KEY"),
+    # A local sidecar, not an endpoint: no address, no key, and the sidecar
+    # picks its own model, so the format alone is the whole route. `--model
+    # codex` was the old spelling; `--api_format codex` is the modern one and
+    # naming a model still rides on it as `--model <id>`.
+    "codex": ("codex", None, None),
 }
 
 # Two of those aliases are also real model ids that a live endpoint serves.
@@ -205,7 +210,7 @@ def translate_legacy_argv(argv):
     # Which key flag to honor depends on the route, so pick it after the
     # alias is known. Preferring position would hand vendor A's key to B.
     alias = legacy.get("--model", "")
-    preferred = _ALIAS_KEY_FLAG.get(alias)
+    preferred = _ALIAS_KEY_FLAG.get(alias.lower())
     if alias.lower().startswith("claude"):
         preferred = "--claude_key"
     key_flag = next((f for f in (preferred,) + _KEY_FLAGS if f and f in legacy), None)
@@ -215,26 +220,32 @@ def translate_legacy_argv(argv):
 
     if "--model" in legacy:
         alias = legacy["--model"]
-        if alias in _OPENAI_PRESETS:
-            model = _OPENAI_PRESETS[alias]
+        # Matched case-insensitively: every branch below is a route name, not
+        # a model id, and `--model Codex` / `--model Gemini` named the route
+        # before this module owned the spelling. `alias` keeps what the user
+        # typed, for the notice and the passthrough.
+        key = alias.lower()
+        if key in _OPENAI_PRESETS:
+            model = _OPENAI_PRESETS[key]
             route_source = f"--model {alias}"
-        elif alias in _DEFAULT_MODEL_ALIASES:
+        elif key in _DEFAULT_MODEL_ALIASES:
             notices.append(
                 f"--model {alias} named the OpenAI route, which is now the "
                 f"default; the format's own default model runs unless "
                 f"--model names one"
             )
             route_source = None
-        elif alias == "claude":
+        elif key == "claude":
             # the bare alias was a stand-in for a default model
             model = "claude-haiku-4-5-20251001"
             route_source = "--model claude"
-        elif alias in _ALIAS_IS_ALSO_A_MODEL_ID and has_format:
+        elif key in _ALIAS_IS_ALSO_A_MODEL_ID and has_format:
             passthrough_model = alias
-        elif alias in _NATIVE_FORMATS:
-            fmt, alias_model, env_key = _NATIVE_FORMATS[alias]
+        elif key in _NATIVE_FORMATS:
+            fmt, alias_model, env_key = _NATIVE_FORMATS[key]
             if has_format and given_format != fmt:
-                if key_flag != _ALIAS_KEY_FLAG.get(alias):
+                alias_key = _ALIAS_KEY_FLAG.get(key)
+                if alias_key is None or key_flag != alias_key:
                     # Nothing says the old route was meant: an endpoint may
                     # legitimately serve a model called `groq` or `gemini`
                     # (a LiteLLM config names its backends whatever it
@@ -249,7 +260,7 @@ def translate_legacy_argv(argv):
                     # does not belong to, and honouring the alias would
                     # ignore what the user typed.
                     _fail(
-                        f"--model {alias} with {_ALIAS_KEY_FLAG[alias]} "
+                        f"--model {alias} with {_ALIAS_KEY_FLAG[key]} "
                         f"selects the {fmt} route, but --api_format "
                         f"{given_format} selects another one. Pass one of "
                         f"them: --api_format {fmt} for that route, or drop "
@@ -260,10 +271,10 @@ def translate_legacy_argv(argv):
                 api_format, model = fmt, alias_model
                 env_keys.append(env_key)
                 route_source = f"--model {alias}"
-        elif alias in _MT_FORMATS:
-            api_format = _MT_FORMATS[alias]
+        elif key in _MT_FORMATS:
+            api_format = _MT_FORMATS[key]
             route_source = f"--model {alias}"
-            if alias == "customapi":
+            if key == "customapi":
                 # the endpoint used to arrive as --custom_api or its variable
                 api_base = api_base or os.environ.get("BBM_CUSTOM_API", "")
         else:

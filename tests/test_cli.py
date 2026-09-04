@@ -767,7 +767,7 @@ class TestVendorFormats:
         "fmt,example",
         [
             ("groq", "llama-3.3-70b-versatile"),
-            ("xai", "grok-beta"),
+            ("xai", "grok-4.3"),
             ("anthropic", "claude-sonnet-4-6"),
         ],
     )
@@ -794,7 +794,7 @@ class TestVendorFormats:
         from book_maker.cli import resolve_endpoint
 
         provider_entry(api_style="groq", env_key="BBM_TEST_PROVIDER_KEY")
-        options = _options(provider="p", api_format="xai", model="grok-beta")
+        options = _options(provider="p", api_format="xai", model="grok-4.3")
         _, api_format, env_keys = resolve_endpoint(options)
 
         assert api_format == "xai"
@@ -990,11 +990,19 @@ class TestProviderPrecedence:
             base_url="https://api.provider.example/v1",
             default_models=["model-one"],
         )
-        options = _options(provider="p", model="codex")
+        from book_maker.legacy_cli import translate_legacy_argv
+
+        legacy = translate_legacy_argv(["--provider", "p", "--model", "codex"])
+        assert "--model codex is now --api_format codex" in legacy.notices
+        assert "--model" not in legacy.argv  # the alias is gone, not a model id
+
+        options = _options(provider="p", api_format="codex")
         models, api_format, _ = resolve_endpoint(options)
 
         assert api_format == "codex"
-        assert models == ["codex"]
+        # the sidecar resolves its own default; the entry's HTTP model is not
+        # its to take, or the run would send `model-one` to codex
+        assert "model-one" not in models
 
     def test_model_orcarouter_keeps_its_own_gateway_at_a_provider(self, provider_entry):
         # the OrcaRouter key would otherwise be sent to the provider's base;

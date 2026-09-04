@@ -469,18 +469,19 @@ class TestFixedStyle:
 
 
 class TestModelAlias:
-    """`--model codex` names the format; upstream spells it this way too."""
+    """`--model codex` is the deprecated spelling: the legacy shim rewrites it
+    to `--api_format codex` before the parser, so the sidecar is always named,
+    never inferred from a model id."""
 
-    def test_the_alias_selects_the_codex_format(self):
+    def test_codex_is_not_inferred_from_a_model_name(self):
         from book_maker.cli import infer_api_format
 
-        assert infer_api_format(None, "codex") == "codex"
+        assert infer_api_format(None, "codex") == "openai"
 
-    def test_the_alias_wins_over_an_api_base(self):
-        """codex is not an endpoint, so a base URL cannot imply otherwise."""
+    def test_a_base_url_still_decides_its_own_format(self):
         from book_maker.cli import infer_api_format
 
-        assert infer_api_format("https://api.openai.com/v1", "codex") == "codex"
+        assert infer_api_format("https://api.openai.com/v1", "codex") == "openai"
 
     def test_the_alias_is_not_sent_as_a_model_id(self):
         t = _codex(["一"])
