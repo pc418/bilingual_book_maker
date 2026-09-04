@@ -4,8 +4,7 @@
 
 **中文 | [English](./README.md)**
 
-
-bilingual_book_maker 是一个 AI 翻译工具，使用 AI 模型制作多语言版本的 epub/txt/md/srt 文件和图书。该工具仅适用于翻译进入公共版权领域的 epub/txt 图书，不适用于有版权的书籍。请在使用之前阅读项目的 **[免责声明](./disclaimer.md)**。
+bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制作多语言版本的 epub/txt/srt 文件和图书。该工具仅适用于翻译进入公共版权领域的 epub/txt 图书，不适用于有版权的书籍。请在使用之前阅读项目的 **[免责声明](./disclaimer.md)**。
 
 [![Stars](https://img.shields.io/github/stars/yihong0618/bilingual_book_maker)](https://github.com/yihong0618/bilingual_book_maker/stargazers)
 [![CI](https://github.com/yihong0618/bilingual_book_maker/actions/workflows/make_test_ebook.yaml/badge.svg)](https://github.com/yihong0618/bilingual_book_maker/actions/workflows/make_test_ebook.yaml)
@@ -21,20 +20,20 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 AI 模型制作多语言
 
 ## 支持的接口
 
-支持 OpenAI 兼容以及 Anthropic 格式的接口。
+支持 OpenAI 和 Anthropic 格式的接口。
 通常需要三个字段，使用官方接口时两个即可，模型如 `gpt-5.6-luna`（默认）、
 `claude-sonnet-4-6` 或 `deepseek-v4-flash-0731`。
 在 `--api_format` 填 `openai` 或 `anthropic` 即可指定 API 请求格式。
 该参数也可以选择常规翻译引擎（`google`、`caiyun`、`deepl`、`deeplfree`、
-`tencent`、`customapi`——旧的请求格式，并非 OpenAI 形状），或填 `codex` 以使用你的 Codex 额度。
+`tencent`、`customapi`（非 OpenAI 格式），或填 `codex` 以使用你的 Codex 额度。
 
 `--provider` 是另一种传凭据的方式，通过 JSON 配置文件 `bbm_providers.json`。
 
 epub 标签分类仅在支持 JSON Schema 的接口上自动开启；不支持时只翻译 `p` 标签，
 因此诗歌等内容可能不会被翻译。详见计划模式。
 
-旧参数（`--model gpt4o`、`--model gemini`、`--openai_key` 等）仍然可用：见
-[从旧写法迁移](./docs/migration.md)与[模型与语言](./docs/model_lang.md)。
+旧参数（`--model gpt4o`、`--model gemini`、`--openai_key` 等）仍然可用：详见
+[模型与语言](./docs/model_lang.md)。
 
 ## 准备
 
@@ -146,8 +145,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 * Qwen
 
-  百炼上的 [Qwen-MT](https://www.aliyun.com/product/dashscope)：它是翻译模型而不是
-  对话模型，请求里写的是源语言和目标语言而不是提示词。支持 qwen-mt-turbo（默认）
+  百炼上的 [Qwen-MT](https://www.aliyun.com/product/dashscope)：它是翻译模型，请求里写的是源语言和目标语言。支持 qwen-mt-turbo（默认）
   和 qwen-mt-plus，不想自动检测源语言时用 `--source_lang` 指定。
 
   ```shell
@@ -176,8 +174,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
-  若要指定具体模型而不走智能路由：`--provider orcarouter --model <模型 id>`。
-  地址始终由该路由或 provider 条目提供，不需要自己填。
+  若要指定具体模型：`--provider orcarouter --model <模型 id>`。
 
 * [Ollama](https://github.com/ollama/ollama)
 
@@ -220,7 +217,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
   内置模型不满足需求时，可以通过 JSON 配置文件自定义 provider。不需要改代码，就能使用任何 OpenAI 兼容 / Anthropic 格式的 API（DeepSeek、SiliconFlow、本地代理等）。
 
-  在当前目录创建 `bbm_providers.json`（全局配置放在 `~/.bbm/providers.json`）：
+  在当前目录创建 `bbm_providers.json`（也可放在 `~/.bbm/providers.json`）：
 
   ```json
   {
@@ -308,7 +305,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   | `deepl` | 需要：`--key` 或 `$BBM_DEEPL_API_KEY` | DeepL（付费） |
   | `deeplfree` | 不需要 | DeepL 免费版 |
   | `tencent` | 不需要 | 腾讯交互翻译，免费 |
-  | `customapi` | 不需要；`--api_base` 是你的翻译接口地址 | 旧的 `{text, source_lang, target_lang}` → `{"data"}` 格式。自建的 OpenAI 形状接口请改用 `--api_format openai --api_base` |
+  | `customapi` | 不需要 |  `{text, source_lang, target_lang}` 格式的API |
 
 - `--source_lang`: 源语言，给需要显式声明的路线用：`--api_format qwen`（请求里就是一对语言）和 `--api_format customapi`，默认自动检测。
 

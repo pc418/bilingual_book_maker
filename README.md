@@ -5,7 +5,7 @@
 **[中文](./README-CN.md) | English**
 
 
-The bilingual_book_maker is an AI translation tool that uses large language models to create multi-language versions of epub/txt/md/srt/pdf files and books. This tool is exclusively designed for translating epub and other public domain works and is not intended for copyrighted works. Before using this tool, please review the project's **[disclaimer](./disclaimer.md)**.
+The bilingual_book_maker is an AI translation tool that uses ChatGPT to assist users in creating multi-language versions of epub/txt/srt files and books. This tool is exclusively designed for translating epub and other public domain works and is not intended for copyrighted works. Before using this tool, please review the project's **[disclaimer](./disclaimer.md)**.
 
 [![Stars](https://img.shields.io/github/stars/yihong0618/bilingual_book_maker)](https://github.com/yihong0618/bilingual_book_maker/stargazers)
 [![CI](https://github.com/yihong0618/bilingual_book_maker/actions/workflows/make_test_ebook.yaml/badge.svg)](https://github.com/yihong0618/bilingual_book_maker/actions/workflows/make_test_ebook.yaml)
@@ -22,12 +22,12 @@ The bilingual_book_maker is an AI translation tool that uses large language mode
 
 ## Supported endpoints
 
-OpenAI compatible and Anthropic format endpoints are supported.
+OpenAI and Anthropic format endpoints are supported.
 Usually it comes with three fields, two if you are using the official endpoints, such as `gpt-5.6-luna` (the default),
 `claude-sonnet-4-6` or `deepseek-v4-flash-0731`. 
 Specify `openai`, or `anthropic` at `--api_format` for API request formats.
 This argument also supports selecting some machine-translation engines (`google`, `caiyun`, `deepl`, `deeplfree`,
-`tencent`, `customapi` — an old request format, not an OpenAI-shaped one) or `codex`
+`tencent`, `customapi` — not an OpenAI format) or `codex`
 if you want to use your Codex quota instead. 
 
 `--provider` is an alternative way to pass credentials, through a JSON config file
@@ -36,8 +36,7 @@ if you want to use your Codex quota instead.
 Epub tags classification is only auto enabled with JSON-schema enabled endpoints, without which only `p` tags are translated. Thus some poetry or verse may be omitted from translation. See plan mode for details.
 
 Older flags (`--model gpt4o`,
-`--model gemini`, `--openai_key`, …) still work: See
-[Migrating from the old spellings](./docs/migration.md) and
+`--model gemini`, `--openai_key`, …) still work: see
 [Models and languages](./docs/model_lang.md).
 
 ## Preparation
@@ -155,10 +154,10 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 * Qwen
 
   [Qwen-MT](https://www.aliyun.com/product/dashscope) on DashScope, a
-  translation model rather than a chat model: the request states a source
-  and a target language instead of carrying a prompt. `qwen-mt-turbo` (the
-  default) and `qwen-mt-plus` are supported, and `--source_lang` states the
-  source language when auto-detection is not wanted.
+  translation model: the request states a source and a target language.
+  `qwen-mt-turbo` (the default) and `qwen-mt-plus` are supported, and
+  `--source_lang` states the source language when auto-detection is not
+  wanted.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --api_format qwen --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
@@ -187,9 +186,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
-  To pin one model instead of letting the gateway route:
-  `--provider orcarouter --model <id>`. The address stays in the provider
-  entry either way — there is never a reason to type it.
+  To name one model instead: `--provider orcarouter --model <id>`.
 
 * [Ollama](https://github.com/ollama/ollama)
 
@@ -233,7 +230,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
   When the built-in models do not cover your needs, define a provider in a JSON config file. Without a code change, any OpenAI-compatible or Anthropic-format API (DeepSeek, SiliconFlow, a local proxy, ...) becomes usable.
 
-  Create `bbm_providers.json` in the current directory (or `~/.bbm/providers.json` for global config):
+  Create `bbm_providers.json` in the current directory (or `~/.bbm/providers.json`):
 
   ```json
   {
@@ -335,7 +332,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   | `deepl` | required: `--key` or `$BBM_DEEPL_API_KEY` | DeepL (paid) |
   | `deeplfree` | none | DeepL free tier |
   | `tencent` | none | Tencent TranSmart, free |
-  | `customapi` | none; `--api_base` is your translation endpoint | the old `{text, source_lang, target_lang}` → `{"data"}` format. An OpenAI-shaped endpoint of your own is `--api_format openai --api_base` instead |
+  | `customapi` | none | a `{text, source_lang, target_lang}` format API |
 
 - `--source_lang`:
 
