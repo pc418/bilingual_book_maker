@@ -33,11 +33,13 @@ import book_maker
 from book_maker.translator import FORMAT_DICT, ROUTE_DICT
 
 if not Path(book_maker.__file__).resolve().is_relative_to(_REPO):
-    # Loudly, not silently: a stand-in installed into the wrong package would
-    # leave the CLI tests translating over the network against other code.
-    raise RuntimeError(
-        f"hermetic harness loaded {book_maker.__file__}, outside {_REPO}"
+    # `site` imports this file inside `except Exception`, so raising here is
+    # printed and swallowed and the run continues against the wrong code.
+    # Leave by a door that cannot be caught.
+    sys.stderr.write(
+        f"hermetic harness loaded {book_maker.__file__}, outside {_REPO}\n"
     )
+    os._exit(1)
 
 
 class OfflineTranslator:
@@ -63,6 +65,14 @@ class OfflineTranslator:
 
     def rotate_key(self):
         pass
+
+    @property
+    def model_name(self):
+        # the same answer the real translators give: the model, else the
+        # api_format / provider key this stand-in is registered under
+        from book_maker.translator.base_translator import service_name
+
+        return getattr(self, "model", None) or service_name(self)
 
     def set_model_list(self, model_list=(), *args, **kwargs):
         # echoed so a CLI test can see which models the run selected —
