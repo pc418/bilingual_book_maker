@@ -55,7 +55,8 @@ sections after it provide additional notes for selected workflows.
 | `--parallel-workers N` | Parallel EPUB chapters or Markdown batches/sections; default `1`. Refused with `--use_context session` (one history) and on the `codex` format (one thread). |
 | `--batch` | Submit an EPUB ChatGPT Batch API job; incompatible with plan mode, and refused on a route that does not implement the Batch API. |
 | `--batch-use` | Consume a previously submitted batch job; incompatible with plan mode. |
-| `--extra_body JSON` | Extra request fields for the routes built on the OpenAI request path (`openai`, `groq`, `xai`, `litellm`, `--model orcarouter`); the others ignore it and say so. |
+| `--extra_body JSON` | Extra fields on every request body, for the routes that build one (`openai`, `groq`, `xai`, `litellm`, `--model orcarouter`, `anthropic`); the others ignore it and say so. Reaches the capability probe and the JSON rungs too, so the endpoint is graded on the request the run makes. Merged over the named parameters, so a field here beats the flag for it. |
+| `--extra_headers JSON` | Extra HTTP headers on every request, same routes. Set on the client, so the capability probe, the model check and the model listing carry them. Values must be strings. |
 | `--quiet` | Suppress EPUB progress bars and paragraph echoes, not reports/errors. |
 | `--proxy URL` | Set HTTP/HTTPS proxy environment variables for the run. |
 

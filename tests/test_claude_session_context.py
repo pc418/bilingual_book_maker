@@ -630,3 +630,48 @@ class TestReplyBlocks:
         t = self._answering(SimpleNamespace(type="thinking", thinking="…"))
         with pytest.raises(ValueError, match="no text block.*thinking"):
             t.translate("text")
+
+
+class TestRequestExtras:
+    """`--extra_body` / `--extra_headers` on the anthropic route.
+
+    `thinking: {"type": "disabled"}` is the field this route exists to carry:
+    thinking buys nothing on a paragraph and costs tokens, but sending it
+    unconditionally would bet on every gateway and every future model
+    default, so it stays the operator's to pass.
+    """
+
+    def _translator(self):
+        return Claude("sk-test", "Chinese")
+
+    def test_headers_go_on_the_client(self):
+        t = self._translator()
+        t.set_request_extras(extra_headers={"X-Title": "bbm"})
+
+        assert t.client.default_headers["X-Title"] == "bbm"
+
+    def test_the_translate_call_sends_the_body(self):
+        t = self._translator()
+        t.set_request_extras(extra_body={"thinking": {"type": "disabled"}})
+        with patch.object(t, "client") as client:
+            client.messages.create.return_value = SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="译文")], usage=None
+            )
+            t.translate("hello")
+
+        kwargs = client.messages.create.call_args.kwargs
+        assert kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+
+    def test_a_run_with_no_extras_sends_none(self):
+        # the request an anthropic run made before the flag existed
+        t = self._translator()
+        with patch.object(t, "client") as client:
+            client.messages.create.return_value = SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="译文")], usage=None
+            )
+            t.translate("hello")
+
+        assert client.messages.create.call_args.kwargs["extra_body"] is None
+
+    def test_the_route_answers_that_it_takes_them(self):
+        assert Claude.SUPPORTS_REQUEST_EXTRAS is True

@@ -1453,3 +1453,99 @@ def test_the_dry_run_builds_no_translator_at_all(tmp_path, monkeypatch):
     main()
 
     assert (tmp_path / f"{src.stem}_plan.json").exists()
+
+
+class TestRequestExtrasFlags:
+    """`--extra_body` / `--extra_headers`: refused early, or carried."""
+
+    def _cli_extras(self, tmp_path, *args):
+        src = tmp_path / BOOK.name
+        src.write_bytes(BOOK.read_bytes())
+        return _cli(
+            "--book_name",
+            str(src),
+            "--key",
+            "sk-test",
+            "--api_format",
+            "openai",
+            "--model",
+            "m",
+            "--test",
+            "--test_num",
+            "1",
+            *args,
+        )
+
+    def test_invalid_json_names_the_flag_it_came_from(self, tmp_path):
+        # with both flags taking JSON, "invalid JSON" alone leaves the reader
+        # checking the wrong one
+        proc = self._cli_extras(tmp_path, "--extra_headers", "{nope}")
+        output = " ".join((proc.stdout + proc.stderr).split())
+
+        assert proc.returncode != 0
+        assert "invalid JSON in --extra_headers" in output
+
+    def test_a_json_array_is_refused_before_a_paid_request(self, tmp_path):
+        # the SDK would accept it and the endpoint would reject it, one
+        # billed request later
+        proc = self._cli_extras(tmp_path, "--extra_body", '["a"]')
+        output = " ".join((proc.stdout + proc.stderr).split())
+
+        assert proc.returncode != 0
+        assert "--extra_body must be a JSON object, not list" in output
+
+    def test_a_non_string_header_value_is_refused_here(self, tmp_path):
+        # httpx raises on one deep inside the first request otherwise
+        proc = self._cli_extras(tmp_path, "--extra_headers", '{"X-N": 1}')
+        output = " ".join((proc.stdout + proc.stderr).split())
+
+        assert proc.returncode != 0
+        assert "--extra_headers values must all be strings" in output
+
+    def test_a_route_that_builds_no_request_says_so_and_runs_on(self, tmp_path):
+        # google translates through a fixed engine: there is no request body
+        # for these to join, and dropping them silently is what this replaces
+        src = tmp_path / BOOK.name
+        src.write_bytes(BOOK.read_bytes())
+        proc = _cli(
+            "--book_name",
+            str(src),
+            "--api_format",
+            "google",
+            "--extra_body",
+            '{"a": 1}',
+            "--extra_headers",
+            '{"b": "c"}',
+            "--test",
+            "--test_num",
+            "1",
+        )
+        output = " ".join((proc.stdout + proc.stderr).split())
+
+        assert (
+            "--extra_body and --extra_headers are ignored by the google route" in output
+        )
+
+    def test_a_header_value_is_never_printed(self, tmp_path):
+        # a header is where a credential goes; echoing the value would put it
+        # in every log and CI artifact the run touches
+        proc = self._cli_extras(
+            tmp_path, "--extra_headers", '{"Authorization": "Bearer sk-SECRET"}'
+        )
+        output = proc.stdout + proc.stderr
+
+        assert "sk-SECRET" not in output
+        assert "Authorization" in output  # the name still says what was sent
+
+    def test_both_flags_are_echoed_so_the_run_records_what_it_sent(self, tmp_path):
+        proc = self._cli_extras(
+            tmp_path,
+            "--extra_body",
+            '{"enable_thinking": false}',
+            "--extra_headers",
+            '{"X-Title": "bbm"}',
+        )
+        output = " ".join((proc.stdout + proc.stderr).split())
+
+        assert "enable_thinking" in output
+        assert "X-Title" in output

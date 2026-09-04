@@ -49,6 +49,7 @@ from .capabilities import (
     probe_structured_output,
     verify_model_routes,
 )
+from ..redaction import redact, remember
 from ..structured import (
     RungRejected,
     extract_json_object,
@@ -194,6 +195,7 @@ class ChatGPTAPI(Base):
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
     SUPPORTS_BATCH_API = True
+    SUPPORTS_REQUEST_EXTRAS = True
     # Session-mode state, declared here so the window-mode path is well
     # defined on any instance — including the subclasses and test fixtures
     # that build one without running __init__. `session is None` means window
@@ -284,6 +286,10 @@ class ChatGPTAPI(Base):
         self._api_lock = Lock()
         self._async_clients = {}
         self.extra_body = extra_body or {}
+        # Set by --extra_headers, after construction; on the client rather
+        # than the call so the capability probe, the route check and the
+        # model listing carry them too.
+        self.extra_headers = {}
 
         # What this endpoint turned out to support, learned at runtime and
         # keyed by model because --model_list rotates across models of
@@ -320,7 +326,9 @@ class ChatGPTAPI(Base):
             # per run whatever it answers.
             state["pending"] = None
 
-            result = verify_model_routes(self.openai_client, pending)
+            result = verify_model_routes(
+                self.openai_client, pending, extra_body=self.extra_body or None
+            )
             if not result["success"]:
                 listed = result["api_models"]
                 state["failure"] = ModelUnavailable(
@@ -356,7 +364,9 @@ class ChatGPTAPI(Base):
         return self.capabilities.ensure_verdict(model, probe)
 
     def _probe(self, model):
-        return probe_structured_output(self.openai_client, model)
+        return probe_structured_output(
+            self.openai_client, model, extra_body=self.extra_body or None
+        )
 
     def _ensure_structured_support(self, model=None):
         """Whether *translation* may use a schema. Only "strict" qualifies.
@@ -410,12 +420,17 @@ class ChatGPTAPI(Base):
     def _completion_text(self, model, content, **kwargs):
         """One single-turn request, with shape refusals marked as such."""
         try:
+            # Every rung and the schema probe come through here, so this is
+            # where --extra_body reaches them. `setdefault`: a caller that
+            # already built one owns it.
+            kwargs.setdefault("extra_body", self.extra_body or None)
             completion = self.openai_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": content}],
                 **kwargs,
             )
         except RUNG_REFUSAL_ERRORS as e:
+            self.warn_if_extras_refused(e)
             raise RungRejected(e) from e
         self._note_usage(completion, model)
         return completion.choices[0].message.content
@@ -438,6 +453,24 @@ class ChatGPTAPI(Base):
 
     def _chat_completion(self, prompt, model=None):
         return self._completion_text(model or self.model, prompt)
+
+    def set_request_extras(self, extra_body=None, extra_headers=None):
+        """See `Base.set_request_extras`.
+
+        Headers go on the client rather than on each call, so they reach the
+        capability probe, the route check and the model listing as well as
+        the translate calls. Cached async clones are dropped so the next one
+        is built with them.
+        """
+        self.extra_body = extra_body or {}
+        self.extra_headers = extra_headers or {}
+        remember(*self.extra_headers.values())
+        if self.extra_headers:
+            with self._api_lock:
+                self.openai_client = self.openai_client.with_options(
+                    default_headers=self.extra_headers
+                )
+                self._async_clients.clear()
 
     def rotate_key(self):
         with self._api_lock:
@@ -496,7 +529,12 @@ class ChatGPTAPI(Base):
         return messages
 
     def _create_async_client(self, key):
-        return AsyncOpenAI(api_key=key, base_url=self.api_base, **REQUEST_LIMITS)
+        return AsyncOpenAI(
+            api_key=key,
+            base_url=self.api_base,
+            default_headers=self.extra_headers or None,
+            **REQUEST_LIMITS,
+        )
 
     def _get_async_client(self, key):
         cache_key = (self.api_base, key)
@@ -879,7 +917,7 @@ class ChatGPTAPI(Base):
             t_text = self.get_translation(text)
             return t_text
         except Exception as e:
-            print(f"Translation failed after retries: {e}")
+            print(f"Translation failed after retries: {redact(e)}")
             raise
 
     def translate_and_split_lines(self, text):

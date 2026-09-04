@@ -1624,3 +1624,99 @@ def test_an_odd_usage_record_never_stops_a_request():
         assert t.usage_postfix() is None
         t._note_usage(SimpleNamespace(usage={"prompt_tokens": 5}))  # a dict
         assert t.usage_postfix() == {"in": "0", "out": "0", "cached": "0"}
+
+
+class TestRequestExtras:
+    """`--extra_body` / `--extra_headers` on the OpenAI request path."""
+
+    def _translator(self):
+        from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+        return ChatGPTAPI("sk-test", "Chinese")
+
+    def test_headers_go_on_the_client_not_the_call(self):
+        # so the capability probe, the route check and the model listing
+        # carry them too, without every call site knowing about them
+        t = self._translator()
+        t.set_request_extras(extra_headers={"X-Title": "bbm"})
+
+        assert t.openai_client.default_headers["X-Title"] == "bbm"
+
+    def test_cached_async_clones_are_dropped_so_they_are_rebuilt(self):
+        t = self._translator()
+        t._async_clients[("base", "k")] = object()
+        t.set_request_extras(extra_headers={"X-Title": "bbm"})
+
+        assert t._async_clients == {}
+
+    def test_an_async_client_is_built_with_the_headers(self):
+        t = self._translator()
+        t.set_request_extras(extra_headers={"X-Title": "bbm"})
+
+        assert t._create_async_client("k").default_headers["X-Title"] == "bbm"
+
+    def test_every_rung_and_the_schema_probe_send_the_body(self):
+        # _completion_text is the one door the rungs and the probe share
+        t = self._translator()
+        t.set_request_extras(extra_body={"enable_thinking": False})
+        with patch.object(t, "openai_client") as client:
+            client.chat.completions.create.return_value = SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+                usage=None,
+                model="m",
+            )
+            t._completion_text("m", "hello")
+
+        kwargs = client.chat.completions.create.call_args.kwargs
+        assert kwargs["extra_body"] == {"enable_thinking": False}
+
+    def test_a_caller_that_built_its_own_body_keeps_it(self):
+        t = self._translator()
+        t.set_request_extras(extra_body={"enable_thinking": False})
+        with patch.object(t, "openai_client") as client:
+            client.chat.completions.create.return_value = SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+                usage=None,
+                model="m",
+            )
+            t._completion_text("m", "hello", extra_body={"mine": 1})
+
+        kwargs = client.chat.completions.create.call_args.kwargs
+        assert kwargs["extra_body"] == {"mine": 1}
+
+    def test_a_refusal_while_extras_are_set_shows_what_the_endpoint_said(self, capsys):
+        # the ladder answers a refusal by demoting, so without this the run
+        # degrades quietly and the endpoint's own words are never seen
+        t = self._translator()
+        t.set_request_extras(extra_body={"enable_thinking": False})
+        t.warn_if_extras_refused(Exception("unknown field 'enable_thinking'"))
+        out = " ".join(capsys.readouterr().out.split())
+
+        assert "unknown field 'enable_thinking'" in out
+        assert "--extra_body" in out
+
+    def test_a_refusal_with_no_extras_set_says_nothing(self):
+        # every endpoint that does not do schemas refuses a rung; that is
+        # the ladder working, not a problem to report
+        t = self._translator()
+        t.warn_if_extras_refused(Exception("no json_schema here"))
+
+
+def test_a_refusal_never_repeats_a_header_value_back(capsys):
+    """An endpoint that rejects a header routinely quotes it back.
+
+    The CLI takes care never to print a header value; the endpoint's own
+    words would put it on stdout anyway.
+    """
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+    t = ChatGPTAPI("sk-test", "Chinese")
+    t.set_request_extras(extra_headers={"Authorization": "Bearer sk-SECRET"})
+    t.warn_if_extras_refused(
+        Exception("invalid header value 'Bearer sk-SECRET' for Authorization")
+    )
+    out = capsys.readouterr().out
+
+    assert "sk-SECRET" not in out
+    assert "<redacted>" in out
+    assert "Authorization" in out  # the endpoint's own words otherwise intact

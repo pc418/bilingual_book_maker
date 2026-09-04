@@ -6,6 +6,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rich import print
+from rich.markup import escape
+
+from ..redaction import redact, remember
 
 from ..structured import (
     extract_json_object,
@@ -259,10 +262,57 @@ class Base(ABC):
     # translator, so accepting it would be an AttributeError partway in.
     SUPPORTS_BATCH_API = False
 
+    # Does this route carry --extra_body / --extra_headers? True where the
+    # request is built here from an SDK that takes them. The codex route is
+    # a subprocess with no request to merge into, and the fixed-endpoint MT
+    # services speak their own protocol; both refuse the flags rather than
+    # printing success and dropping the fields.
+    SUPPORTS_REQUEST_EXTRAS = False
+
+    def set_request_extras(self, extra_body=None, extra_headers=None):
+        """Fields and headers to add to every request this route makes.
+
+        Overridden where `SUPPORTS_REQUEST_EXTRAS` is True. The base refuses
+        rather than storing attributes nothing reads.
+        """
+        raise NotImplementedError(
+            f"the {service_name(self)} route builds no request these could "
+            f"be added to"
+        )
+
+    # --extra_body / --extra_headers, rebound by `set_request_extras` and
+    # never mutated in place. Class-level so a route that skipped __init__
+    # still answers, and so the default is stated once.
+    extra_body = {}
+    extra_headers = {}
+
+    def warn_if_extras_refused(self, error):
+        """Say so when a request carrying the run's extras was refused.
+
+        The structured ladder answers a refusal by demoting to the next rung
+        and carrying on, which is right when the endpoint simply does not do
+        schemas — and wrong when the operator's own `--extra_body` or
+        `--extra_headers` is what the endpoint objected to, because then the
+        run degrades quietly and the endpoint's own words are never seen.
+        """
+        if not (self.extra_body or self.extra_headers):
+            return
+        message = redact(error)
+        print(
+            f"[bold yellow]Warning:[/bold yellow] the endpoint refused a "
+            f"request carrying your --extra_body/--extra_headers, and the "
+            f"run fell back to a simpler request shape. It said: "
+            f"{escape(message)}"
+        )
+
     # Refusals of one rung, by one model, before we stop offering it.
     RUNG_REFUSAL_THRESHOLD = 2
 
     def __init__(self, key, language) -> None:
+        # Registered before the first request: an endpoint that refuses a key
+        # routinely quotes it back, and this run prints an endpoint's words
+        # in several places.
+        remember(*key.split(","))
         self.keys = itertools.cycle(key.split(","))
         self.language = language
         self._fatal_error_detected = False

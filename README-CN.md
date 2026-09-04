@@ -495,10 +495,40 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 - `--extra_body`:
 
   以 JSON 字符串向 ChatGPT/OpenAI 衍生请求路径透传额外参数，包括 OpenAI 风格的
-  自定义 provider，以及同样走这条请求路径的 `groq`、`xai`、`litellm` 和 `--model orcarouter`。其余格式会明说并忽略该参数。例如：
+  自定义 provider，以及同样走这条请求路径的 `groq`、`xai`、`litellm` 和 `--model orcarouter`，还有 `anthropic` 路径。其余格式会明说并忽略该参数。它同样会带到
+  能力探测与 JSON 各级请求上，因此端点是按本次运行真正发出的请求形状被评级的。例如：
 
   ```shell
   python3 make_book.py --book_name book.epub --extra_body '{"chat_template_kwargs":{"enable_thinking":false}}'
+  ```
+
+- `--extra_headers`:
+
+  以 JSON 字符串为每次请求追加 HTTP 头，适用范围同上。头设置在 client 上，因此
+  能力探测、模型校验与模型列表请求也会带上。值必须是字符串。
+
+  ```shell
+  python3 make_book.py --book_name book.epub --key ${openrouter_key} --api_base https://openrouter.ai/api/v1 --model anthropic/claude-haiku-4.5 --extra_headers '{"HTTP-Referer":"https://example.com","X-Title":"bilingual_book_maker"}'
+  ```
+
+  若端点拒绝了带这两个参数的请求，程序会明说，并把端点返回的原文一并打印，而不是
+  悄悄退回更简单的请求形状。
+
+  常见写法，供参考：
+
+  ```shell
+  # openai 路径 —— 关闭本地/vLLM chat template 的思考块
+  --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
+  # openai 路径 —— 覆盖 flag 未暴露的采样参数
+  --extra_body '{"top_p": 0.9}'
+  # anthropic 路径 —— 关闭扩展思考，或带预算开启
+  --extra_body '{"thinking": {"type": "disabled"}}'
+  --extra_body '{"thinking": {"type": "enabled", "budget_tokens": 2000}}'
+
+  # OpenRouter 归属标识（显示在其后台）
+  --extra_headers '{"HTTP-Referer": "https://example.com", "X-Title": "bilingual_book_maker"}'
+  # 网关自身的鉴权或路由头（其值不会进日志）
+  --extra_headers '{"X-API-Key": "sk-gateway-..."}'
   ```
 
 - `--provider`:

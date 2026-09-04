@@ -19,8 +19,8 @@ from book_maker.translator import (
     LLM_FORMATS,
     ROUTE_DICT,
 )
+from book_maker.redaction import redact
 from book_maker.translator.base_translator import PriceTable
-from book_maker.translator.chatgptapi_translator import ChatGPTAPI
 from book_maker.translator.capabilities import ModelUnavailable
 from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
 
@@ -480,7 +480,7 @@ def resolve_plan_mode(book_type, api_format, translate_tags_given, probe):
     except Exception as e:
         # tag mode still works; the endpoint's trouble surfaces at the first
         # translation request
-        return "none", f"the JSON-schema probe failed: {e}"
+        return "none", f"the JSON-schema probe failed: {redact(e)}"
     if verdict != "strict":
         return "none", (
             f"the endpoint does not verify a strict JSON schema "
@@ -873,7 +873,25 @@ So you are close to reaching the limit. You have to choose your own value, there
         dest="extra_body",
         type=str,
         default="",
-        help='JSON string of extra body parameters to pass to the API. Example: --extra_body \'{"chat_template_kwargs": {"enable_thinking": false}}\'',
+        help="JSON object of extra fields to add to every request body, on "
+        "the openai and anthropic routes. It reaches the capability probe "
+        "and the JSON rungs as well as the translate calls, so the endpoint "
+        "is graded on the request the run actually makes. Merged over the "
+        "named parameters, so a field here beats the flag for it (a "
+        "temperature in --extra_body beats --temperature). Examples: "
+        '\'{"chat_template_kwargs": {"enable_thinking": false}}\' on the '
+        'openai route, \'{"thinking": {"type": "disabled"}}\' on anthropic',
+    )
+    parser.add_argument(
+        "--extra_headers",
+        dest="extra_headers",
+        type=str,
+        default="",
+        help="JSON object of extra HTTP headers to send with every request, "
+        "on the openai and anthropic routes. Set on the client, so the "
+        "capability probe, the model check and the model listing carry them "
+        "too. Example: --extra_headers "
+        '\'{"HTTP-Referer": "https://example.com", "X-Title": "bbm"}\'',
     )
     parser.add_argument(
         "--quiet",
@@ -1143,26 +1161,77 @@ def main():
     if price_table is not None and hasattr(e.translate_model, "usage"):
         # the bar shows what was spent instead of token counts
         e.translate_model.usage.prices = price_table
-    # Parse and set extra_body only on request paths that consume it. Setting
-    # an arbitrary attribute on the other translators used to print success
-    # and then silently drop the fields.
-    if options.extra_body:
-        # The OpenAI request path is what reads it, so every route built on
-        # that path takes it — naming the format instead would have told a
-        # groq or xai run that its fields were dropped when they were not.
-        if not issubclass(translate_model, ChatGPTAPI):
+    # Request extras, on the routes that build a request these can join.
+    # Setting an arbitrary attribute on the others used to print success and
+    # then silently drop the fields.
+    if options.extra_body or options.extra_headers:
+        given = [
+            flag
+            for flag, value in (
+                ("--extra_body", options.extra_body),
+                ("--extra_headers", options.extra_headers),
+            )
+            if value
+        ]
+        if not translate_model.SUPPORTS_REQUEST_EXTRAS:
+            # Named by capability, not by format: `groq`, `xai`, `litellm`
+            # and `orcarouter` are the openai request path and do take them,
+            # and naming the format would have told those runs otherwise.
             print(
-                f"[bold yellow]Warning:[/bold yellow] --extra_body is ignored "
-                f"by the {api_format} route"
+                f"[bold yellow]Warning:[/bold yellow] "
+                f"{' and '.join(given)} "
+                f"{'is' if len(given) == 1 else 'are'} ignored by the "
+                f"{api_format} route, which builds no request they could "
+                f"join; the run continues without them."
             )
         else:
-            try:
-                extra_body = json.loads(options.extra_body)
-                e.translate_model.extra_body = extra_body
-                print(f"[bold blue]Extra body parameters:[/bold blue] {extra_body}")
-            except json.JSONDecodeError as ex:
-                print(f"[bold red]Error:[/bold red] Invalid JSON in --extra_body: {ex}")
+            extras = {}
+            for flag, dest in (
+                ("--extra_body", "extra_body"),
+                ("--extra_headers", "extra_headers"),
+            ):
+                raw = getattr(options, dest)
+                if not raw:
+                    continue
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError as ex:
+                    print(f"[bold red]Error:[/bold red] invalid JSON in {flag}: {ex}")
+                    exit(1)
+                if not isinstance(parsed, dict):
+                    # A list or a bare string would be accepted by the SDK
+                    # and rejected by the endpoint, one paid request later.
+                    print(
+                        f"[bold red]Error:[/bold red] {flag} must be a JSON "
+                        f"object, not {type(parsed).__name__}."
+                    )
+                    exit(1)
+                extras[dest] = parsed
+            if "extra_headers" in extras and not all(
+                isinstance(v, str) for v in extras["extra_headers"].values()
+            ):
+                # httpx raises on a non-string header value, deep in the
+                # first request rather than here.
+                print(
+                    "[bold red]Error:[/bold red] --extra_headers values must "
+                    "all be strings."
+                )
                 exit(1)
+            e.translate_model.set_request_extras(**extras)
+            if "extra_body" in extras:
+                print(
+                    f"[bold blue]--extra_body:[/bold blue] "
+                    f"{escape(str(extras['extra_body']))}"
+                )
+            if "extra_headers" in extras:
+                # Names only. A header is where a credential goes —
+                # Authorization, X-API-Key — and echoing the value would put
+                # it in every log and CI artifact the run touches.
+                names = ", ".join(sorted(extras["extra_headers"]))
+                print(
+                    f"[bold blue]--extra_headers:[/bold blue] {escape(names)} "
+                    f"(values not shown)"
+                )
     # other options
     if options.sentence_mode:
         e.sentence_mode = True
@@ -1295,7 +1364,7 @@ def main():
             except Exception as err:
                 if not getattr(err, "user_facing", False):
                     raise
-                print(f"[bold red]{escape(str(err))}[/bold red]")
+                print(f"[bold red]{escape(redact(err))}[/bold red]")
                 exit(1)
     elif model_names:
         # These formats translate through a fixed engine and take no model, so
@@ -1326,7 +1395,7 @@ def main():
             # message is the whole explanation
             if not getattr(err, "user_facing", False):
                 raise
-            print(f"[bold red]{escape(str(err))}[/bold red]")
+            print(f"[bold red]{escape(redact(err))}[/bold red]")
             exit(1)
         if mode == "model":
             print(f"plan mode: on ({reason})")
@@ -1345,7 +1414,7 @@ def main():
         # agent) to hand-edit, so its lint errors are the failure a user is
         # most likely to see — print them like every other plan failure,
         # not as a traceback.
-        print(f"[bold red]{escape(str(err))}[/bold red]")
+        print(f"[bold red]{escape(redact(err))}[/bold red]")
         raise SystemExit(1)
 
 

@@ -19,6 +19,7 @@ from ..session_context import (
     compact_budget_for,
     handoff_prompt,
 )
+from ..redaction import remember
 from ..structured import RungRejected
 
 # The window this route falls back to when the CLI hands it a limit of 0.
@@ -111,6 +112,7 @@ class Claude(Base):
 
     SUPPORTS_SESSION_CONTEXT = True
     SUPPORTS_PARALLEL_CONTEXT = True
+    SUPPORTS_REQUEST_EXTRAS = True
     # Compact attempts before giving up on a summary and starting clean. More
     # than one so a transient error does not cost the accumulated context;
     # bounded so a broken endpoint cannot grow the history forever.
@@ -214,6 +216,14 @@ class Claude(Base):
         the very content it just sent.
         """
         return self.session is None
+
+    def set_request_extras(self, extra_body=None, extra_headers=None):
+        """See `Base.set_request_extras`. Headers ride on the client."""
+        self.extra_body = extra_body or {}
+        self.extra_headers = extra_headers or {}
+        remember(*self.extra_headers.values())
+        if self.extra_headers:
+            self.client = self.client.with_options(default_headers=self.extra_headers)
 
     def rotate_key(self):
         """Advance to the next key, as the comma-separated form promises.
@@ -399,6 +409,7 @@ class Claude(Base):
                 system=self.prompt_sys_msg,
                 temperature=self.temperature,
                 model=self.model,
+                extra_body=self.extra_body or None,
                 **self._cache_kwargs(),
             )
             self._note_usage(r)
@@ -521,8 +532,10 @@ class Claude(Base):
                 max_tokens=4096,
                 model=model or self.model,
                 messages=[{"role": "user", "content": prompt}],
+                extra_body=self.extra_body or None,
             )
         except (BadRequestError, UnprocessableEntityError) as e:
+            self.warn_if_extras_refused(e)
             raise RungRejected(e) from e
         except APIStatusError as e:
             self._explain_wrong_shape(e)
@@ -542,6 +555,7 @@ class Claude(Base):
                 system=self.prompt_sys_msg,
                 temperature=self.temperature,
                 model=self.model,
+                extra_body=self.extra_body or None,
                 **self._cache_kwargs(),
             )
         except APIStatusError as e:

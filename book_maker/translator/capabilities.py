@@ -198,7 +198,7 @@ def grade_probe_response(completion):
     return "strict" if parsed[PROBE_KEY] == PROBE_EXPECTED else "shape"
 
 
-def probe_structured_output(client, model):
+def probe_structured_output(client, model, extra_body=None):
     """Ask `model` whether the endpoint really applies a strict JSON Schema.
 
     Grades the response body: accepting the request proves nothing, because
@@ -206,6 +206,10 @@ def probe_structured_output(client, model):
     No temperature and no token cap — the probe must test exactly one
     capability, and a cap would be rejected by o-series/gpt-5 models or eaten
     by reasoning tokens, producing a false negative.
+
+    `extra_body` is the run's own `--extra_body`, for the reason
+    `probe_model_route` gives: a verdict earned on a request shape the run
+    never sends is a verdict about a different endpoint.
 
     Returns a verdict string. Fatal errors propagate; a transient outage
     raises `ProbeDeferred` so no verdict is cached.
@@ -218,6 +222,7 @@ def probe_structured_output(client, model):
                 "type": "json_schema",
                 "json_schema": STRUCTURED_PROBE_SCHEMA,
             },
+            extra_body=extra_body or None,
         )
     except PROBE_FATAL_ERRORS:
         raise
@@ -301,18 +306,23 @@ def _named_param(text):
     return match.group(1) if match else None
 
 
-def probe_model_route(client, model):
+def probe_model_route(client, model, extra_body=None):
     """Ask this endpoint to serve `model` once, as cheaply as a request can be.
 
     Gateways routinely serve models they do not list, so the route is asked,
     not the listing. Raises `ModelUnavailable` when the endpoint says there
     is no such model; any other failure is re-raised untouched, since it is
     not an answer about the model.
+
+    `extra_body` is the run's own `--extra_body`. Asking without it would
+    check a request the run never makes: an endpoint that needs a field to
+    answer at all would be judged on a shape it is not given.
     """
     try:
         client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": ROUTE_PROBE_PROMPT}],
+            extra_body=extra_body or None,
         )
     except Exception as e:
         if names_missing_model(e, model):
@@ -339,7 +349,7 @@ def describe_listing(api_models, limit=LISTING_HINT_LIMIT):
     return f"{names[:limit]} and {len(names) - limit} more"
 
 
-def verify_model_routes(client, model_list):
+def verify_model_routes(client, model_list, extra_body=None):
     """Which of `model_list` this endpoint actually serves, in the order given.
 
     One route probe per model. A model that answers is usable; a model the
@@ -355,7 +365,7 @@ def verify_model_routes(client, model_list):
     available, unavailable = [], []
     for model_name in model_list:
         try:
-            probe_model_route(client, model_name)
+            probe_model_route(client, model_name, extra_body=extra_body)
         except ModelUnavailable as e:
             print(f"[red]{e}[/red]")
             unavailable.append(model_name)

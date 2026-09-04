@@ -524,3 +524,32 @@ class TestBadRequestClassification:
         # Misreading a temperature 400 as "no schema support" demotes the model
         # for the rest of the run and hides the real cause from the user.
         assert classify_bad_request(_api_error(BadRequestError, 400, message)) == kind
+
+
+class TestProbesCarryTheRunsExtraBody:
+    """A verdict earned on a request shape the run never sends is a verdict
+    about a different endpoint. Both probes take `--extra_body`."""
+
+    def test_the_schema_probe_sends_it(self):
+        create = Mock(return_value=_completion('{"answer": "ignored"}'))
+        probe_structured_output(
+            _client(create), "m", extra_body={"enable_thinking": False}
+        )
+
+        assert create.call_args.kwargs["extra_body"] == {"enable_thinking": False}
+
+    def test_the_route_probe_sends_it(self):
+        create = Mock(return_value=_completion("PONG"))
+        probe_model_route(
+            _route_client(create), "m", extra_body={"enable_thinking": False}
+        )
+
+        assert create.call_args.kwargs["extra_body"] == {"enable_thinking": False}
+
+    def test_no_extra_body_sends_none_not_an_empty_object(self):
+        # an endpoint that rejects unknown keys should see the request it
+        # would have seen before the flag existed
+        create = Mock(return_value=_completion("PONG"))
+        probe_model_route(_route_client(create), "m")
+
+        assert create.call_args.kwargs["extra_body"] is None

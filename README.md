@@ -550,11 +550,44 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
   Pass additional JSON parameters on the routes built on the OpenAI request
   path — `openai` and the OpenAI-style custom providers, and so also
-  `groq`, `xai`, `litellm` and `--model orcarouter`. Every other format says
-  so and ignores it. Provide a JSON string with the desired parameters.
+  `groq`, `xai`, `litellm` and `--model orcarouter` — and on the `anthropic`
+  route. Every other format says so and ignores it. It reaches the
+  capability probe and the JSON rungs as well as the translate calls, so the
+  endpoint is graded on the request the run actually makes. Provide a JSON
+  object with the desired parameters.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
+  ```
+
+- `--extra_headers`:
+
+  Extra HTTP headers sent with every request, on the same routes. They are
+  set on the client, so the capability probe, the model check and the model
+  listing carry them too. Values must be strings.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --key ${openrouter_key} --api_base https://openrouter.ai/api/v1 --model anthropic/claude-haiku-4.5 --extra_headers '{"HTTP-Referer": "https://example.com", "X-Title": "bilingual_book_maker"}'
+  ```
+
+  If the endpoint refuses a request carrying either flag, it says so and
+  quotes what the endpoint said, rather than quietly falling back.
+
+  Common forms, for reference:
+
+  ```shell
+  # openai route — disable a local/vLLM chat template's thinking block
+  --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
+  # openai route — sampling override the flag does not expose
+  --extra_body '{"top_p": 0.9}'
+  # anthropic route — turn extended thinking off, or on with a budget
+  --extra_body '{"thinking": {"type": "disabled"}}'
+  --extra_body '{"thinking": {"type": "enabled", "budget_tokens": 2000}}'
+
+  # OpenRouter attribution (shown on its dashboard)
+  --extra_headers '{"HTTP-Referer": "https://example.com", "X-Title": "bilingual_book_maker"}'
+  # a gateway's own auth or routing header (the value stays out of the logs)
+  --extra_headers '{"X-API-Key": "sk-gateway-..."}'
   ```
 
 - `--provider`:

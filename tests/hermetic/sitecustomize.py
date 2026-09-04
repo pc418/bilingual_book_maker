@@ -57,6 +57,11 @@ class OfflineTranslator:
     # it has none of the Batch API methods, and the CLI's refusal of --batch
     # on a route without them is part of the contract these tests exercise
     SUPPORTS_BATCH_API = False
+    # It builds no request, like the real `google` engine it stands in for,
+    # so --extra_body / --extra_headers have nothing to join. The CLI's
+    # refusal of them on such a route is part of the contract these tests
+    # exercise.
+    SUPPORTS_REQUEST_EXTRAS = False
     context_paragraph_limit = 3
 
     def __init__(self, *args, **kwargs):
@@ -111,6 +116,16 @@ class OfflineLLM(OfflineTranslator):
                 "This endpoint served none of the models ['ghost-model']."
             )
         return verdict
+
+    # An SDK-backed request, like the openai route this stands in for.
+    SUPPORTS_REQUEST_EXTRAS = True
+
+    def set_request_extras(self, extra_body=None, extra_headers=None):
+        # echoed so a CLI test can see what the run would have sent — header
+        # names only, for the reason the CLI redacts them: a header is where
+        # a credential goes, and a test log is still a log
+        names = sorted(extra_headers or {})
+        print(f"offline extras: body={extra_body or {}} header names={names}")
 
     def supports_structured_json(self):
         return True
