@@ -198,8 +198,13 @@ def check_file_filters_against(book, only_filelist, exclude_filelist):
 
 
 # ebooklib's own spine writer, captured before the class attribute is
-# replaced, so reinstalling the wrapper below cannot wrap itself.
-_EBOOKLIB_WRITE_OPF_SPINE = epub.EpubWriter._write_opf_spine
+# replaced. Read through `_bbm_wraps` so the capture survives a reload of
+# this module: after the wrapper is installed, the class attribute *is* the
+# wrapper, and capturing that would make it call itself until RecursionError.
+_INSTALLED_WRITE_OPF_SPINE = epub.EpubWriter._write_opf_spine
+_EBOOKLIB_WRITE_OPF_SPINE = getattr(
+    _INSTALLED_WRITE_OPF_SPINE, "_bbm_wraps", _INSTALLED_WRITE_OPF_SPINE
+)
 
 
 def _write_opf_spine_patch(obj, root, ncx_id):
@@ -233,6 +238,16 @@ def _write_opf_spine_patch(obj, root, ncx_id):
         value = wanted.get(itemref.get("idref"))
         if value:
             itemref.set("properties", value)
+
+
+_write_opf_spine_patch._bbm_wraps = _EBOOKLIB_WRITE_OPF_SPINE
+
+# Installed on import, not from `EPUBBookLoader.__init__`. `stamp_disclosure`
+# marks the note with `spine_properties`, and whether that reaches the file
+# must not depend on whether something else happened to build a loader first
+# in this process — anything that stamps a book and calls `write_epub` gets
+# the same OPF.
+epub.EpubWriter._write_opf_spine = _write_opf_spine_patch
 
 
 class EPUBBookLoader(BaseBookLoader):
@@ -382,7 +397,6 @@ class EPUBBookLoader(BaseBookLoader):
             pass
 
         epub.EpubWriter._write_items = _write_items_patch
-        epub.EpubWriter._write_opf_spine = _write_opf_spine_patch
         epub.EpubReader._check_deprecated = _check_deprecated
 
         try:
@@ -509,25 +523,28 @@ class EPUBBookLoader(BaseBookLoader):
                 continue
 
             if isinstance(metas, dict):
-                entries = (
-                    (name, value, others)
-                    for name, values in metas.items()
-                    for value, others in (
-                        (item if isinstance(item, tuple) else (item, None))
-                        for item in values
-                    )
-                )
+                entries = []
+                for name, values in metas.items():
+                    for item in values:
+                        try:
+                            value, others = (
+                                item if isinstance(item, tuple) else (item, None)
+                            )
+                        except Exception as e:
+                            # Unpacked one at a time on purpose. Built as a
+                            # generator instead, a single badly shaped value
+                            # raises at the loop below and takes the rest of
+                            # the namespace with it — and the namespace is
+                            # where dc:language and dc:identifier live.
+                            skipped.append((name, e))
+                            continue
+                        entries.append((name, value, others))
             else:
-                entries = metas
-
-            try:
-                entries = list(entries)
-            except Exception as e:
-                # The unpacking above is a generator, so a malformed value
-                # raises here rather than at the entry that holds it. One
-                # namespace is lost, not the book.
-                skipped.append((f"the whole {namespace or 'default'} namespace", e))
-                continue
+                try:
+                    entries = list(metas)
+                except Exception as e:
+                    skipped.append((f"the {namespace or 'default'} namespace", e))
+                    continue
 
             for entry in entries:
                 if not entry:

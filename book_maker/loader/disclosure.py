@@ -367,6 +367,26 @@ def stamp_disclosure(book, model, language, source_identifier=None, when=None):
         return None
 
     # ---- read the book, decide everything, touch nothing
+    #
+    # Including the two things the commit half assumes about the book, which
+    # is the only way the commit half can fail. `add_metadata` indexes
+    # `book.metadata[namespace]` as a dict of lists, and `_iter_metadata`
+    # deliberately tolerates a namespace that is not one — so such a book can
+    # reach here, and committing would raise between the credit and the note.
+    for namespace in (epub.NAMESPACES["DC"], None):
+        existing = book.metadata.get(namespace)
+        if existing is not None and not isinstance(existing, dict):
+            raise TypeError(
+                f"the book's {namespace or 'default'} metadata is a "
+                f"{type(existing).__name__}, not a dict of entries; nothing "
+                f"can be added to it"
+            )
+    if not hasattr(book.spine, "append"):
+        raise TypeError(
+            f"the book's spine is a {type(book.spine).__name__}; the "
+            f"translation note cannot be appended to it"
+        )
+
     when = when or date.today()
     contributor_id = allocate_contributor_id(book)
     item_id, file_name = allocate_colophon_names(book)

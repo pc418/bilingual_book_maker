@@ -881,17 +881,12 @@ def test_a_document_pinned_pre_paginated_does_not_make_the_book_so():
     assert not getattr(_colophon_entry(rebuilt), "spine_properties", None)
 
 
-def test_the_spine_property_reaches_the_opf(tmp_path, monkeypatch):
+def test_the_spine_property_reaches_the_opf(tmp_path):
     """ebooklib's spine writer emits `idref` and `linear` and nothing else,
     so the property only exists in the file because `epub_loader` wraps it.
-    Installed here explicitly: the wrapper is installed by
-    `EPUBBookLoader.__init__`, and these tests build their loader with
-    `__new__`."""
-    from book_maker.loader import epub_loader
-
-    monkeypatch.setattr(
-        epub.EpubWriter, "_write_opf_spine", epub_loader._write_opf_spine_patch
-    )
+    Nothing is installed here on purpose: importing the loader is what
+    installs the wrapper, so a caller that stamps a book and writes it
+    without ever building a loader gets the same OPF."""
     opf = _written_opf(tmp_path, _rebuild(_source(metadata=[FIXED_LAYOUT_META])))
 
     assert (
@@ -1045,3 +1040,55 @@ def test_an_underivable_identifier_does_not_stop_the_book(capsys, monkeypatch):
 
     assert rebuilt.get_metadata("DC", "title")
     assert "could not derive a stable identifier" in _said(capsys)
+
+
+def test_the_wrapper_names_what_it_wraps_so_a_reload_cannot_double_it():
+    """The capture at import reads `_bbm_wraps`. Without it, reloading this
+    module after the wrapper is installed captures the wrapper, which then
+    calls itself on the next write until RecursionError."""
+    from book_maker.loader import epub_loader
+
+    wrapped = epub_loader._write_opf_spine_patch._bbm_wraps
+
+    assert wrapped is not epub_loader._write_opf_spine_patch
+    # What a re-import would capture, run against what is installed now.
+    installed = epub.EpubWriter._write_opf_spine
+    assert getattr(installed, "_bbm_wraps", installed) is wrapped
+
+
+def test_one_badly_shaped_value_does_not_cost_its_whole_namespace(capsys):
+    """A three-element entry where the reader expects two. Unpacked in a
+    generator it raises at the loop, not at the entry, and everything else
+    in the namespace — dc:language, dc:identifier — goes with it."""
+    source = _source()
+    source.metadata[DC_NS].setdefault("subject", []).append(("Fables", None, "extra"))
+
+    rebuilt = _rebuild(source)
+
+    # The target language is written in front of the source's; what matters
+    # here is that the source's survived the malformed neighbour at all.
+    assert "en" in [value for value, _ in rebuilt.get_metadata("DC", "language")]
+    assert [value for value, _ in rebuilt.get_metadata("DC", "creator")] == [
+        "A. Author"
+    ]
+    said = _said(capsys)
+    assert "1 metadata entry could not be copied" in said
+    assert "subject" in said
+
+
+def test_a_book_that_cannot_take_the_stamp_is_refused_before_it_is_touched():
+    """The commit half assumes two things about the book, and they are the
+    only way it can fail. Checked while nothing has been written, so the
+    caller's warning is true: no half-applied credit is left behind."""
+    from book_maker.loader import disclosure
+
+    book = _rebuild(_source(), disclose=False)
+    # `_iter_metadata` tolerates this shape, so such a book reaches the stamp.
+    book.metadata[None] = ["not a dict of entries"]
+    before = len(book.metadata.get(DC_NS, {}).get("contributor", []))
+
+    with pytest.raises(TypeError):
+        disclosure.stamp_disclosure(book, "x/y", "zh-hans")
+
+    assert len(book.metadata.get(DC_NS, {}).get("contributor", [])) == before
+    assert not book.metadata.get(DC_NS, {}).get("description")

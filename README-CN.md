@@ -16,7 +16,6 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 AI 模型制作多语言
 
 </div>
 
-## 截图
 
 ![image](https://user-images.githubusercontent.com/15976103/222317531-a05317c5-4eee-49de-95cd-04063d9539d9.png)
 
@@ -34,8 +33,8 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 AI 模型制作多语言
 epub 标签分类仅在支持 JSON Schema 的接口上自动开启；不支持时只翻译 `p` 标签，
 因此诗歌等内容可能不会被翻译。详见计划模式。
 
-已废弃的参数（`--model gpt4o`、`--model gemini`、`--openai_key` 等）仍然可用：见
-[从旧参数迁移](./docs/migration.md)与[模型与语言](./docs/model_lang.md)。
+旧参数（`--model gpt4o`、`--model gemini`、`--openai_key` 等）仍然可用：见
+[从旧写法迁移](./docs/migration.md)与[模型与语言](./docs/model_lang.md)。
 
 ## 准备
 
