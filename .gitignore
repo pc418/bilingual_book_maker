@@ -151,7 +151,13 @@ prompts/
 
 # epubcheck is fetched on demand by whoever runs the corpus gate; the
 # unpacked distribution itself is not source
-tools/epubcheck-*/
+tools/epubcheck-*
+
+# the acceptance corpus, fetched or symlinked next to the checkout, never
+# committed: it is other people's books. The files inside are already covered
+# by *.epub; this line is for the symlink a worktree gets, which is not a
+# directory and so slipped past the pattern above it
+epub-sample
 
 # where runs put what they produce: the corpus gate writes its partition
 # audit here, and translated books land next to it
