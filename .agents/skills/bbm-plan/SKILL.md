@@ -126,7 +126,9 @@ and tell the user to rotate it.
 ## 1. Intake — what else to ask for
 
 1. **Book path** and **target language** (`--language`, e.g. `zh-hans`,
-   `ja`, `Simplified Chinese`).
+   `ja`, `Simplified Chinese`). When the operator names the source
+   language too, pass the pair: `--language en:zh-hant` — worth doing for
+   a book whose short lines or names could be misdetected.
 2. **Their prompt file** — asked in step 0's one question. If they hand
    one over, lint it before the first paid run — contract and commands in
    **`references/prompt-files.md`**. If they say no, offer one sentence of
@@ -284,14 +286,20 @@ What the report gives you, and what each part is for:
   either a translation unit or a skip with a stated structural reason, and
   the run proves the accounting adds up, so a low number means the book
   really is mostly apparatus — not that something was quietly dropped.
-- **Poetry windows.** Stanza-shaped runs are batched `--poetry-group-size`
-  lines per request so verse is translated with its neighbours.
+- **Short-run batches.** Consecutive short lines — verse, lists, short
+  table entries — share one request, `--poetry-group-size` lines at most,
+  so each line is translated with its neighbours in view. The report's
+  `batches:` line says how many requests the book's units packed into.
+- **Inline markers.** A short excluded inline (`<code>`, `<sup>`, an
+  `<img>`) no longer splits its sentence: the model sees a `⟦code1⟧`
+  token and the original node is put back at that spot afterwards.
 
 Symptom → knob, when reading the report:
 
 | symptom in report | knob |
 |---|---|
-| verse split awkwardly across requests | raise `--poetry-group-size` |
+| short lines split awkwardly across requests | raise `--poetry-group-size` |
+| `N marker(s) missing … — reconciled` lines | benign one-off; if most units say it, the model ignores the token instruction — try a stronger model |
 | legit low coverage (dictionary, critical edition, apparatus-heavy) | lower `--plan-min-coverage` deliberately, and say so in the plan summary |
 | visible text under a `hidden` skip reason, or vice versa | inspect the epub's CSS before overriding |
 
@@ -418,7 +426,7 @@ so you can honour a request without guessing at legal values.
 |---|---|---|---|
 | `--plan-classify` | `auto`, `none`, `all`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
-| `--poetry-group-size` | integer lines per request | **8** | verse is split awkwardly (raise it), or stanzas are long enough that a window is unwieldy (lower it) |
+| `--poetry-group-size` | integer, short lines per request | **8** | short lines split awkwardly across requests (raise it), or grouped lines confuse each other's translation (lower it) |
 | `--exclude-translate-tags` | comma-separated tags; `""` excludes nothing | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
 
 ### Context and consistency

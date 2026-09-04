@@ -172,7 +172,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 * [xAI](https://x.ai)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-beta
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-4.3
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -349,6 +349,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 - `--language`:
 
   Set the target language like `--language "Simplified Chinese"`. Default target language is `"Simplified Chinese"`.
+  A pair form names the source as well: `--language en:zh-hant` translates from English. With a bare target the source is auto-detected, as before.
   Read available languages by helper message: `python make_book.py --help`
 
 - `--proxy`:
@@ -385,7 +386,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   - `--plan-dry-run`: print the per-signature table, write `<book>_plan.json`, and exit. Honors `--only_filelist` / `--exclude_filelist`.
   - `<book>_plan.json`: the translation plan; delete it to classify again.
   - `--plan-min-coverage` (default 0.5): plan mode aborts if the plan covers less than this fraction of the text.
-  - `--poetry-group-size` (default 8): runs of short verse lines are grouped into stanzas of up to this many lines and translated together.
+  - `--poetry-group-size` (default 8): consecutive short lines — verse, lists, tables of short entries — are translated together, up to this many per request, so each line sees its neighbours.
 
   ```shell
   # let the model judge which tags need translating

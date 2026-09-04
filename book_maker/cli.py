@@ -575,7 +575,7 @@ def build_parser():
         ),
         default="zh-hans",
         metavar="LANGUAGE",
-        help="language to translate to, or SOURCE:TARGET to name both "
+        help="target language, or SOURCE:TARGET to state the source too "
         "(e.g. en:zh-hant); available: {%(choices)s}",
     )
     parser.add_argument(
@@ -658,8 +658,9 @@ def build_parser():
         dest="poetry_group_size",
         type=int,
         default=8,
-        help="in plan mode, max short units batched per translation request "
-        "(default 8)",
+        help="plan mode: consecutive short lines share one translation "
+        "request, at most this many per request (default 8; ~500 "
+        "characters per request either way)",
     )
     parser.add_argument(
         "--plan-classify",

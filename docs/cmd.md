@@ -11,7 +11,7 @@ sections after it provide additional notes for selected workflows.
 | Option | Purpose |
 |---|---|
 | `--book_name PATH` | Input EPUB, TXT, Markdown, SRT, or PDF path (required). |
-| `--language LANGUAGE` | Target language; default `zh-hans`. |
+| `--language LANGUAGE` | Target language, or `SOURCE:TARGET` (e.g. `en:zh-hant`) to state the source; default `zh-hans`. |
 | `--source_lang LANGUAGE` | Source language for models such as Qwen; default `auto`. |
 | `--single_translate` | Output translation only instead of bilingual text. |
 | `--no_disclosure` | Do not mark the epub as a machine translation (translator credit, description line, closing note). |
@@ -33,7 +33,7 @@ sections after it provide additional notes for selected workflows.
 | `--plan-classify {auto,none,all,model,agent}` | No plan, the whole partition, model triage, or coding-agent triage. Default `auto`: model triage on an epub whose endpoint is verified to apply a strict JSON schema, tag mode otherwise. |
 | `--plan-classify-model MODEL` | Classification model; implies model mode and conflicts with `all`/`agent`. |
 | `--plan-min-coverage FRACTION` | Fail if selected planned text is below this fraction; default `0.5`. |
-| `--poetry-group-size N` | Maximum verse lines per planned translation request; default `8`. |
+| `--poetry-group-size N` | Maximum consecutive short lines per planned translation request; default `8`. |
 
 ### Translation and execution
 
