@@ -25,15 +25,16 @@ guess. Any model id reaches any endpoint; nothing has to be registered.
 | the anthropic shape, on a gateway domain | the same plus `--api_format anthropic` |
 | an entry in `bbm_providers.json` / `~/.bbm/providers.json` | `--provider NAME`, optionally `--model "$MODEL"` |
 | the OrcaRouter gateway | `--model orcarouter`, no `--api_base` |
-| nothing: a local Codex sidecar on the user's plan | `--model codex`, no key, no base (SKILL.md §1c) |
+| nothing: a local Codex sidecar on the user's plan | `--api_format codex`, no key, no base (SKILL.md §1c) |
 
 On the openai format `--model` may be left out; it defaults to
 `gpt-5.6-luna`. Every other format wants an id, and the anthropic format
 errors without one.
 
 `codex` is the one route with no endpoint to probe. It is not a model id and
-not a host, so none of the probes below apply to it. `--model codex` and
-`--api_format codex` select the same thing.
+not a host, so none of the probes below apply to it. Spell it
+`--api_format codex`; `--model codex` is the same route under an older
+spelling.
 
 A gateway asked for the anthropic shape it does not serve answers 404, and
 the run stops naming `--api_format openai` as the fix. `--api_base` may be

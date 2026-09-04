@@ -398,7 +398,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 - `--accumulated_num`:
 
   达到累计token数开始进行翻译。gpt3.5将total_token限制为4090。
-  例如，如果您使用`--accumulation_num 1600`，则可能会输出2200个令牌，另外200个令牌用于系统指令（system_message）和用户指令（user_message），1600+2200+200 = 4000，所以token接近极限。你必须选择一个自己合适的值，我们无法在发送之前判断是否达到限制
+  例如，如果您使用`--accumulated_num 1600`，则可能会输出2200个令牌，另外200个令牌用于系统指令（system_message）和用户指令（user_message），1600+2200+200 = 4000，所以token接近极限。你必须选择一个自己合适的值，我们无法在发送之前判断是否达到限制
 
 - `--use_context`:
   使用上下文模式翻译。

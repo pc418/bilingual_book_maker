@@ -72,7 +72,7 @@ Read the answer into the `ROUTE` array every later step uses:
 | a bare `OPENAI_API_KEY` | `(--provider openai)` after step 0b | openai |
 | a bare `ANTHROPIC_API_KEY` | `(--provider anthropic)` after step 0b | anthropic |
 | `BBM_ORCAROUTER_API_KEY` | `(--model orcarouter)` | openai |
-| codex, signed in | `(--model codex)` — §1c, nothing else to set up | codex |
+| codex, signed in | `(--api_format codex)` — §1c, nothing else to set up | codex |
 
 The route decides the **default flag set** (§1d). Say the choice back in
 one line with the format it implies.
@@ -156,7 +156,7 @@ Base command — `ROUTE` from step 0, `CONTEXT` from §1d:
 
 ```bash
 set -a; source .env; set +a
-ROUTE=(--provider openai)                   # or (--provider NAME) / (--model codex)
+ROUTE=(--provider openai)                   # or (--provider NAME) / (--api_format codex)
 CONTEXT=(--use_context session)             # or () on codex
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
   --language "$LANG" --plan-classify agent "${CONTEXT[@]}"
@@ -207,19 +207,20 @@ itself is rejected by its own provider.
 
 ## 1c. The codex route — a subscription, not an endpoint
 
-`--model codex` and `--api_format codex` are the same thing, and neither
-names a model or a host: the run drives a local `codex app-server` sidecar
+`--api_format codex` names a route, not a model or a host (`--model codex`
+is the same route spelled the older way): the run drives a local
+`codex app-server` sidecar
 and spends the user's ChatGPT/Codex plan allowance instead of API credits.
 **Step 1b does not apply**: there is nothing to curl and no key to resolve.
 
 ```bash
-python make_book.py --book_name "$BOOK" --model codex --language "$LANG" \
+python make_book.py --book_name "$BOOK" --api_format codex --language "$LANG" \
   --plan-classify agent
 ```
 
-- **`--model codex` runs `gpt-5.6-luna`.** To name another model, spell
-  the route as `--api_format codex --model "$MODEL"`, and offer only ids
-  the user's plan lists.
+- **`--api_format codex` alone runs `gpt-5.6-luna`.** To name another
+  model, add `--model "$MODEL"` to it, and offer only ids the user's plan
+  lists.
 - **No `--key`, no `--api_base`.** Run `codex login` once beforehand. The
   run checks that the sidecar is up and signed in before parsing the book,
   and reports how much of the 5-hour window is left.
@@ -257,7 +258,7 @@ legal alternatives.
 | openai (any OpenAI-shaped entry, `orcarouter`, and `groq`/`xai`/`litellm`, which are that route at their own address) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8000 tokens; costs less than window mode for several times the context |
 | anthropic (`api_style: anthropic`) | `(--provider NAME)` | `(--use_context session)` | the same history, and this route keeps it |
 | gemini, qwen | `(--provider NAME)` | `(--use_context)` | neither keeps a re-sendable session history, so `--use_context session` is refused; window mode is what they have — Gemini's own chat history, Qwen's translation memory |
-| codex | `(--model codex)` | `()` | the thread is the context; a context flag has nothing to add to it |
+| codex | `(--api_format codex)` | `()` | the thread is the context; a context flag has nothing to add to it |
 
 Common to all of them, per step: `--plan-classify agent` always; the full
 run adds `--quiet`, and `--resume` only once a cache exists (§5); the
@@ -403,10 +404,10 @@ so you can honour a request without guessing at legal values.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--model` | any model id the endpoint uses, verbatim; or `codex`; or `orcarouter` | the entry's `default_models`; unset on the openai format means `gpt-5.6-luna` | the user names a different model, wants their ChatGPT plan spent (`codex`, §1c), or wants the OrcaRouter gateway, which `--model orcarouter` reaches with no `--api_base` |
+| `--model` | any model id the endpoint uses, verbatim; or `orcarouter` | the entry's `default_models`; unset on the openai format means `gpt-5.6-luna` | the user names a different model, or wants the OrcaRouter gateway, which `--model orcarouter` reaches with no `--api_base`. A ChatGPT plan is `--api_format codex` (§1c), not a `--model` value |
 | `--model_list` | several ids, comma-separated | *unset*; one model goes in `--model` | rate limits force rotation. Naming a model in both flags is an error. Each id keeps its own prompt cache, so every switch re-pays the `--use_context session` history at full price |
 | `--key` | one key, or several comma-separated to rotate past rate limits | **never passed**; the entry's `env_key` (then `$BBM_API_KEY`, then `$OPENAI_API_KEY` / `$ANTHROPIC_API_KEY`) is read from the environment | never; omit on the `codex` route too |
-| `--api_format` | `openai`, `anthropic`, `codex`, `gemini`, `qwen`, `groq`, `xai`, `litellm`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi` | *unset*; inferred from `--api_base`, then from the model id | step 1b proved the guess wrong. The machine-translation formats cannot answer a question, so they are translation-only |
+| `--api_format` | `openai`, `anthropic`, `codex`, `gemini`, `qwen`, `groq`, `xai`, `litellm`, `google`, `caiyun`, `deepl`, `deeplfree`, `tencent`, `customapi` | *unset*; inferred from `--api_base`, then from the model id | the run spends the user's ChatGPT plan (`codex`, §1c), or step 1b proved the guess wrong. The machine-translation formats cannot answer a question, so they are translation-only |
 | `--api_base` | endpoint URL | *unset*; the entry's `base_url` | a gateway, proxy or local server. The OpenAI shape wants `…/v1`; the anthropic shape wants the bare host |
 | `--provider` | a name from `bbm_providers.json` (repo root) or `~/.bbm/providers.json` | **the route, step 0** | the endpoint is an entry there: one word supplies `--api_base`, `--api_format`, the model(s) and the key variable. Explicit flags still win, so `--model` may ride along. An unknown name is an error naming both files |
 | `--proxy` | `http://127.0.0.1:7890`-style | *unset* | the user is behind one |
@@ -438,6 +439,7 @@ so you can honour a request without guessing at legal values.
 | `--single_translate` | on/off | **off** | **only** when the user asked for a translated-only book in so many words. Naming a target language is not that request. The original is replaced, so there is nothing to compare against afterwards; `--translation_style` still applies |
 | `--translation_style` | CSS declarations | *unset* | the translation should be visually separated, e.g. `"color:#808080;font-style:italic"`. It is the whole declaration block, so it replaces `--translation_color` rather than merging with it (the run says so) |
 | `--translation_color` | a colour | *unset* | the user wants only a colour and no other CSS. Passing both: `--translation_style` wins, and the run says the colour was lost |
+| `--no_disclosure` | on/off | **off — the epub says it is a machine translation**: the tool is credited as a translator, a description line names the model, and a closing note ends the book | the user asks for the note gone in so many words. Say what they lose: a reader can no longer tell the translation from a human one, and the model that made it is no longer recorded. Ignored on non-epub output, which carries no note |
 
 ### Scope and run control
 

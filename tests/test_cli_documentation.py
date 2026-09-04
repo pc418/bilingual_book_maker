@@ -84,3 +84,79 @@ def test_help_renders():
     # the interpolated help strings render too — argparse's own `%` path,
     # which is what a literal percent sign elsewhere would break
     assert "available:" in proc.stdout
+
+
+# Flags that appear in the references without being ours: `--help`, docker's
+# own flags in the docker section, and the shell placeholders the skill uses
+# in its recipes.
+_FOREIGN_FLAGS = frozenset(
+    {"--help", "--rm", "--name", "--mount", "--tag", "--flag", "--git-common-dir"}
+)
+
+# Every file an operator or an agent reads to decide what to type. The skill
+# and its references are read by an LLM, which cannot tell a flag that was
+# removed from one that still exists.
+_REFERENCES = (
+    "README.md",
+    "README-CN.md",
+    "docs/cmd.md",
+    "docs/migration.md",
+    "docs/model_lang.md",
+    "docs/env_settings.md",
+    "docs/quickstart.md",
+    "docs/index.md",
+    "docs/prompt.md",
+    "docs/book_source.md",
+    "docs/installation.md",
+    ".agents/skills/bbm-plan/SKILL.md",
+    ".agents/skills/bbm-plan/references/providers.md",
+    ".agents/skills/bbm-plan/references/prompt-files.md",
+    ".agents/skills/bbm-plan/assets/env.example",
+)
+
+
+def _legacy_flags() -> set[str]:
+    """The removed flags `legacy_cli` still accepts and rewrites.
+
+    A reference may name these — migration.md is nothing but these — so they
+    are documentable even though argparse has never heard of them.
+    """
+    from book_maker import legacy_cli
+
+    flags = set(legacy_cli._KEY_FLAGS)
+    flags.update({"--model", "--ollama_model", "--custom_api", "--deployment_id"})
+    return flags
+
+
+def test_references_name_no_flag_that_does_not_exist():
+    """The other direction of the test above: nothing invented, nothing stale.
+
+    A flag deleted from the parser leaves its rows behind in prose, and a
+    typo'd name (`--accumulation_num`) reads exactly like a real one. Both
+    send a reader — or an agent following the skill — to an argparse error.
+    """
+    known = _long_cli_options() | _legacy_flags() | _FOREIGN_FLAGS
+    # Options hidden with argparse.SUPPRESS are absent from
+    # _long_cli_options by design; they are still legal to type, so a
+    # reference naming one is not an error.
+    tree = ast.parse((ROOT / "book_maker/cli.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "attr", "") == "add_argument"
+        ):
+            known.update(
+                arg.value
+                for arg in node.args
+                if isinstance(arg, ast.Constant)
+                and isinstance(arg.value, str)
+                and arg.value.startswith("--")
+            )
+    for name in _REFERENCES:
+        path = ROOT / name
+        if not path.exists():  # docs/ is trimmed on some branches
+            continue
+        named = set(re.findall(r"--[A-Za-z][A-Za-z0-9_-]*", path.read_text("utf-8")))
+        assert not (
+            named - known
+        ), f"{name} names flags the CLI does not have: {sorted(named - known)}"
