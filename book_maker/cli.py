@@ -22,7 +22,24 @@ from book_maker.translator import (
 from book_maker.redaction import redact
 from book_maker.translator.base_translator import PriceTable
 from book_maker.translator.capabilities import ModelUnavailable
-from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE
+from book_maker.utils import LANGUAGES, TO_LANGUAGE_CODE, parse_language_pair
+
+
+class LanguageChoices(list):
+    """`--language` values: a target, or `SOURCE:TARGET`.
+
+    A list, so `--help` still prints the languages; only membership is
+    widened. Both halves of a pair are checked, because a typo in the source
+    half would otherwise pass silently into the prompt as a language nobody
+    speaks.
+    """
+
+    def __contains__(self, value):
+        source, target = parse_language_pair(value)
+        if source is not None and not list.__contains__(self, source):
+            return False
+        return list.__contains__(self, target)
+
 
 # Where each format looks for a key when --key is absent. $BBM_API_KEY is the
 # one this project asks for; the rest are the variables people already have
@@ -553,11 +570,13 @@ def build_parser():
     parser.add_argument(
         "--language",
         type=str,
-        choices=sorted(LANGUAGES.keys())
-        + sorted([k.title() for k in TO_LANGUAGE_CODE]),
+        choices=LanguageChoices(
+            sorted(LANGUAGES.keys()) + sorted([k.title() for k in TO_LANGUAGE_CODE])
+        ),
         default="zh-hans",
         metavar="LANGUAGE",
-        help="language to translate to, available: {%(choices)s}",
+        help="language to translate to, or SOURCE:TARGET to name both "
+        "(e.g. en:zh-hant); available: {%(choices)s}",
     )
     parser.add_argument(
         "--resume",
@@ -639,7 +658,7 @@ def build_parser():
         dest="poetry_group_size",
         type=int,
         default=8,
-        help="in plan mode, max poetry lines batched per translation request "
+        help="in plan mode, max short units batched per translation request "
         "(default 8)",
     )
     parser.add_argument(
@@ -1107,10 +1126,14 @@ def main():
 
     book_loader = BOOK_LOADER_DICT.get(book_type)
     assert book_loader is not None, "unsupported loader"
-    language = options.language
-    if options.language in LANGUAGES:
-        # use the value for prompt
-        language = LANGUAGES.get(language, language)
+    # `--language en:zh-hant`: the target half drives everything the language
+    # has always driven (prompt, schema field names, the stamp on the output
+    # markup); the source half is evidence for the model and nothing else.
+    source_language, language = parse_language_pair(options.language)
+    # use the readable value for the prompt, on both halves
+    language = LANGUAGES.get(language, language)
+    if source_language:
+        source_language = LANGUAGES.get(source_language, source_language)
 
     # None lets each SDK use its own official host.
     model_api_base = options.api_base
@@ -1157,6 +1180,11 @@ def main():
         parallel_workers=options.parallel_workers,
         **loader_kwargs,
     )
+    if source_language and getattr(e, "translate_model", None) is not None:
+        # Reaches the prompt/system message and the schema field
+        # descriptions. Never a gate: a book whose source is not what the
+        # flag says still translates, it just says so in one sentence.
+        e.translate_model.source_language = source_language
     price_table = getattr(options, "price_table", None)
     if price_table is not None and hasattr(e.translate_model, "usage"):
         # the bar shows what was spent instead of token counts
