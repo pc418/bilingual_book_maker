@@ -17,7 +17,6 @@ The bilingual_book_maker is an AI translation tool that uses large language mode
 
 </div>
 
-## Screenshot
 
 ![image](https://user-images.githubusercontent.com/15976103/222317531-a05317c5-4eee-49de-95cd-04063d9539d9.png)
 
@@ -28,16 +27,17 @@ Usually it comes with three fields, two if you are using the official endpoints,
 `claude-sonnet-4-6` or `deepseek-v4-flash-0731`. 
 Specify `openai`, or `anthropic` at `--api_format` for API request formats.
 This argument also supports selecting some machine-translation engines (`google`, `caiyun`, `deepl`, `deeplfree`,
-`tencent`, `customapi`) or `codex` if you want to use your Codex quota instead. 
+`tencent`, `customapi` — an old request format, not an OpenAI-shaped one) or `codex`
+if you want to use your Codex quota instead. 
 
 `--provider` is an alternative way to pass credentials, through a JSON config file
 `bbm_providers.json`. 
 
 Epub tags classification is only auto enabled with JSON-schema enabled endpoints, without which only `p` tags are translated. Thus some poetry or verse may be omitted from translation. See plan mode for details.
 
-Deprecated flags (`--model gpt4o`,
+Older flags (`--model gpt4o`,
 `--model gemini`, `--openai_key`, …) still work: See
-[Migrating from the old flags](./docs/migration.md) and
+[Migrating from the old spellings](./docs/migration.md) and
 [Models and languages](./docs/model_lang.md).
 
 ## Preparation
@@ -178,19 +178,17 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
 * [OrcaRouter](https://www.orcarouter.ai)
 
-  The [OrcaRouter](https://www.orcarouter.ai) gateway, on its smart-routing
-  model `orcarouter/auto`. The address belongs to the route, so there is no
-  `--api_base` to type; the key is `--key` or `BBM_ORCAROUTER_API_KEY`.
-  `--provider orcarouter` from `bbm_providers.example.json` reaches the same
-  place.
+  The [OrcaRouter](https://www.orcarouter.ai) gateway, defaulting to its
+  `orcarouter/auto` smart routing. The address comes with the route, so there
+  is no `--api_base`; the key is `--key` or `BBM_ORCAROUTER_API_KEY`.
+  `--provider orcarouter` reaches the same place.
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
-  To pin one model there instead of letting the gateway route, address it as
-  the OpenAI-shaped endpoint it is: `--api_format openai --api_base
-  https://api.orcarouter.ai/v1 --model <id>`.
+  To pin one model instead of letting the gateway route: `--api_format openai
+  --api_base https://api.orcarouter.ai/v1 --model <id>`.
 
 * [Ollama](https://github.com/ollama/ollama)
 
@@ -336,7 +334,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   | `deepl` | required: `--key` or `$BBM_DEEPL_API_KEY` | DeepL (paid) |
   | `deeplfree` | none | DeepL free tier |
   | `tencent` | none | Tencent TranSmart, free |
-  | `customapi` | none; `--api_base` is your translation endpoint | a custom translation API |
+  | `customapi` | none; `--api_base` is your translation endpoint | the old `{text, source_lang, target_lang}` → `{"data"}` format. An OpenAI-shaped endpoint of your own is `--api_format openai --api_base` instead |
 
 - `--source_lang`:
 

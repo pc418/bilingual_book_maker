@@ -26,7 +26,7 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 AI 模型制作多语言
 `claude-sonnet-4-6` 或 `deepseek-v4-flash-0731`。
 在 `--api_format` 填 `openai` 或 `anthropic` 即可指定 API 请求格式。
 该参数也可以选择常规翻译引擎（`google`、`caiyun`、`deepl`、`deeplfree`、
-`tencent`、`customapi`），或填 `codex` 以使用你的 Codex 额度。
+`tencent`、`customapi`——旧的请求格式，并非 OpenAI 形状），或填 `codex` 以使用你的 Codex 额度。
 
 `--provider` 是另一种传凭据的方式，通过 JSON 配置文件 `bbm_providers.json`。
 
@@ -168,16 +168,15 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 * [OrcaRouter](https://www.orcarouter.ai)
 
-  [OrcaRouter](https://www.orcarouter.ai) 网关，使用其 `orcarouter/auto` 智能路由模型。
-  地址由该路由自带，无需填写 `--api_base`；key 用 `--key` 或环境变量
-  `BBM_ORCAROUTER_API_KEY`。`bbm_providers.example.json` 里的
+  [OrcaRouter](https://www.orcarouter.ai) 网关，默认使用 `orcarouter/auto` 智能路由。
+  地址随该路由自带，无需 `--api_base`；key 用 `--key` 或 `BBM_ORCAROUTER_API_KEY`。
   `--provider orcarouter` 指向同一处。
 
   ```shell
   python3 make_book.py --book_name test_books/animal_farm.epub --model orcarouter --key ${orcarouter_key}
   ```
 
-  若要指定具体模型而不走智能路由，就把它当作 OpenAI 格式的接口来填：
+  若要指定具体模型而不走智能路由：
   `--api_format openai --api_base https://api.orcarouter.ai/v1 --model <模型 id>`。
 
 * [Ollama](https://github.com/ollama/ollama)
@@ -309,7 +308,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   | `deepl` | 需要：`--key` 或 `$BBM_DEEPL_API_KEY` | DeepL（付费） |
   | `deeplfree` | 不需要 | DeepL 免费版 |
   | `tencent` | 不需要 | 腾讯交互翻译，免费 |
-  | `customapi` | 不需要；`--api_base` 是你的翻译接口地址 | 自定义翻译 API |
+  | `customapi` | 不需要；`--api_base` 是你的翻译接口地址 | 旧的 `{text, source_lang, target_lang}` → `{"data"}` 格式。自建的 OpenAI 形状接口请改用 `--api_format openai --api_base` |
 
 - `--source_lang`: 源语言，给需要显式声明的路线用：`--api_format qwen`（请求里就是一对语言）和 `--api_format customapi`，默认自动检测。
 
