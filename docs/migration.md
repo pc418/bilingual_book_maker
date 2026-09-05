@@ -20,6 +20,7 @@ deprecated: --model gpt4omini is now --model gpt-4o-mini
 | `--model qwen` / `qwen-mt-turbo` / `qwen-mt-plus` | `--api_format qwen --model qwen-mt-*` |
 | `--model groq --model_list X` | `--api_format groq --model_list X` |
 | `--model xai` | `--api_format xai --model grok-4.3` |
+| `--model codex` | `--api_format codex` (the sidecar's default model; add `--model` to name one) |
 | `--model google` / `caiyun` / `deepl` / `deeplfree` / `tencentransmart` | `--api_format google` / `caiyun` / `deepl` / `deeplfree` / `tencent` |
 | `--custom_api URL` | `--api_format customapi --api_base URL` |
 | `--openai_key` / `--claude_key` / `--gemini_key` / `--groq_key` / `--xai_key` / `--qwen_key` / `--caiyun_key` / `--deepl_key` / `--orcarouter_key` | `--key` (`--api_key` is the same flag and was never renamed) |

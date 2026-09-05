@@ -1219,9 +1219,12 @@ def main():
                 exit(1)
             e.translate_model.set_request_extras(**extras)
             if "extra_body" in extras:
+                # Through redact(): a body field is not where a credential
+                # belongs, but a gateway that wants the key in the body gets
+                # it repeated here, and the echo must not print it either.
                 print(
                     f"[bold blue]--extra_body:[/bold blue] "
-                    f"{escape(str(extras['extra_body']))}"
+                    f"{escape(redact(str(extras['extra_body'])))}"
                 )
             if "extra_headers" in extras:
                 # Names only. A header is where a credential goes —

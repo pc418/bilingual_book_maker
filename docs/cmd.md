@@ -77,7 +77,7 @@ A route is an endpoint, not a model name.
 | `--model_list IDS` | Several model ids to rotate across, comma-separated. A single model belongs in `--model`; naming a model in both flags is an error. |
 | `--source_lang LANG` | Source language, for the routes that want it stated (`qwen`, `customapi`); default `auto`. |
 | `--interval SECONDS` | Pause between requests, default `0.01`. Only the `gemini` route paces itself with it. |
-| `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name. Its `base_url`, `api_style` (`openai`, `anthropic`, `gemini`, `qwen`, `groq`, `xai` or `litellm`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Flags you pass yourself win. |
+| `--provider NAME` | A named endpoint from `bbm_providers.json` (this directory) or `~/.bbm/providers.json`; the project file wins on a shared name, and a name in neither falls back to the shipped `bbm_providers.example.json`, with a warning naming the address and key variable it used (its `FILL-ME` templates excluded). Its `base_url`, `api_style` (`openai`, `anthropic`, `gemini`, `qwen`, `groq`, `xai` or `litellm`), `default_models` and `env_key` stand in for `--api_base`, `--api_format`, `--model`/`--model_list` and the key. Flags you pass yourself win. |
 
 A gateway that serves Claude models speaks the OpenAI shape, and a gateway
 `--api_base` is taken to be that shape. The anthropic format is inferred only

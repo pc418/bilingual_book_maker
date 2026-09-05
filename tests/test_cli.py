@@ -1537,6 +1537,31 @@ class TestRequestExtrasFlags:
         assert "sk-SECRET" not in output
         assert "Authorization" in output  # the name still says what was sent
 
+    def test_a_body_field_repeating_the_key_is_masked_in_the_echo(self, tmp_path):
+        # a gateway that wants the key in the body gets it repeated there;
+        # the body echo goes through redact() like every other sink
+        src = tmp_path / BOOK.name
+        src.write_bytes(BOOK.read_bytes())
+        proc = _cli(
+            "--book_name",
+            str(src),
+            "--key",
+            "sk-live-0123456789",
+            "--api_format",
+            "openai",
+            "--model",
+            "m",
+            "--test",
+            "--test_num",
+            "1",
+            "--extra_body",
+            '{"api_key": "sk-live-0123456789", "top_p": 0.9}',
+        )
+        output = proc.stdout + proc.stderr
+
+        assert "sk-live-0123456789" not in output
+        assert "api_key" in output and "top_p" in output
+
     def test_both_flags_are_echoed_so_the_run_records_what_it_sent(self, tmp_path):
         proc = self._cli_extras(
             tmp_path,

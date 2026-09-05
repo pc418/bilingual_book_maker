@@ -67,6 +67,15 @@ class OfflineTranslator:
     def __init__(self, *args, **kwargs):
         self._fatal_error_detected = False
         self.is_test = False
+        # As Base.__init__ does: the key is a secret from the moment the
+        # translator holds it, and every sink the CLI prints goes through
+        # redact(); a stand-in that skipped this would let a CLI test pass
+        # while the real run printed the key.
+        from book_maker.redaction import remember
+
+        key = kwargs.get("key", args[0] if args else None)
+        if key:
+            remember(*str(key).split(","))
 
     def rotate_key(self):
         pass
@@ -124,8 +133,14 @@ class OfflineLLM(OfflineTranslator):
         # echoed so a CLI test can see what the run would have sent — header
         # names only, for the reason the CLI redacts them: a header is where
         # a credential goes, and a test log is still a log
+        from book_maker.redaction import redact, remember
+
+        remember(*(extra_headers or {}).values())
         names = sorted(extra_headers or {})
-        print(f"offline extras: body={extra_body or {}} header names={names}")
+        print(
+            f"offline extras: body={redact(str(extra_body or {}))} "
+            f"header names={names}"
+        )
 
     def supports_structured_json(self):
         return True
