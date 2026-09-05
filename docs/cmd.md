@@ -14,7 +14,7 @@ sections after it provide additional notes for selected workflows.
 | `--language LANGUAGE` | Target language; default `zh-hans`. |
 | `--source_lang LANGUAGE` | Source language for models such as Qwen; default `auto`. |
 | `--single_translate` | Output translation only instead of bilingual text. |
-| `--no_disclosure` | Do not mark the epub as a machine translation (translator credit, description line, closing note). |
+| `--no_disclosure` | Do not mark the epub as an AI translation, or a machine translation on the engine formats (translator credit, description line, closing note). |
 | `--translate-tags TAGS` | Comma-separated EPUB tags; default `p`, ignored in plan mode. |
 | `--exclude-translate-tags TAGS` | EPUB ancestor tags to exclude; default `sup,code`; `""` clears it. |
 | `--allow_navigable_strings` | Include otherwise untagged EPUB strings; redundant in plan mode. |

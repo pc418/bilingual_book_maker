@@ -124,15 +124,16 @@ def test_the_description_names_the_model_the_run_used(tmp_path):
 
     year = date.today().year
     assert (
-        f"<dc:description>Machine translation (x/y, {year}). Original text "
-        f"unaltered; translation quality not verified.</dc:description>" in opf
+        f"<dc:description>AI translation (x/y, {year}).\n"
+        "Original text unaltered; translation quality not verified."
+        "</dc:description>" in opf
     )
 
 
 def test_a_translator_with_no_model_still_says_what_made_the_file(tmp_path):
     opf = _written_opf(tmp_path, _rebuild(_source(), model=ModellessModel))
 
-    assert "Machine translation (ModellessModel," in opf
+    assert "AI translation (ModellessModel," in opf
 
 
 def test_the_source_description_survives(tmp_path):
@@ -242,10 +243,111 @@ def test_a_rebuild_of_a_translated_book_stacks_nothing(tmp_path):
             opf_name = next(n for n in archive.namelist() if n.endswith(".opf"))
             opf = archive.read(opf_name).decode("utf-8")
         assert opf.count(f'id="{CONTRIBUTOR_ID}"') == 1, output.name
-        assert opf.count("Machine translation (") == 1, output.name
+        assert opf.count("AI translation (") == 1, output.name
         assert opf.count(f'href="{COLOPHON_FILE}"') == 1, output.name
         assert opf.count(f'idref="{COLOPHON_ID}"') == 1, output.name
         assert opf.index(f'idref="{COLOPHON_ID}"') > opf.rindex("<spine")
+
+
+# ------------------------------------------------- what did the work: the label
+
+
+def _service(cls, model=None):
+    """A registered translator with nothing constructed behind it."""
+    translator = cls.__new__(cls)
+    translator.model = model
+    return lambda: translator
+
+
+def test_an_engine_route_is_a_machine_translation(tmp_path):
+    """Google, DeepL and the other fixed services are machine translation;
+    the label says so, and the service is what is named."""
+    from book_maker.translator import Google
+
+    opf = _written_opf(tmp_path, _rebuild(_source(), model=_service(Google)))
+
+    year = date.today().year
+    assert f"Machine translation (google, {year})" in opf
+    assert "AI translation (" not in opf
+
+
+def test_a_model_route_is_an_ai_translation(tmp_path):
+    from book_maker.translator import ChatGPTAPI
+
+    opf = _written_opf(
+        tmp_path, _rebuild(_source(), model=_service(ChatGPTAPI, "gpt-x"))
+    )
+
+    assert "AI translation (gpt-x," in opf
+    assert "Machine translation (" not in opf
+
+
+def test_every_registered_format_gets_the_label_its_kind_earns():
+    from book_maker.loader.disclosure import (
+        AI_LABEL,
+        ENGINE_LABEL,
+        translation_label,
+    )
+    from book_maker.translator import FORMAT_DICT, LLM_FORMATS, ROUTE_DICT
+
+    for key, cls in FORMAT_DICT.items():
+        expected = AI_LABEL if key in LLM_FORMATS else ENGINE_LABEL
+        assert translation_label(_service(cls)()) == expected, key
+    for key, cls in ROUTE_DICT.items():
+        assert translation_label(_service(cls)()) == AI_LABEL, key
+    assert translation_label(StubModel()) == AI_LABEL
+    assert translation_label(None) == AI_LABEL
+
+
+def test_the_description_is_two_lines(tmp_path):
+    """The claim on one line, the caveat on the next: a reader's metadata
+    pane shows them as two sentences, not one run-on."""
+    rebuilt = _rebuild(_source())
+
+    ((description, _),) = rebuilt.get_metadata("DC", "description")
+    lines = description.split("\n")
+
+    assert len(lines) == 2
+    assert lines[0].startswith("AI translation (x/y, ") and lines[0].endswith(").")
+    assert lines[1] == "Original text unaltered; translation quality not verified."
+
+
+def test_a_stamp_written_on_one_line_is_still_ours(tmp_path):
+    """The caveat moved onto its own line after the first books were
+    stamped; a description from before the break is recognised all the
+    same, or a rerun of such a book would claim both."""
+    one_line = (
+        "Machine translation (x/y, 2025). Original text unaltered; "
+        "translation quality not verified."
+    )
+    source = _source(metadata=[("DC", "description", one_line, None)])
+
+    opf = _written_opf(tmp_path, _rebuild(source))
+
+    assert opf.count("<dc:description>") == 1
+    assert "2025" not in opf
+    assert "AI translation (x/y," in opf
+
+
+def test_a_prior_engine_stamp_is_replaced_by_a_model_rerun(tmp_path):
+    """Either label is ours: a book first translated by Google and then by
+    a model must not keep saying Google did it."""
+    source = _source(
+        metadata=[
+            (
+                "DC",
+                "description",
+                f"Machine translation (google, 2025{DESCRIPTION_TAIL}",
+                None,
+            )
+        ]
+    )
+
+    opf = _written_opf(tmp_path, _rebuild(source))
+
+    assert opf.count(DESCRIPTION_TAIL) == 1
+    assert "google" not in opf
+    assert "AI translation (x/y," in opf
 
 
 # ------------------------------------------------------------- the off switch
@@ -256,7 +358,7 @@ def test_nothing_is_disclosed_when_disclosure_is_off(tmp_path):
     opf = _written_opf(tmp_path, rebuilt)
 
     assert f'id="{CONTRIBUTOR_ID}"' not in opf
-    assert "Machine translation (" not in opf
+    assert "AI translation (" not in opf
     assert _colophon_of(rebuilt) is None
     assert COLOPHON_FILE not in opf
 
@@ -607,7 +709,7 @@ def test_a_second_translation_names_only_the_model_that_did_it(tmp_path):
     _assert_sound(members, opf)
     assert "vendor/b" in opf
     assert "x/y" not in opf
-    assert opf.count("Machine translation (") == 1
+    assert opf.count("AI translation (") == 1
     assert opf.count(f'id="{CONTRIBUTOR_ID}"') == 1
 
 
@@ -632,7 +734,7 @@ def test_a_rebuild_with_disclosure_off_carries_no_prior_stamp(tmp_path):
 
     members, opf = _members_and_opf(once.with_name(f"{once.stem}_bilingual.epub"))
     _assert_sound(members, opf)
-    assert "Machine translation (" not in opf
+    assert "AI translation (" not in opf
     assert f'id="{CONTRIBUTOR_ID}"' not in opf
     assert not [m for m in members if "translation_note" in m]
 
@@ -676,7 +778,7 @@ def test_a_model_list_run_names_every_model_it_could_have_used(tmp_path):
     rebuilt = _rebuild(_source(), model=RotatingModel)
     opf = _written_opf(tmp_path, rebuilt, name="rotating.epub")
 
-    assert "Machine translation (a, b," in opf
+    assert "AI translation (a, b," in opf
     page = rebuilt.get_item_with_id(COLOPHON_ID).content.decode("utf-8")
     assert "a, b" in page
 

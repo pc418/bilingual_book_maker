@@ -40,13 +40,18 @@ CONTRIBUTOR_ID = "bbm-trl"
 CONTRIBUTOR_ROLE = "trl"
 MARC_SCHEME = "marc:relators"
 
-# The description this tool writes, as two fixed halves with the model and
-# the year between them. Both halves are matched when deciding whether a
-# description is one of ours: a publisher's "Machine translation (French
-# edition)" opens the same way and is a statement about the book, not a
-# stamp to be replaced.
-DESCRIPTION_PREFIX = "Machine translation ("
-DESCRIPTION_TAIL = "). Original text unaltered; translation quality not verified."
+# The description this tool writes: a label, then the model and the year in
+# parentheses, then a fixed tail. The label says what did the work — a
+# model is an "AI translation", an engine such as Google or DeepL a
+# "Machine translation". Label and tail are both matched when deciding
+# whether a description is one of ours: a publisher's "Machine translation
+# (French edition)" opens the same way and is a statement about the book,
+# not a stamp to be replaced.
+AI_LABEL = "AI translation"
+ENGINE_LABEL = "Machine translation"
+DESCRIPTION_LABELS = (AI_LABEL, ENGINE_LABEL)
+DESCRIPTION_TAIL = ").\nOriginal text unaltered; translation quality not verified."
+_TAIL_WORDS = " ".join(DESCRIPTION_TAIL.split())
 
 # A fixed-layout book requires every spine document to declare its page
 # dimensions, and epubcheck enforces it (HTM-046). The note has none to
@@ -75,6 +80,26 @@ GENERATOR_MARK = "bilingual_book_maker translation note"
 # Calibre writes its record two ways: EPUB 2 `<meta name="calibre:…">` and,
 # in books it has converted, whole elements in a namespace of its own.
 CALIBRE = "calibre"
+
+
+def translation_label(translator):
+    """Which label the description opens with, from the translator that ran.
+
+    The engines — the formats registered to talk to a fixed service rather
+    than to a model — did a machine translation; everything else, a model
+    named or not, did an AI translation. Looked up by the key the
+    translator is registered under, the same way `Base.model_name` names a
+    modelless service.
+    """
+    if translator is None:
+        return AI_LABEL
+    from book_maker.translator import FORMAT_DICT, LLM_FORMATS
+    from book_maker.translator.base_translator import service_name
+
+    key = service_name(translator)
+    if key in FORMAT_DICT and key not in LLM_FORMATS:
+        return ENGINE_LABEL
+    return AI_LABEL
 
 
 def model_id(translator):
@@ -221,8 +246,13 @@ def is_prior_disclosure(name, value, others, owned_ids):
     ):
         return True
     if name == "description":
-        text = value or ""
-        if text.startswith(DESCRIPTION_PREFIX) and text.endswith(DESCRIPTION_TAIL):
+        # Compared with whitespace collapsed: the tail's line break is
+        # layout, and a stamp written before it existed (one sentence, one
+        # space) is still ours to replace.
+        text = " ".join((value or "").split())
+        if text.endswith(_TAIL_WORDS) and any(
+            text.startswith(f"{label} (") for label in DESCRIPTION_LABELS
+        ):
             return True
     return False
 
@@ -347,7 +377,9 @@ def entry_is_our_colophon(source_book, entry):
     return target is not None and is_our_colophon(target)
 
 
-def stamp_disclosure(book, model, language, source_identifier=None, when=None):
+def stamp_disclosure(
+    book, model, language, source_identifier=None, when=None, label=AI_LABEL
+):
     """Add the credit, the description and the colophon, once.
 
     Called on the finished book just before it is written, not while it is
@@ -390,7 +422,7 @@ def stamp_disclosure(book, model, language, source_identifier=None, when=None):
     when = when or date.today()
     contributor_id = allocate_contributor_id(book)
     item_id, file_name = allocate_colophon_names(book)
-    description = f"{DESCRIPTION_PREFIX}{model}, {when.year}{DESCRIPTION_TAIL}"
+    description = f"{label} ({model}, {when.year}{DESCRIPTION_TAIL}"
     item = build_colophon(
         model,
         language,

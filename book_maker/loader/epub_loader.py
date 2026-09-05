@@ -55,6 +55,7 @@ from .disclosure import (
     model_id,
     stamp_disclosure,
     tool_contributor_ids,
+    translation_label,
 )
 from .font_obfuscation import deobfuscate_fonts, reobfuscate_written_epub
 from .rights import DRM_MESSAGE, check_epub
@@ -758,6 +759,7 @@ class EPUBBookLoader(BaseBookLoader):
                 model_id(getattr(self, "translate_model", None)),
                 getattr(self, "_disclosure_language", None) or self.language,
                 source_identifier=getattr(self, "_disclosure_source", None),
+                label=translation_label(getattr(self, "translate_model", None)),
             )
         except Exception as e:
             # A book that took hours and real money to translate is not
