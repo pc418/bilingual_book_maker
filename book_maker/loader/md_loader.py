@@ -15,6 +15,7 @@ from book_maker.session_context import handoff_path
 from book_maker.utils import prompt_config_to_kwargs
 
 from .base_loader import BaseBookLoader
+from .helper import translate_list_or_singles
 
 
 @dataclass(frozen=True)
@@ -610,9 +611,7 @@ class MarkdownBookLoader(BaseBookLoader):
 
     def _translate_list(self, texts, translator=None):
         translator = translator if translator is not None else self.translate_model
-        if hasattr(translator, "translate_list"):
-            return translator.translate_list(texts)
-        return [translator.translate(text) for text in texts]
+        return translate_list_or_singles(translator, texts)
 
     def _coerce_saved_batch(self, saved_batch, batch_texts):
         if isinstance(saved_batch, list):

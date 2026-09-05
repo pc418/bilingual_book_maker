@@ -212,7 +212,9 @@ class Gemini(Base):
             "top_k": generation_config.top_k,
             "max_output_tokens": generation_config.max_output_tokens,
             "safety_settings": safety_settings,
-            "system_instruction": self.prompt_sys_msg,
+            # `--language src:tgt` names the source; the note is fixed for a
+            # run, so it belongs with the run's standing instructions.
+            "system_instruction": self._augment_system_content(self.prompt_sys_msg),
         }
 
         if response_mime_type:
@@ -493,7 +495,9 @@ class Gemini(Base):
                     response_mime_type="application/json",
                     response_schema=TranslationResponse,
                     temperature=generation_config.temperature,
-                    system_instruction=self.prompt_sys_msg,
+                    system_instruction=self._augment_system_content(
+                        self.prompt_sys_msg
+                    ),
                 ),
             )
 

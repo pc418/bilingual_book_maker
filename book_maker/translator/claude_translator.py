@@ -272,9 +272,12 @@ class Claude(Base):
         """The user message for one unit.
 
         Deterministic for a given text, which is what lets session mode store
-        exactly what it sent without threading the string around.
+        exactly what it sent without threading the string around — the marker
+        preamble included, since it is a function of the text too.
         """
-        return self.prompt_template.format(text=text, language=self.language)
+        return self._marker_preamble(text) + self.prompt_template.format(
+            text=text, language=self.language
+        )
 
     def create_messages(self, text, intermediate_messages=None):
         """Create messages for the current translation request"""
@@ -556,7 +559,7 @@ class Claude(Base):
             r = self.client.messages.create(
                 max_tokens=4096,
                 messages=messages,
-                system=self._augment_system_content(self.prompt_sys_msg, text),
+                system=self._augment_system_content(self.prompt_sys_msg),
                 temperature=self.temperature,
                 model=self.model,
                 extra_body=self.extra_body or None,

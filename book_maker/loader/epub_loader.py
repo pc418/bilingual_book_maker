@@ -45,6 +45,7 @@ from .helper import (
     rebase_ncx_srcs,
     shorter_result_link,
     strip_duplicate_ids,
+    translate_list_or_singles,
 )
 from .disclosure import (
     entry_is_our_colophon,
@@ -1485,10 +1486,17 @@ class EPUBBookLoader(BaseBookLoader):
             # Lenient by decision: a lost marker is reconciled and reported,
             # never a failed unit and never a retry. Marker placement is not
             # worth re-paying a request for.
-            note = marker_report(f"{unit.file_name}#{unit.ordinal}", unit.text, t_text)
+            #
+            # `unit.markers` is passed as the issued set on purpose: a token
+            # the *source* prints verbatim looks the same and belongs to the
+            # book, so it must survive reconciliation untouched.
+            issued = list(unit.markers)
+            note = marker_report(
+                f"{unit.file_name}#{unit.ordinal}", unit.text, t_text, issued
+            )
             if note:
                 print(f"[yellow]{note}[/yellow]")
-            t_text = reconcile_markers(unit.text, t_text)
+            t_text = reconcile_markers(unit.text, t_text, issued)
         if single_translate and unit.nodes:
             # Ruby annotations of text that is about to disappear would
             # survive as orphaned furigana next to non-Japanese text. The
@@ -1514,11 +1522,11 @@ class EPUBBookLoader(BaseBookLoader):
                     ruby.name = "span"
                 else:
                     ruby.unwrap()
-            self._write_single_translation(
+            inserted = self._write_single_translation(
                 unit, t_text, translation_style, language=self.language_tag
             )
         elif has_restricted_content_model(unit.element):
-            self._append_inline_translation(
+            inserted = self._append_inline_translation(
                 unit, t_text, translation_style, language=self.language_tag
             )
         elif unit.resolver is not None and (
@@ -1531,19 +1539,28 @@ class EPUBBookLoader(BaseBookLoader):
             unit.owner_runs > 1
             or not is_simple_owner(unit.element, unit.resolver)
         ):
-            self._insert_anchored_translation(
+            inserted = self._insert_anchored_translation(
                 unit, t_text, translation_style, language=self.language_tag
             )
         else:
-            self._insert_trans_preserving_tags(
+            inserted = self._insert_trans_preserving_tags(
                 unit.element, t_text, translation_style, False
             )
         if unit.markers:
-            self._restore_markers(unit, single_translate)
+            self._restore_markers(unit, single_translate, inserted)
 
     @staticmethod
-    def _restore_markers(unit, single_translate=False):
+    def _restore_markers(unit, single_translate=False, inserted=None):
         """Put each marker's source node back where its token landed.
+
+        `inserted` is what the insertion path just wrote — the bilingual
+        clone, or the rewritten owner in single-translate mode. Only that is
+        searched. Scanning the owner and its next sibling instead was wrong
+        in both directions: in single-translate mode the next sibling is
+        another *source* element, so a book whose next paragraph prints
+        ``⟦code1⟧`` as literal text had the node moved out of the
+        translation and into that paragraph; and nothing guarantees the
+        clone is the immediately following tag.
 
         Bilingual mode *clones* the node — the original is still standing in
         the source paragraph beside the translation, so the copy is a second
@@ -1557,20 +1574,19 @@ class EPUBBookLoader(BaseBookLoader):
         appended it, so it is somewhere in the text and gets its node.
         """
         tokens = list(unit.markers)
-        roots = [unit.element]
-        sibling = unit.element.next_sibling
-        while sibling is not None and not isinstance(sibling, Tag):
-            sibling = sibling.next_sibling
-        if sibling is not None:
-            # the bilingual clone of a code-bearing paragraph is inserted
-            # after the owner, not inside it
-            roots.append(sibling)
+        roots = inserted if isinstance(inserted, list) else [inserted]
         for root in roots:
-            if not isinstance(root, Tag):
+            if isinstance(root, NavigableString):
+                # `_write_single_translation` writes a bare string when no
+                # --translation_style was asked for
+                text_nodes = [root]
+            elif isinstance(root, Tag):
+                text_nodes = [
+                    n for n in list(root.descendants) if isinstance(n, NavigableString)
+                ]
+            else:
                 continue
-            for text_node in list(root.descendants):
-                if not isinstance(text_node, NavigableString):
-                    continue
+            for text_node in text_nodes:
                 raw = str(text_node)
                 if not any(token in raw for token in tokens):
                     continue
@@ -1614,6 +1630,7 @@ class EPUBBookLoader(BaseBookLoader):
         span.string = f" {t_text}"
         stamp_translation(span, unit.element, language)
         unit.nodes[-1].insert_after(span)
+        return span
 
     @staticmethod
     def _markup_covers_run(markup, owned):
@@ -1666,6 +1683,7 @@ class EPUBBookLoader(BaseBookLoader):
         line_break = make_tag("br")
         tail.insert_after(line_break)
         line_break.insert_after(span)
+        return span
 
     @staticmethod
     def _write_single_translation(unit, t_text, translation_style="", language=None):
@@ -1698,7 +1716,7 @@ class EPUBBookLoader(BaseBookLoader):
             for node in unit.nodes[1:]:
                 node.extract()
             EPUBBookLoader._remove_emptied_wrappers(emptied)
-            return
+            return translation
 
         anchor = container if isinstance(container, Tag) else unit.nodes[0]
         # only wrappers *we* empty are ours to remove: an already-empty
@@ -1708,6 +1726,7 @@ class EPUBBookLoader(BaseBookLoader):
         for node in unit.nodes:
             node.extract()
         EPUBBookLoader._remove_emptied_wrappers(emptied)
+        return translation
 
     @staticmethod
     def _styled_translation(t_text, translation_style=""):
@@ -1868,10 +1887,9 @@ class EPUBBookLoader(BaseBookLoader):
 
         if not has_code_tags:
             # Simple case: no code tags, use standard insert_trans
-            self.helper.insert_trans(
+            return self.helper.insert_trans(
                 p, translated_text, translation_style, single_translate
             )
-            return
 
         # For paragraphs with code tags
         if single_translate:
@@ -1898,13 +1916,14 @@ class EPUBBookLoader(BaseBookLoader):
             for content in temp_p.contents:
                 p.append(copy(content))
             restamp_language(p, self.language_tag)
+            # the element itself now holds nothing but the translation
+            return p
         else:
             # Bilingual mode: keep original paragraph with code, add translation after
             if has_restricted_content_model(p):
-                append_inline_translation(
+                return append_inline_translation(
                     p, translated_text, translation_style, self.language_tag
                 )
-                return
             new_p = copy(p)
             # Remove code tags from translation
             for tag_name in exclude_tags_list:
@@ -1917,6 +1936,7 @@ class EPUBBookLoader(BaseBookLoader):
             if translation_style != "":
                 new_p["style"] = translation_style
             p.insert_after(new_p)
+            return new_p
 
     def _show_usage(self, pbar):
         """Pin in/out/cached tokens on the bar, once a request reported them.
@@ -2151,8 +2171,8 @@ class EPUBBookLoader(BaseBookLoader):
         if not wait_p_list:
             return
 
-        result_txt_list = self.translate_model.translate_list(
-            [p.text for p in wait_p_list]
+        result_txt_list = translate_list_or_singles(
+            self.translate_model, [p.text for p in wait_p_list]
         )
 
         for i in range(len(wait_p_list)):
@@ -2915,8 +2935,8 @@ class EPUBBookLoader(BaseBookLoader):
                     )
 
                     # Call translate_list for consistent batch translation logic
-                    result_txt_list = self.translator.translate_list(
-                        [p.text for p in wait_p_list]
+                    result_txt_list = translate_list_or_singles(
+                        self.translator, [p.text for p in wait_p_list]
                     )
 
                     # Update chapter context from translator

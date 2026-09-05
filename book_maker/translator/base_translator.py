@@ -331,21 +331,32 @@ class Base(ABC):
 
         return bool(MARKER_RE.search(text or ""))
 
-    def _augment_system_content(self, sys_content, request_text=""):
-        """The system message plus whatever *this* request needs said.
+    def _augment_system_content(self, sys_content):
+        """The system message plus what is true for the whole run.
 
-        Two additions, both conditional, so a run that uses neither sends
-        byte-identical system messages and keeps its cached prefix: the
-        source language when `--language src:tgt` named one, and the marker
-        contract when the request actually carries markers.
+        Only the source-language note, which `--language src:tgt` fixes once
+        and every request then repeats verbatim. Nothing per-request may go
+        here: a system message that changes between requests moves the
+        prefix session mode caches, and every later request re-reads the
+        whole accumulated history at full input price. The marker contract
+        is exactly such a per-request thing — it rides in the user message,
+        see `_marker_preamble`.
         """
-        extras = [self._source_language_note()]
-        if self._carries_markers(request_text):
-            extras.append(self.MARKER_INSTRUCTION)
-        extras = [part for part in extras if part]
-        if not extras:
+        note = self._source_language_note()
+        if not note:
             return sys_content
-        return " ".join([(sys_content or "").strip(), *extras]).strip()
+        return " ".join([(sys_content or "").strip(), note]).strip()
+
+    def _marker_preamble(self, request_text):
+        """The marker contract as a user-message prefix, or "".
+
+        Said only to requests that carry markers, and said in the user turn
+        so the system message stays byte-identical across a run that mixes
+        marker-bearing and plain units.
+        """
+        if not self._carries_markers(request_text):
+            return ""
+        return f"{self.MARKER_INSTRUCTION}\n\n"
 
     def warn_if_extras_refused(self, error):
         """Say so when a request carrying the run's extras was refused.

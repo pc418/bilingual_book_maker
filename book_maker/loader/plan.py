@@ -723,13 +723,24 @@ def _marker_candidate(element, owned_ids, owner, resolver):
         return False
     if element.name in RENDERED_VOID_TAGS:
         return True
+    holds_void = False
     for node in element.descendants:
-        if isinstance(node, Tag) and (
-            resolver.is_block(node)
-            or node.name == "br"
-            or node.name in RENDERED_VOID_TAGS
-        ):
+        if not isinstance(node, Tag):
+            continue
+        if resolver.is_block(node) or node.name == "br":
+            # a genuine barrier: it separates the text around it, and a
+            # token cannot stand in for a line break
             return False
+        if node.name in RENDERED_VOID_TAGS:
+            holds_void = True
+    if holds_void:
+        # `<a href="full.jpg"><img src="thumb.jpg"/></a>`: the wrapper owns no
+        # translatable text and renders exactly what the replaced element
+        # renders, so the *wrapper* is the marker source. Taking the <img>
+        # alone (what rejecting the anchor here used to do) restores the
+        # image without its link, which single-translate mode then writes
+        # into the book.
+        return True
     # It has to render between the runs to be worth a placeholder at all: a
     # hidden span or a ruby annotation is not a barrier today and must not
     # become a token either.

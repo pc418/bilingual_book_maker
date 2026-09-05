@@ -98,48 +98,68 @@ def find_markers(text):
     return found
 
 
-def reconcile_markers(sent, reply):
+def _issued_and_literal(sent, issued):
+    """Split the marker-shaped tokens in `sent` into ours and the book's.
+
+    `issued` is what generation actually planted (``unit.markers``). Anything
+    else that merely *looks* like a token is the source text's own: a book
+    that prints ``⟦x1⟧`` verbatim, which collision avoidance already refused
+    to reuse as a placeholder. It stands for no node, so it is literal text —
+    it is not deduped, not appended, and above all not scrubbed, because
+    scrubbing it would delete a character the author wrote.
+
+    Without `issued` there is nothing better to go on than the shape, which
+    is what every caller did before the distinction existed.
+    """
+    shaped = find_markers(sent)
+    if issued is None:
+        return shaped, []
+    issued = [token for token in issued]
+    return issued, [token for token in shaped if token not in issued]
+
+
+def reconcile_markers(sent, reply, issued=None):
     """The reply with its markers made to match what was sent. Never raises.
 
-    Unknown marker-shaped tokens are dropped, repeats after the first are
-    dropped, and markers the model lost are appended in source order. A reply
-    that already agrees with the source comes back byte-identical, so the
-    ordinary case costs nothing.
+    Invented tokens are dropped, repeats of an issued token after the first
+    are dropped, and issued markers the model lost are appended in source
+    order. A reply that already agrees with the source comes back
+    byte-identical, so the ordinary case costs nothing.
     """
     if reply is None:
         reply = ""
-    expected = find_markers(sent)
-    if not expected:
-        # Nothing was sent, so nothing may be restored — but an invented
-        # token still has to go: it names no node.
-        return MARKER_RE.sub("", reply) if MARKER_RE.search(reply) else reply
-
+    issued, literal = _issued_and_literal(sent, issued)
     seen = []
 
     def keep(match):
         token = match.group(0)
-        if token in expected and token not in seen:
+        if token in issued:
+            if token in seen:
+                return ""
             seen.append(token)
             return token
-        return ""
+        if token in literal:
+            # the source's own text, echoed back: not ours to touch
+            return token
+        return ""  # neither planted nor in the source: invented
 
     out = MARKER_RE.sub(keep, reply)
-    missing = [token for token in expected if token not in seen]
+    missing = [token for token in issued if token not in seen]
     if missing:
         out = (out.rstrip() + " " + " ".join(missing)).strip()
     return out
 
 
-def marker_report(unit_name, sent, reply):
+def marker_report(unit_name, sent, reply, issued=None):
     """One line naming what reconciliation had to do, or None when nothing.
 
     The operator sees the unit, not a count buried in a summary: a book whose
     every marker comes back missing is a prompt problem worth noticing early.
     """
-    expected = find_markers(sent)
+    issued, literal = _issued_and_literal(sent, issued)
     got = find_markers(reply or "")
-    missing = [token for token in expected if token not in got]
-    invented = [token for token in got if token not in expected]
+    missing = [token for token in issued if token not in got]
+    invented = [token for token in got if token not in issued and token not in literal]
     if not missing and not invented:
         return None
     parts = []

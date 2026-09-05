@@ -576,15 +576,18 @@ class ChatGPTAPI(Base):
         """The user message for one unit.
 
         Deterministic for a given text, which is what lets session mode store
-        exactly what it sent without threading the string around.
+        exactly what it sent without threading the string around — the marker
+        preamble included, since it is a function of the text too.
         """
-        return self.prompt_template.format(text=text, language=self.language, crlf="\n")
+        return self._marker_preamble(text) + self.prompt_template.format(
+            text=text, language=self.language, crlf="\n"
+        )
 
     def create_messages(self, text, intermediate_messages=None):
         content = self._user_content(text)
 
         sys_content = self.system_content or self.prompt_sys_msg.format(crlf="\n")
-        sys_content = self._augment_system_content(sys_content, text)
+        sys_content = self._augment_system_content(sys_content)
         messages = [
             {"role": "system", "content": sys_content},
         ]
@@ -1146,7 +1149,7 @@ class ChatGPTAPI(Base):
         field = batch_field_name(self.language)
         item_field = single_field_name(self.language)
         content = (
-            f"{user_prompt}\n\n"
+            f"{self._marker_preamble(texts_json)}{user_prompt}\n\n"
             f"Return a JSON object whose '{field}' array contains EXACTLY "
             f"{plist_len} objects, one per input paragraph. Each object has "
             f"exactly two fields: 'id', copied unchanged from the paragraph "
@@ -1156,7 +1159,7 @@ class ChatGPTAPI(Base):
         )
 
         sys_content = self.system_content or self.prompt_sys_msg.format(crlf="\n")
-        sys_content = self._augment_system_content(sys_content, texts_json)
+        sys_content = self._augment_system_content(sys_content)
 
         messages = [
             {"role": "system", "content": sys_content},

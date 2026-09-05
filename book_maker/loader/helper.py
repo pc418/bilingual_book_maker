@@ -11,6 +11,7 @@ from bs4.element import Tag
 from ebooklib import epub
 from lxml import etree
 
+from book_maker.translator.base_translator import BatchMismatch
 from book_maker.utils import TO_LANGUAGE_CODE
 
 logging.basicConfig(level=logging.WARNING)
@@ -373,8 +374,7 @@ class EPUBBookLoaderHelper:
         if not single_translate and has_restricted_content_model(p):
             # single-translate extracts the original, so it never creates
             # the second sibling this rule exists to prevent
-            append_inline_translation(p, text, translation_style, self.language)
-            return
+            return append_inline_translation(p, text, translation_style, self.language)
         new_p = copy(p)
         new_p.string = text
         if translation_style != "":
@@ -391,6 +391,10 @@ class EPUBBookLoaderHelper:
         p.insert_after(new_p)
         if single_translate:
             p.extract()
+        # the node the translation was written into, for callers that have to
+        # find their way back to it (marker restore); None when nothing was
+        # written, which the early returns above cover
+        return new_p
 
     @backoff.on_exception(
         backoff.expo,
@@ -415,8 +419,8 @@ class EPUBBookLoaderHelper:
         if not wait_p_list:
             return
 
-        result_txt_list = self.translate_model.translate_list(
-            [p.text for p in wait_p_list]
+        result_txt_list = translate_list_or_singles(
+            self.translate_model, [p.text for p in wait_p_list]
         )
 
         for i in range(len(wait_p_list)):
@@ -440,6 +444,28 @@ url_pattern = r"(http[s]?://|www\.)+(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0
 # and re.compile per call pays a cache lookup for a constant pattern.
 _URL_RE = re.compile(url_pattern)
 _URL_TAIL_RE = re.compile(r".*" + url_pattern + r"$")
+
+
+def translate_list_or_singles(model, texts):
+    """`model.translate_list(texts)`, with tag mode's own alignment fallback.
+
+    Plan mode answers a `BatchMismatch` with `_translate_texts_aligned`: it
+    halves the chunk and asks again, ~2x the batch instead of N singles. Tag
+    mode has no such ladder — `--accumulated_num > 1` calls `translate_list`
+    straight from `deal_old` — so the exception would escape and end a run
+    that used to repair itself. One local sweep of `translate()` calls is
+    what that repair was; it stays here, where the ladder cannot reach.
+    """
+    if not hasattr(model, "translate_list"):
+        return [model.translate(text) for text in texts]
+    try:
+        return model.translate_list(texts)
+    except BatchMismatch as e:
+        print(
+            f"[yellow]batch of {len(texts)} came back misaligned ({e}); "
+            f"translating one by one[/yellow]"
+        )
+        return [model.translate(text) for text in texts]
 
 
 def is_text_link(text):

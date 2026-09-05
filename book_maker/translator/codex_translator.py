@@ -286,6 +286,11 @@ class Codex(Base):
         both speak to.
         """
         parts = [BASE_INSTRUCTIONS.format(language=self.language, crlf="\n")]
+        # `--language src:tgt`: fixed for the run, so it rides with the
+        # thread's standing instructions rather than each turn's text.
+        note = self._source_language_note()
+        if note:
+            parts.append(note)
         if self.prompt_sys_msg:
             parts.append(self.prompt_sys_msg.format(language=self.language, crlf="\n"))
         if self.style_note:
