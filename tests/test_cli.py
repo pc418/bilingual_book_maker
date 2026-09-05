@@ -1695,4 +1695,7 @@ def test_an_explicit_one_keeps_the_session_dry_run_ungrouped(tmp_path):
         "1",
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert json.loads(plan.read_text())["token_budget"] is None
+    # 0, the off switch: None would preview the short-run grouping the run
+    # won't do (the zero-budget behavior itself is pinned at the
+    # assign_batches level: a 0 budget groups nothing at all)
+    assert json.loads(plan.read_text())["token_budget"] == 0

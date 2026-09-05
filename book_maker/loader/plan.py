@@ -1355,7 +1355,7 @@ def assign_batches(
 ):
     """Group consecutive units so they share one request.
 
-    Without `token_budget`, a run is consecutive units of fewer than
+    Without `token_budget` (None), a run is consecutive units of fewer than
     `SHORT_UNIT_CHARS` characters, whatever their tag or parent. A run of two
     or more is cut into groups at `group_size` units **and** at
     `GROUP_MAX_CHARS` characters, whichever comes first; each group gets a
@@ -1373,7 +1373,12 @@ def assign_batches(
     Returns the next unused group id. A pure function of unit order and
     text, so the same book always partitions into the same requests.
     """
-    if token_budget:
+    if token_budget is not None:
+        # 0 is the off switch (`--accumulated_num 1`): a budget nothing
+        # fits leaves every unit its own request — the short-run rule below
+        # must not quietly take over, or "off" still groups.
+        if token_budget <= 0:
+            return next_group_id
         return _assign_general_batches(units, token_budget, next_group_id, max_units)
 
     def emit(run):

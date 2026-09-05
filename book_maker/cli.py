@@ -1035,9 +1035,9 @@ def main():
         from book_maker.loader.plan import SESSION_DEFAULT_TOKEN_BUDGET
 
         if accumulated_num_given:
-            dry_budget = (
-                options.accumulated_num if options.accumulated_num > 1 else None
-            )
+            # 0, not None: an explicit 1 turns every grouping rule off, and
+            # None would preview the short-run grouping the run won't do
+            dry_budget = options.accumulated_num if options.accumulated_num > 1 else 0
         elif options.context_mode == "session":
             dry_budget = SESSION_DEFAULT_TOKEN_BUDGET
         else:

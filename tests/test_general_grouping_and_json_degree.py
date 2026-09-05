@@ -364,7 +364,9 @@ class TestSessionModeDefaultsTheBudget:
 
     def test_an_explicit_one_turns_grouping_off_in_session_mode_too(self, tmp_path):
         # `--accumulated_num 1` is the documented way to say "no grouping";
-        # a default that overrode it would leave no way to say it
+        # a default that overrode it would leave no way to say it. The
+        # answer is 0, not None: None re-enables the short-run rule, and
+        # "off" that still groups short lines is not off (codex P1, 260905).
         loader, _ = _plan_loader(
             tmp_path,
             _StrictModel,
@@ -372,7 +374,16 @@ class TestSessionModeDefaultsTheBudget:
             accumulated_num_given=True,
         )
 
-        assert loader._plan_token_budget is None
+        assert loader._plan_token_budget == 0
+
+    def test_a_zero_budget_groups_nothing_at_all(self):
+        # even a run of short lines — the off switch beats the short-run rule
+        units = _units("<p>One.</p><p>Two.</p><p>Three.</p>")
+        assert all(u.chars < 70 for u in units)
+
+        assign_batches(units, token_budget=0)
+
+        assert all(u.group_id is None for u in units)
 
     def test_an_explicit_value_still_wins_in_session_mode(self, tmp_path):
         loader, _ = _plan_loader(

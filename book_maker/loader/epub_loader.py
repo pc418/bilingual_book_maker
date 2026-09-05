@@ -934,8 +934,11 @@ class EPUBBookLoader(BaseBookLoader):
         if self.accumulated_num > 1:
             return self.accumulated_num
         if self.accumulated_num_given:
-            # an explicit `--accumulated_num 1`: grouping off, as asked
-            return None
+            # An explicit `--accumulated_num 1`: grouping off, as asked —
+            # ALL of it. 0 is the budget nothing fits, so even the short-run
+            # rule stands down and every unit is its own request; None here
+            # would quietly re-enable that rule and make "off" still group.
+            return 0
         if self.context_mode == "session":
             return SESSION_DEFAULT_TOKEN_BUDGET
         return None
