@@ -1292,6 +1292,25 @@ class ChatGPTAPI(Base):
         if plist_len == 1:
             return [self.get_translation(text_list[0])]
 
+        degree = self._structured_enabled()
+        if degree and degree not in SCHEMA_BATCH_DEGREES:
+            from ..loader.plan import SUBSTRICT_GROUP_MAX_UNITS
+
+            if plist_len > SUBSTRICT_GROUP_MAX_UNITS:
+                # Tag mode sizes batches by characters and plan mode may have
+                # sized this one for a schema-degree model before rotation.
+                # Either way the json-degree cap is a per-*request* bound, so
+                # it is honoured by making more requests — refusing instead
+                # would send tag mode's fallback into an N-singles sweep.
+                out = []
+                for i in range(0, plist_len, SUBSTRICT_GROUP_MAX_UNITS):
+                    out.extend(
+                        self._do_structured_batch_translate(
+                            text_list[i : i + SUBSTRICT_GROUP_MAX_UNITS]
+                        )
+                    )
+                return out
+
         try:
             items, user_content, raw_reply = self._execute_structured_batch_translate(
                 text_list, plist_len
@@ -1397,11 +1416,12 @@ class ChatGPTAPI(Base):
             )
 
         if degree not in SCHEMA_BATCH_DEGREES:
-            # The loader sized this batch for the model current at plan
-            # build; rotation may have moved execution to a json-degree
-            # model, whose cap is tighter. Refusing before the request costs
-            # nothing — the loader's ladder halves the batch — where sending
-            # it re-opens the oversized-batch corruption the cap bounds.
+            # Backstop for the rotation race: the caller chunked to this cap
+            # against the degree it saw, but `rotate_model()` above may have
+            # just moved execution to a json-degree model. Refusing before
+            # the request costs nothing — the loader's ladder divides the
+            # batch — where sending it re-opens the oversized-batch
+            # corruption the cap bounds.
             from ..loader.plan import SUBSTRICT_GROUP_MAX_UNITS
 
             if plist_len > SUBSTRICT_GROUP_MAX_UNITS:

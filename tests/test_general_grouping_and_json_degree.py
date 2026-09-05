@@ -410,11 +410,43 @@ class TestJsonDegreeBatchTranslate:
         with pytest.raises(BatchMismatch):
             translator._do_structured_batch_translate(["a", "b"])
 
-    def test_an_oversized_batch_is_refused_before_the_request(self):
-        # codex P1: the loader sizes batches for the model current at plan
-        # build, but --model_list rotation can hand the batch to a
-        # json-degree model whose cap is 8. The translator refuses before
-        # spending a request; the loader's ladder halves the batch.
+    def test_an_oversized_batch_is_chunked_not_refused(self):
+        # codex P1 + P2: the loader sizes batches for the model current at
+        # plan build (and tag mode sizes them by characters), so a batch
+        # over the json-degree cap is normal here. The cap is a per-request
+        # bound: the translator honours it with more requests, because a
+        # refusal would send tag mode's fallback into an N-singles sweep.
+        from book_maker.loader.plan import SUBSTRICT_GROUP_MAX_UNITS
+
+        n = SUBSTRICT_GROUP_MAX_UNITS * 2
+        create = Mock(
+            side_effect=[
+                _completion(
+                    _reply([f"t{i}" for i in range(SUBSTRICT_GROUP_MAX_UNITS)])
+                ),
+                _completion(
+                    _reply(
+                        [f"t{i}" for i in range(SUBSTRICT_GROUP_MAX_UNITS, n)],
+                    )
+                ),
+            ]
+        )
+        translator = self._translator_at_json(create)
+
+        assert translator._do_structured_batch_translate(
+            [f"p{i}" for i in range(n)]
+        ) == [f"t{i}" for i in range(n)]
+        assert create.call_count == 2
+        # each request carried at most the cap's worth of paragraphs
+        for call in create.call_args_list:
+            content = call.kwargs["messages"][-1]["content"]
+            assert f"EXACTLY {SUBSTRICT_GROUP_MAX_UNITS} objects" in content
+
+    def test_a_rotation_race_to_a_json_model_is_refused_before_the_request(self):
+        # The backstop inside the request path: the caller chunked against
+        # the degree it saw, but rotate_model() can flip execution to a
+        # json-degree model mid-batch. Refusing pre-request lets the
+        # loader's ladder divide; nothing is spent.
         from book_maker.loader.plan import SUBSTRICT_GROUP_MAX_UNITS
 
         n = SUBSTRICT_GROUP_MAX_UNITS + 1
@@ -422,7 +454,9 @@ class TestJsonDegreeBatchTranslate:
         translator = self._translator_at_json(create)
 
         with pytest.raises(BatchMismatch, match="json-degree cap"):
-            translator._do_structured_batch_translate([f"p{i}" for i in range(n)])
+            translator._execute_structured_batch_translate(
+                [f"p{i}" for i in range(n)], n
+            )
         assert create.call_count == 0
 
     def test_a_batch_at_the_json_degree_cap_goes_through(self):
