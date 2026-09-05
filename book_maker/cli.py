@@ -746,7 +746,10 @@ def build_parser():
 gpt3.5 limits the total_token to 4090.
 For example, if you use --accumulated_num 1600, maybe openai will output 2200 tokens
 and maybe 200 tokens for other messages in the system messages user messages, 1600+2200+200=4000,
-So you are close to reaching the limit. You have to choose your own value, there is no way to know if the limit is reached before sending
+So you are close to reaching the limit. You have to choose your own value, there is no way to know if the limit is reached before sending.
+In EPUB plan mode this is a per-request token budget: consecutive units of any
+length share one request up to this many tokens (at most 16 units per request;
+8 when the endpoint verifies JSON mode but not a strict schema).
 """,
     )
     parser.add_argument(

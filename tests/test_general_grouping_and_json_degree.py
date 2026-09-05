@@ -410,6 +410,32 @@ class TestJsonDegreeBatchTranslate:
         with pytest.raises(BatchMismatch):
             translator._do_structured_batch_translate(["a", "b"])
 
+    def test_an_oversized_batch_is_refused_before_the_request(self):
+        # codex P1: the loader sizes batches for the model current at plan
+        # build, but --model_list rotation can hand the batch to a
+        # json-degree model whose cap is 8. The translator refuses before
+        # spending a request; the loader's ladder halves the batch.
+        from book_maker.loader.plan import SUBSTRICT_GROUP_MAX_UNITS
+
+        n = SUBSTRICT_GROUP_MAX_UNITS + 1
+        create = Mock(return_value=_completion(_reply(["x"] * n)))
+        translator = self._translator_at_json(create)
+
+        with pytest.raises(BatchMismatch, match="json-degree cap"):
+            translator._do_structured_batch_translate([f"p{i}" for i in range(n)])
+        assert create.call_count == 0
+
+    def test_a_batch_at_the_json_degree_cap_goes_through(self):
+        from book_maker.loader.plan import SUBSTRICT_GROUP_MAX_UNITS
+
+        n = SUBSTRICT_GROUP_MAX_UNITS
+        create = Mock(return_value=_completion(_reply([f"t{i}" for i in range(n)])))
+        translator = self._translator_at_json(create)
+
+        assert translator._do_structured_batch_translate(
+            [f"p{i}" for i in range(n)]
+        ) == [f"t{i}" for i in range(n)]
+
     def test_a_strict_endpoint_still_gets_a_schema(self):
         parse = Mock(
             return_value=SimpleNamespace(

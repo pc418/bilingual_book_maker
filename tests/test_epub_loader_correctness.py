@@ -525,6 +525,29 @@ def test_epub_sequential_interrupt_and_resume_uses_completed_prefix(
         assert content.count(f"&lt;T&gt;{text}&lt;/T&gt;") == 1
 
 
+def test_plan_mode_interrupt_saves_progress_despite_accumulated_num(
+    tmp_path, monkeypatch
+):
+    # The `accumulated_num == 1` guard on the interrupt save is tag-mode
+    # shaped: its positional slots are unreliable mid-batch. Plan-mode
+    # checkpoints record finished units only, so a batched plan run must
+    # save exactly like an unbatched one.
+    chapters = [("one.xhtml", ["one", "two", "three"])]
+    loader, _ = _make_loader(tmp_path, monkeypatch, chapters, model=InterruptingModel)
+    loader.plan_mode = True
+    loader.plan_classify = "all"
+    loader.accumulated_num = 800
+    saved = []
+    monkeypatch.setattr(loader, "_save_progress", lambda: saved.append(True))
+    monkeypatch.setattr(loader, "_save_temp_book", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        loader.make_bilingual_book()
+
+    assert exc.value.code == 130
+    assert saved == [True]
+
+
 def test_epub_sequential_batch_excludes_inline_code_content(tmp_path, monkeypatch):
     loader, _ = _make_loader(
         tmp_path,

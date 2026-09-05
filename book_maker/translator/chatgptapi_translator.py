@@ -1396,6 +1396,20 @@ class ChatGPTAPI(Base):
                 f"'{self.model}' has no structured-output support"
             )
 
+        if degree not in SCHEMA_BATCH_DEGREES:
+            # The loader sized this batch for the model current at plan
+            # build; rotation may have moved execution to a json-degree
+            # model, whose cap is tighter. Refusing before the request costs
+            # nothing — the loader's ladder halves the batch — where sending
+            # it re-opens the oversized-batch corruption the cap bounds.
+            from ..loader.plan import SUBSTRICT_GROUP_MAX_UNITS
+
+            if plist_len > SUBSTRICT_GROUP_MAX_UNITS:
+                raise BatchMismatch(
+                    f"batch of {plist_len} exceeds the json-degree cap of "
+                    f"{SUBSTRICT_GROUP_MAX_UNITS} units for '{self.model}'"
+                )
+
         messages = self._create_structured_batch_messages(text_list, degree=degree)
         if degree not in SCHEMA_BATCH_DEGREES:
             return self._execute_json_object_batch(messages, plist_len)

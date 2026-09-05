@@ -459,6 +459,7 @@ so you can honour a request without guessing at legal values.
 | `--resume` | on/off | **off on the first run, on for every rerun** | never off after a crash — replay is positional and fingerprint-guarded. With no `.<book>.temp.bin` it raises an uncaught traceback, so it goes on neither a smoke nor a full run that follows a skipped smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
 | `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock matters more than consistency. Then drop to bare `--use_context`: **`--use_context session` is refused with it** (one history, which workers cannot share), and window context is per chapter anyway, so continuity stops at every chapter boundary. **Never on `codex`** (below) |
 | `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
+| `--accumulated_num` | integer (tokens per request) | *unset* — only runs of short lines share a request | a long prose book where request count is the cost driver (session mode above all): consecutive units of any length then share one request up to N tokens, at most 16 units per request (8 on an endpoint that verifies JSON mode but not a strict schema). `800` is a sane opening value; interrupted runs checkpoint and `--resume` either way |
 
 ### Never pass in plan mode
 
@@ -468,8 +469,8 @@ so you can honour a request without guessing at legal values.
   writes has every `action` still `null` and there is no agent handoff
   block to work from. The base command writes the same plan *and* hands
   off.
-- `--accumulated_num` and `--allow_navigable_strings` — both explicitly
-  ignored; a non-1 `accumulated_num` also disables the interrupt-save path.
+- `--allow_navigable_strings` — explicitly ignored; the plan already
+  accounts for every text node.
 - `--batch` / `--batch-use`, `--retranslate`, `--sentence_mode` —
   **refused** in plan mode: the run prints which flag and exits 1.
   `--batch` is also refused on the codex route, which has no batch API.
@@ -550,7 +551,7 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `--use_context session` not supported for *txt/srt/pdf* | those loaders never hand context to the model; epub is where this workflow lives anyway |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
-| codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints (everything, unless `--accumulated_num` was raised); rerun with `--resume` after the time it names |
+| codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints; rerun with `--resume` after the time it names |
 | `handoff report failed (…); starting the next window` | one compact produced no report. Informational; translation continues |
 
 ## Reference files

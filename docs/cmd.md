@@ -48,7 +48,7 @@ sections after it provide additional notes for selected workflows.
 | `--context_paragraph_limit N` | Window mode only: context history limit. Parser default `0` means the translator default (3 paragraphs for ChatGPT), not zero history. |
 | `--context-compact-at N` | Session mode only: estimated-token budget before the history is compacted into a handoff report. Default `8000`, minimum `500`; `2500` is the cheapest setting. |
 | `--no-context-compact` | Session mode only: skip the handoff report. The window still rolls over at the budget, but the next one starts empty. |
-| `--accumulated_num N` | EPUB token/character accumulation and SRT subtitle-block character batching (capped at 512 for SRT); ignored in EPUB plan mode. |
+| `--accumulated_num N` | EPUB token/character accumulation and SRT subtitle-block character batching (capped at 512 for SRT). In EPUB plan mode it is a per-request token budget: consecutive units of any length share one request up to `N` tokens (at most 16 units per request; 8 when the endpoint verifies JSON mode but not a strict schema). |
 | `--batch_size N` | Aggregated unit count for loaders that support it. |
 | `--block_size N` | Merge paragraphs into delimiter-translated blocks. |
 | `--sentence_mode` | Translate EPUB paragraphs sentence by sentence; incompatible with plan mode. |

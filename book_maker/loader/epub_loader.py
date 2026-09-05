@@ -3371,7 +3371,11 @@ class EPUBBookLoader(BaseBookLoader):
                 self._reobfuscate_written(f"{name}_bilingual.epub")
         except KeyboardInterrupt as e:
             print(e)
-            if self.accumulated_num == 1:
+            # The accumulated_num guard is tag-mode-shaped: its positional
+            # slots are unreliable mid-batch. Plan-mode checkpoints are
+            # unit-keyed and only record finished units, so a batched plan
+            # run is exactly as resumable as an unbatched one.
+            if self.accumulated_num == 1 or self.plan_mode:
                 print("you can resume it next time")
                 self._save_progress()
                 self._save_temp_book()
@@ -3393,7 +3397,7 @@ class EPUBBookLoader(BaseBookLoader):
                 print("Please check your network connection or API server status.")
             else:
                 traceback.print_exc()
-            if self.accumulated_num == 1:
+            if self.accumulated_num == 1 or self.plan_mode:
                 print("Saving progress...")
                 try:
                     self._save_progress()
