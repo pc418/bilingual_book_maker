@@ -25,6 +25,7 @@ from rich import print
 from rich.markup import escape
 from tqdm import tqdm
 
+from book_maker.redaction import redact
 from book_maker.session_context import handoff_path
 from book_maker.utils import num_tokens_from_text, prompt_config_to_kwargs
 
@@ -55,6 +56,7 @@ from .disclosure import (
     model_id,
     stamp_disclosure,
     tool_contributor_ids,
+    translation_label,
 )
 from .font_obfuscation import deobfuscate_fonts, reobfuscate_written_epub
 from .rights import DRM_MESSAGE, check_epub
@@ -131,6 +133,38 @@ def _key_flag_env(flag):
     if len(matches) == 1:
         return matches.pop()
     return "BBM_API_KEY" if matches else None
+
+
+def _is_extra_headers_flag(flag):
+    """Whether `flag` is `--extra_headers` or an abbreviation of it.
+
+    `--extra_headers` values are treated as secret everywhere else (the echo
+    shows names only, and each value is `remember`ed), so the rerun command
+    must not print them back either. Any prefix of the long option is caught,
+    ambiguous ones included: on an unsupported route the value is never parsed
+    or remembered, so a `remember`-based mask would miss it, and a header must
+    not reach the terminal on the strength of an argument the parser refused.
+    """
+    return (
+        flag.startswith("--") and len(flag) >= 3 and "--extra_headers".startswith(flag)
+    )
+
+
+def _mask_header_values(raw):
+    """`raw` (a `--extra_headers` JSON value) with every value blanked.
+
+    The header names stay — they are printed by the echo too — and only the
+    values, any of which may be a credential, become the mask. A value that
+    does not parse as a JSON object is replaced whole, since its shape cannot
+    be trusted to hide the secret.
+    """
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        return json.dumps({name: "<redacted>" for name in parsed})
+    return "<redacted>"
 
 
 # Inline elements that mean something without holding text: a link target,
@@ -728,6 +762,7 @@ class EPUBBookLoader(BaseBookLoader):
                 model_id(getattr(self, "translate_model", None)),
                 getattr(self, "_disclosure_language", None) or self.language,
                 source_identifier=getattr(self, "_disclosure_source", None),
+                label=translation_label(getattr(self, "translate_model", None)),
             )
         except Exception as e:
             # A book that took hours and real money to translate is not
@@ -1254,19 +1289,36 @@ class EPUBBookLoader(BaseBookLoader):
 
         Reconstructed from argv so the printed instructions name the user's
         actual invocation (their book, their model, their language) — a
-        generic example would have to be translated back by hand. Keys are
-        the one thing not reproduced verbatim: see KEY_FLAG_ENV.
+        generic example would have to be translated back by hand. The one
+        thing not reproduced verbatim is a secret: a key becomes its env
+        variable (see KEY_FLAG_ENV) and every `--extra_headers` value is
+        masked, since any of them may be a credential.
         """
         parts = []
         # Set once a bare key flag is seen, so the value that follows it in
         # the next argv entry is replaced instead of quoted.
         pending_env = None
+        # The same, for a bare `--extra_headers`: the JSON in the next entry
+        # is masked, since any of its values may be a credential.
+        pending_header_mask = False
         for arg in sys.argv:
             if pending_env is not None:
                 parts.append(f'"${pending_env}"')
                 pending_env = None
                 continue
-            flag, joined, _value = arg.partition("=")
+            if pending_header_mask:
+                parts.append(shlex.quote(_mask_header_values(arg)))
+                pending_header_mask = False
+                continue
+            flag, joined, value = arg.partition("=")
+            if _is_extra_headers_flag(flag):
+                if joined:
+                    # `--extra_headers={…}`: value never becomes its own entry
+                    parts.append(f"{flag}={shlex.quote(_mask_header_values(value))}")
+                else:
+                    parts.append(shlex.quote(arg))
+                    pending_header_mask = True
+                continue
             env_name = _key_flag_env(flag)
             if env_name is None:
                 parts.append(shlex.quote(arg))
@@ -1276,7 +1328,10 @@ class EPUBBookLoader(BaseBookLoader):
             else:
                 parts.append(shlex.quote(arg))
                 pending_env = env_name
-        return " ".join(["python3", *parts])
+        # A final pass over the whole line masks any registered secret the
+        # flag-by-flag substitution above did not place (a key given in an
+        # unexpected position, say); redact is a no-op when there is none.
+        return redact(" ".join(["python3", *parts]))
 
     def check_file_filters(self):
         """Every name in --only_filelist / --exclude_filelist must exist.

@@ -1537,6 +1537,31 @@ class TestRequestExtrasFlags:
         assert "sk-SECRET" not in output
         assert "Authorization" in output  # the name still says what was sent
 
+    def test_a_body_field_repeating_the_key_is_masked_in_the_echo(self, tmp_path):
+        # a gateway that wants the key in the body gets it repeated there;
+        # the body echo goes through redact() like every other sink
+        src = tmp_path / BOOK.name
+        src.write_bytes(BOOK.read_bytes())
+        proc = _cli(
+            "--book_name",
+            str(src),
+            "--key",
+            "sk-live-0123456789",
+            "--api_format",
+            "openai",
+            "--model",
+            "m",
+            "--test",
+            "--test_num",
+            "1",
+            "--extra_body",
+            '{"api_key": "sk-live-0123456789", "top_p": 0.9}',
+        )
+        output = proc.stdout + proc.stderr
+
+        assert "sk-live-0123456789" not in output
+        assert "api_key" in output and "top_p" in output
+
     def test_both_flags_are_echoed_so_the_run_records_what_it_sent(self, tmp_path):
         proc = self._cli_extras(
             tmp_path,
@@ -1549,3 +1574,45 @@ class TestRequestExtrasFlags:
 
         assert "enable_thinking" in output
         assert "X-Title" in output
+
+
+# --------------------------------------------- the whole path, read back
+
+
+def test_the_written_epub_carries_each_translation_beside_its_source(tmp_path):
+    """The one check the CLI tests were missing: not the exit code, not the
+    plan, but the book. Run the real command against the offline stand-in,
+    then open what it wrote and find each translation as the paragraph
+    right after its original, with the original's class, in a content
+    document and not only in the nav."""
+    import zipfile
+
+    from bs4 import BeautifulSoup
+
+    proc, _ = _run(tmp_path, "--test", "--test_num", "2")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    output = tmp_path / "animal_farm_bilingual.epub"
+    assert output.exists(), proc.stdout + proc.stderr
+
+    with zipfile.ZipFile(output) as archive:
+        documents = {
+            name: archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith((".html", ".xhtml")) and "nav" not in name
+        }
+
+    def words(node):
+        return " ".join(node.get_text(" ").split())
+
+    placed = 0
+    for name, text in documents.items():
+        for paragraph in BeautifulSoup(text, "html.parser").find_all("p"):
+            translation = words(paragraph)
+            if not translation.startswith("[offline]"):
+                continue
+            source = paragraph.find_previous_sibling("p")
+            assert source is not None, f"{name}: a translation with nothing before it"
+            assert words(source) == translation[len("[offline]") :], name
+            assert source.get("class") == paragraph.get("class"), name
+            placed += 1
+    assert placed == 2, f"{placed} translations placed, 2 requested"

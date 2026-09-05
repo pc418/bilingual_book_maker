@@ -465,15 +465,15 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   bar's `cached=`: if it is still zero after a dozen requests, the endpoint
   is not reporting a cache; Ctrl+C and switch to window mode.
 
-- `--context-compact-at`:
+  - `--context-compact-at`:
 
-  Session mode only. The estimated-token budget the history may reach before it is compacted into a handoff report. Default `8000`, minimum `500`.
+    Session mode only. The estimated-token budget the history may reach before it is compacted into a handoff report. Default `8000`, minimum `500`.
 
-  At `8000` a run is estimated at 0.5x to 1.1x what window mode costs, while carrying several times the context; the ratio depends on the cache discount. Our calculation (August 2026) found `--context-compact-at 2500` the cheapest for most model prices (about 0.4x to 0.5x).
+    At `8000` a run is estimated at 0.5x to 1.1x what window mode costs, while carrying several times the context; the ratio depends on the cache discount. Our calculation (August 2026) found `--context-compact-at 2500` the cheapest for most model prices (about 0.4x to 0.5x).
 
-- `--no-context-compact`:
+  - `--no-context-compact`:
 
-  Session mode only. Skip the handoff report. The window still rolls over at the budget, but the next one starts empty instead of inheriting a summary. Cheaper, at the cost of continuity across the seam.
+    Session mode only. Skip the handoff report. The window still rolls over at the budget, but the next one starts empty instead of inheriting a summary. Cheaper, at the cost of continuity across the seam.
 
 - `--parallel-workers`:
 
@@ -498,7 +498,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
 - `--no_disclosure`:
 
-  An epub output is marked as a machine translation: the tool is added as a translator contributor, a description line names the model, and a one-page translation note closes the book. `--no_disclosure` leaves all three out. The author, rights and source metadata are carried over either way.
+  An epub output says it is an AI translation (a machine translation on the `google`, `deepl`, `caiyun`, `tencent` and `customapi` engines): the tool is added as a translator contributor, a description line names the model, and a one-page translation note closes the book. `--no_disclosure` leaves all three out. The author, rights and source metadata are carried over either way.
 
 - `--translation_style`:
 
@@ -579,8 +579,9 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   ```shell
   # openai route — disable a local/vLLM chat template's thinking block
   --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
-  # openai route — sampling override the flag does not expose
-  --extra_body '{"top_p": 0.9}'
+  # openai route (chat completions) — reasoning effort and a token ceiling,
+  # neither of which has its own flag (both model-dependent)
+  --extra_body '{"reasoning_effort": "low", "max_completion_tokens": 2000}'
   # anthropic route — turn extended thinking off, or on with a budget
   --extra_body '{"thinking": {"type": "disabled"}}'
   --extra_body '{"thinking": {"type": "enabled", "budget_tokens": 2000}}'

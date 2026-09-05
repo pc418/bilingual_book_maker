@@ -29,7 +29,7 @@
     "xai": {
       "api_style": "xai",
       "base_url": "https://api.x.ai/v1",
-      "default_models": ["grok-beta"],
+      "default_models": ["grok-4.3"],
       "env_key": "BBM_XAI_API_KEY"
     },
     "groq": {

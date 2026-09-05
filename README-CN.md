@@ -89,13 +89,13 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   那家的地址，所以格式加一个 `--key` 就是一条完整命令。
 - **其他 OpenAI 兼容 API**: `--api_base`（以 `/v1` 结尾）、
   `--key`即 API key，以及模型标识符 `--model`。省略 `--api_base`即使用openai官方API，
-  省略`--model`即使用gpt-5.6-luna。
+  省略`--model`即使用 gpt-5.6-luna。
 - 或使用`--provider`进行翻译: `bbm_providers.example.json` 里预设了以下厂家（Gemini、Qwen、xAI、Groq、OrcaRouter、Ollama、LiteLLM、DeepSeek、
   SiliconFlow、OpenRouter）：复制为 `bbm_providers.json`，并修改其中的key，
   例如`--provider gemini` 就是使用其中 Gemini 的api。
 - `--key` 可以写多个 key，英文逗号分隔，轮换使用。
 - `--use_context session` 使用会话模式翻译，并在8k上下文时进行压缩。
-- 旧的预设名和 key 参数仍然可用，见[从旧参数迁移](./docs/migration.md)。
+- 旧的预设名和 key 参数仍然可用，见 [从旧参数迁移](./docs/migration.md)。
 
 ## 支持的翻译服务
 * DeepL
@@ -161,7 +161,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 * [xAI](https://x.ai)
 
   ```shell
-  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-beta
+  python3 make_book.py --book_name test_books/animal_farm.epub --api_format xai --key ${xai_key} --model grok-4.3
   ```
 
 * [OrcaRouter](https://www.orcarouter.ai)
@@ -276,7 +276,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   | `gpt-5.6-luna` | `openai` | 默认值，OpenAI 官方地址 |
   | `claude-sonnet-4-6` | `anthropic` | Anthropic 官方地址 |
   | `gpt-4o-mini` | `openai` | OpenAI |
-  | `deepseek/deepseek-v4-flash-0731` | `openai` | 与`--api_base` 配合使用 |
+  | `deepseek-v4-flash-0731` | `openai` | 与`--api_base` 配合使用 |
   | `codex` | 即 `--api_format codex` | 通过 Codex CLI 使用 |
   | `orcarouter` | `openai` | 使用OrcaRouter，key 读取 `BBM_ORCAROUTER_API_KEY` |
 
@@ -421,13 +421,13 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
     在 `8000` 下，整体花费预估为 window 模式的 0.5–1.1 倍，但携带数倍的上下文——具体比例取决于缓存折扣比例。我们计算发现（2026年8月），大部分模型价格`--context-compact-at 2500` 最省钱（约 0.4–0.5 倍）。
 
-- `--no-context-compact`:
+  - `--no-context-compact`:
 
-  仅 session 模式。跳过交接报告：历史仍在达到预算时滚动，但下一个窗口从空白开始，不继承摘要。更省钱，代价是接缝处的连续性。
+    仅 session 模式。跳过交接报告：历史仍在达到预算时滚动，但下一个窗口从空白开始，不继承摘要。更省钱，代价是接缝处的连续性。
 
 - `--temperature`:
 
-  设置 openai / anthropic 格式的采样温度（codex 格式没有这个设置）。
+  设置 openai / anthropic 格式的采样温度（旧模型）。
   如 `--temperature 0.7`。
 
 - `--block_size`:
@@ -441,7 +441,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 - `--no_disclosure`:
 
-  epub 输出默认标注为机器翻译：工具作为译者写入 contributor，一行描述记录模型名，书末附一页翻译说明。`--no_disclosure` 去掉这三项。作者、版权与来源元数据无论如何都会保留。
+  epub 输出默认标注为 AI 翻译（`google`、`deepl`、`caiyun`、`tencent`、`customapi` 引擎则标注为机器翻译）：工具作为译者写入 contributor，一行描述记录模型名，书末附一页翻译说明。`--no_disclosure` 去掉这三项。
 
 - `--translation_style`:
 
@@ -519,8 +519,8 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   ```shell
   # openai 路径 —— 关闭本地/vLLM chat template 的思考块
   --extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
-  # openai 路径 —— 覆盖 flag 未暴露的采样参数
-  --extra_body '{"top_p": 0.9}'
+  # openai 路径（chat completions）—— 推理力度与 token 上限，二者都没有独立 flag（是否支持视模型而定）
+  --extra_body '{"reasoning_effort": "low", "max_completion_tokens": 2000}'
   # anthropic 路径 —— 关闭扩展思考，或带预算开启
   --extra_body '{"thinking": {"type": "disabled"}}'
   --extra_body '{"thinking": {"type": "enabled", "budget_tokens": 2000}}'
