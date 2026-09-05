@@ -352,6 +352,13 @@ class ChatGPTAPI(Base):
     # and a shared dict settles the question for all of them at once.
     _route_state = None
     context_mode = "window"
+    # Units one request may carry when the endpoint is below strict decoding.
+    # Mirrors `book_maker.loader.plan.SUBSTRICT_GROUP_MAX_UNITS` (pinned by a
+    # test) but is spelled here as a plain class attribute: importing the
+    # loader from the translator only works lazily, and an instance built
+    # without __init__ — a subclass, a test double — still needs the value.
+    # The CLI lowers it alongside `--batch_units`.
+    substrict_batch_cap = 8
 
     # Set by the CLI from --quiet. Suppresses this class's own echoes.
     quiet = False
@@ -1294,20 +1301,17 @@ class ChatGPTAPI(Base):
 
         degree = self._structured_enabled()
         if degree and degree not in SCHEMA_BATCH_DEGREES:
-            from ..loader.plan import SUBSTRICT_GROUP_MAX_UNITS
-
-            if plist_len > SUBSTRICT_GROUP_MAX_UNITS:
+            cap = self.substrict_batch_cap
+            if plist_len > cap:
                 # Tag mode sizes batches by characters and plan mode may have
                 # sized this one for a schema-degree model before rotation.
                 # Either way the json-degree cap is a per-*request* bound, so
                 # it is honoured by making more requests — refusing instead
                 # would send tag mode's fallback into an N-singles sweep.
                 out = []
-                for i in range(0, plist_len, SUBSTRICT_GROUP_MAX_UNITS):
+                for i in range(0, plist_len, cap):
                     out.extend(
-                        self._do_structured_batch_translate(
-                            text_list[i : i + SUBSTRICT_GROUP_MAX_UNITS]
-                        )
+                        self._do_structured_batch_translate(text_list[i : i + cap])
                     )
                 return out
 
@@ -1422,12 +1426,11 @@ class ChatGPTAPI(Base):
             # the request costs nothing — the loader's ladder divides the
             # batch — where sending it re-opens the oversized-batch
             # corruption the cap bounds.
-            from ..loader.plan import SUBSTRICT_GROUP_MAX_UNITS
-
-            if plist_len > SUBSTRICT_GROUP_MAX_UNITS:
+            cap = self.substrict_batch_cap
+            if plist_len > cap:
                 raise BatchMismatch(
                     f"batch of {plist_len} exceeds the json-degree cap of "
-                    f"{SUBSTRICT_GROUP_MAX_UNITS} units for '{self.model}'"
+                    f"{cap} units for '{self.model}'"
                 )
 
         messages = self._create_structured_batch_messages(text_list, degree=degree)

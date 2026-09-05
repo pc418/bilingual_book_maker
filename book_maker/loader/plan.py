@@ -1324,6 +1324,13 @@ GENERAL_GROUP_MAX_UNITS = 16
 # has to describe the book rather than the endpoint that happens to run it.
 SUBSTRICT_GROUP_MAX_UNITS = 8
 
+# The grouping budget plan mode assumes when `--use_context session` is on and
+# `--accumulated_num` was not typed. In session mode the history is re-read at
+# the endpoint's cache rate, so the *request count* is what a run pays for, and
+# leaving grouping off there is the expensive default. Small on purpose: 800
+# tokens is a handful of paragraphs, well inside the unit cap.
+SESSION_DEFAULT_TOKEN_BUDGET = 800
+
 
 def unit_tokens(unit):
     """Tokens in a unit's text, counted once and remembered on the unit.
@@ -1339,7 +1346,13 @@ def unit_tokens(unit):
     return unit.token_count
 
 
-def assign_batches(units, group_size=8, next_group_id=0, token_budget=None):
+def assign_batches(
+    units,
+    group_size=8,
+    next_group_id=0,
+    token_budget=None,
+    max_units=GENERAL_GROUP_MAX_UNITS,
+):
     """Group consecutive units so they share one request.
 
     Without `token_budget`, a run is consecutive units of fewer than
@@ -1347,19 +1360,21 @@ def assign_batches(units, group_size=8, next_group_id=0, token_budget=None):
     or more is cut into groups at `group_size` units **and** at
     `GROUP_MAX_CHARS` characters, whichever comes first; each group gets a
     `group_id`. A long unit is its own request (`group_id` stays None) and
-    ends the run around it.
+    ends the run around it. `max_units` does not apply to this path — the
+    short-run grouping has always been bounded by `group_size` instead.
 
     With `token_budget` (plan mode's `--accumulated_num N`), *any*
     consecutive units are packed — mixed lengths, prose included — greedily
-    to at most N tokens and at most `GENERAL_GROUP_MAX_UNITS` units. A unit
-    that is over budget on its own stays solo. Either way a group of one
-    keeps `group_id` None, so the single-translate path is untouched.
+    to at most N tokens and at most `max_units` units (`--batch_units`,
+    defaulting to `GENERAL_GROUP_MAX_UNITS`). A unit that is over budget on
+    its own stays solo. Either way a group of one keeps `group_id` None, so
+    the single-translate path is untouched.
 
     Returns the next unused group id. A pure function of unit order and
     text, so the same book always partitions into the same requests.
     """
     if token_budget:
-        return _assign_general_batches(units, token_budget, next_group_id)
+        return _assign_general_batches(units, token_budget, next_group_id, max_units)
 
     def emit(run):
         nonlocal next_group_id
@@ -1391,7 +1406,9 @@ def assign_batches(units, group_size=8, next_group_id=0, token_budget=None):
     return next_group_id
 
 
-def _assign_general_batches(units, token_budget, next_group_id):
+def _assign_general_batches(
+    units, token_budget, next_group_id, max_units=GENERAL_GROUP_MAX_UNITS
+):
     """Pack any consecutive units into requests of `token_budget` tokens."""
     group, total = [], 0
 
@@ -1405,9 +1422,7 @@ def _assign_general_batches(units, token_budget, next_group_id):
 
     for unit in units:
         tokens = unit_tokens(unit)
-        if group and (
-            len(group) >= GENERAL_GROUP_MAX_UNITS or total + tokens > token_budget
-        ):
+        if group and (len(group) >= max_units or total + tokens > token_budget):
             close()
             group, total = [], 0
         if tokens > token_budget:
@@ -1429,6 +1444,7 @@ def partition_file(
     poetry_group_size=8,
     next_group_id=0,
     token_budget=None,
+    max_units=GENERAL_GROUP_MAX_UNITS,
 ):
     """partition_soup + grouping; the one entry point loaders use."""
     fp = partition_soup(
@@ -1439,6 +1455,7 @@ def partition_file(
         group_size=poetry_group_size,
         next_group_id=next_group_id,
         token_budget=token_budget,
+        max_units=max_units,
     )
     return fp, next_group_id
 
@@ -1471,6 +1488,7 @@ class TranslationPlan:
         only_files=None,
         exclude_files=None,
         token_budget=None,
+        batch_units=GENERAL_GROUP_MAX_UNITS,
     ):
         self.files = files
         self.exclude_tags = tuple(exclude_tags)
@@ -1479,6 +1497,9 @@ class TranslationPlan:
         # the short-run-only grouping. Recorded (see `plan_meta`) because it
         # is part of how this plan's requests were shaped.
         self.token_budget = token_budget
+        # `--batch_units`: units the budget path may put in one request.
+        # Recorded for the same reason the budget is — it shaped the requests.
+        self.batch_units = batch_units
         self.only_files = frozenset(only_files or ())
         self.exclude_files = frozenset(exclude_files or ())
 
@@ -1656,7 +1677,7 @@ class TranslationPlan:
         batched = [u for f in self.files for u in f.units if u.group_id is not None]
         requests = len(groups)
         limit = (
-            f"<= {GENERAL_GROUP_MAX_UNITS} units / {self.token_budget} tokens"
+            f"<= {self.batch_units} units / {self.token_budget} tokens"
             if self.token_budget
             else f"<= {self.poetry_group_size} units"
         )
@@ -1685,6 +1706,9 @@ class TranslationPlan:
             # decided plan. Additive, so the stored shape stays schema 6 —
             # no row key and no resume slot moves with it.
             "token_budget": self.token_budget,
+            # Same treatment, for the same reason: the unit cap decides how
+            # many units share a request, never which units exist.
+            "batch_units": self.batch_units,
             "book_sha256": file_sha256(book_path),
             "planning_settings": planning_settings(
                 self.exclude_tags,
@@ -1832,6 +1856,7 @@ def build_plan(
     only_files=None,
     exclude_files=None,
     token_budget=None,
+    batch_units=GENERAL_GROUP_MAX_UNITS,
 ):
     """Build a TranslationPlan for an ebooklib book object.
 
@@ -1859,6 +1884,7 @@ def build_plan(
             poetry_group_size=poetry_group_size,
             next_group_id=next_group_id,
             token_budget=token_budget,
+            max_units=batch_units,
         )
         files.append(fp)
     return TranslationPlan(
@@ -1868,4 +1894,5 @@ def build_plan(
         only_files=only_files,
         exclude_files=exclude_files,
         token_budget=token_budget,
+        batch_units=batch_units,
     )

@@ -1616,3 +1616,83 @@ def test_the_written_epub_carries_each_translation_beside_its_source(tmp_path):
             assert source.get("class") == paragraph.get("class"), name
             placed += 1
     assert placed == 2, f"{placed} translations placed, 2 requested"
+
+
+# --------------------------------------------------------------------------
+# --batch_units, and the session-mode grouping default
+# --------------------------------------------------------------------------
+
+
+def test_a_batch_of_zero_units_is_refused():
+    # a request has to carry something; `--accumulated_num 1` is the flag
+    # that turns grouping off, and this one must not become a second spelling
+    import argparse
+
+    from book_maker.cli import batch_unit_cap
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        batch_unit_cap("0")
+
+
+def test_a_zero_batch_units_run_stops_at_the_parser(tmp_path):
+    proc, _ = _run(tmp_path, "--batch_units", "0", "--plan-dry-run")
+    # argparse's own refusal: exit 2, one line, nothing translated
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "--batch_units" in proc.stderr
+    assert not list(tmp_path.glob("*_plan.json"))
+    assert "Traceback" not in proc.stdout + proc.stderr
+
+
+def test_a_negative_batch_units_is_refused_the_same_way(tmp_path):
+    proc, _ = _run(tmp_path, "--batch_units", "-4", "--plan-dry-run")
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+
+
+def test_batch_units_is_recorded_in_the_plan(tmp_path):
+    proc, plan = _run(tmp_path, "--batch_units", "4", "--plan-dry-run")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(plan.read_text())["batch_units"] == 4
+
+
+def test_batch_units_defaults_to_the_evals_ceiling(tmp_path):
+    from book_maker.loader.plan import GENERAL_GROUP_MAX_UNITS
+
+    proc, plan = _run(tmp_path, "--plan-dry-run")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(plan.read_text())["batch_units"] == GENERAL_GROUP_MAX_UNITS
+
+
+def test_an_untyped_accumulated_num_reaches_the_parser_as_none():
+    # the explicitness is the whole mechanism: plan mode defaults the budget
+    # by context mode only when the flag was not typed, and `1` has to stay
+    # distinguishable from silence
+    from book_maker.cli import parse_args
+
+    assert parse_args(["--book_name", "b.epub"]).accumulated_num is None
+    assert (
+        parse_args(["--book_name", "b.epub", "--accumulated_num", "1"]).accumulated_num
+        == 1
+    )
+
+
+def test_a_session_dry_run_previews_the_default_budget(tmp_path):
+    # --plan-dry-run must group the way the run will: session mode defaults
+    # the token budget, so the preview's plan carries it too
+    from book_maker.loader.plan import SESSION_DEFAULT_TOKEN_BUDGET
+
+    proc, plan = _run(tmp_path, "--plan-dry-run", "--use_context", "session")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(plan.read_text())["token_budget"] == SESSION_DEFAULT_TOKEN_BUDGET
+
+
+def test_an_explicit_one_keeps_the_session_dry_run_ungrouped(tmp_path):
+    proc, plan = _run(
+        tmp_path,
+        "--plan-dry-run",
+        "--use_context",
+        "session",
+        "--accumulated_num",
+        "1",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(plan.read_text())["token_budget"] is None

@@ -184,6 +184,30 @@ class TestTokenBudgetGrouping:
 
         assert all(isinstance(u.token_count, int) for u in units)
 
+    def test_a_lower_unit_cap_bounds_the_groups(self):
+        # --batch_units: the ceiling came from one model's eval, so it is the
+        # default and not a law. A generous budget makes the cap the only
+        # thing bounding a group, which is where it has to be visible.
+        units = _units("".join(_paragraph(20) for _ in range(40)))
+
+        assign_batches(units, token_budget=10**6, max_units=4)
+
+        sizes = {}
+        for unit in units:
+            sizes[unit.group_id] = sizes.get(unit.group_id, 0) + 1
+        assert max(sizes.values()) == 4
+
+    def test_the_unit_cap_does_not_reach_the_no_budget_path(self):
+        # the short-run grouping is bounded by group_size and GROUP_MAX_CHARS;
+        # --batch_units is a budget-path bound and must not silently re-cut it
+        html = "<p>a</p><p>b</p><p>c</p><p>d</p><p>e</p><p>f</p>"
+        capped, plain = _units(html), _units(html)
+
+        assign_batches(capped, max_units=2)
+        assign_batches(plain)
+
+        assert [u.group_id for u in capped] == [u.group_id for u in plain]
+
     def test_the_count_does_not_depend_on_a_model_name(self, monkeypatch):
         # grouping is a property of the book: pinned to cl100k_base, so the
         # same book partitions into the same requests on every endpoint
@@ -292,6 +316,98 @@ class TestLoaderHonorsAccumulatedNum:
         sizes = [len(call) for call in loader.translate_model.list_calls]
         assert max(sizes) > SUBSTRICT_GROUP_MAX_UNITS
         assert max(sizes) <= GENERAL_GROUP_MAX_UNITS
+
+    def test_the_default_cap_is_the_evals_ceiling(self, tmp_path):
+        # no --batch_units: 16 strict, 8 below it, exactly as before the flag
+        strict, _ = _plan_loader(tmp_path / "s", _StrictModel)
+        sub, _ = _plan_loader(tmp_path / "j", _RecordingModel)
+
+        assert strict._plan_request_cap() == GENERAL_GROUP_MAX_UNITS
+        assert sub._plan_request_cap() == SUBSTRICT_GROUP_MAX_UNITS
+
+    def test_a_chosen_cap_is_halved_below_strict_decoding(self, tmp_path):
+        # --batch_units 4: the strict cap as typed, half of it otherwise —
+        # the same 16/8 ratio the default ships with
+        strict, _ = _plan_loader(tmp_path / "s", _StrictModel, batch_units=4)
+        sub, _ = _plan_loader(tmp_path / "j", _RecordingModel, batch_units=4)
+
+        assert strict._plan_request_cap() == 4
+        assert sub._plan_request_cap() == 2
+
+    def test_a_cap_of_one_never_halves_to_nothing(self, tmp_path):
+        sub, _ = _plan_loader(tmp_path, _RecordingModel, batch_units=1)
+
+        assert sub._plan_request_cap() == 1
+
+    def test_a_chosen_cap_bounds_the_batches_that_are_sent(self, tmp_path):
+        loader, _ = _plan_loader(
+            tmp_path, _StrictModel, accumulated_num=100_000, batch_units=3
+        )
+        loader.make_bilingual_book()
+
+        sizes = [len(call) for call in loader.translate_model.list_calls]
+        assert sizes and max(sizes) == 3
+
+
+class TestSessionModeDefaultsTheBudget:
+    """`--use_context session` groups by default; every other run does not."""
+
+    def test_session_mode_defaults_the_plan_budget(self, tmp_path):
+        from book_maker.loader.plan import SESSION_DEFAULT_TOKEN_BUDGET
+
+        loader, _ = _plan_loader(tmp_path, _StrictModel, context_mode="session")
+
+        assert loader._plan_token_budget == SESSION_DEFAULT_TOKEN_BUDGET == 800
+        # and tag mode is untouched: the default lives in the plan property,
+        # not in the attribute every tag-mode path reads
+        assert loader.accumulated_num == 1
+
+    def test_an_explicit_one_turns_grouping_off_in_session_mode_too(self, tmp_path):
+        # `--accumulated_num 1` is the documented way to say "no grouping";
+        # a default that overrode it would leave no way to say it
+        loader, _ = _plan_loader(
+            tmp_path,
+            _StrictModel,
+            context_mode="session",
+            accumulated_num_given=True,
+        )
+
+        assert loader._plan_token_budget is None
+
+    def test_an_explicit_value_still_wins_in_session_mode(self, tmp_path):
+        loader, _ = _plan_loader(
+            tmp_path,
+            _StrictModel,
+            context_mode="session",
+            accumulated_num_given=True,
+            accumulated_num=1500,
+        )
+
+        assert loader._plan_token_budget == 1500
+
+    @pytest.mark.parametrize("mode", [None, "window"])
+    def test_no_session_no_flag_is_still_no_budget(self, tmp_path, mode):
+        loader, _ = _plan_loader(tmp_path, _StrictModel, context_mode=mode)
+
+        assert loader._plan_token_budget is None
+
+    def test_the_session_default_groups_ordinary_prose(self, tmp_path):
+        # the visible half of the contract: without the flag, a session run
+        # batches consecutive paragraphs instead of sending one request each
+        loader, _ = _plan_loader(tmp_path, _StrictModel, context_mode="session")
+        loader.make_bilingual_book()
+
+        assert any(
+            len(call) > 1 and all(len(t) >= 70 for t in call)
+            for call in loader.translate_model.list_calls
+        ), loader.translate_model.list_calls
+
+    def test_the_report_names_the_budget_it_defaulted_to(self, tmp_path, capsys):
+        loader, _ = _plan_loader(tmp_path, _StrictModel, context_mode="session")
+        loader.make_bilingual_book()
+
+        out = capsys.readouterr().out
+        assert "800 tokens" in out
 
 
 # ----------------------------------------------- 3. the plan mode gate
@@ -456,6 +572,44 @@ class TestJsonDegreeBatchTranslate:
         with pytest.raises(BatchMismatch, match="json-degree cap"):
             translator._execute_structured_batch_translate(
                 [f"p{i}" for i in range(n)], n
+            )
+        assert create.call_count == 0
+
+    def test_the_class_default_cap_is_the_partitions_substrict_cap(self):
+        # the translator spells the number itself (importing the loader from
+        # here only works lazily); this is what keeps the two in step
+        assert ChatGPTAPI.substrict_batch_cap == SUBSTRICT_GROUP_MAX_UNITS
+
+    def test_a_lowered_cap_chunks_at_the_lowered_size(self):
+        # --batch_units 4 halves to 2 here, and the chunking has to follow
+        # that rather than the class default. Six, not five: a tail of one
+        # leaves the batch path entirely (`get_translation`, through .parse),
+        # which would measure the single-translate path instead of this cap.
+        create = Mock(
+            side_effect=[
+                _completion(_reply(["t0", "t1"])),
+                _completion(_reply(["t2", "t3"], ids=[0, 1])),
+                _completion(_reply(["t4", "t5"], ids=[0, 1])),
+            ]
+        )
+        translator = self._translator_at_json(create)
+        translator.substrict_batch_cap = 2
+
+        assert translator._do_structured_batch_translate(
+            [f"p{i}" for i in range(6)]
+        ) == [f"t{i}" for i in range(6)]
+        assert create.call_count == 3
+        for call in create.call_args_list:
+            assert "EXACTLY 2 objects" in call.kwargs["messages"][-1]["content"]
+
+    def test_the_rotation_race_backstop_honours_the_lowered_cap(self):
+        create = Mock(return_value=_completion(_reply(["x"] * 3)))
+        translator = self._translator_at_json(create)
+        translator.substrict_batch_cap = 2
+
+        with pytest.raises(BatchMismatch, match="cap of 2 units"):
+            translator._execute_structured_batch_translate(
+                [f"p{i}" for i in range(3)], 3
             )
         assert create.call_count == 0
 
@@ -628,13 +782,13 @@ def test_entry_rung_defaults_to_the_prompt_for_an_unsupported_endpoint():
 
 
 class TestPlanMetaRecordsTheBudget:
-    def _plan(self, tmp_path, token_budget):
+    def _plan(self, tmp_path, token_budget, **kwargs):
         from ebooklib import epub
 
         from book_maker.loader.plan import build_plan
 
         book = epub.read_epub(str(ANIMAL_FARM))
-        return build_plan(book, token_budget=token_budget)
+        return build_plan(book, token_budget=token_budget, **kwargs)
 
     def test_the_budget_is_recorded_and_changes_the_plan_identity(self, tmp_path):
         src = tmp_path / ANIMAL_FARM.name
@@ -665,6 +819,7 @@ class TestPlanMetaRecordsTheBudget:
         # never which units exist, so no resume cache or row key moves
         assert data["schema_version"] == PLAN_SCHEMA_VERSION
         assert data["token_budget"] == 800
+        assert data["batch_units"] == GENERAL_GROUP_MAX_UNITS
 
     def test_the_budget_is_not_a_planning_setting(self, tmp_path):
         # same reason `poetry_group_size` is not one: it decides how many
@@ -673,3 +828,22 @@ class TestPlanMetaRecordsTheBudget:
         from book_maker.loader.plan import planning_settings
 
         assert "token_budget" not in planning_settings(("sup", "code"))
+
+    def test_the_unit_cap_is_recorded_and_changes_the_plan_identity(self, tmp_path):
+        # --batch_units gets the budget's treatment: it shaped the requests,
+        # so it is written down
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        src = tmp_path / ANIMAL_FARM.name
+        shutil.copy(ANIMAL_FARM, src)
+
+        default = self._plan(tmp_path, 400).plan_meta(str(src))
+        narrow = self._plan(tmp_path, 400, batch_units=4).plan_meta(str(src))
+
+        assert default["batch_units"] == GENERAL_GROUP_MAX_UNITS
+        assert narrow["batch_units"] == 4
+        assert narrow != default
+
+    def test_the_unit_cap_is_not_a_planning_setting_either(self, tmp_path):
+        from book_maker.loader.plan import planning_settings
+
+        assert "batch_units" not in planning_settings(("sup", "code"))

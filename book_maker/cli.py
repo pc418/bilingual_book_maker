@@ -12,6 +12,7 @@ from rich.markup import escape
 from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.ledger import PlanLedgerError
+from book_maker.loader.plan import GENERAL_GROUP_MAX_UNITS
 from book_maker.provider_loader import resolve_provider
 from book_maker.translator import (
     FORMAT_DEFAULT_BASES,
@@ -454,6 +455,20 @@ def compact_budget(value):
     return budget
 
 
+def batch_unit_cap(value):
+    """argparse type for --batch_units: units one plan request may carry."""
+    try:
+        units = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}")
+    if units < 1:
+        raise argparse.ArgumentTypeError(
+            f"a batch of {units} units is not a request; use at least 1 "
+            f"(--accumulated_num 1 is how grouping is turned off)"
+        )
+    return units
+
+
 def resolve_context_mode(options):
     """`(context_flag, context_mode)` from the parsed `--use_context` value.
 
@@ -741,16 +756,28 @@ def build_parser():
         "--accumulated_num",
         dest="accumulated_num",
         type=int,
-        default=1,
+        default=None,
         help="""Wait for how many tokens have been accumulated before starting the translation.
 gpt3.5 limits the total_token to 4090.
 For example, if you use --accumulated_num 1600, maybe openai will output 2200 tokens
 and maybe 200 tokens for other messages in the system messages user messages, 1600+2200+200=4000,
 So you are close to reaching the limit. You have to choose your own value, there is no way to know if the limit is reached before sending.
 In EPUB plan mode this is a per-request token budget: consecutive units of any
-length share one request up to this many tokens (at most 16 units per request;
-8 when the endpoint verifies JSON mode but not a strict schema).
+length share one request up to this many tokens (at most --batch_units units per
+request; half that when the endpoint verifies JSON mode but not a strict schema).
+Plan mode with --use_context session defaults this to 800, because a session
+run's bill is roughly its request count; pass 1 to turn grouping off there.
 """,
+    )
+    parser.add_argument(
+        "--batch_units",
+        dest="batch_units",
+        type=batch_unit_cap,
+        default=None,
+        help="EPUB plan mode only: the most units --accumulated_num's token "
+        "budget may put in one request. Default 16, which a degradation eval "
+        "found safe; lower it for a weaker model. An endpoint that verifies "
+        "JSON mode but not a strict schema carries half this many.",
     )
     parser.add_argument(
         "--translation_style",
@@ -955,6 +982,13 @@ def main():
 
     options = parse_args(legacy.argv)
     options.context_flag, options.context_mode = resolve_context_mode(options)
+    # None is "not typed": --accumulated_num keeps its explicitness (plan
+    # mode defaults the budget by context mode, and an explicit 1 must still
+    # mean grouping off), and --batch_units falls back to the eval's ceiling.
+    accumulated_num_given = options.accumulated_num is not None
+    batch_units = (
+        GENERAL_GROUP_MAX_UNITS if options.batch_units is None else options.batch_units
+    )
     # A named tag selection is an opt-out from the automatic plan; the
     # parser's None is the only way to tell one from the "p" default.
     translate_tags_given = options.translate_tags is not None
@@ -995,6 +1029,19 @@ def main():
                 "EPUB — its text boxes are sized for the original words, so "
                 "translated text may overflow or misplace.[/bold yellow]"
             )
+        # The preview must group the way the run will: an explicit
+        # --accumulated_num wins (1 turning grouping off), and an untyped
+        # one defaults by context mode exactly as _plan_token_budget does.
+        from book_maker.loader.plan import SESSION_DEFAULT_TOKEN_BUDGET
+
+        if accumulated_num_given:
+            dry_budget = (
+                options.accumulated_num if options.accumulated_num > 1 else None
+            )
+        elif options.context_mode == "session":
+            dry_budget = SESSION_DEFAULT_TOKEN_BUDGET
+        else:
+            dry_budget = None
         plan = build_plan(
             book,
             exclude_tags=tuple(
@@ -1004,6 +1051,8 @@ def main():
             only_files=set(f for f in options.only_filelist.split(",") if f) or None,
             exclude_files=set(f for f in options.exclude_filelist.split(",") if f)
             or None,
+            token_budget=dry_budget,
+            batch_units=batch_units,
         )
         # samples are book text: rich would eat "[Seven] warriors [they were]"
         print(escape(plan.report()))
@@ -1365,8 +1414,22 @@ def main():
     # so a sidecar boot or a context-window lookup cannot precede it.
     if hasattr(e, "check_file_filters"):
         e.check_file_filters()
-    if options.accumulated_num > 1:
-        e.accumulated_num = options.accumulated_num
+    if accumulated_num_given:
+        # 1 keeps the loader's own default and turns grouping off; the flag
+        # having been typed is recorded either way, because plan mode's
+        # session default has to know the difference between "1" and silence.
+        if hasattr(e, "accumulated_num_given"):
+            e.accumulated_num_given = True
+        if options.accumulated_num > 1:
+            e.accumulated_num = options.accumulated_num
+    if hasattr(e, "batch_units"):
+        e.batch_units = batch_units
+    if options.batch_units is not None and hasattr(
+        e.translate_model, "substrict_batch_cap"
+    ):
+        # the translator enforces the same cap per request when the endpoint
+        # is below strict decoding, and it is halved there too
+        e.translate_model.substrict_batch_cap = max(1, batch_units // 2)
     if options.translation_color:
         e.translation_style = f"color: {options.translation_color};"
     if options.translation_style:

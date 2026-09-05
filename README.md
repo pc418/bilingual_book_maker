@@ -444,7 +444,12 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 - `--accumulated_num`:
 
   Wait for how many tokens have been accumulated before starting the translation. gpt3.5 limits the total_token to 4090. For example, if you use `--accumulated_num 1600`, maybe openai will output 2200 tokens and maybe 200 tokens for other messages in the system messages user messages, 1600+2200+200=4000, So you are close to reaching the limit. You have to choose your own
-  value, there is no way to know if the limit is reached before sending
+  value, there is no way to know if the limit is reached before sending.
+  In EPUB plan mode this is a per-request token budget: consecutive units of any length share one request up to `N` tokens. With `--use_context session` it defaults to `800` (fewer requests is most of a session run's bill); pass `1` to turn grouping off.
+
+- `--batch_units`:
+
+  EPUB plan mode only: the most units one grouped request may carry (default `16`). Lower it for a weaker model that merges or drops paragraphs in large batches; an endpoint that verifies JSON mode but not a strict schema automatically carries half this many.
 
 - `--use_context`:
 

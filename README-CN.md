@@ -397,7 +397,12 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 - `--accumulated_num`:
 
   达到累计token数开始进行翻译。gpt3.5将total_token限制为4090。
-  例如，如果您使用`--accumulated_num 1600`，则可能会输出2200个令牌，另外200个令牌用于系统指令（system_message）和用户指令（user_message），1600+2200+200 = 4000，所以token接近极限。你必须选择一个自己合适的值，我们无法在发送之前判断是否达到限制
+  例如，如果您使用`--accumulated_num 1600`，则可能会输出2200个令牌，另外200个令牌用于系统指令（system_message）和用户指令（user_message），1600+2200+200 = 4000，所以token接近极限。你必须选择一个自己合适的值，我们无法在发送之前判断是否达到限制。
+  在 EPUB 计划模式下这是每个请求的 token 预算：连续的段落（不限长度）合并进同一个请求，直到累计 `N` 个 token。配合 `--use_context session` 时默认为 `800`（会话模式的开销主要取决于请求数）；传 `1` 可关闭合并。
+
+- `--batch_units`:
+
+  仅 EPUB 计划模式：一个合并请求最多携带的段落数（默认 `16`）。较弱的模型在大批量下会合并或丢失段落，可调低此值；只支持 JSON 模式而不支持严格 schema 的端点自动减半。
 
 - `--use_context`:
   使用上下文模式翻译。

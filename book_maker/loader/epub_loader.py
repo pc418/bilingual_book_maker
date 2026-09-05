@@ -63,7 +63,7 @@ from .rights import DRM_MESSAGE, check_epub
 from .plan import (
     GENERAL_GROUP_MAX_UNITS,
     PLAN_SCHEMA_VERSION,
-    SUBSTRICT_GROUP_MAX_UNITS,
+    SESSION_DEFAULT_TOKEN_BUDGET,
     BookCss,
     TranslationPlan,
     UnsafeSingleTranslateError,
@@ -355,6 +355,14 @@ class EPUBBookLoader(BaseBookLoader):
         self.exclude_translate_tags = "sup,code"
         self.allow_navigable_strings = False
         self.accumulated_num = 1
+        # Whether `--accumulated_num` was typed at all. 1 is both "the user
+        # asked for no grouping" and "the user said nothing", and plan mode's
+        # session default (below) has to tell those apart.
+        self.accumulated_num_given = False
+        # session mode's history is re-read at the endpoint's cache rate, so
+        # requests are what a run pays for; the loader needs to know which
+        # mode it is in to default the plan budget accordingly.
+        self.context_mode = context_mode
         self.translation_style = ""
         self.context_flag = context_flag
         self.helper = EPUBBookLoaderHelper(
@@ -382,6 +390,9 @@ class EPUBBookLoader(BaseBookLoader):
         self.plan_fallback_tags = "p"
         self.plan_min_coverage = 0.5
         self.poetry_group_size = 8
+        # `--batch_units`: units one plan request may carry at the strict
+        # degree. Below strict it is halved (see `_plan_request_cap`).
+        self.batch_units = GENERAL_GROUP_MAX_UNITS
         # "none" = no plan mode, the CLI's default. A caller that turns plan
         # mode on must pick all | model | agent (see .classify): there is no
         # mode where nobody decides and the code translates whatever it could
@@ -909,17 +920,31 @@ class EPUBBookLoader(BaseBookLoader):
         """`--accumulated_num` as plan mode's grouping budget, or None.
 
         Same meaning as in tag mode — tokens a request may carry — counted
-        the same way. 1 is argparse's default and means the flag was not
-        used, which leaves the short-run-only grouping plan mode has always
-        done on its own.
+        the same way. A typed value wins outright, `1` included: that is the
+        way to turn grouping off, and it has to keep working in every mode.
+
+        With the flag untyped, session mode defaults to
+        `SESSION_DEFAULT_TOKEN_BUDGET`. There the history is re-read at the
+        endpoint's cache rate, so a run's bill is roughly its request count,
+        and leaving grouping off is the expensive choice. Everywhere else the
+        untyped default stays None — the short-run-only grouping plan mode
+        has always done on its own. Plan mode only: tag mode reads
+        `accumulated_num` directly and never sees this.
         """
-        return self.accumulated_num if self.accumulated_num > 1 else None
+        if self.accumulated_num > 1:
+            return self.accumulated_num
+        if self.accumulated_num_given:
+            # an explicit `--accumulated_num 1`: grouping off, as asked
+            return None
+        if self.context_mode == "session":
+            return SESSION_DEFAULT_TOKEN_BUDGET
+        return None
 
     def _plan_request_cap(self):
         """Units one plan request may carry, given the endpoint's degree.
 
-        The partition caps a general group at `GENERAL_GROUP_MAX_UNITS`
-        because that is a property of the book; how far an *endpoint* can be
+        The partition caps a general group at `--batch_units` because that
+        is a property of the book; how far an *endpoint* can be
         trusted with one is not, and is not knowable when the partition is
         built (only `--plan-classify auto` probes before the loader runs; an
         explicit plan mode probes later, and `--model_list` rotates across
@@ -943,8 +968,9 @@ class EPUBBookLoader(BaseBookLoader):
                 # real request behind it reports its own failure
                 degree = None
         if degree == "strict":
-            return GENERAL_GROUP_MAX_UNITS
-        return SUBSTRICT_GROUP_MAX_UNITS
+            return self.batch_units
+        # half, floored, but never zero: a request has to carry something
+        return max(1, self.batch_units // 2)
 
     def _plan_mode_conflict(self):
         """The flags whose meaning the plan would contradict, if any."""
@@ -1414,6 +1440,7 @@ class EPUBBookLoader(BaseBookLoader):
             only_files=only,
             exclude_files=exclude,
             token_budget=self._plan_token_budget,
+            batch_units=self.batch_units,
         )
 
     def _classify_plan(self, ledger, plan, plan_path):
@@ -1498,6 +1525,7 @@ class EPUBBookLoader(BaseBookLoader):
             overrides=self._plan_overrides,
             poetry_group_size=self.poetry_group_size,
             token_budget=self._plan_token_budget,
+            max_units=self.batch_units,
         )
         return fp
 
