@@ -211,24 +211,28 @@ def test_the_verdict_only_picks_where_classification_starts(verdict, entry):
     assert rungs[0][0] == entry
 
 
-def test_shape_endpoint_translates_via_delimiter_but_classifies_structured():
+def test_shape_endpoint_batches_with_a_schema_and_classifies_structured():
+    # The batch schema pins no *values* — the target language rides in the
+    # field name and the prose tail — so shape-only decoding is enough for
+    # it, unlike the single-translation schema (#544).
     create = Mock(
         side_effect=[
             _completion('{"probe":"ignored"}'),  # shape verdict
-            _completion("一\n\n@@\n\n二"),  # delimiter translation
             _completion('{"p.header": {"verdict": "skip"}}'),  # classification
         ]
     )
-    translator = _translator(create=create)
+    parse = Mock(return_value=_parsed_completion(parsed=_batch(["一", "二"])))
+    translator = _translator(create=create, parse=parse)
 
     assert translator.translate_list(["one", "two"]) == ["一", "二"]
     assert translator.structured_json("classify", {"schema": {}}) == {
         "p.header": {"verdict": "skip"}
     }
 
-    translate_call = create.call_args_list[1].kwargs
-    classify_call = create.call_args_list[2].kwargs
-    assert "response_format" not in translate_call
+    assert parse.call_args.kwargs["response_format"] is batch_translation_model(
+        LANGUAGE, 2
+    )
+    classify_call = create.call_args_list[1].kwargs
     assert classify_call["response_format"]["type"] == "json_schema"
 
 

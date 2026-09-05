@@ -4,6 +4,7 @@ import os
 import shutil
 from os import environ
 from itertools import cycle
+from types import SimpleNamespace
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -55,6 +56,7 @@ from ..structured import (
     RungRejected,
     extract_json_object,
     prompt_with_schema,
+    schema_required_keys,
     unwrap_schema_echo,
 )
 from ..config import config
@@ -233,6 +235,83 @@ def single_translation_schema(language):
             "additionalProperties": False,
         },
     }
+
+
+@lru_cache(maxsize=None)
+def batch_translation_schema(language, n, source_language=None):
+    """Mirror of `batch_translation_model` as a plain JSON Schema dict.
+
+    The json_object degree cannot be handed a schema at all — the endpoint
+    guarantees only that *some* JSON comes back — so the shape is described
+    in the prompt instead (`prompt_with_schema`). This is the dict that
+    description is rendered from, and the source of the one top-level key
+    the reply is checked for before anything is read out of it.
+    """
+    field = batch_field_name(language)
+    item_field = single_field_name(language)
+    return {
+        "name": field,
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                field: {
+                    "type": "array",
+                    "description": _batch_field_description(
+                        language, n, source_language
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "integer",
+                                "description": (
+                                    "The id of the input paragraph this "
+                                    "translates, copied exactly from the "
+                                    "request."
+                                ),
+                            },
+                            item_field: {
+                                "type": "string",
+                                "description": _single_field_description(
+                                    language, source_language
+                                ),
+                            },
+                        },
+                        "required": ["id", item_field],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": [field],
+            "additionalProperties": False,
+        },
+    }
+
+
+# Probe verdicts the id-echo batch contract may run at. "strict" and "shape"
+# are sent a `json_schema` request: the batch schema pins no *values* (the
+# target language rides in the field name and in the prose tail), so an
+# endpoint that honours shape honours all of it. "json" is sent
+# `json_object` plus the schema described in the prompt, and its reply is
+# read out of whatever prose or fences came with it.
+SCHEMA_BATCH_DEGREES = ("strict", "shape")
+BATCH_STRUCTURED_DEGREES = SCHEMA_BATCH_DEGREES + ("json",)
+
+
+def _echoed_id(value):
+    """An id from an unconstrained reply, as the integer it was sent as.
+
+    Nothing constrained the type here, and an id echoed as "3" is the id 3.
+    A boolean is not an id at all, and is deliberately taken out of the
+    integer space it would otherwise share (`True == 1`) so that a reply
+    carrying one fails alignment instead of passing it.
+    """
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, str) and value.strip().lstrip("+-").isdigit():
+        return int(value)
+    return value
 
 
 # Per-request timeout and SDK retries. The SDK defaults (600 s, 3 tries) let
@@ -444,8 +523,22 @@ class ChatGPTAPI(Base):
         """
         return self._probe_verdict(model) == "strict"
 
-    def _structured_enabled(self):
-        return self.capabilities.verdicts.get(self.model, False) == "strict"
+    def _structured_enabled(self, model=None):
+        """The degree the id-echo batch contract may run at, or False.
+
+        Batching asks a different question from single-paragraph
+        translation. A single translation is pinned to its target language
+        by a schema *value* (#544), which only a "strict" endpoint applies —
+        but a batch's schema pins no values at all, and the thing batching
+        actually needs is that ids come back attached to their translations.
+        The 260905 off-OpenAI eval measured that contract holding at the
+        json_object degree on every endpoint tried, so "shape" and "json"
+        batch too; they are simply carried on a looser wire format, and the
+        alignment checks that catch a bad strict reply catch a bad loose one
+        the same way.
+        """
+        verdict = self._probe_verdict(model)
+        return verdict if verdict in BATCH_STRUCTURED_DEGREES else False
 
     def _note_structured_success(self):
         """A working structured call clears the model's failure streak."""
@@ -503,7 +596,9 @@ class ChatGPTAPI(Base):
             prompt,
             response_format={"type": "json_schema", "json_schema": schema},
         )
-        return unwrap_schema_echo(extract_json_object(text))
+        return unwrap_schema_echo(
+            extract_json_object(text, schema_required_keys(schema))
+        )
 
     def _json_object_rung(self, prompt, schema, model):
         text = self._completion_text(
@@ -511,7 +606,9 @@ class ChatGPTAPI(Base):
             prompt_with_schema(prompt, schema),
             response_format={"type": "json_object"},
         )
-        return unwrap_schema_echo(extract_json_object(text))
+        return unwrap_schema_echo(
+            extract_json_object(text, schema_required_keys(schema))
+        )
 
     def _chat_completion(self, prompt, model=None):
         return self._completion_text(model or self.model, prompt)
@@ -1103,11 +1200,11 @@ class ChatGPTAPI(Base):
     def translate_list(self, text_list):
         """
         Translate multiple texts using the best available method.
-        Priority: 1. Structured Outputs (strict) -> 2. Delimiter-based
+        Priority: 1. id-echo JSON (strict, shape or json) -> 2. Delimiter-based
         Returns a list of translated texts.
         """
         # Use structured outputs if available (probed once per model)
-        if self._ensure_structured_support():
+        if self._structured_enabled():
             return self._do_structured_batch_translate(text_list)
 
         # Fallback to delimiter-based method
@@ -1119,7 +1216,7 @@ class ChatGPTAPI(Base):
             lambda text: self.translate(text, False),
         )
 
-    def _create_structured_batch_messages(self, text_list):
+    def _create_structured_batch_messages(self, text_list, degree="strict"):
         """Create messages for structured batch translation.
 
         The source travels as `{"paragraphs": [{"id": n, "text": ...}, ...]}`
@@ -1158,6 +1255,20 @@ class ChatGPTAPI(Base):
             f"the {plist_len} translations, each written in {self.language}."
         )
 
+        if degree == "json":
+            # No schema reaches this endpoint, so the shape has to be said
+            # out loud. The language sentence is repeated after it for the
+            # reason the tail exists at all: the last thing the model reads
+            # before decoding must be what language to write in, and
+            # `prompt_with_schema` appends its description after the prompt.
+            schema = batch_translation_schema(
+                self.language, plist_len, self.source_language
+            )
+            content = (
+                f"{prompt_with_schema(content, schema)}\n\n"
+                f"Every translation must be written in {self.language}."
+            )
+
         sys_content = self.system_content or self.prompt_sys_msg.format(crlf="\n")
         sys_content = self._augment_system_content(sys_content)
 
@@ -1189,6 +1300,13 @@ class ChatGPTAPI(Base):
             # Capability answer, not a transient failure: stop paying for it.
             self._demote_structured_outputs(e)
             return [self.translate(t, False) for t in text_list]
+        except BatchMismatch:
+            # The reply arrived and did not answer the request. That is the
+            # loader's ladder's business — it halves the chunk — so it must
+            # not be swallowed into a per-paragraph sweep here. Raised from
+            # inside the request only at the json degree, where the parse is
+            # ours rather than the SDK's.
+            raise
         except Exception as e:
             # A refusal, or a transport failure that outlived its retries.
             # Neither says the batch came back misaligned, so this is not the
@@ -1250,7 +1368,7 @@ class ChatGPTAPI(Base):
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=60),
         retry=retry_if_not_exception_type(
-            (StructuredOutputUnsupported, StructuredRefusal)
+            (StructuredOutputUnsupported, StructuredRefusal, BatchMismatch)
         ),
         reraise=True,
     )
@@ -1261,18 +1379,26 @@ class ChatGPTAPI(Base):
         the user message exactly as it was sent, and the raw assistant text.
         The last two are what session mode records — and only after the
         caller has found the items usable.
+
+        A reply that came back and did not answer the request is a
+        `BatchMismatch`, never a retry: re-asking the same model the same
+        question buys the same answer at the same price, and the loader
+        halves the chunk instead.
         """
         self.rotate_key()
         self.rotate_model()
-        if not self._ensure_structured_support():
+        degree = self._structured_enabled()
+        if not degree:
             # eligibility was decided for the model current at call time, but
             # rotation may have moved us to a different one: a model that
             # never passed the probe must not be handed a schema
             raise StructuredOutputUnsupported(
-                f"'{self.model}' has no strict structured-output support"
+                f"'{self.model}' has no structured-output support"
             )
 
-        messages = self._create_structured_batch_messages(text_list)
+        messages = self._create_structured_batch_messages(text_list, degree=degree)
+        if degree not in SCHEMA_BATCH_DEGREES:
+            return self._execute_json_object_batch(messages, plist_len)
 
         try:
             completion = self._request(
@@ -1312,6 +1438,85 @@ class ChatGPTAPI(Base):
                 ensure_ascii=False,
             )
         return items, messages[-1]["content"], raw_reply
+
+    def _execute_json_object_batch(self, messages, plist_len):
+        """One id-echo batch at the json_object degree.
+
+        The endpoint guarantees only that *some* JSON comes back, so
+        everything the SDK's parse mode would have guaranteed is checked
+        here instead: the object is dug out of whatever fences or prose came
+        with it, it must carry the batch key, and every row must be an
+        object. Each failure is a `BatchMismatch` — the same signal a
+        misaligned strict reply raises, and the loader answers it the same
+        way, by halving the chunk.
+        """
+        try:
+            completion = self._request(
+                lambda sampling: self.openai_client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    extra_body=self.extra_body if self.extra_body else None,
+                    **sampling,
+                )
+            )
+        except BadRequestError as e:
+            if self._classify_bad_request(e) != "schema":
+                raise  # not a capability answer — do not blame the schema
+            raise StructuredOutputUnsupported(str(e)) from e
+
+        self._note_usage(completion)
+
+        message = completion.choices[0].message
+        if getattr(message, "refusal", None):
+            raise StructuredRefusal(message.refusal)
+        raw_reply = getattr(message, "content", None) or ""
+        return (
+            self._parse_json_object_batch(raw_reply),
+            messages[-1]["content"],
+            raw_reply,
+        )
+
+    def _parse_json_object_batch(self, raw_reply):
+        """The reply's items, or `BatchMismatch` saying what was wrong.
+
+        The required top key is the whole point (260905 amendment 1):
+        `extract_json_object` on its own hands back the first object it can
+        parse, which on a reply with one unescaped quote is a fragment of
+        the answer rather than the answer. A missing key is a mismatch, not
+        a fall-through.
+        """
+        field = batch_field_name(self.language)
+        item_field = single_field_name(self.language)
+        obj = extract_json_object(raw_reply, (field,))
+        if isinstance(obj, dict):
+            obj = unwrap_schema_echo(obj)
+        if not isinstance(obj, dict) or field not in obj:
+            raise BatchMismatch(f"no JSON object carrying '{field}' in the reply")
+        rows = obj[field]
+        if not isinstance(rows, list):
+            raise BatchMismatch(f"the reply's '{field}' is not a list")
+        items = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise BatchMismatch(f"a '{field}' entry is not an object")
+            text = row.get(item_field)
+            items.append(
+                SimpleNamespace(
+                    **{
+                        # An id echoed as "3" is the same id as 3: nothing
+                        # constrained its type here, and the alignment check
+                        # below compares against the integers we sent.
+                        "id": _echoed_id(row.get("id")),
+                        # Anything that is not a string is not a translation.
+                        # Left empty on purpose: an empty slot for a
+                        # non-empty source is exactly what `_check_batch`
+                        # exists to catch.
+                        item_field: text if isinstance(text, str) else "",
+                    }
+                )
+            )
+        return items
 
     def set_model_list(self, model_list):
         """The only way models get set: whatever the user named, in that order.

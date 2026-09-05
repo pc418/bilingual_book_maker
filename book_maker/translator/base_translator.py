@@ -14,6 +14,7 @@ from ..structured import (
     extract_json_object,
     prompt_with_schema,
     run_rungs,
+    schema_required_keys,
     unwrap_schema_echo,
 )
 
@@ -471,7 +472,9 @@ class Base(ABC):
     def _prompt_rung(self, prompt, schema, model=None):
         """Schema described in the prompt, answer recovered from free text."""
         text = self._chat_completion(prompt_with_schema(prompt, schema), model=model)
-        return unwrap_schema_echo(extract_json_object(text))
+        return unwrap_schema_echo(
+            extract_json_object(text, schema_required_keys(schema))
+        )
 
     def structured_json(self, prompt, schema, model=None, accept=None):
         """One structured question, over whatever rungs this provider has.

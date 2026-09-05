@@ -472,6 +472,20 @@ def resolve_context_mode(options):
 # ...) has no such verdict to offer and stays in tag mode.
 PLAN_AUTO_FORMAT = "openai"
 
+# Probe verdicts a plan may be built on, and the line each one prints.
+# "strict" is the endpoint applying our schema; "shape" and "json" are
+# weaker, but the classifier ladders down to a described schema and the
+# batch contract checks its own alignment, so both are still enough to plan
+# on (260905 eval). Everything else — `unsupported`, a rejected request, no
+# verdict at all — stays in tag mode: the classifier would be asking a
+# prose-only channel, and entering the plan on a prompt rung is its own
+# decision, not this one.
+PLAN_VERDICT_REASONS = {
+    "strict": "endpoint verified strict JSON schema",
+    "shape": "endpoint applies JSON schema shape, values unverified",
+    "json": "endpoint verified JSON object mode, no schema applied",
+}
+
 
 def resolve_plan_mode(book_type, api_format, translate_tags_given, probe):
     """What `--plan-classify auto` means for this run: `(mode, reason)`.
@@ -498,12 +512,13 @@ def resolve_plan_mode(book_type, api_format, translate_tags_given, probe):
         # tag mode still works; the endpoint's trouble surfaces at the first
         # translation request
         return "none", f"the JSON-schema probe failed: {redact(e)}"
-    if verdict != "strict":
+    reason = PLAN_VERDICT_REASONS.get(verdict)
+    if reason is None:
         return "none", (
-            f"the endpoint does not verify a strict JSON schema "
+            f"the endpoint produces no JSON the schema ladder can use "
             f"({verdict or 'no schema support'})"
         )
-    return "model", "endpoint verified strict JSON schema"
+    return "model", reason
 
 
 def build_parser():

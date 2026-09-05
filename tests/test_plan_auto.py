@@ -60,8 +60,19 @@ def test_strict_schema_on_an_epub_turns_the_plan_on():
     assert "strict" in reason
 
 
-@pytest.mark.parametrize("verdict", ["shape", "json", False, "unsupported"])
-def test_anything_below_strict_stays_in_tag_mode(verdict):
+@pytest.mark.parametrize("verdict,named", [("shape", "shape"), ("json", "JSON object")])
+def test_a_weaker_but_real_degree_still_plans(verdict, named):
+    # 260905: the classifier's ladder and the batch contract both work below
+    # strict decoding; the reason line says which degree was found
+    probe = _Probe(verdict)
+    mode, reason = resolve_plan_mode("epub", "openai", False, probe)
+    assert mode == "model"
+    assert probe.calls == 1
+    assert named in reason
+
+
+@pytest.mark.parametrize("verdict", [False, "unsupported"])
+def test_no_json_at_all_stays_in_tag_mode(verdict):
     probe = _Probe(verdict)
     mode, reason = resolve_plan_mode("epub", "openai", False, probe)
     assert mode == "none"
@@ -345,8 +356,20 @@ def test_a_bare_command_on_a_verified_endpoint_plans(tmp_path):
     assert plan.exists()
 
 
-def test_a_bare_command_on_an_unverified_endpoint_uses_tags(tmp_path):
+def test_a_bare_command_on_a_json_object_endpoint_plans(tmp_path):
+    # the classifier ladders down to a described schema and the batch
+    # contract checks its own alignment, so the json degree plans too
     proc, plan = _cli(tmp_path, "--test", "--test_num", "1", BBM_FAKE_PROBE="json")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = " ".join(proc.stdout.split())
+    assert "plan mode: on" in out
+    assert plan.exists()
+
+
+def test_a_bare_command_on_an_unverified_endpoint_uses_tags(tmp_path):
+    proc, plan = _cli(
+        tmp_path, "--test", "--test_num", "1", BBM_FAKE_PROBE="unsupported"
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     out = " ".join(proc.stdout.split())
     assert "plan mode: off" in out

@@ -61,7 +61,9 @@ from .disclosure import (
 from .font_obfuscation import deobfuscate_fonts, reobfuscate_written_epub
 from .rights import DRM_MESSAGE, check_epub
 from .plan import (
+    GENERAL_GROUP_MAX_UNITS,
     PLAN_SCHEMA_VERSION,
+    SUBSTRICT_GROUP_MAX_UNITS,
     BookCss,
     TranslationPlan,
     UnsafeSingleTranslateError,
@@ -902,6 +904,48 @@ class EPUBBookLoader(BaseBookLoader):
     def _exclude_tags_tuple(self):
         return tuple(t for t in self.exclude_translate_tags.split(",") if t)
 
+    @property
+    def _plan_token_budget(self):
+        """`--accumulated_num` as plan mode's grouping budget, or None.
+
+        Same meaning as in tag mode — tokens a request may carry — counted
+        the same way. 1 is argparse's default and means the flag was not
+        used, which leaves the short-run-only grouping plan mode has always
+        done on its own.
+        """
+        return self.accumulated_num if self.accumulated_num > 1 else None
+
+    def _plan_request_cap(self):
+        """Units one plan request may carry, given the endpoint's degree.
+
+        The partition caps a general group at `GENERAL_GROUP_MAX_UNITS`
+        because that is a property of the book; how far an *endpoint* can be
+        trusted with one is not, and is not knowable when the partition is
+        built (only `--plan-classify auto` probes before the loader runs; an
+        explicit plan mode probes later, and `--model_list` rotates across
+        models of differing capability). So the split happens here, where
+        the verdict is in hand: everything below strict decoding carries
+        half a request, per the 260905 eval — both of its content
+        regressions were large batches, and neither endpoint could be told
+        apart by its probe verdict in advance.
+
+        A translator with no verdict to offer (an MT engine, a test double)
+        is not being asked to hold a schema together, and takes the tighter
+        cap.
+        """
+        degree = None
+        verdict = getattr(self.translate_model, "_structured_enabled", None)
+        if verdict is not None:
+            try:
+                degree = verdict()
+            except Exception:
+                # a probe that cannot answer is not a reason to stop; the
+                # real request behind it reports its own failure
+                degree = None
+        if degree == "strict":
+            return GENERAL_GROUP_MAX_UNITS
+        return SUBSTRICT_GROUP_MAX_UNITS
+
     def _plan_mode_conflict(self):
         """The flags whose meaning the plan would contradict, if any."""
         incompatible = {
@@ -961,12 +1005,6 @@ class EPUBBookLoader(BaseBookLoader):
             print(
                 "note: --allow_navigable_strings is redundant in plan mode "
                 "(every text node is already accounted for); ignoring it"
-            )
-        if self.accumulated_num > 1:
-            print(
-                "note: plan mode batches short units itself; "
-                "--accumulated_num is ignored here — pass --plan-classify none "
-                "for tag-mode batching"
             )
         # The plan would refuse this cache anyway (see _prepare_translation_plan),
         # but only after the classifier has been paid for and a plan JSON
@@ -1375,6 +1413,7 @@ class EPUBBookLoader(BaseBookLoader):
             self.poetry_group_size,
             only_files=only,
             exclude_files=exclude,
+            token_budget=self._plan_token_budget,
         )
 
     def _classify_plan(self, ledger, plan, plan_path):
@@ -1458,6 +1497,7 @@ class EPUBBookLoader(BaseBookLoader):
             exclude_tags=self._exclude_tags_tuple(),
             overrides=self._plan_overrides,
             poetry_group_size=self.poetry_group_size,
+            token_budget=self._plan_token_budget,
         )
         return fp
 
@@ -2462,12 +2502,20 @@ class EPUBBookLoader(BaseBookLoader):
         return [index // self.block_size for index in range(len(source_texts))]
 
     @staticmethod
-    def _plan_batch_indexes(units):
-        """Batch identity for plan units: one window per poetry group.
+    def _plan_batch_indexes(units, max_units=None):
+        """Batch identity for plan units: one request per group.
 
         Grouped units are contiguous by construction, so numbering them in
         first-seen order keeps batch indexes monotonic — the same property
         _assign_batch_indexes gives tag mode.
+
+        `max_units` cuts a group that is larger than this endpoint should be
+        handed at once (see `_plan_request_cap`). The split is here rather
+        than in the partition on purpose: the plan describes the book and
+        must stay the same file whichever endpoint runs it, while how much
+        one request may carry is a fact about the endpoint. Nothing else
+        moves — resume slots are positions in the unit list, which the split
+        does not touch.
         """
         indexes = []
         by_group = {}
@@ -2477,10 +2525,12 @@ class EPUBBookLoader(BaseBookLoader):
                 indexes.append(next_free)
                 next_free += 1
                 continue
-            if unit.group_id not in by_group:
-                by_group[unit.group_id] = next_free
+            batch, carried = by_group.get(unit.group_id, (None, 0))
+            if batch is None or (max_units is not None and carried >= max_units):
+                batch, carried = next_free, 0
                 next_free += 1
-            indexes.append(by_group[unit.group_id])
+            by_group[unit.group_id] = (batch, carried + 1)
+            indexes.append(batch)
         return indexes
 
     def _build_translation_plan(self, document_items, trans_taglist):
@@ -2492,6 +2542,9 @@ class EPUBBookLoader(BaseBookLoader):
         """
         plans = []
         global_index = 0
+        # asked once per run, not once per document: the answer is a
+        # property of the endpoint, and asking is what triggers its probe
+        request_cap = self._plan_request_cap() if self._plan_mode else None
 
         for document_index, item in enumerate(document_items):
             should_translate = True
@@ -2528,7 +2581,7 @@ class EPUBBookLoader(BaseBookLoader):
                         nodes.append(unit.element)
                         source_texts.append(unit.text)
                         global_index += 1
-                batch_indexes = self._plan_batch_indexes(units)
+                batch_indexes = self._plan_batch_indexes(units, request_cap)
             else:
                 soup = bs(item.content, "html.parser")
                 if should_translate:
