@@ -1574,3 +1574,45 @@ class TestRequestExtrasFlags:
 
         assert "enable_thinking" in output
         assert "X-Title" in output
+
+
+# --------------------------------------------- the whole path, read back
+
+
+def test_the_written_epub_carries_each_translation_beside_its_source(tmp_path):
+    """The one check the CLI tests were missing: not the exit code, not the
+    plan, but the book. Run the real command against the offline stand-in,
+    then open what it wrote and find each translation as the paragraph
+    right after its original, with the original's class, in a content
+    document and not only in the nav."""
+    import zipfile
+
+    from bs4 import BeautifulSoup
+
+    proc, _ = _run(tmp_path, "--test", "--test_num", "2")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    output = tmp_path / "animal_farm_bilingual.epub"
+    assert output.exists(), proc.stdout + proc.stderr
+
+    with zipfile.ZipFile(output) as archive:
+        documents = {
+            name: archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith((".html", ".xhtml")) and "nav" not in name
+        }
+
+    def words(node):
+        return " ".join(node.get_text(" ").split())
+
+    placed = 0
+    for name, text in documents.items():
+        for paragraph in BeautifulSoup(text, "html.parser").find_all("p"):
+            translation = words(paragraph)
+            if not translation.startswith("[offline]"):
+                continue
+            source = paragraph.find_previous_sibling("p")
+            assert source is not None, f"{name}: a translation with nothing before it"
+            assert words(source) == translation[len("[offline]") :], name
+            assert source.get("class") == paragraph.get("class"), name
+            placed += 1
+    assert placed == 2, f"{placed} translations placed, 2 requested"
