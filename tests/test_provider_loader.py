@@ -8,6 +8,7 @@ typed outranks it.
 
 import json
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -384,9 +385,14 @@ class TestShippedExample:
         # absent from a pip install, which packages only book_maker
         assert load_provider_config()["providers"] == {}
 
-    def test_the_shipped_file_is_readable_and_valid(self):
-        # the real one, unredirected: every non-template entry it offers has
-        # to survive validate_provider, or the fallback hands out a failure
+    def test_the_shipped_file_is_readable_and_valid(self, monkeypatch):
+        # the real one, read from the checkout rather than from wherever
+        # book_maker was imported: under `pip install .`, as CI runs, that
+        # is site-packages, and the example is not packaged. Every
+        # non-template entry it offers has to survive validate_provider, or
+        # the fallback hands out a failure
+        shipped = Path(__file__).resolve().parent.parent / "bbm_providers.example.json"
+        monkeypatch.setattr(provider_loader, "EXAMPLE_CONFIG_PATH", shipped)
         config = provider_loader._load_example_config()
 
         assert config, "the shipped example should be present in a checkout"
