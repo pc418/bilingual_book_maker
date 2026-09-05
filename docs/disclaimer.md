@@ -1,16 +1,31 @@
-Disclaimer:
+# Disclaimer
 
-1. The purpose of this project, bilingual_book_maker, is to assist users in creating multilingual versions of epub files and books. Use it only with material you have the right to translate: works you hold the rights to, works whose license or an explicit permission from the rights holder covers translation (for example a Creative Commons license, subject to its terms), works in the public domain, or uses otherwise permitted by the law that applies to you. A translation is a derivative work; making one for yourself and distributing one are separate activities, and distribution needs its own rights basis. Note that public-domain status depends on jurisdiction, and that a modern translation, edition, foreword or illustrations accompanying an old work may be protected separately from the original text.
-2. The project's MIT license covers the project's code only. It grants no rights to any book, and it does not license the EPUB files the tool produces — their rights status follows from the source material and from whatever permission you have to translate it. The tool preserves the source book's attribution and rights information where it can, but it does not verify rights status; that verification is the user's responsibility.
-3. In no event shall the authors or developers be liable for any loss or damage caused by the use of this project. Users assume all risks associated with the use of this project.
+bilingual_book_maker helps users create multilingual versions of books and other documents.
 
-If you have any concerns or suggestions about the use of this project, please contact us through the issues section.
+1. **Use only material you are entitled to translate.** This includes works for which you hold the necessary rights, works whose license or the rights holder's permission allows your intended use, works in the public domain under applicable law, and uses otherwise permitted by applicable law. Owning or buying a copy does not itself grant translation rights.
 
+2. **Check translation and distribution rights separately.** Translation is generally an adaptation (a derivative work). Personal use is not automatically exempt from copyright restrictions. If you share a translation, ensure that your license, permission, or applicable law also allows distribution of everything included in the output, including any original text and images. The same license or permission may cover both translation and distribution. For Creative Commons works, check the specific license and version, including attribution, NonCommercial, ShareAlike, and NoDerivatives conditions where applicable. For example, NoDerivatives licenses do not authorize public sharing of translations. Public-domain status varies by jurisdiction; modern translations, editorial contributions, forewords, and illustrations may be protected separately from an older original.
 
-免责声明：
+3. **The MIT license does not license book content.** The project's MIT license covers its software and associated documentation; it grants no rights to input books or other third-party content and does not automatically apply to generated files. Use of the output remains subject to applicable law and any relevant licenses or permissions. The tool does not determine copyright ownership or verify that your intended use is permitted.
 
-1. 该项目 bilingual_book_maker 旨在帮助用户制作多语言版本的 epub 文件和图书。请仅将其用于您有权翻译的内容：您自己拥有权利的作品、其许可协议或权利人的明确授权允许翻译的作品（例如知识共享 CC 许可的作品，须遵守其条款）、已进入公有领域的作品，或适用法律另行允许的使用方式。翻译属于演绎作品：为自己制作译本与对外分发译本是两回事，分发需要相应的权利依据。另请注意，作品是否进入公有领域取决于司法辖区；古旧作品的现代译本、版本、序言或插图可能独立于原文受到保护。
-2. 本项目的 MIT 许可证仅覆盖项目代码本身。它不授予任何图书的权利，也不为工具生成的 EPUB 文件授予许可——其权利状态取决于源图书以及您获得的翻译授权。工具会尽量保留源图书的署名与版权信息，但不会核实其权利状态；核实是用户的责任。
-3. 在任何情况下，作者和开发者不对因使用该项目而导致的任何损失或损害承担任何责任。使用该项目的风险由用户自行承担。
+4. **Preservation is not rights verification.** For EPUB output, the tool carries over source attribution and rights metadata where it can. This does not establish that translation or distribution is permitted. Check the output and retain or supply attribution, copyright notices, license information, and indications of changes as required by the applicable license or permission.
 
-如果您对该项目的使用有任何疑虑或建议，请通过 issues 与我们联系。
+5. **No warranty; limitation of liability.** The software is provided “as is,” without warranty, as set out in the project's MIT license. To the extent permitted by applicable law, the authors and copyright holders disclaim liability arising from use of the software, as set out in that license.
+
+For questions or suggestions about the project, please open an issue.
+
+# 免责声明
+
+bilingual_book_maker 帮助用户制作图书及其他文档的多语言版本。
+
+1. **请仅翻译您有权翻译的内容。** 这包括您持有必要权利的作品、许可协议或权利人授权允许您按预期方式使用的作品、依据适用法律已进入公有领域的作品，以及适用法律另行允许的使用情形。持有或购买一本书或一个副本，本身并不授予翻译权。
+
+2. **分别核实翻译和分发的权利依据。** 翻译通常属于改编（演绎作品）。个人使用并不自动免受著作权限制。如果您分享译本，请确认许可协议、授权或适用法律也允许分发输出文件中包含的全部内容，包括原文和图片。同一许可协议或授权可以同时涵盖翻译与分发。使用知识共享（CC）许可的作品时，请核实具体许可及版本，包括其中适用的署名、非商业性使用、相同方式共享和禁止演绎等条件。例如，禁止演绎许可不授权公开分享译本。作品是否进入公有领域因司法辖区而异；现代译本、编辑新增内容、序言及插图可能独立于古旧原文受到保护。
+
+3. **MIT 许可证不为图书内容授予许可。** 本项目的 MIT 许可证覆盖软件及随附文档；它不授予输入图书或其他第三方内容的任何权利，也不会自动适用于生成的文件。输出内容的使用仍须遵守适用法律及相关许可或授权。工具不会判定著作权归属，也不会核实您的预期使用方式是否获准。
+
+4. **保留信息不等于核实权利。** 生成 EPUB 时，工具会尽量保留源图书的署名与权利元数据。这并不代表翻译或分发已获许可。请检查输出内容，并按适用许可或授权的要求，保留或补充署名、版权声明、许可信息及修改说明。
+
+5. **不提供担保；责任限制。** 软件按本项目 MIT 许可证的规定“按原样”提供，不附带任何担保。在适用法律允许的范围内，作者及著作权人按该许可证的规定，不承担因使用软件而产生的责任。
+
+如对项目有问题或建议，请通过 issue 联系我们。
