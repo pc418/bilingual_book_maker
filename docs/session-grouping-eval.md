@@ -4,9 +4,9 @@ A measurement report, September 2026. This documents (a) the grouping
 strategy plan mode uses to batch translation units, (b) the paid
 evaluation (18 runs, `gpt-5.6-luna`, 3.27M tokens, three books from
 [epub-samples](https://github.com/IDPF/epub-samples)) that the session-mode
-defaults for `--accumulated_num` and `--context-compact-at` are derived
+defaults for `--accumulated_num` and `--context-compact-at` come
 from, and (c) the follow-up fault-emergence sweep (76 cells, 923
-requests, four books, two models) that the `--batch_units` default is
+requests, four books, two models) that the `--max-batch-units` default is
 derived from — plus how to pick these parameters for your own endpoint
 (§7). Raw artifacts (per-cell logs, handoff reports, bilingual epubs,
 ledgers) live outside the repository; every number used below is
@@ -21,7 +21,7 @@ with **token-budget batches**:
 - The book's translatable units are grouped, in document order, into
   requests of at most **32 units** (16 on endpoints without a strict
   JSON-schema verdict — see §6) and at most **B tokens** of source text
-  (`--accumulated_num` is B; `--batch_units` is the unit cap). Nothing is
+  (`--accumulated_num` is B; `--max-batch-units` is the unit cap). Nothing is
   split mid-unit; a unit larger than B travels alone.
 - Inline markup inside a unit (links, emphasis, spans) is replaced by
   numbered markers `⟦tag1⟧…⟦tagN⟧` before translation and restored after,
@@ -136,9 +136,31 @@ price-weighted cost per book:
 | epub30-spec | 117.2k | **108.4k** | 111.9k | 169.0k | 1580 |
 
 Flat within 0.6–3% across [1500, 4000] on all three books — inside
-single-run noise, and all three solved C* land in that region. The stock
-8000 sits 4–18% above it; C=20000 costs up to 56% more. Being wrong short
+single-run noise, and all three solved C* land in that region. C=8000
+sits 9–25% above C*; C=20000 costs up to 56% more. Being wrong short
 is nearly free; being wrong long is not.
+
+The figure's curves are the §4 cost model evaluated on the same finite
+25-request run as the cells (window sawtooth simulated, measured per-C α
+interpolated), so the dots sit on their own curves; the open squares at
+C=12000 and C=16000 are **model predictions, not measured cells**. The
+dashed companion curves re-price cache reads at zero, and they answer a
+question we had wrong until we ran it: the long-C wall barely moves
+(−2 to −8 points) even if cache were free, because at these budgets only
+0.1–0.2 of the carried history is cached at all on prose. **The wall is
+a token-count effect, not a cache-price effect** — a free-cache endpoint
+does not buy you a long C.
+
+**Why the default is pinned at C=8000 anyway.** The shaded 8k–16k band
+is where a typical run makes 0–1 compactions, so there are almost no
+seams to drift across — a *continuity* argument, bought at a real,
+quantified price (+10% to +50% over C* across the band). 8000 is the
+short edge of that band: at most ~25% over the optimum on the worst
+book, which we treat as inside the don't-care zone (<30% on a single
+run is noise-adjacent), while 20000 is past it — that cell showed the
+grid's only drift *and* costs up to 56% more. Pinning one number also
+beats deriving one: the derivation moved the default by less than the
+don't-care zone, at the price of a per-run moving target.
 
 **B — the ceiling wins.** At fixed C, input cost is nearly flat in B
 (129k / 132k / 147k at B = 400 / 800 / 1600) because carried history, not
@@ -202,14 +224,14 @@ observed. Measured retry overhead at those defaults is 0–25%.
 ## 7. Choosing the parameters for your endpoint
 
 Everything below is a default-tuning guide; leaving all three flags
-unset is correct on every route, because the run probes the endpoint
-and derives them.
+unset is correct on every route: the run probes the endpoint, derives
+the request budget from its own prompt overhead, and pins the rest.
 
 - **Endpoint verifies a strict JSON schema** (the official OpenAI API):
   the full cap (32) applies and every reply is schema-checked. Nothing
   to change.
 - **Endpoint accepts JSON mode but not a strict schema**: the run
-  halves the cap to 16 by itself. Do not raise `--batch_units` to undo
+  halves the cap to 16 by itself. Do not raise `--max-batch-units` to undo
   it — the halved tier is where miscounted replies were actually
   observed.
 - **No structured output at all** (the ChatGPT-plan/codex route, many
@@ -228,19 +250,21 @@ and derives them.
   exist to absorb exactly that. So: don't pre-shrink the caps for a
   router; let the probe grade it.
 - **Weaker or smaller models**: don't pre-emptively lower
-  `--batch_units` either — the sweep's weak model held format better
+  `--max-batch-units` either — the sweep's weak model held format better
   than the strong one. Lower it (to 16, then 8) only when a run prints
   the misalignment hint (`N misaligned batches this run — consider a
-  lower --batch_units or --accumulated_num`), which appears from the
+  lower --max-batch-units or --accumulated_num`), which appears from the
   third recovered batch on.
 - **`--accumulated_num`**: leave unset (the derived 1600–2000 band).
   Raising it toward 4800 produced no faults, but retry cost climbs past
   the ceiling and per-content savings flatten — the measured optimum is
   the derived band.
-- **`--context-compact-at`**: leave unset; the cost curve is flat
-  across 1500–4000 and the derived value lands inside it. Only a run
-  with an unusually fat custom `--prompt` moves it, and the derivation
-  already accounts for that.
+- **`--context-compact-at`**: leave unset; every session run compacts
+  at the pinned 8000 (§5, §8). Set it lower (toward 2000–4000) only if
+  squeezing the last ~10–25% of session cost matters more to you than
+  having the fewest window seams; set it higher never — past 16000 the
+  cost wall is steep and the only drift we ever observed lived in the
+  long-window cell.
 
 ## 8. The shipped defaults
 
@@ -250,16 +274,25 @@ equations, not constants, because prompt overhead is user-customizable
 
 ```
 B_default = clamp( 3·F, 1600, 2000 )          # F = measured prompt overhead
-C_default = clamp( √(2 · 1.4·B · (72 + 4.0·538)), 1500, 4000 )   # grouped runs
+C_default = 8000                              # pinned, every session run
 ```
 
-With the stock prompts F ≈ 104–111, so B defaults to the floor 1600 and
-C to **3156** — inside the measured flat region. F does not appear in
-C* (it drops out of the derivative); prompt growth reaches C only
-through B. Ungrouped session runs keep the old 8000: the fit was not
-measured on per-paragraph exchanges, and extrapolating below the
-measured range is guesswork. The clamps are pinned rather than fitted
-because the curve is flat — the grid cannot resolve differences of 0.6%.
+With the stock prompts F ≈ 104–111, so B defaults to the floor 1600. F
+does not appear in a compaction optimum (it drops out of the
+derivative); prompt growth reaches C only through B.
+
+C is **pinned, not derived** — a deliberate simplification over the
+earlier derived value (~3156). The measured case for it: the per-book
+optima solve to 1580–2512 and the 1500–4000 region is flat within
+single-run noise, but everything up to ~16000 stays inside a <30%
+penalty — a don't-care zone for a single book run — while 8000 is the
+short edge of the band where a run compacts 0–1 times, so it buys the
+fewest seams at the smallest premium (9–25% over C*, §5). Terminology
+held across 44 seams in the validation run and the only drift ever
+observed was *within* a long window, so the seams 8000 still makes are
+the cheap side of that trade. A pinned number also never moves between
+runs, which the derived one did — by less than the noise band it sat
+in, which is exactly why it did not earn its complexity.
 
 ## 9. Reproducing a cell
 
@@ -271,6 +304,6 @@ python make_book.py --book_name childrens-literature.epub \
 ```
 
 Leave `--context-compact-at` and `--accumulated_num` unset to get the
-derived defaults; the run narrates them
-(`session: compacting at ~3156 estimated tokens (derived from the
-1600-token request budget; --context-compact-at overrides)`).
+defaults; the run narrates them
+(`session: compacting at 8000 estimated tokens (the default;
+--context-compact-at overrides)`).
