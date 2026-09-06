@@ -196,9 +196,13 @@ fault live in its 50-unit bucket while 16 stayed clean, so 16 was a
 safety margin, not a measurement. The follow-up sweep measured the
 actual emergence: 76 cells / 923 requests over four epub-samples books
 (literary prose, a long novel, a spec, verse), sweeping the effective
-unit count to 128 and B across 1600–4800, on a deliberately weak model
-(`gpt-5.4-mini`) with a stronger default as cross-check, every cell
-read back from the produced epub rather than trusted from its log.
+unit count to 128 and B across 1600–4800, on `gpt-5.4-mini` with a
+stronger default as cross-check, every cell read back from the produced
+epub rather than trusted from its log. (`gpt-5.4-mini` was picked as
+the "weak" arm, but the owner's ruling is that it is a strong model
+with unusually good format alignment — §6's own finding that it held
+the reply format better than the default supports that. §14 reruns
+both axes on genuinely weak models; the emergence level reproduces.)
 
 ![fault rate and retry cost vs units and budget](img/fault-emergence.png)
 
@@ -513,3 +517,80 @@ totals verified identical against a snapshot; translation code paths
 byte-identical). Read-back on all nine epubs: 301 translated nodes
 each, 0 lost ids, 0 dangling hrefs, 0 residue, 0 schema demotions.
 
+
+## 14. The weak-model rerun: the B band and the unit cap on gpt-4o-mini and DeepSeek (runs 260906)
+
+§6's emergence sweep ran on `gpt-5.4-mini`, which is not the weak model
+it was cast as (see the note there). This section reruns both axes on
+two genuinely weak models: **gpt-4o-mini** (vendor endpoint) and
+**`deepseek/deepseek-chat`** (via OpenRouter). 36 cells, 260 metered
+requests, `childrens-literature` (prose) and `wasteland` (verse),
+every cell read back from the produced epub; zero infra failures.
+
+Design notes that make these cells *directly* comparable to the shipped
+defaults and *not* raw-comparable to §6's numbers:
+
+- Both endpoints probe as **strict-schema**, so the sub-strict halving
+  never fires: `--max-batch-units N` = N effective units. §6 ran the
+  codex route, where every swept cap was halved (max 24 effective).
+- Non-session, no `--glossary-auto` (matching §6's control arm), 256
+  translation units per cell so the largest requests hit real prose and
+  the Fire Sermon rather than front matter.
+- On the verse book the 32-unit cap binds at every B (verse units
+  average ~10 tokens), so the B gradient there was measured at a
+  256-unit cap instead: 89 / 138 / 179 / 256 units per request across
+  the four budgets — §6 hit the same degeneracy and answered it the
+  same way.
+
+**Results.**
+
+- **The B axis (1600–4800, shipped cap): zero content faults on either
+  model, either book.** gpt-4o-mini's single fault in the whole grid on
+  this axis is one echoed (untranslated) verse line at B=2400 —
+  non-monotone (1600/3200/4800 clean), stochastic, correctly placed.
+  What moves with B is retry cost only, and it is flat-to-noisy here
+  (§6's "+150% at B=2400" did not reproduce).
+- **The unit axis (B=4800): gpt-4o-mini clean through 96 effective
+  units** (and through 89–256 units/request on verse). **DeepSeek's
+  first structural fault is at 64 effective units** — a dropped span in
+  prose whose text resurfaced one slot late — and its second at 96.
+  32 and 48 were clean on both books; 256 was clean again. Faults are
+  **stochastic per request, not a cliff**: 64 is where risk becomes
+  observable, not where it becomes certain.
+- **Verdict on the shipped defaults**: the 32-unit cap sits at exactly
+  **2.0×** below DeepSeek's observable emergence (64), reproducing
+  §6's emergence level on a genuinely weak model; the derived
+  1600–2000 budget band carries **≥2.4×** margin (fault-free through
+  4800). The "half the measured emergence" derivation of the cap
+  survives with its premise repaired.
+- Retry overhead pooled over both books: flat in B at U=32
+  (0–42% o4m, 0–24% ds); rising in U past 48 (o4m 25→86% at 96,
+  400% at 256; ds 12→57% at 96) — same shape as §6.
+
+**A new fault class, and the grid's worst cell.** `ds-waste-u96-b4800`
+merged two source lines into one translation and, 42 slots later,
+re-synced by emitting an extra item — a model meta-comment,
+`（此处应有一个空行表示节段间隔）`, which was **written into the
+finished book as a translation**. Because the merge and the injected
+extra cancelled out, the reply count matched, alignment passed, and
+the run narrated **zero recoveries**; the `III. THE FIRE SERMON`
+heading received the next line's translation. Independent evidence:
+the verse line number `170` (belonging to source slot 176) appears in
+slot 175's translation. This is §6's "shifted reply that survives
+reconciliation" failure surviving by **count compensation** rather
+than wrong-slot markers, so the marker-evidence guard does not catch
+it. Open defect candidate for the loader: count-compensated shifts
+need their own evidence check. At the shipped 32-unit cap the class
+was never observed, on any model, in any cell of this grid or §10's.
+
+**A caution on DeepSeek itself, separate from batching**: it
+compresses aggressively at every U and B — median zh/en character
+ratio 0.24–0.31 with 59–117 slots under 0.25 per cell, versus
+0.30–0.33 and 6–17 for gpt-4o-mini. That is a property of the model,
+not of grouping, and it needs its own quality judgement before this
+fork recommends DeepSeek for literary work.
+
+Structural read-back over all 36 cells: 0 marker tokens in visible
+text, 0 JSON/delimiter residue, 0 ids lost, 0 hrefs dangling, 0
+missing documents; translated-node counts identical across every cell
+of a book.
