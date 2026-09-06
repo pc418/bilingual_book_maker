@@ -383,3 +383,72 @@ calibrated finite-run model, not measured; measured cells at both
 budgets (gpt-5.6-luna for grid comparability, plus gpt-4o-mini and
 DeepSeek as requested) are running at reporting time and will be
 reported here as measurements against those projections when complete.
+
+## 12. Glossary alignment: uncommon and abbreviated terms (run 260906)
+
+Purpose: measure whether a user `--glossary` actually lands — per
+occurrence, in the produced epub — when the pinned renderings are
+uncommon or abbreviated, and capture the auto-glossary artifact a
+session run builds on its own. Model `gpt-5.6-luna`, a fixed 120-unit
+slice of `animal_farm.epub` (the plan file from a probe run copied into
+every cell, so all cells translate the identical slice).
+
+**Every pin is provably non-default.** A no-glossary baseline run of the
+same slice was translated first; all 12 pinned renderings occur **zero**
+times in it, so a hit below can only be injection, never agreement.
+
+The glossary: 12 entries — `Mr./Mrs. + surname` abbreviations
+(钟斯老爷/钟斯夫人 against the model's own 琼斯先生/琼斯太太), two
+abbreviated names **absent from the slice** (`Mr. Whymper`,
+`Mr. Pilkington`, to measure hits-only), uncommon renderings for the
+proper names (兽园, 冰糖山, 雪团儿, 鲍克赛, 苜蓿婶, 老麦哲, 曼诺庄园),
+and one keep-untranslated pin (`Beasts of England` → itself).
+
+Per-occurrence alignment over the 50 term-bearing nodes (66 term
+occurrences in the slice, 50 inside translated nodes):
+
+| cell | hit / n | misses |
+|---|---|---|
+| plain, notes in file | 48/50 | 2× `Beasts of England` translated anyway |
+| session, notes in file | 49/50 | 1× `Clover` — see below: the miss is correct |
+| plain, notes stripped | **50/50** | none |
+
+Three findings behind those numbers:
+
+- **A `#` note is prompt text, not a comment.** `prompt_block` sends the
+  note as a parenthetical, so a note reading "(baseline default:
+  琼斯先生)" hands the model the rendering it was meant to avoid. Both
+  plain-cell misses disappeared when notes were stripped: 48/50 → 50/50.
+  Never put a rejected alternative in a glossary note.
+- **Case-insensitive matching over-fires on homographs.** The one
+  session "miss" is the model correctly rendering the *plant* clover
+  (苜蓿) in "clover was in season all the year round"; both plain cells
+  applied the mare's pin and produced 苜蓿婶一年四季都在生长. Restricted
+  to the capitalized mare, every cell is 4/4.
+- **Session mode propagates a pin to unpinned surface forms; plain mode
+  cannot.** Session rendered bare `Jones`/`Major` consistently with the
+  pinned full forms (10 such generalizations, zero contaminating leaks);
+  the plain cells left 琼斯 ×3 and 少校 ×8 at their defaults next to
+  钟斯老爷/老麦哲 in the same book. Session mode is the mode to
+  recommend with `--glossary`.
+
+**Hits-only, measured on the wire** (in-process trace of
+`prompt_block`, repo untouched): the two absent names were sent in
+**0/90** plain and **0/33** session requests; the plain run emitted a
+glossary block in only 34 of 90 requests. Read-back on all four epubs:
+0 residue, 0 tag/class mismatches, 0 duplicate ids, 0 broken anchors.
+
+**Auto-glossary artifact.** A session run with no user glossary
+(`--glossary-auto on` default, `--context-compact-at 3000`) produced
+seven handoff windows. Choosing freely it learned exactly the
+baseline's defaults (雪球, 糖果山, 庄园农场, 琼斯先生, 老少校, 克洛弗,
+《英格兰兽》…) — independent confirmation the §12 pins were genuinely
+non-default. By Window 7 the accumulated block is 130 lines, 28 of them
+new that window: renderings replay quadratically across windows, and
+the model emits the block under a markdown `### Established renderings`
+heading rather than the `<renderings>` tags the prompt asks for
+(`strip_handoff_glossary` handles both; nothing reached the epub). Both
+are noted as artifact-format rough edges, not faults. With a user
+glossary present, `--glossary-auto` grew the working set 12 → 69
+entries across three compactions without ever overwriting a pin.
+
