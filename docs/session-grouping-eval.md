@@ -307,3 +307,47 @@ Leave `--context-compact-at` and `--accumulated_num` unset to get the
 defaults; the run narrates them
 (`session: compacting at 8000 estimated tokens (the default;
 --context-compact-at overrides)`).
+
+## 10. Corpus robustness: 90 runs over the 45 epub-samples books
+
+The grid above measures cost and continuity on a few books deeply. This
+section is the opposite cut: every book in the IDPF `epub-samples`
+corpus, translated twice on the no-schema codex route
+(`--test --test_num 64 --language zh-hans`, ≤2 cells at a time under a
+1.5 GB memory cap) — once on the legacy per-paragraph path, once with
+`--plan-classify all` engaging the grouped pipeline. The corpus is
+deliberately hostile: fixed-layout books, SVG text, Unicode braille,
+8 CJK-source books, MathML, 6 MB of transliterated Sanskrit.
+
+| sweep | clean | flagged |
+|---|---|---|
+| legacy path (plan off) | 35/45 | 10 |
+| grouped pipeline (`--plan-classify all`) | **41/45** | 4 |
+
+Structural totals over all 90 runs: **0 ids lost of 22,450 checked, 0
+newly dangling internal links of 7,525, 0 marker or JSON residue in
+rendered text, 0 inline markers lost or invented**, and 2 misalignment
+recoveries (both on one book, both recovered down the ladder, read-back
+clean). No run ever answered with a wrong count without raising.
+
+Every flagged cell is a book quirk, a model fault, or the coverage
+guard doing its job — none is pipeline damage. Two findings argue for
+the grouped path directly:
+
+- **The legacy path can translate nothing and exit 0.** Six books keep
+  their text outside `<p>` (in `span`/`div`/`td`/SVG); the legacy loop
+  walks past all of it — the Sanskrit epic translated not one word in an
+  11-second "successful" run. The plan partition sees those shapes:
+  the same book plans 99.4% text coverage under grouping.
+- **The coverage guard refuses what should not be translated.** The
+  braille book's Unicode went to the model on the legacy path, which
+  wrote a hallucinated "decode" into the book; under plan mode the run
+  refuses loudly at 0.0% plannable coverage instead.
+
+A read-back methodology note that the corpus forced: a translation is
+detected as *the immediately-following same-tag sibling whose text does
+not occur anywhere in the source document* — a source-diff test, not a
+target-script test. A "does the sibling contain CJK" check scores zero
+on the eight CJK-source books, and — the same coin's other face — a
+model echoing the source back is not counted as a translation, because
+its text is still in the source's string set.
