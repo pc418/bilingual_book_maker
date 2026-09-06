@@ -351,3 +351,35 @@ target-script test. A "does the sibling contain CJK" check scores zero
 on the eight CJK-source books, and — the same coin's other face — a
 model echoing the source back is not counted as a translation, because
 its text is still in the source's string set.
+
+## 11. Requested model verification: gpt-4o-mini and deepseek (runs 260905, reported 260906)
+
+These cells were run on request as the default-verification pass and
+were recorded only in working notes at the time; this section reports
+them, from the preserved artifacts re-read at reporting time — a
+reporting lapse, not a measurement one.
+
+All cells: `animal_farm.epub` (except the 64-unit probes, on
+`childrens-literature.epub`), `--test --quiet --language zh-hans`,
+memory-capped. Read-back re-run on the produced epubs: **0 ids lost, 0
+hrefs lost, 0 marker/JSON residue, 0 missing documents in every cell.**
+
+| cell | model / endpoint | result |
+|---|---|---|
+| 4omini-plain / -session | gpt-4o-mini, vendor | clean; 13 translated nodes placed adjacent |
+| 4omini-bu32 / -bu48 (±`--accumulated_num`) | gpt-4o-mini, 64-unit probe book | clean at **32 and 48 units per request** — a weak model held format at 1.5× the shipped 32-unit cap; 74 translated nodes each |
+| deepseek-plain / -session | DeepSeek via OpenRouter | clean |
+| router-plain / -session | the domestic router | clean; session showed a large cache share (latency/verbosity tax only) |
+| claude-fixed-plain / -session | claude-haiku via OpenRouter, post-fence-fix | clean, 0 fences (the pre-fix cells are what found the fence leak) |
+
+What this adds to the grid's conclusions: the unit-cap margin (§6) holds
+on a genuinely weak model, and the defaults transfer across two
+non-vendor endpoints without structural faults. What it does not do:
+these are smoke-depth cells (8 units, probes 64), not ledger cells — the
+cost columns of §5 are unaffected.
+
+The 12k/16k budget squares of §5/§8 are **projected** from the
+calibrated finite-run model, not measured; measured cells at both
+budgets (gpt-5.6-luna for grid comparability, plus gpt-4o-mini and
+DeepSeek as requested) are running at reporting time and will be
+reported here as measurements against those projections when complete.
