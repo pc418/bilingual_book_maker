@@ -264,10 +264,12 @@ the request budget from its own prompt overhead, and pins the rest.
   the misalignment hint (`N misaligned batches this run — consider a
   lower --max-batch-units or --accumulated_num`), which appears from the
   third recovered batch on.
-- **`--accumulated_num`**: leave unset (the derived 1600–2000 band).
-  Raising it toward 4800 produced no faults, but retry cost climbs past
-  the ceiling and per-content savings flatten — the measured optimum is
-  the derived band.
+- **`--accumulated_num`**: leave unset (the derived 2400–3200 band,
+  raised 260906 off §14: the whole 1600–4800 range measured fault-free
+  at the 32-unit cap on the weak models too, so the floor sits at half
+  the measured-clean ceiling — the same margin the unit cap takes).
+  Raising it toward 4800 produced no faults but spends that margin for
+  flattening per-content savings.
 - **`--context-compact-at`**: leave unset; every session run compacts
   at the pinned 8000 (§5, §8). Set it lower (toward 2000–4000) only if
   squeezing the last ~10–25% of session cost matters more to you than
@@ -282,11 +284,15 @@ equations, not constants, because prompt overhead is user-customizable
 (`--prompt`) and measured at run start:
 
 ```
-B_default = clamp( 3·F, 1600, 2000 )          # F = measured prompt overhead
+B_default = clamp( 3·F, 2400, 3200 )          # F = measured prompt overhead
 C_default = 8000                              # pinned, every session run
 ```
 
-With the stock prompts F ≈ 104–111, so B defaults to the floor 1600. F
+The floor is half the largest B measured fault-free (4800, §14, at the
+32-unit cap); the ceiling is a directly measured clean rung, 1.5×
+under that edge. (Before §14 the band was 1600–2000, from the
+char-denominated 260904 degradation eval.) With the stock prompts
+F ≈ 104–111, so B defaults to the floor 2400. F
 does not appear in a compaction optimum (it drops out of the
 derivative); prompt growth reaches C only through B.
 
@@ -562,10 +568,15 @@ defaults and *not* raw-comparable to §6's numbers:
   §6's emergence level on a genuinely weak model; the derived
   1600–2000 budget band carries **≥2.4×** margin (fault-free through
   4800). The "half the measured emergence" derivation of the cap
-  survives with its premise repaired.
+  survives with its premise repaired. (Outcome: on this evidence the
+  shipped band was raised to 2400–3200 the same day — the floor at half
+  the measured-clean ceiling, the ceiling at a directly measured clean
+  rung — see §7/§8.)
 - Retry overhead pooled over both books: flat in B at U=32
   (0–42% o4m, 0–24% ds); rising in U past 48 (o4m 25→86% at 96,
   400% at 256; ds 12→57% at 96) — same shape as §6.
+
+![retry overhead vs effective units per request on gpt-4o-mini and deepseek-chat](img/retry_overhead_vs_units.png)
 
 **A new fault class, and the grid's worst cell.** `ds-waste-u96-b4800`
 merged two source lines into one translation and, 42 slots later,
@@ -589,6 +600,12 @@ ratio 0.24–0.31 with 59–117 slots under 0.25 per cell, versus
 0.30–0.33 and 6–17 for gpt-4o-mini. That is a property of the model,
 not of grouping, and it needs its own quality judgement before this
 fork recommends DeepSeek for literary work.
+
+![per-cell median zh/en ratio and heavily-compressed slot counts](img/compression_ratio.png)
+
+(The chart's per-cell medians run over every written slot, §14's prose
+figures over the adjacent-sibling subset, so the ranges differ by a
+few hundredths; the separation between the models is the point.)
 
 Structural read-back over all 36 cells: 0 marker tokens in visible
 text, 0 JSON/delimiter residue, 0 ids lost, 0 hrefs dangling, 0
