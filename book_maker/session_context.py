@@ -452,16 +452,26 @@ _STYLE_REQUEST = (
 # old clause was for — and the per-report cap keeps it flat even when the
 # model re-emits anyway, which it cannot be told not to do when it can no
 # longer see what it established (see GLOSSARY_MAX_PER_COMPACT).
+#
+# The wording below is EVAL-PINNED (260913, 27-call prompt-variant eval) and
+# owner-written — do not restyle it. The load-bearing lines, each earned by a
+# measured failure: the "could have rendered differently … will recur" scope
+# and the "Do NOT list words with one obvious standard translation" line are
+# what stop a model dumping every set-dressing noun (observed: harness-room,
+# nosebag). Nothing else is asked for, by owner trim: reversed pairs, dual
+# renderings and repeats are all defended client-side (the flip, the
+# alternatives filter, the dedupe), so prompt lines about them would spend
+# the report's token budget saying what the harvest already enforces.
 _GLOSSARY_REQUEST = (
     f"{_RENDERINGS_HEADER}\n\n"
     f"<renderings>\n"
     f"term → translation # note\n"
     f"</renderings>\n\n"
-    f"At most {GLOSSARY_MAX_PER_COMPACT} names from the passages above whose "
-    f"rendering is new or has changed, one per line inside those tags, source "
-    f"term on the left and the note optional. Never repeat an entry you have "
-    f"already reported. If there are none, emit an empty block. This is the "
-    f"only place term equivalences belong."
+    f"Only terms another translator could reasonably have rendered "
+    f"differently, and which will recur: invented or transliterated names, "
+    f"places, coined terms, titles and forms of address. Do NOT list words "
+    f"with one obvious standard translation, or anything unlikely to appear "
+    f"again. Up to {GLOSSARY_MAX_PER_COMPACT} entries, only new ones."
 )
 
 

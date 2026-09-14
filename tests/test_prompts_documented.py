@@ -57,11 +57,11 @@ _RENDERINGS = (
     "term → translation # note\n"
     "</renderings>\n"
     "\n"
-    "At most 16 names from the passages above whose rendering is new or has "
-    "changed, one per line inside those tags, source term on the left and "
-    "the note optional. Never repeat an entry you have already reported. If "
-    "there are none, emit an empty block. This is the only place term "
-    "equivalences belong."
+    "Only terms another translator could reasonably have rendered "
+    "differently, and which will recur: invented or transliterated names, "
+    "places, coined terms, titles and forms of address. Do NOT list words "
+    "with one obvious standard translation, or anything unlikely to appear "
+    "again. Up to 16 entries, only new ones."
 )
 
 # The size the report is asked to hold to — layer (a) of the seed bound. The

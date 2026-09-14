@@ -660,9 +660,11 @@ class TestTheHarvestIsBounded:
         putting it back in the prompt would be the same unbounded growth by
         another door."""
         prompt = handoff_prompt(with_glossary=True)
-        assert f"At most {GLOSSARY_MAX_PER_COMPACT}" in prompt
-        assert "new or has changed" in prompt
-        assert "already reported" in prompt
+        assert f"Up to {GLOSSARY_MAX_PER_COMPACT}" in prompt
+        assert "only new ones" in prompt
+        # The eval-pinned scoping (260913): the do-NOT line is what stops a
+        # model dumping every set-dressing noun into the report.
+        assert "Do NOT list words with one obvious standard translation" in prompt
         # the prompt is a constant: the same text on window 1 and window 40
         assert handoff_prompt(with_glossary=True) == prompt
 
