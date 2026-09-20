@@ -169,7 +169,7 @@ class TestStops:
         assert "records no progress at all" in _flat(proc)
 
     def test_to_epub_on_a_book_that_is_not_a_pdf(self, tmp_path):
-        # A12: --to-epub changes which route the run takes — it reads a PDF
+        # A13: --to-epub changes which route the run takes — it reads a PDF
         # with OCR and translates the Markdown that comes back. On an epub
         # there is nothing to read, and ignoring the flag would leave the
         # operator waiting for a file that is never written.
@@ -586,7 +586,7 @@ WARN_FIXTURES = [
         "never asks its report",
     ),
     (
-        # C25: OCR only happens on the --to-epub route, so on any other run
+        # C26: OCR only happens on the --to-epub route, so on any other run
         # there is no device for the flag to choose
         "C26",
         ["--no-gpu"],
