@@ -413,7 +413,7 @@ def describe_listing(api_models, limit=LISTING_HINT_LIMIT):
     return f"{names[:limit]} and {len(names) - limit} more"
 
 
-def verify_model_routes(client, model_list, extra_body=None):
+def verify_model_routes(client, model_list, extra_body=None, probe=None):
     """Which of `model_list` this endpoint actually serves, in the order given.
 
     One route probe per model. A model that answers is usable; a model the
@@ -423,13 +423,18 @@ def verify_model_routes(client, model_list, extra_body=None):
 
     Returns success plus the split, in the order the caller asked for, so
     rotation order stays the order the user typed.
+
+    `probe` replaces `probe_model_route` for a caller that has something to
+    settle on this request — `--no-thinking` negotiates its field here,
+    because this is the cheapest request the run makes.
     """
+    probe = probe or probe_model_route
     model_list = list(model_list)
     # silent when every model answers: only a refusal is news
     available, unavailable = [], []
     for model_name in model_list:
         try:
-            probe_model_route(client, model_name, extra_body=extra_body)
+            probe(client, model_name, extra_body=extra_body)
         except ModelUnavailable as e:
             print(f"[red]{redact(e)}[/red]")
             unavailable.append(model_name)

@@ -825,6 +825,22 @@ are a minute's edit in `source.md`.
   python3 "make_book.py" --book_name "test_books/animal_farm.epub" --retranslate 'test_books/animal_farm_bilingual.epub' 'index_split_002.html' 'in spite of the present book shortage which' ''
   ```
 
+- `--no-thinking`:
+
+  Ask the model not to reason before answering — thinking buys nothing on a
+  paragraph of prose and costs tokens and time. Every endpoint spells the
+  request field differently and rejects the others, so on the OpenAI-format
+  routes the field is negotiated from the endpoint's own rejections and
+  remembered for the run; if it refuses all of them the run says so once and
+  carries on without one. On the `anthropic` route it is
+  `thinking: {"type": "disabled"}`. The `codex` route is refused, since it
+  runs the codex CLI as a subprocess with no request body. A field you set
+  yourself in `--extra_body` wins over the flag.
+
+  ```shell
+  python3 make_book.py --book_name test_books/animal_farm.epub --key ${openai_key} --no-thinking
+  ```
+
 - `--extra_body`:
 
   Pass additional JSON parameters on the routes built on the OpenAI request

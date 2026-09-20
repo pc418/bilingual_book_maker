@@ -570,6 +570,19 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   python3 "make_book.py" --book_name "test_books/animal_farm.epub" --retranslate 'test_books/animal_farm_bilingual.epub' 'index_split_002.html' 'in spite of the present book shortage which' ''
   ```
 
+- `--no-thinking`:
+
+  让模型回答前不要先思考——翻译一段散文，思考带不来质量，只多花 token 和时间。各家
+  端点关闭思考的字段名互不相同且互相拒绝，因此在 OpenAI 请求格式的路径上，字段由端点
+  自己的报错协商得出并在本次运行中记住；若全部被拒，会提示一次并照常继续（不带该字
+  段）。`anthropic` 路径上固定为 `thinking: {"type": "disabled"}`。`codex` 路径会直接
+  拒绝该选项——它以子进程方式调用 codex CLI，没有可写入的请求体。你在 `--extra_body`
+  里自己写的字段优先于本选项。
+
+  ```shell
+  python3 make_book.py --book_name book.epub --no-thinking
+  ```
+
 - `--extra_body`:
 
   以 JSON 字符串向 ChatGPT/OpenAI 衍生请求路径透传额外参数，包括 OpenAI 请求格式的

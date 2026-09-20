@@ -19,6 +19,7 @@ from openai import (
     LengthFinishReasonError,
     OpenAI,
     RateLimitError,
+    UnprocessableEntityError,
 )
 from pydantic import ConfigDict, Field, ValidationError, create_model
 from rich import print
@@ -40,6 +41,7 @@ from .base_translator import (
     TranslationContext,
     TranslationResult,
 )
+from . import reasoning
 from .capabilities import (
     ENTRY_RUNG,
     RUNG_REFUSAL_ERRORS,
@@ -49,9 +51,11 @@ from .capabilities import (
     StructuredRefusal,
     classify_bad_request,
     describe_listing,
+    probe_model_route,
     probe_structured_output,
     verify_model_routes,
 )
+from .reasoning import NO_THINKING_FIELDS
 from .vision import (
     VISION_REQUEST_PARAMS,
     VisionRequestFailed,
@@ -440,6 +444,10 @@ class ChatGPTAPI(Base):
     handoff_path = None
     context_compact_at = None
     no_context_compact = False
+    # Where this run's requests go. Set in __init__; class-level too, so an
+    # instance built without it (a subclass, a test double) still answers the
+    # one question `--no-thinking` asks of it — which endpoint is this?
+    api_base = None
     # Every model --model_list rotates through, not just the current one.
     _model_names = ()
     # Models not yet confirmed served, and the refusal if one was. One dict,
@@ -589,7 +597,12 @@ class ChatGPTAPI(Base):
             state["pending"] = None
 
             result = verify_model_routes(
-                self.openai_client, pending, extra_body=self.extra_body or None
+                self.openai_client,
+                pending,
+                extra_body=self.request_extra_body(),
+                # `--no-thinking` settles its spelling here, on the cheapest
+                # request of the run, rather than on a paid translate call.
+                probe=self._route_probe,
             )
             if not result["success"]:
                 listed = result["api_models"]
@@ -626,8 +639,11 @@ class ChatGPTAPI(Base):
         return self.capabilities.ensure_verdict(model, probe)
 
     def _probe(self, model):
+        # Not wrapped in `_negotiating`: this probe answers a rejection with a
+        # verdict string rather than an exception, and the route probe above
+        # has already settled the spelling by the time it runs.
         return probe_structured_output(
-            self.openai_client, model, extra_body=self.extra_body or None
+            self.openai_client, model, extra_body=self.request_extra_body(model)
         )
 
     def _ensure_structured_support(self, model=None):
@@ -695,16 +711,24 @@ class ChatGPTAPI(Base):
 
     def _completion_text(self, model, content, **kwargs):
         """One single-turn request, with shape refusals marked as such."""
-        try:
-            # Every rung and the schema probe come through here, so this is
-            # where --extra_body reaches them. `setdefault`: a caller that
-            # already built one owns it.
-            kwargs.setdefault("extra_body", self.extra_body or None)
-            completion = self.openai_client.chat.completions.create(
+        # Every rung and the schema probe come through here, so this is where
+        # --extra_body and the --no-thinking control reach them. A caller that
+        # built its own body owns it; everyone else gets a fresh one per
+        # attempt, which is how a renegotiated spelling reaches the retry.
+        owned = "extra_body" in kwargs
+
+        def attempt():
+            call = dict(kwargs)
+            if not owned:
+                call["extra_body"] = self.request_extra_body(model)
+            return self.openai_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": content}],
-                **kwargs,
+                **call,
             )
+
+        try:
+            completion = self._negotiating(attempt, model=model)
         except RUNG_REFUSAL_ERRORS as e:
             self.warn_if_extras_refused(e)
             raise RungRejected(e) from e
@@ -912,13 +936,69 @@ class ChatGPTAPI(Base):
             lambda sampling: self.openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
-                extra_body=self.extra_body if self.extra_body else None,
+                extra_body=self.request_extra_body(),
                 **sampling,
             ),
             model=model,
         )
         self._note_usage(completion, model)
         return completion.choices[0].message.content or ""
+
+    # ---- --no-thinking ----------------------------------------------------
+
+    def _no_thinking_control(self, model=None):
+        """The reasoning-off field this route is currently sending, if any.
+
+        Empty when the flag is off, when the ladder has run out (the run was
+        told once, and carries on without one), and when `--extra_body`
+        already names a field the ladder writes: the operator said what to
+        send, and a flag quietly sending something else alongside it would be
+        two instructions about reasoning in one request.
+        """
+        if not self.no_thinking or NO_THINKING_FIELDS & set(self.extra_body):
+            return {}
+        return reasoning.CONTROLS.control(self.api_base, model or self.model)
+
+    def request_extra_body(self, model=None):
+        """See `Base.request_extra_body`. `--extra_body` wins the merge."""
+        return {**self._no_thinking_control(model), **self.extra_body} or None
+
+    def _negotiating(self, call, model=None):
+        """Run `call`, moving on when the endpoint rejects the field just sent.
+
+        The one loop the flag needs. Every request this route makes carries
+        the control, so any of them can be the one that finds out the
+        spelling is wrong; `call` re-reads `request_extra_body()` each time
+        round, so it sends the new spelling without knowing there was an old
+        one. Anything that is not this endpoint rejecting this field — an
+        unrelated 400, a refused schema, a rate limit — leaves the loop
+        untouched and propagates, which is the whole safety property.
+        """
+        if not self._no_thinking_control(model):
+            return call()
+        endpoint, model = self.api_base, model or self.model
+        while True:
+            try:
+                return call()
+            except (BadRequestError, UnprocessableEntityError) as e:
+                if not reasoning.CONTROLS.rejected(endpoint, model, e):
+                    raise
+
+    def _route_probe(self, client, model, extra_body=None):
+        """The route probe, with the `--no-thinking` spelling settled on it.
+
+        This is the first request a paid run makes, so it is where the
+        negotiation belongs: by the time the schema probe grades an answer,
+        the shape of the run's requests is known, and the verdict is about
+        the endpoint rather than about a field it was going to refuse anyway.
+        `extra_body` is ignored in favour of a fresh one per attempt.
+        """
+        return self._negotiating(
+            lambda: probe_model_route(
+                client, model, extra_body=self.request_extra_body(model)
+            ),
+            model=model,
+        )
 
     def set_request_extras(self, extra_body=None, extra_headers=None):
         """See `Base.set_request_extras`.
@@ -1111,17 +1191,31 @@ class ChatGPTAPI(Base):
             return await client.chat.completions.create(
                 model=model,
                 messages=messages,
-                extra_body=self.extra_body if self.extra_body else None,
+                extra_body=self.request_extra_body(model),
                 **sampling,
             )
 
-        try:
-            completion = await create(self._sampling_kwargs(model))
-        except BadRequestError as e:
-            if classify_bad_request(e) != "temperature":
-                raise
-            self._note_temperature_rejected(model)
-            completion = await create({})
+        async def attempt():
+            try:
+                return await create(self._sampling_kwargs(model))
+            except BadRequestError as e:
+                if classify_bad_request(e) != "temperature":
+                    raise
+                self._note_temperature_rejected(model)
+                return await create({})
+
+        # The synchronous `_negotiating` in await form; the parallel path
+        # cannot borrow it, and a worker that never learned the spelling
+        # would refuse every chapter it was given.
+        while True:
+            try:
+                completion = await attempt()
+                break
+            except (BadRequestError, UnprocessableEntityError) as e:
+                if not self._no_thinking_control(model):
+                    raise
+                if not reasoning.CONTROLS.rejected(self.api_base, model, e):
+                    raise
 
         self._note_usage(completion, model)
         translated = completion.choices[0].message.content or ""
@@ -1149,8 +1243,18 @@ class ChatGPTAPI(Base):
             )
 
     def _request(self, call, model=None):
-        """Issue an API call, retrying once without temperature if refused."""
+        """Issue an API call, retrying once without temperature if refused.
+
+        Also the door every paid request on this route goes through, so it is
+        where `--no-thinking` negotiates its spelling for the translate
+        calls, the batch rungs and the compact turn.
+        """
         model = model or self.model
+        return self._negotiating(
+            lambda: self._temperature_tolerant(call, model), model=model
+        )
+
+    def _temperature_tolerant(self, call, model):
         try:
             return call(self._sampling_kwargs(model))
         except BadRequestError as e:
@@ -1167,7 +1271,7 @@ class ChatGPTAPI(Base):
             lambda sampling: self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                extra_body=self.extra_body if self.extra_body else None,
+                extra_body=self.request_extra_body(),
                 **sampling,
             )
         )
@@ -1191,7 +1295,7 @@ class ChatGPTAPI(Base):
                     response_format=single_translation_model(
                         self.language, field_language=self.language_field_tag
                     ),
-                    extra_body=self.extra_body if self.extra_body else None,
+                    extra_body=self.request_extra_body(),
                     **sampling,
                 )
             )
@@ -1274,7 +1378,7 @@ class ChatGPTAPI(Base):
             return self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                extra_body=self.extra_body if self.extra_body else None,
+                extra_body=self.request_extra_body(),
                 **cap,
                 **sampling,
             )
@@ -1718,7 +1822,7 @@ class ChatGPTAPI(Base):
                         self.source_language,
                         self.language_field_tag,
                     ),
-                    extra_body=self.extra_body if self.extra_body else None,
+                    extra_body=self.request_extra_body(),
                     **sampling,
                 )
             )
@@ -1766,7 +1870,7 @@ class ChatGPTAPI(Base):
                     model=self.model,
                     messages=messages,
                     response_format={"type": "json_object"},
-                    extra_body=self.extra_body if self.extra_body else None,
+                    extra_body=self.request_extra_body(),
                     **sampling,
                 )
             )

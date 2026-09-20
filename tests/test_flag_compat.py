@@ -311,6 +311,20 @@ class TestStops:
         assert proc.returncode == 1
         assert "implemented by the epub loader only" in _flat(proc)
 
+    def test_no_thinking_is_refused_on_codex(self, tmp_path):
+        # A12: the route runs the codex CLI as a subprocess, so there is no
+        # request body a reasoning control could be written into; accepting
+        # the flag would translate a whole book as if it had been honoured
+        proc = _cli(
+            "--book_name",
+            str(_book(tmp_path)),
+            "--api_format",
+            "codex",
+            "--no-thinking",
+        )
+        assert proc.returncode == 1
+        assert "no request to travel in on the codex route" in _flat(proc)
+
     def test_a_stop_silences_the_warnings(self, capsys):
         # a warning about a run that is not going to happen is noise in
         # front of the reason it isn't
@@ -586,6 +600,14 @@ WARN_FIXTURES = [
         ["--api_format", "anthropic", "--terminology", str(GLOSSARY)],
         {"api_format": "anthropic"},
         "--terminology is carried by",
+    ),
+    (
+        # C25: the MT engines and the native vendor SDKs build their own
+        # request; the flag is read, reaches nothing, and must say so
+        "C25",
+        ["--api_format", "google", "--no-thinking"],
+        {"api_format": "google"},
+        "reaches nothing and this run is unchanged",
     ),
     (
         # C20: the derived glossary comes out of a compact turn, and a

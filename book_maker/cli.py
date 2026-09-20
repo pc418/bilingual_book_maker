@@ -1135,6 +1135,16 @@ COMPAT_RULES = (
         ),
     ),
     CompatRule(
+        "A12",
+        "stop",
+        lambda f: f.api_format == "codex" and f.options.no_thinking,
+        lambda f: (
+            "--no-thinking has no request to travel in on the codex route: "
+            "the route drives the codex CLI as a subprocess, which owns its "
+            "own reasoning settings."
+        ),
+    ),
+    CompatRule(
         "C9",
         "stop",
         lambda f: bool(f.options.retranslate) and f.book_type != "epub",
@@ -1399,6 +1409,19 @@ COMPAT_RULES = (
             f"codex, which state the pins alongside the text they send. The "
             f"{f.api_format} route does not, so the file will be read and "
             f"then ignored."
+        ),
+    ),
+    CompatRule(
+        "C25",
+        "warn",
+        lambda f: f.options.no_thinking
+        and f.api_format != "codex"
+        and not getattr(f.translate_model, "SUPPORTS_REQUEST_EXTRAS", False),
+        lambda f: (
+            f"--no-thinking is carried by the openai-shaped routes and "
+            f"anthropic, which merge the field into a request body built "
+            f"here. The {f.api_format} route builds its own, so the flag "
+            f"reaches nothing and this run is unchanged by it."
         ),
     ),
     CompatRule(
@@ -2325,6 +2348,16 @@ off. Minimum 1.
         'openai route, \'{"thinking": {"type": "disabled"}}\' on anthropic',
     )
     parser.add_argument(
+        "--no-thinking",
+        dest="no_thinking",
+        action="store_true",
+        help="Ask the model not to reason before answering (thinking buys "
+        "nothing on a paragraph and costs tokens and time). On "
+        "OpenAI-format endpoints the request field is negotiated from the "
+        "endpoint's own rejections; on the anthropic format it is thinking: "
+        "disabled; the codex route does not take it.",
+    )
+    parser.add_argument(
         "--extra_headers",
         dest="extra_headers",
         type=str,
@@ -2879,6 +2912,12 @@ def main(argv=None, *, markdown_loader_class=None):
     if price_table is not None and hasattr(e.translate_model, "usage"):
         # the bar shows what was spent instead of token counts
         e.translate_model.usage.prices = price_table
+    # --no-thinking, on the same routes and for the same reason: it is a
+    # field in the request body. The table above has already stopped the
+    # codex route and warned every route that builds no body of ours, so
+    # this is only the routes that carry it.
+    if options.no_thinking and translate_model.SUPPORTS_REQUEST_EXTRAS:
+        e.translate_model.no_thinking = True
     # Request extras, on the routes that build a request these can join.
     # Setting an arbitrary attribute on the others used to print success and
     # then silently drop the fields.
