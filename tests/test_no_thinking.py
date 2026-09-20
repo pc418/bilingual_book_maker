@@ -196,11 +196,34 @@ class TestNegotiation:
 
         t.create_chat_completion("hello")
 
+        # flattened: rich wraps a long line to the terminal, and the
+        # sentence is the last thing said either way
         out = " ".join(capsys.readouterr().out.split())
-        assert out == (
+        assert out.endswith(
             "--no-thinking: this endpoint rejected every known reasoning "
             "control; requests continue without one."
         )
+
+    def test_each_move_says_which_field_it_moved_to(self, capsys):
+        # a negotiation nobody can see is one nobody can debug: a run that
+        # paid for a refusal must not look like one that took the first field
+        endpoint = Endpoint(_rejects("reasoning_effort"))
+        t = _translator(endpoint)
+
+        t.create_chat_completion("hello")
+
+        out = " ".join(capsys.readouterr().out.split())
+        # the whole control, not the field name: two rungs write `reasoning`
+        # and differ only inside it
+        assert 'rejected {"reasoning_effort": "none"}' in out
+        assert 'asking with {"reasoning": {"effort": "none"}} instead' in out
+
+    def test_a_settled_endpoint_says_nothing_at_all(self, capsys):
+        t = _translator(Endpoint())
+
+        t.create_chat_completion("hello")
+
+        assert capsys.readouterr().out == ""
 
     def test_a_400_about_something_else_propagates_untouched(self):
         # the flag must not turn an unrelated refusal into a silent retry on

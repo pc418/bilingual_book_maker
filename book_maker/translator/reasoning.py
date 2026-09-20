@@ -29,6 +29,7 @@ field against the same class of endpoints; the matcher below is its
 `rejected_parameter`, adapted to the OpenAI SDK's exception shape.
 """
 
+import json
 import re
 
 from rich import print
@@ -66,6 +67,7 @@ NO_CONTROL_WARNING = (
     "[yellow]--no-thinking: this endpoint rejected every known reasoning "
     "control; requests continue without one.[/yellow]"
 )
+
 
 # `error.code` values that are an endpoint saying "not this field". Only read
 # alongside a `param` that names the field we sent: a code on its own says
@@ -148,6 +150,25 @@ def rejected_parameter(error, control):
     )
 
 
+def _advance_note(rejected, accepted):
+    """What the operator is told when the ladder moves on one rung.
+
+    A negotiation nobody can see is a negotiation nobody can debug: a run
+    that quietly paid for six refusals looks exactly like one that took the
+    first field. One line per rung, at the rung, and never again for that
+    endpoint and model.
+
+    The whole control, not just its field name: two rungs write `reasoning`
+    and differ only inside it, and "rejected reasoning, asking with
+    reasoning" tells nobody anything.
+    """
+    return (
+        f"[yellow]ℹ --no-thinking: this endpoint rejected "
+        f"{json.dumps(rejected)}; asking with {json.dumps(accepted)} "
+        f"instead[/yellow]"
+    )
+
+
 class ThinkingOff:
     """Which reasoning-off field an endpoint takes, learned by being told.
 
@@ -190,6 +211,12 @@ class ThinkingOff:
         if index + 1 >= len(self._controls):
             return False
         self._accepted[key] = index + 1
+        following = self._controls[index + 1]
+        if following:
+            # The omission rung announces itself in `control`, with the
+            # warning that says the ladder is spent; this line is only for
+            # the moves that still have a field to send.
+            print(_advance_note(self._controls[index], following))
         return True
 
 
