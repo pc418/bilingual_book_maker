@@ -22,6 +22,15 @@ dependencies = [
     "google-genai",
     # chat.completions.parse (Structured Outputs) is unavailable before 1.92.
     "openai>=1.92.0",
+    # The local PDF parser and its hybrid OCR backend. The extra is what
+    # installs docling and the models' runtime; without it the PDF path
+    # has a Java engine and no OCR, which is the one
+    # substitution that parser must never make silently. 2.5.10 is the
+    # version this was built and verified against: it is the one whose
+    # `convert(hybrid=..., hybrid_url=..., hybrid_fallback=...)` signature
+    # and whose `opendataloader-pdf-hybrid --device` flag were checked,
+    # rather than a lower bound guessed from a changelog.
+    "opendataloader-pdf[hybrid]>=2.5.10",
     "pydantic>=2.0",
     "requests",
     "rich",

@@ -2200,10 +2200,21 @@ def parse_args(argv):
     return build_parser().parse_args(argv)
 
 
-def main():
+def main(argv=None, *, markdown_loader_class=None):
+    """The command line, and the one seam an in-process caller may use.
+
+    `argv` defaults to the real command line, so nothing about a normal run
+    changes. A caller that already holds the arguments (the Markdown/EPUB
+    bundle harness in tools/) passes them here instead of rewriting
+    `sys.argv`, and `markdown_loader_class` lets it substitute its own
+    `MarkdownBookLoader` subclass for md books only — a reading-edition
+    formatter and a completion record — so it gets this module's validation,
+    endpoint resolution and compatibility checks rather than a second copy
+    of them. Both default to None and the run is byte-for-byte the old one.
+    """
     # Old command lines are rewritten into the endpoint surface before the
     # parser sees them; see book_maker/legacy_cli.py.
-    legacy = translate_legacy_argv(sys.argv[1:])
+    legacy = translate_legacy_argv(sys.argv[1:] if argv is None else list(argv))
     for notice in legacy.notices:
         print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
 
@@ -2493,6 +2504,10 @@ def main():
 
     book_loader = BOOK_LOADER_DICT.get(book_type)
     assert book_loader is not None, "unsupported loader"
+    if markdown_loader_class is not None and book_type == "md":
+        # md only: the substitute is a MarkdownBookLoader subclass, and
+        # every other format keeps the registered loader.
+        book_loader = markdown_loader_class
     # `--language zh-hant:Traditional Chinese`: the tag is stamped on the
     # output and names the structured field, the name is what the model is
     # asked for. A bare value resolves the way it always has.

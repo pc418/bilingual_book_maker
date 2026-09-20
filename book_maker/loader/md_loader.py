@@ -91,11 +91,31 @@ class MarkdownBookLoader(BaseBookLoader):
             raise Exception("can not load file") from e
 
         self.resume = resume
-        self.bin_path = f"{Path(md_name).parent}/.{Path(md_name).stem}.temp.bin"
+        self.bin_path = self._state_path(md_name)
         if self.resume:
             self.load_state()
 
         self.process_markdown_content()
+
+    def _state_path(self, md_name):
+        """Where the resume file lives. A hidden sibling of the book.
+
+        Overridable so a caller that owns a directory layout of its own (the
+        PDF/Markdown bundle harness) can put the resume file where the rest
+        of its working state is, without this loader knowing about bundles.
+        """
+        return f"{Path(md_name).parent}/.{Path(md_name).stem}.temp.bin"
+
+    def _output_path(self):
+        """The bilingual Markdown this run writes, named after the source."""
+        return f"{Path(self.md_name).parent}/{Path(self.md_name).stem}_bilingual.md"
+
+    def _temp_output_path(self):
+        """Where an interrupted run leaves what it had translated so far."""
+        return (
+            f"{Path(self.md_name).parent}/"
+            f"{Path(self.md_name).stem}_bilingual_temp.txt"
+        )
 
     def process_markdown_content(self):
         """Split Markdown into translatable prose blocks and pass-through blocks."""
@@ -226,10 +246,7 @@ class MarkdownBookLoader(BaseBookLoader):
                 translate_missing=True
             )
 
-            out_path = (
-                f"{Path(self.md_name).parent}/"
-                f"{Path(self.md_name).stem}_bilingual.md"
-            )
+            out_path = self._output_path()
             self.save_file(out_path, self.bilingual_result)
             self.announce_saved_book(out_path)
 
@@ -551,7 +568,7 @@ class MarkdownBookLoader(BaseBookLoader):
         result = []
         for item_type, value in render_items:
             if item_type == "text":
-                result.append(value)
+                self._emit_pass_through(result, value)
                 continue
 
             batch = batches[value]
@@ -565,13 +582,30 @@ class MarkdownBookLoader(BaseBookLoader):
                     else [batch_text]
                 )
                 for source_text, translated_text in zip(source_items, translated_texts):
-                    if not self.single_translate:
-                        result.append(source_text)
-                    result.append(translated_text)
+                    self._emit_pair(result, source_text, translated_text)
             elif not self.single_translate:
-                result.append(batch_text)
+                self._emit_untranslated(result, batch_text)
 
         return result
+
+    # The three places a rendered file gets its pieces. Split out so a
+    # reading-edition subclass can decide how a pair is laid out (blank
+    # lines, heading identifiers, a language region around the translation)
+    # without reimplementing the walk that pairs source with target — the
+    # one thing that must never be guessed back from the rendered text.
+    def _emit_pass_through(self, result, text):
+        """A block that was never sent to the model, once, as it stood."""
+        result.append(text)
+
+    def _emit_pair(self, result, source_text, translated_text):
+        """One source block and the translation that belongs to it."""
+        if not self.single_translate:
+            result.append(source_text)
+        result.append(translated_text)
+
+    def _emit_untranslated(self, result, source_text):
+        """A batch with no translation yet: the source keeps its place."""
+        result.append(source_text)
 
     @staticmethod
     def _contiguous_results(results):
@@ -725,7 +759,4 @@ class MarkdownBookLoader(BaseBookLoader):
             translate_missing=False
         )
 
-        self.save_file(
-            f"{Path(self.md_name).parent}/{Path(self.md_name).stem}_bilingual_temp.txt",
-            self.bilingual_temp_result,
-        )
+        self.save_file(self._temp_output_path(), self.bilingual_temp_result)

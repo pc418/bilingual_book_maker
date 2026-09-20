@@ -1,0 +1,810 @@
+"""The PDF/Markdown -> bilingual Markdown + EPUB bundle, end to end.
+
+Real temporary bundles and the real Pandoc: the point of these tests is
+that the artifacts are the ones a reader would open, so nothing about the
+Markdown parsing or the EPUB packaging is simulated. Only the model is
+fixed, because a translation has to be deterministic to be asserted.
+"""
+
+import importlib.util
+import json
+import re
+import sys
+import zipfile
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from pipeline_helpers import (  # noqa: E402
+    PNG,
+    FakeTranslator,
+    pandoc_or_skip,
+    register_fake_format,
+    write_fixture,
+)
+
+from book_maker.pipeline.bundle import (
+    TRANSLATE_STATE,
+    Bundle,
+    sha256_file,
+)  # noqa: E402
+from book_maker.pipeline.epub_export import export_epub  # noqa: E402
+from book_maker.pipeline.errors import PipelineError  # noqa: E402
+from book_maker.pipeline.importer import import_markdown  # noqa: E402
+from book_maker.pipeline.messages import (  # noqa: E402
+    BILINGUAL_EDITED,
+    PANDOC_REQUIRED,
+    SETTINGS_CHANGED,
+)
+from book_maker.pipeline.preflight import parse_markdown  # noqa: E402
+from book_maker.pipeline.translate import check_options, translate_bundle  # noqa: E402
+
+HARNESS = Path(__file__).resolve().parent.parent / "tools" / "pdf_to_book.py"
+
+
+def load_harness():
+    spec = importlib.util.spec_from_file_location("pdf_to_book", HARNESS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def pandoc():
+    return pandoc_or_skip()
+
+
+@pytest.fixture
+def fake_format(monkeypatch):
+    return register_fake_format(monkeypatch)
+
+
+OPTIONS = ["--api_format", "faketest", "--language", "zh-hans"]
+
+
+def prepared(tmp_path, pandoc, text=None):
+    from pipeline_helpers import FIXTURE
+
+    book = write_fixture(tmp_path / "src", text if text is not None else FIXTURE)
+    bundle = Bundle(tmp_path / "bundle").create()
+    import_markdown(bundle, book, pandoc=pandoc)
+    return bundle
+
+
+def blocks(pandoc, text):
+    return parse_markdown(pandoc, text)["blocks"]
+
+
+def block_kinds(blocks_):
+    return [block["t"] for block in blocks_]
+
+
+def translation_divs(blocks_):
+    return [
+        block
+        for block in blocks_
+        if block["t"] == "Div" and "bbm-translation" in block["c"][0][1]
+    ]
+
+
+# --------------------------------------------------------------------------
+# The deliverable
+# --------------------------------------------------------------------------
+def test_supported_structures_survive_into_markdown_and_epub(
+    tmp_path, pandoc, fake_format
+):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    export_epub(bundle, pandoc=pandoc)
+
+    text = bundle.bilingual_markdown.read_text(encoding="utf-8")
+    parsed = blocks(pandoc, text)
+    kinds = block_kinds(parsed)
+
+    # Every pass-through structure is there exactly once.
+    assert kinds.count("Table") == 1
+    assert kinds.count("CodeBlock") == 1
+    assert text.count("![A plate]") == 1
+
+    # One heading per source heading, each with its own identifier, and the
+    # translated heading is not a heading.
+    headers = [block for block in parsed if block["t"] == "Header"]
+    assert len(headers) == 2
+    identifiers = [block["c"][1][0] for block in headers]
+    assert identifiers == ["chapter-one", "notes"]
+    assert len(set(identifiers)) == len(identifiers)
+
+    # Source and translation are adjacent, separate parsed blocks -- never
+    # one merged paragraph.
+    for index, block in enumerate(parsed):
+        if block["t"] in ("Header", "Para", "BulletList"):
+            if index + 1 < len(parsed) and parsed[index + 1]["t"] == "Div":
+                assert "bbm-translation" in parsed[index + 1]["c"][0][1]
+    divs = translation_divs(parsed)
+    assert len(divs) == 6
+    # The multi-paragraph translation stayed two paragraphs and did not
+    # shift the pairs after it.
+    assert any(len(div["c"][1]) == 2 for div in divs)
+    assert all(div["c"][0][2] == [["lang", "zh-hans"]] for div in divs)
+
+    # The credit line survives the Markdown path into the book.
+    assert "Translated by fake-test-model" in text
+
+    with zipfile.ZipFile(bundle.epub) as archive:
+        names = archive.namelist()
+        nav = archive.read("EPUB/nav.xhtml").decode("utf-8")
+        assert nav.count('<a href="text/ch') == 2  # one TOC entry per heading
+        assert "#chapter-one" in nav and "#notes" in nav
+        documents = [n for n in names if n.endswith(".xhtml")]
+        body = "".join(archive.read(name).decode("utf-8") for name in documents)
+        assert body.count('<div class="bbm-translation"') == 6
+        assert body.count("<img") == 1
+        assert body.count("<table>") == 1
+        assert "never translated" in body
+        assert len([n for n in names if n.startswith("EPUB/media/")]) == 1
+
+
+def test_export_only_needs_no_translator_and_no_extraction(
+    tmp_path, pandoc, fake_format, monkeypatch
+):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    bundle.epub.unlink(missing_ok=True)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("export must not translate or extract")
+
+    monkeypatch.setattr(FakeTranslator, "__init__", refuse)
+    monkeypatch.setattr("book_maker.pipeline.opendataloader.extract_pdf", refuse)
+    monkeypatch.setattr("book_maker.cli.main", refuse)
+
+    export_epub(bundle, pandoc=pandoc)
+    assert bundle.epub.is_file()
+
+
+def test_edited_bilingual_markdown_is_exported_without_retranslation(
+    tmp_path, pandoc, fake_format, monkeypatch
+):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    edited = bundle.bilingual_markdown.read_text(encoding="utf-8").replace(
+        "译:第一段。", "译:改过的第一段。"
+    )
+    bundle.bilingual_markdown.write_text(edited, encoding="utf-8")
+
+    monkeypatch.setattr(
+        "book_maker.cli.main",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no retranslation")),
+    )
+    export_epub(bundle, pandoc=pandoc)
+    with zipfile.ZipFile(bundle.epub) as archive:
+        body = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith(".xhtml")
+        )
+    assert "译:改过的第一段。" in body
+
+    # A later translate run must not quietly overwrite that edit.
+    with pytest.raises(PipelineError) as refused:
+        translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    assert refused.value.detail == BILINGUAL_EDITED
+    assert "译:改过的第一段。" in bundle.bilingual_markdown.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# Refusals: none of these may look like a finished book
+# --------------------------------------------------------------------------
+BROKEN = {
+    "missing image": "# T\n\ntext\n\n![gone](assets/absent.png)\n",
+    "escaping path": "# T\n\ntext\n\n![out](../../etc/hosts)\n",
+    "remote image": "# T\n\ntext\n\n![remote](https://example.com/a.png)\n",
+    "html image": '# T\n\ntext\n\n<img src="assets/plate.png" />\n',
+    "reference image": "# T\n\ntext\n\n![plate][ref]\n\n[ref]: assets/plate.png\n",
+    "malformed markup": "# T\n\n<table><tr><td>unclosed\n\ntext\n",
+    "dangling anchor": "# T\n\nSee [later](#nowhere).\n",
+}
+
+
+@pytest.mark.parametrize("label", sorted(BROKEN))
+def test_unsupported_or_broken_markdown_is_refused_at_import(tmp_path, pandoc, label):
+    book = write_fixture(tmp_path / "src", BROKEN[label])
+    bundle = Bundle(tmp_path / "bundle").create()
+    with pytest.raises(PipelineError):
+        import_markdown(bundle, book, pandoc=pandoc)
+    assert bundle.stage_status("import") == "failed"
+    assert not bundle.bilingual_markdown.exists()
+    assert not bundle.epub.exists()
+
+
+PRESERVED_FIXTURE = """# Chapter One
+
+The mass energy $E = mc^2$ relation is stated in prose, and it costs $5 and
+$10 and $5-$10 in ordinary currency.
+
+$$\\int_0^1 x\\,dx = \\frac{1}{2}$$
+
+Prose with a note.[^note] and more prose after it.
+
+<table>
+<tr><th>a</th><th>b</th></tr>
+<tr><td>1</td><td>2</td></tr>
+</table>
+
+[^note]: The definition of the note.
+"""
+
+
+def test_math_tables_and_footnotes_are_preserved_once_and_not_translated(
+    tmp_path, pandoc, fake_format, capsys
+):
+    """Carried through, in the source language, exactly once each.
+
+    The prose around them is still translated, the currency amounts are
+    still prose, and nothing in this fixture reaches the model as a
+    formula, a table cell or a note definition.
+    """
+    bundle = prepared(tmp_path, pandoc, PRESERVED_FIXTURE)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    text = bundle.bilingual_markdown.read_text(encoding="utf-8")
+
+    # An inline formula belongs to the sentence it is in, so it stands in
+    # both the source sentence and its translation -- the same policy links
+    # and code spans already have. Display math is a block of its own and is
+    # carried once, like a table: pairing it would print the formula twice
+    # with nothing else to read.
+    assert text.count("E = mc^2") == 2
+    assert text.count("\\int_0^1") == 1
+    assert text.count("<table>") == 1
+    assert text.count("[^note]: The definition of the note.") == 1
+    # One reference only: two would make Pandoc print the definition twice.
+    assert len(re.findall(r"\[\^note\](?!:)", text)) == 1
+
+    sent = [t for i in FakeTranslator.instances for t in i.translated]
+    joined = "\n".join(sent)
+    assert "E = mc^2" not in joined
+    assert "<table>" not in joined
+    assert "The definition of the note." not in joined
+    assert "\\int_0^1" not in joined
+    # Currency is prose, here and in Pandoc: it must not have been eaten.
+    assert any("$5 and" in t for t in sent)
+
+    parsed = blocks(pandoc, text)
+    assert block_kinds(parsed).count("RawBlock") == 1
+    assert translation_divs(parsed), "prose around the structures was not translated"
+
+    out = capsys.readouterr().out
+    assert "Preserved without translation: math (2)." in out
+    assert "Preserved without translation: HTML tables (1)." in out
+    assert "Preserved without translation: footnotes (1)." in out
+
+    export_epub(bundle, pandoc=pandoc)
+    with zipfile.ZipFile(bundle.epub) as archive:
+        body = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith(".xhtml")
+        )
+    assert body.count("<table>") == 1
+    assert body.count("The definition of the note.") == 1
+
+
+def test_repeated_headings_get_distinct_identifiers(tmp_path, pandoc, fake_format):
+    text = "# Notes\n\nFirst.\n\n# Notes\n\nSecond.\n"
+    bundle = prepared(tmp_path, pandoc, text)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    parsed = blocks(pandoc, bundle.bilingual_markdown.read_text(encoding="utf-8"))
+    identifiers = [b["c"][1][0] for b in parsed if b["t"] == "Header"]
+    # Pandoc's own duplicate suffix, so a link written against the source
+    # still resolves in the bilingual file.
+    assert identifiers == ["notes", "notes-1"]
+    export_epub(bundle, pandoc=pandoc)
+    with zipfile.ZipFile(bundle.epub) as archive:
+        nav = archive.read("EPUB/nav.xhtml").decode("utf-8")
+    assert "#notes" in nav and "#notes-1" in nav
+
+
+def test_failed_export_leaves_the_previous_epub_in_place(tmp_path, pandoc, fake_format):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    export_epub(bundle, pandoc=pandoc)
+    before = sha256_file(bundle.epub)
+
+    broken = bundle.bilingual_markdown.read_text(encoding="utf-8") + (
+        "\n![gone](assets/absent.png)\n"
+    )
+    bundle.bilingual_markdown.write_text(broken, encoding="utf-8")
+    with pytest.raises(PipelineError) as failed:
+        export_epub(bundle, pandoc=pandoc)
+    assert "missing image" in failed.value.detail
+    assert sha256_file(bundle.epub) == before
+    assert not bundle.work_file("book_bilingual.epub.part").exists()
+
+
+def test_export_fails_when_pandoc_itself_fails(tmp_path, pandoc, fake_format):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    export_epub(bundle, pandoc=pandoc)
+    before = sha256_file(bundle.epub)
+
+    failing = tmp_path / "pandoc-that-fails"
+    failing.write_text("#!/bin/sh\nexec 1>&2; echo 'boom'; exit 3\n")
+    failing.chmod(0o755)
+    with pytest.raises(PipelineError) as failed:
+        export_epub(bundle, pandoc=str(failing))
+    assert "exited 3" in failed.value.detail
+    assert sha256_file(bundle.epub) == before
+
+
+def test_missing_pandoc_stops_the_run_before_any_translation(
+    tmp_path, pandoc, fake_format, capsys
+):
+    write_fixture(tmp_path / "src")
+    harness = load_harness()
+    code = harness.main(
+        [
+            "--pandoc",
+            str(tmp_path / "no-such-pandoc"),
+            "run",
+            str(tmp_path / "src" / "book.md"),
+            "--output",
+            str(tmp_path / "bundle"),
+            "--",
+            *OPTIONS,
+        ]
+    )
+    assert code == 1
+    assert PANDOC_REQUIRED in capsys.readouterr().out
+    assert FakeTranslator.instances == []
+    assert not (tmp_path / "bundle" / "book_bilingual.md").exists()
+
+
+# --------------------------------------------------------------------------
+# State: resume, invalidation, completion
+# --------------------------------------------------------------------------
+def test_resume_translates_only_the_pending_blocks(tmp_path, pandoc, fake_format):
+    # One block per batch, so the interruption lands on a batch boundary and
+    # the assertion is about resume rather than about batch granularity.
+    options = OPTIONS + ["--batch_size", "1"]
+    bundle = prepared(tmp_path, pandoc)
+    FakeTranslator.fail_after = 2
+
+    with pytest.raises(PipelineError) as stopped:
+        translate_bundle(bundle, options, pandoc=pandoc)
+    # The interrupt path exits zero; the stage must still be a failure.
+    assert "stopped before finishing" in stopped.value.detail
+    assert bundle.stage_status("translate") == "failed"
+    assert bundle.work_file(TRANSLATE_STATE).is_file()
+    assert not bundle.bilingual_markdown.exists()
+    first = [text for i in FakeTranslator.instances for text in i.translated]
+
+    FakeTranslator.fail_after = None
+    FakeTranslator.instances = []
+    translate_bundle(bundle, options, pandoc=pandoc)
+
+    second = [text for i in FakeTranslator.instances for text in i.translated]
+    assert second, "the resumed run translated nothing"
+    assert not set(first) & set(second), "already-translated blocks were repaid"
+    body = bundle.bilingual_markdown.read_text(encoding="utf-8")
+    assert body.count("译:Chapter One") == 1
+    assert bundle.stage_status("translate") == "completed"
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        ["--api_format", "faketest", "--language", "ja"],
+        ["--api_format", "faketest", "--language", "zh-hans", "--batch_size", "3"],
+        ["--api_format", "faketest", "--language", "zh-hans", "--use_context"],
+    ],
+    ids=["target", "chunking", "context"],
+)
+def test_changed_settings_refuse_stale_translation_state(
+    tmp_path, pandoc, fake_format, changed
+):
+    bundle = prepared(tmp_path, pandoc)
+    FakeTranslator.fail_after = 2
+    with pytest.raises(PipelineError):
+        translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+
+    FakeTranslator.fail_after = None
+    with pytest.raises(PipelineError) as refused:
+        translate_bundle(bundle, changed, pandoc=pandoc)
+    assert refused.value.detail == SETTINGS_CHANGED
+
+
+def test_edited_source_refuses_stale_translation_state(tmp_path, pandoc, fake_format):
+    bundle = prepared(tmp_path, pandoc)
+    FakeTranslator.fail_after = 2
+    with pytest.raises(PipelineError):
+        translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+
+    FakeTranslator.fail_after = None
+    bundle.source.write_text(
+        bundle.source.read_text(encoding="utf-8").replace("Chapter One", "Chapter Two"),
+        encoding="utf-8",
+    )
+    with pytest.raises(PipelineError) as refused:
+        translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    assert refused.value.detail == SETTINGS_CHANGED
+
+
+def test_edited_prompt_file_refuses_stale_translation_state(
+    tmp_path, pandoc, fake_format
+):
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Translate to {language}: {text}", encoding="utf-8")
+    options = OPTIONS + ["--prompt", str(prompt)]
+    bundle = prepared(tmp_path, pandoc)
+    FakeTranslator.fail_after = 2
+    with pytest.raises(PipelineError):
+        translate_bundle(bundle, options, pandoc=pandoc)
+
+    FakeTranslator.fail_after = None
+    prompt.write_text("Render into {language}: {text}", encoding="utf-8")
+    with pytest.raises(PipelineError) as refused:
+        translate_bundle(bundle, options, pandoc=pandoc)
+    assert refused.value.detail == SETTINGS_CHANGED
+
+
+def test_completion_record_states_what_was_finished(tmp_path, pandoc, fake_format):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    record = json.loads(
+        bundle.work_file("translate.result.json").read_text(encoding="utf-8")
+    )
+    assert record["completed"] is True
+    assert record["untranslated_batches"] == 0
+    assert record["pairs"] == 6
+    assert record["output_sha256"] == sha256_file(bundle.bilingual_markdown)
+
+
+# --------------------------------------------------------------------------
+# The harness surface
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "option,tokens",
+    [
+        ("--book_name", ["--book_name", "other.md"]),
+        ("--single_translate", ["--single_translate"]),
+        ("--resume", ["--resume"]),
+        ("--batch", ["--batch"]),
+        ("--batch-use", ["--batch-use"]),
+        ("--retranslate", ["--retranslate", "a", "b", "c", "d"]),
+        ("--plan-dry-run", ["--plan-dry-run"]),
+        ("--plan-classify", ["--plan-classify", "agent"]),
+    ],
+)
+def test_harness_refuses_options_it_owns_or_cannot_deliver(option, tokens):
+    with pytest.raises(PipelineError) as refused:
+        check_options(tokens)
+    assert option in refused.value.detail
+
+
+def test_a_translation_command_line_that_does_not_parse_is_refused_early():
+    """`run` must not pay for extraction and then fail on a typo."""
+    with pytest.raises(PipelineError) as refused:
+        check_options(["--no-such-flag", "1"])
+    assert "--no-such-flag" in refused.value.detail
+
+
+def test_harness_run_produces_both_deliverables(tmp_path, pandoc, fake_format, capsys):
+    write_fixture(tmp_path / "src")
+    harness = load_harness()
+    code = harness.main(
+        [
+            "--pandoc",
+            pandoc,
+            "run",
+            str(tmp_path / "src" / "book.md"),
+            "--output",
+            str(tmp_path / "bundle"),
+            "--title",
+            "A Small Book",
+            "--",
+            *OPTIONS,
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 0, out
+    bundle = Bundle(tmp_path / "bundle")
+    assert bundle.bilingual_markdown.is_file()
+    assert bundle.epub.is_file()
+    assert "Bilingual Markdown saved:" in out
+    assert "Bilingual EPUB saved:" in out
+    assert "Preserved without translation: tables (1)." in out
+    with zipfile.ZipFile(bundle.epub) as archive:
+        assert "A Small Book" in archive.read("EPUB/content.opf").decode("utf-8")
+
+
+def test_harness_rejects_an_unknown_input_suffix(tmp_path, pandoc, capsys):
+    (tmp_path / "book.docx").write_bytes(b"x")
+    harness = load_harness()
+    code = harness.main(
+        [
+            "--pandoc",
+            pandoc,
+            "import",
+            str(tmp_path / "book.docx"),
+            "--output",
+            str(tmp_path / "b"),
+        ]
+    )
+    assert code == 1
+    assert "neither a PDF nor a Markdown file" in capsys.readouterr().out
+
+
+def test_manifest_never_records_a_key(tmp_path, pandoc, fake_format):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS + ["--key", "sk-secret-value"], pandoc=pandoc)
+    manifest = bundle.manifest_path.read_text(encoding="utf-8")
+    assert "sk-secret-value" not in manifest
+    assert '"secret:' in manifest
+
+
+def test_sample_runs_are_visible_as_samples(tmp_path, pandoc, fake_format):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS + ["--test", "--test_num", "2"], pandoc=pandoc)
+    assert bundle.read_manifest()["translation"]["sample"] is True
+    export_epub(bundle, pandoc=pandoc)
+    with zipfile.ZipFile(bundle.epub) as archive:
+        assert "(sample)" in archive.read("EPUB/content.opf").decode("utf-8")
+
+
+def test_image_paths_with_spaces_and_nested_directories_are_carried(
+    tmp_path, pandoc, fake_format
+):
+    source = tmp_path / "src"
+    (source / "figures" / "ch1").mkdir(parents=True)
+    (source / "figures" / "ch1" / "plate one.png").write_bytes(PNG)
+    book = source / "book.md"
+    book.write_text(
+        "# T\n\nProse.\n\n![one](<figures/ch1/plate one.png>)\n", encoding="utf-8"
+    )
+    bundle = Bundle(tmp_path / "bundle").create()
+    import_markdown(bundle, book, pandoc=pandoc)
+    assert (bundle.assets / "figures" / "ch1" / "plate one.png").is_file()
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    export_epub(bundle, pandoc=pandoc)
+    with zipfile.ZipFile(bundle.epub) as archive:
+        assert len([n for n in archive.namelist() if n.startswith("EPUB/media/")]) == 1
+
+
+# --------------------------------------------------------------------------
+# The CLI seam
+# --------------------------------------------------------------------------
+def test_the_seam_leaves_an_ordinary_markdown_run_exactly_as_it_was(
+    tmp_path, fake_format
+):
+    """`main(argv)` with no loader class renders the old file, byte for byte.
+
+    The reading-edition layout -- blank lines, heading ids, fenced divs --
+    is opt-in. A plain `--book_name book.md` run must not acquire any of it.
+    """
+    from book_maker import cli
+
+    book = tmp_path / "plain.md"
+    book.write_text("# Title\n\nOne paragraph.\n", encoding="utf-8")
+    cli.main(["--book_name", str(book), *OPTIONS])
+
+    written = (tmp_path / "plain_bilingual.md").read_text(encoding="utf-8")
+    assert written == "# Title\n# 译:Title\nOne paragraph.\n译:One paragraph."
+
+
+def test_the_seam_substitutes_the_markdown_loader_without_patching_anything(
+    tmp_path, fake_format
+):
+    from book_maker import cli
+    from book_maker.loader.md_loader import MarkdownBookLoader
+    from book_maker.pipeline.reading_edition import ReadingEditionMarkdownLoader
+
+    built = []
+
+    class Probe(ReadingEditionMarkdownLoader):
+        def __init__(self, *args, **kwargs):
+            built.append(self)
+            super().__init__(*args, **kwargs)
+
+    book = tmp_path / "plain.md"
+    book.write_text("# Title\n\nOne paragraph.\n", encoding="utf-8")
+    cli.main(["--book_name", str(book), *OPTIONS], markdown_loader_class=Probe)
+
+    assert len(built) == 1
+    written = (tmp_path / "plain_bilingual.md").read_text(encoding="utf-8")
+    assert "# Title {#title}" in written
+    # The class used on its own states no language: the bundle harness is
+    # what supplies the CLI's normalized tag, and nothing invents one.
+    assert "::: {.bbm-translation}" in written
+    # The registry itself was never touched.
+    from book_maker.loader import BOOK_LOADER_DICT
+
+    assert BOOK_LOADER_DICT["md"] is MarkdownBookLoader
+
+
+def test_an_html_image_inside_a_code_fence_is_not_mistaken_for_one(
+    tmp_path, pandoc, fake_format
+):
+    """The raw-text checks must not refuse a book that documents HTML."""
+    text = (
+        "# Manual\n\nHow to embed a picture:\n\n"
+        '```html\n<img src="logo.png" alt="logo" />\n```\n\n'
+        "That is the whole trick.\n"
+    )
+    bundle = prepared(tmp_path, pandoc, text)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    export_epub(bundle, pandoc=pandoc)
+    assert '<img src="logo.png"' in bundle.bilingual_markdown.read_text(
+        encoding="utf-8"
+    )
+
+
+# --------------------------------------------------------------------------
+# What is allowed to become a published EPUB
+# --------------------------------------------------------------------------
+def make_epub(path, entries):
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    return path
+
+
+MINIMAL = {
+    "mimetype": "application/epub+zip",
+    "META-INF/container.xml": "<container/>",
+    "EPUB/content.opf": "<package/>",
+    "EPUB/text/ch001.xhtml": "<html><body><p>ok</p></body></html>",
+}
+
+
+@pytest.mark.parametrize(
+    "damage,expected",
+    [
+        ({}, "no mimetype entry"),
+        ({"mimetype": "application/zip"}, "mimetype is"),
+        ({"META-INF/container.xml": None}, "no META-INF/container.xml"),
+        ({"EPUB/text/ch001.xhtml": None}, "no content document"),
+        (
+            {"EPUB/text/ch001.xhtml": "<html><body><p>unclosed</body></html>"},
+            "not well-formed XML",
+        ),
+        ({"EPUB/content.opf": None}, "no package document"),
+    ],
+    ids=[
+        "no-mimetype",
+        "wrong-mimetype",
+        "no-container",
+        "no-document",
+        "bad-xhtml",
+        "no-opf",
+    ],
+)
+def test_a_damaged_package_is_never_published(tmp_path, damage, expected):
+    from book_maker.pipeline.epub_export import validate_epub
+
+    entries = dict(MINIMAL)
+    if not damage:
+        entries.pop("mimetype")
+    for name, value in damage.items():
+        if value is None:
+            entries.pop(name)
+        else:
+            entries[name] = value
+    candidate = make_epub(tmp_path / "candidate.epub", entries)
+    with pytest.raises(PipelineError) as refused:
+        validate_epub(candidate)
+    assert expected in refused.value.detail
+
+
+def test_a_file_that_is_not_a_zip_is_never_published(tmp_path):
+    from book_maker.pipeline.epub_export import validate_epub
+
+    candidate = tmp_path / "candidate.epub"
+    candidate.write_bytes(b"this is not a zip archive")
+    with pytest.raises(PipelineError) as refused:
+        validate_epub(candidate)
+    assert "unreadable EPUB" in refused.value.detail
+
+
+def test_an_image_pandoc_could_not_read_is_a_failure_not_a_warning(
+    tmp_path, pandoc, fake_format, monkeypatch
+):
+    """Pandoc reports an unreachable resource and still exits 0.
+
+    Preflight normally catches this first; this guards the case where it
+    cannot -- the check has to be on the run's output, not on its status.
+    """
+    from book_maker.pipeline import epub_export
+
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    export_epub(bundle, pandoc=pandoc)
+    before = sha256_file(bundle.epub)
+
+    real = epub_export.run_tool
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = "[WARNING] Could not fetch resource assets/plate.png\n"
+
+    def warn_instead(argv, stdin_text=None):
+        if "-t" in argv and argv[argv.index("-t") + 1] == "epub3":
+            real(argv, stdin_text)  # still writes the candidate file
+            return Result()
+        return real(argv, stdin_text)
+
+    monkeypatch.setattr(epub_export, "run_tool", warn_instead)
+    with pytest.raises(PipelineError) as failed:
+        export_epub(bundle, pandoc=pandoc)
+    assert "could not read a resource" in failed.value.detail
+    assert sha256_file(bundle.epub) == before
+    assert not bundle.work_file("book_bilingual.epub.part").exists()
+
+
+def test_an_image_inside_prose_appears_once_and_keeps_its_sentence(
+    tmp_path, pandoc, fake_format
+):
+    """Inline protection restores a span into both copies of a paragraph.
+
+    For a link that is right; for a picture it means printing the picture
+    twice. The reading edition drops it from the translated copy and keeps
+    everything else the model returned.
+    """
+    source = tmp_path / "src"
+    source.mkdir(parents=True)
+    (source / "plate.png").write_bytes(PNG)
+    book = source / "book.md"
+    book.write_text(
+        "# Chapter\n\n"
+        "The diagram ![A plate](plate.png) sits inside this sentence and "
+        "the sentence continues after it.\n",
+        encoding="utf-8",
+    )
+    bundle = Bundle(tmp_path / "bundle").create()
+    import_markdown(bundle, book, pandoc=pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+
+    text = bundle.bilingual_markdown.read_text(encoding="utf-8")
+    assert text.count("![A plate]") == 1
+    divs = translation_divs(blocks(pandoc, text))
+    assert len(divs) == 2  # the heading and the paragraph
+    rendered = text.split("::: {.bbm-translation")[2]
+    assert "译:" in rendered
+    assert "the sentence continues after it" in rendered
+
+    export_epub(bundle, pandoc=pandoc)
+    with zipfile.ZipFile(bundle.epub) as archive:
+        body = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith(".xhtml")
+        )
+        assert body.count("<img") == 1
+        assert len([n for n in archive.namelist() if n.startswith("EPUB/media/")]) == 1
+
+
+def test_an_internal_link_written_against_the_source_still_resolves(
+    tmp_path, pandoc, fake_format
+):
+    text = (
+        "# Book\n\nSee [the notes](#notes) and [the repeat](#notes-1).\n\n"
+        "# Notes\n\nFirst note section.\n\n# Notes\n\nSecond note section.\n"
+    )
+    bundle = prepared(tmp_path, pandoc, text)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    # Export runs the same link check over the bilingual file: an anchor
+    # that stopped resolving would be a refusal here, not a broken EPUB.
+    export_epub(bundle, pandoc=pandoc)
+
+    bilingual = bundle.bilingual_markdown.read_text(encoding="utf-8")
+    assert "{#notes}" in bilingual and "{#notes-1}" in bilingual
+    with zipfile.ZipFile(bundle.epub) as archive:
+        body = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith(".xhtml")
+        )
+    assert 'id="notes"' in body and 'id="notes-1"' in body
+    assert "#notes-1" in body
