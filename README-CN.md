@@ -461,6 +461,18 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   为 PDF 输入选择额外生成的双语 PDF 版式。默认 `none` 不额外生成 PDF；
   `all` 会同时尝试上下对照和左右对照。双语 TXT 和 EPUB 输出不受该参数影响。
 
+- `--to-epub`（仅限 PDF）：
+
+  用 OCR 读取 PDF，翻译得到的 Markdown，并在 PDF 旁生成带导航的双语 EPUB
+  `<name>_bilingual.epub`。工作目录保留在 `<name>_book/`：可以先编辑其中的
+  `source.md` 再翻译，重复执行同一条命令会从已完成的部分继续，而不会重新提取或
+  重新翻译。需要 Java、PATH 中的 Pandoc，以及 `opendataloader-pdf[hybrid]` 依赖。
+  不加该参数时，PDF 仍按原有方式翻译。
+
+- `--no-gpu`（仅限 PDF，需配合 `--to-epub`）：
+
+  即使有可用的加速器，也在 CPU 上运行 OCR。默认会自动检测加速器，没有时回退到 CPU。
+
 - `--sentence_mode`:
 
   将 EPUB 的每个段落拆成句子逐句翻译，而不是整段翻译。与 EPUB 计划模式不兼容。

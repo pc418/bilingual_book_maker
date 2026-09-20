@@ -27,7 +27,7 @@ PANDOC_REQUIRED = (
     "Pandoc is required for EPUB export. Install it or provide --pandoc PATH."
 )
 NAV_INVALID = "EPUB navigation is invalid: "
-PDF_OPTIONS_INERT = "--pdf-device and --pages apply only to PDF input."
+PDF_OPTIONS_INERT = "--no-gpu and --pages apply only to PDF input."
 DEVICE_SELECTED = "OpenDataLoader device: {device}."
 DEVICE_CPU_FALLBACK = "OpenDataLoader device: cpu (no supported accelerator detected)."
 DEVICE_UNAVAILABLE = "Requested OpenDataLoader device is unavailable: {device}."
@@ -48,13 +48,33 @@ OCR_EMPTY_PAGES = (
     "before translating."
 )
 
+# Progress. The line is rewritten in place on a terminal and printed every
+# ten seconds into a log, so it says the same thing either way: what is
+# running, how long it has been running, and the last thing the engine or
+# the OCR backend said for itself.
+PROGRESS_LINE = "{label}, {elapsed}s"
+PROGRESS_LINE_DETAIL = "{label}, {elapsed}s - {detail}"
+EXTRACT_PROGRESS_LABEL = "Extracting PDF: {scope}, OCR on {device}"
+EXTRACT_DONE = "PDF extracted: {scope}, OCR on {device}, {elapsed}s."
+PAGE_SCOPE = "{count} page"
+PAGES_SCOPE = "{count} pages"
+
+# The main CLI's --to-epub route. It has no --pandoc flag, so the refusal
+# that names one would send its operator looking for an option that is not
+# there.
+PANDOC_ON_PATH = (
+    "Pandoc is required for --to-epub. Install it and make sure pandoc is on PATH."
+)
+TO_EPUB_BUNDLE = "Working bundle: {path}"
+TO_EPUB_COPY = "Bilingual EPUB saved beside the PDF: {path}"
+
 # Argument and subcommand help, as authored.
 DESCRIPTION = "Create bilingual Markdown and a reflowable EPUB from PDF or Markdown."
 HELP_IMPORT = "Import Markdown and its local images."
 HELP_EXTRACT = "Extract Markdown and images from a PDF with OpenDataLoader."
-HELP_PDF_DEVICE = (
-    "OpenDataLoader device: auto detects acceleration and falls back to CPU; "
-    "cpu forces CPU."
+HELP_NO_GPU = (
+    "Run OCR on the CPU even when an accelerator is available; the default "
+    "detects one and falls back to CPU."
 )
 HELP_PAGES = "PDF pages, numbered from 1; for example 1-20."
 HELP_TRANSLATE = "Translate a prepared bundle with BBM."

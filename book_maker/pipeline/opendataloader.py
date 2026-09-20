@@ -23,6 +23,8 @@ the fallback for *acceleration*, never for OCR -- `hybrid_fallback` stays off
 so a backend error cannot quietly demote the run to Java-only extraction.
 """
 
+import contextlib
+import io
 import json
 import re
 import shutil
@@ -33,6 +35,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 from .bundle import EXTRACTION_JOB, one_based_pages, parse_pages, sha256_file
@@ -43,11 +46,16 @@ from .messages import (
     DEVICE_CPU_FALLBACK,
     DEVICE_SELECTED,
     DEVICE_UNAVAILABLE,
+    EXTRACT_DONE,
+    EXTRACT_PROGRESS_LABEL,
     JAVA_REQUIRED,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
+    PAGES_SCOPE,
+    PAGE_SCOPE,
     SCANNED_PAGES,
 )
+from .progress import ProgressLine, ticking
 
 STAGE = "extract"
 PARSER = "opendataloader"
@@ -68,6 +76,21 @@ SHUTDOWN_GRACE = 10.0
 # must not be handed the whole thing to find it.
 LOG_TAIL_BYTES = 4096
 LOG_TAIL_CHARS = 600
+# How many of the two engines' log lines are kept for a failure message.
+LOG_TAIL_LINES = 20
+
+# What a line of somebody else's log has to look like before it is shown as
+# progress. The backend logs through Python's logging and through uvicorn,
+# the Java engine through java.util.logging -- whose own format puts the
+# class and method on a line of their own above the message, which is why an
+# unprefixed line is dropped rather than shown.
+LOG_LEVEL_PREFIX = re.compile(
+    r"^(?:\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d[.,]\d+ - \w+ - |"
+    r"(?:INFO|WARNING|ERROR|SEVERE|CRITICAL|DEBUG):\s+)"
+)
+# uvicorn's access log: one line per health probe, saying nothing about the
+# conversion.
+ACCESS_LOG = re.compile(r"^\w+:\s+\d{1,3}(?:\.\d{1,3}){3}:\d+\s+-\s+\"")
 
 # `%page-number%` is substituted by the Java engine. An HTML comment is a
 # block the Markdown loader passes through untouched and Pandoc drops from
@@ -160,6 +183,7 @@ class HybridBackend:
         self._probe = probe or self._http_health
         self.process = None
         self._log = None
+        self._read = 0
 
     @property
     def url(self):
@@ -200,6 +224,7 @@ class HybridBackend:
     def start(self):
         # A file avoids pipe backpressure while the converter is running.
         self._log = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+        self._read = 0
         try:
             self.process = self._popen(
                 self.command(),
@@ -238,6 +263,31 @@ class HybridBackend:
             # __exit__ is not called if __enter__/start is interrupted.
             self.stop()
             raise
+
+    def new_output(self):
+        """Whole lines the backend has logged since this was last asked.
+
+        The models take minutes and the operator is owed a sign of life,
+        which is in this log and nowhere else. Complete lines only: the read
+        stops at the last newline and leaves the rest for the next call, so
+        a line caught half-written is not shown as a half sentence and a
+        multi-byte character split across two reads is not mangled.
+        """
+        if self._log is None:
+            return ""
+        try:
+            self._log.flush()
+            raw = self._log.buffer
+            raw.seek(self._read)
+            chunk = raw.read()
+        except (OSError, ValueError):
+            # The log is closed once the backend has been stopped.
+            return ""
+        cut = chunk.rfind(b"\n")
+        if cut < 0:
+            return ""
+        self._read += cut + 1
+        return chunk[: cut + 1].decode("utf-8", "replace")
 
     def _drain(self):
         """The tail of the backend's log, bounded, for one failure message.
@@ -350,6 +400,54 @@ def text_layer_report(pdf_path, page_range=None):
     return missing, examined
 
 
+def backend_note(line):
+    """The part of an engine's log line worth showing, or None.
+
+    Measured on a real conversion (three pages, hybrid `full`): neither
+    stream reports a page as it finishes -- the Java engine says how many
+    pages go to the backend and then nothing for the whole conversion, and
+    the backend says "Processing document" and, twenty-two seconds later,
+    "Finished converting". So there is no page counter to show, and what is
+    shown instead is the last of these lines, with its own logger's
+    timestamp and level taken off.
+    """
+    line = (line or "").strip()
+    if not line or ACCESS_LOG.match(line):
+        return None
+    match = LOG_LEVEL_PREFIX.match(line)
+    if not match:
+        return None
+    return line[match.end() :].strip() or None
+
+
+class _LineSink(io.TextIOBase):
+    """Stands in for `sys.stdout` while the converter runs.
+
+    `opendataloader_pdf` streams the Java engine's output to `sys.stdout`
+    itself, writing to `sys.stdout.buffer` when there is one. This object
+    deliberately has no `buffer`, so the runner takes its text branch and
+    every line arrives here, as it is produced, instead of on the operator's
+    terminal on top of the progress line.
+    """
+
+    def __init__(self, note):
+        self._note = note
+        self._partial = ""
+
+    def writable(self):
+        return True
+
+    def write(self, text):
+        self._partial += text
+        while "\n" in self._partial:
+            line, _, self._partial = self._partial.partition("\n")
+            self._note(line)
+        return len(text)
+
+    def flush(self):
+        pass
+
+
 def _prose(chunk):
     """What is left of a chunk once markers and pictures are removed."""
     return IMAGE.sub(" ", COMMENT.sub(" ", chunk)).strip()
@@ -397,6 +495,7 @@ def extract_pdf(
     page_range=None,
     backend_factory=HybridBackend,
     convert=None,
+    progress=True,
 ):
     """Convert one PDF to Markdown in `bundle`, locally, with OCR."""
     pdf = Path(pdf_path)
@@ -425,36 +524,79 @@ def extract_pdf(
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
+    scope = (PAGE_SCOPE if examined == 1 else PAGES_SCOPE).format(count=examined)
+    line = ProgressLine(
+        EXTRACT_PROGRESS_LABEL.format(scope=scope, device=resolved),
+        enabled=progress,
+    )
+    # Both engines' last words, for the failure message. `quiet=False` below
+    # means their logs come here instead of being thrown away, so a
+    # conversion that dies says what it said before it died.
+    transcript = deque(maxlen=LOG_TAIL_LINES)
+
+    def note(text):
+        for raw in (text or "").splitlines():
+            entry = backend_note(raw)
+            if entry:
+                transcript.append(entry)
+                line.note(entry)
+
     backend = backend_factory(resolved)
+    reader = getattr(backend, "new_output", None)
+    finished = False
+    # Started before the backend is: loading the models is part of the wait
+    # -- and on a first run, downloading them is -- so the operator is owed
+    # the same sign of life there as during the conversion itself.
+    line.start()
     try:
-        with backend:
-            try:
-                converter(
-                    str(pdf),
-                    output_dir=str(staging),
-                    format="markdown",
-                    image_output="external",
-                    image_dir=str(staging / "images"),
-                    markdown_page_separator=PAGE_SEPARATOR,
-                    pages=pages,
-                    hybrid=HYBRID_MODE,
-                    hybrid_mode=triage,
-                    hybrid_url=backend.url,
-                    # Never on: the Java-only fallback drops the OCR this
-                    # run exists to get, and would do it silently.
-                    hybrid_fallback=False,
-                    quiet=True,
-                )
-            except PipelineError:
-                raise
-            except Exception as err:
-                raise PipelineError(
-                    BACKEND_FAILED.format(detail=f"{type(err).__name__}: {err}"),
-                    stage=STAGE,
-                )
+        with ticking(line, poll=(lambda: note(reader())) if reader else None):
+            with backend:
+                try:
+                    # The converter writes the Java engine's log to
+                    # `sys.stdout` itself; this is where it is intercepted,
+                    # so it feeds the progress line instead of scrolling
+                    # past the operator.
+                    with contextlib.redirect_stdout(_LineSink(note)):
+                        converter(
+                            str(pdf),
+                            output_dir=str(staging),
+                            format="markdown",
+                            image_output="external",
+                            image_dir=str(staging / "images"),
+                            markdown_page_separator=PAGE_SEPARATOR,
+                            pages=pages,
+                            hybrid=HYBRID_MODE,
+                            hybrid_mode=triage,
+                            hybrid_url=backend.url,
+                            # Never on: the Java-only fallback drops the OCR
+                            # this run exists to get, and would do it
+                            # silently.
+                            hybrid_fallback=False,
+                            # Not quiet, and not printed either: quiet drops
+                            # the engine's log stream, which is the only
+                            # place this conversion says anything at all
+                            # while it runs.
+                            quiet=False,
+                        )
+                    finished = True
+                except PipelineError:
+                    raise
+                except Exception as err:
+                    raise PipelineError(
+                        BACKEND_FAILED.format(detail=_failure_detail(err, transcript)),
+                        stage=STAGE,
+                    )
     except (PipelineError, KeyboardInterrupt):
         bundle.set_stage(STAGE, "failed", parser=PARSER, device=resolved)
         raise
+    finally:
+        line.finish(
+            EXTRACT_DONE.format(
+                scope=scope, device=resolved, elapsed=int(line.elapsed())
+            )
+            if finished
+            else None
+        )
 
     try:
         markdown = _converted_markdown(staging, pdf)
@@ -487,6 +629,19 @@ def extract_pdf(
         )
     bundle.add_limitations(limitations)
     return report
+
+
+def _failure_detail(err, transcript):
+    """The exception, plus the last thing the engines said before it.
+
+    `subprocess.CalledProcessError` says only that a command exited
+    non-zero; the reason is in the output, which is now read for the
+    progress line and would otherwise be dropped on the floor.
+    """
+    detail = f"{type(err).__name__}: {err}"
+    if transcript:
+        detail = f"{detail}; last output: {transcript[-1]}"
+    return detail
 
 
 def _load_converter():

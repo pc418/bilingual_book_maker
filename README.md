@@ -542,6 +542,20 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   extra PDF; `all` attempts both top-bottom and side-by-side layouts. The bilingual TXT and
   EPUB outputs are unaffected.
 
+- `--to-epub` (PDF only):
+
+  Read the PDF with OCR, translate the Markdown it recovers, and write a bilingual EPUB
+  with navigation next to the PDF as `<name>_bilingual.epub`. The working bundle stays in
+  `<name>_book/`: its `source.md` can be edited before translating, and rerunning the same
+  command resumes from what is already there instead of extracting or translating it
+  again. Needs Java, Pandoc on PATH, and the `opendataloader-pdf[hybrid]` extras.
+  Without this flag a PDF is translated the way it always has been.
+
+- `--no-gpu` (PDF only, with `--to-epub`):
+
+  Run OCR on the CPU even when an accelerator is available. The default detects one and
+  falls back to CPU by itself.
+
 - `--sentence_mode`:
 
   Translate EPUB text sentence by sentence instead of translating each paragraph as one

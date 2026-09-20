@@ -168,6 +168,31 @@ class TestStops:
         assert proc.returncode == 1
         assert "records no progress at all" in _flat(proc)
 
+    def test_to_epub_on_a_book_that_is_not_a_pdf(self, tmp_path):
+        # A12: --to-epub changes which route the run takes — it reads a PDF
+        # with OCR and translates the Markdown that comes back. On an epub
+        # there is nothing to read, and ignoring the flag would leave the
+        # operator waiting for a file that is never written.
+        proc = _cli(
+            "--book_name",
+            str(_book(tmp_path)),
+            "--api_format",
+            "google",
+            "--to-epub",
+        )
+        assert proc.returncode == 1
+        assert "--to-epub is the PDF route" in _flat(proc)
+
+    def test_to_epub_on_a_pdf_is_not_refused(self):
+        # the same flag on the book it is for: no row fires, and the run is
+        # diverted into the pipeline rather than stopped
+        f = facts(["--book_name", "b.pdf", "--to-epub"], book_type="pdf")
+        assert tripped(f) == []
+
+    def test_no_gpu_beside_to_epub_is_not_warned_about(self):
+        f = facts(["--book_name", "b.pdf", "--to-epub", "--no-gpu"], book_type="pdf")
+        assert tripped(f) == []
+
     def test_two_of_the_three_are_fine(self, tmp_path):
         # only the triple is refused: the pairs each work
         f = facts(
@@ -559,6 +584,14 @@ WARN_FIXTURES = [
         ["--glossary-auto", "on", "--use_context", "session"],
         {"api_format": "anthropic"},
         "never asks its report",
+    ),
+    (
+        # C25: OCR only happens on the --to-epub route, so on any other run
+        # there is no device for the flag to choose
+        "C25",
+        ["--no-gpu"],
+        {},
+        "only happens on the --to-epub route",
     ),
 ]
 

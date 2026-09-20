@@ -8,6 +8,7 @@ this module starts is the only one it ever stops.
 """
 
 import json
+import subprocess
 import sys
 import types
 import zipfile
@@ -477,6 +478,93 @@ def test_a_conversion_produces_the_same_bundle_contract(
     assert extraction["cost_cents"] is None
 
 
+def test_the_conversion_says_it_is_running_and_what_it_said_last(
+    bundle, pdf, pandoc, accelerators, capsys
+):
+    """Minutes of two other programs' work, with a sign of life.
+
+    The converter writes the Java engine's log to `sys.stdout` itself; the
+    adapter intercepts that, so nothing scrolls past the operator and the
+    last line either engine said becomes the progress line's detail. Here
+    the stream is not a terminal, so whole lines are printed instead of one
+    being rewritten.
+    """
+
+    def convert(input_path, **kwargs):
+        assert kwargs["quiet"] is False, "the engine's log is the only progress"
+        print("INFO: Number of pages: 2")
+        fake_convert()(input_path, **kwargs)
+
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        backend_factory=lambda device: backend(device),
+        convert=convert,
+    )
+    out = capsys.readouterr().out
+    assert "Extracting PDF: 2 pages, OCR on mps, 0s" in out
+    assert "PDF extracted: 2 pages, OCR on mps," in out
+    # the engine's own log line is not printed on its own account
+    assert "INFO: Number of pages: 2" not in out
+
+
+def test_a_quiet_extraction_prints_no_progress_at_all(
+    bundle, pdf, pandoc, accelerators, capsys
+):
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        backend_factory=lambda device: backend(device),
+        convert=fake_convert(),
+        progress=False,
+    )
+    out = capsys.readouterr().out
+    assert "Extracting PDF" not in out
+    assert "PDF extracted" not in out
+
+
+def test_a_failed_conversion_quotes_what_the_engines_said_last(
+    bundle, pdf, pandoc, accelerators
+):
+    """`quiet=False` is also what keeps the diagnostic.
+
+    `CalledProcessError` says only that a command exited non-zero; the
+    reason is in the output, which is read for the progress line and would
+    otherwise be dropped.
+    """
+
+    def convert(input_path, **kwargs):
+        print("SEVERE: cannot read the document catalog")
+        raise subprocess.CalledProcessError(1, ["java"])
+
+    with pytest.raises(PipelineError) as failed:
+        opendataloader.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            backend_factory=lambda device: backend(device),
+            convert=convert,
+        )
+    assert "cannot read the document catalog" in failed.value.detail
+
+
+def test_the_backend_log_is_read_forward_in_whole_lines():
+    instance = backend("cpu")
+    instance.start()
+    instance._log.write("2026-01-01 00:00:00,000 - INFO - Processing document\n")
+    instance._log.write("a half-written")
+    assert instance.new_output().endswith("Processing document\n")
+    # the rest of that line is not shown until it is a line
+    assert instance.new_output() == ""
+    instance._log.write(" line\n")
+    assert instance.new_output() == "a half-written line\n"
+    instance.stop()
+    # closed, and asking is still not an error
+    assert instance.new_output() == ""
+
+
 def test_the_bundle_it_produces_translates_and_exports_like_any_other(
     bundle, pdf, pandoc, accelerators, monkeypatch
 ):
@@ -717,7 +805,7 @@ def test_a_pdf_goes_to_opendataloader_with_no_flag_at_all(
 ):
     """The default and the only route: a PDF is read locally.
 
-    No parser is chosen and none can be. `--pdf-device` left out means the
+    No parser is chosen and none can be. `--no-gpu` left out means the
     adapter's own `auto`, and nothing else is consulted to decide.
     """
     seen = {}
@@ -770,8 +858,7 @@ def test_the_pdf_route_never_touches_the_cloud_adapter(
             str(pdf),
             "--output",
             str(tmp_path / "b"),
-            "--pdf-device",
-            "cpu",
+            "--no-gpu",
             "--pages",
             "1-4",
         ]
@@ -806,9 +893,11 @@ def test_the_parser_selector_is_gone_and_is_refused(
     assert "--pdf-parser" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("flag,value", [("--pdf-device", "cpu"), ("--pages", "1-2")])
+@pytest.mark.parametrize(
+    "given", [["--no-gpu"], ["--pages", "1-2"]], ids=["--no-gpu", "--pages"]
+)
 def test_a_pdf_only_option_on_markdown_is_refused_not_ignored(
-    tmp_path, pandoc, flag, value, capsys, monkeypatch
+    tmp_path, pandoc, given, capsys, monkeypatch
 ):
     """Markdown reads no PDF, so neither option could have been honoured.
 
@@ -832,8 +921,7 @@ def test_a_pdf_only_option_on_markdown_is_refused_not_ignored(
             str(book),
             "--output",
             str(tmp_path / "b"),
-            flag,
-            value,
+            *given,
             "--",
             "--api_format",
             "faketest",

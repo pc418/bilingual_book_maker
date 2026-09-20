@@ -1105,6 +1105,18 @@ COMPAT_RULES = (
         ),
     ),
     CompatRule(
+        "A12",
+        "stop",
+        lambda f: f.options.to_epub and f.book_type != "pdf",
+        lambda f: (
+            f"--to-epub is the PDF route: it reads a PDF with OCR, translates "
+            f"the Markdown it recovers and builds the EPUB from that. A "
+            f"{f.book_type} book has no PDF to read, and the flag changes "
+            f"which route the run takes rather than being ignored. Drop "
+            f"--to-epub."
+        ),
+    ),
+    CompatRule(
         "A10",
         "stop",
         lambda f: f.book_type == "epub"
@@ -1443,6 +1455,16 @@ COMPAT_RULES = (
             f"--glossary-auto on learns renderings from the compact turn's "
             f"handoff report, and the {f.api_format} route never asks its "
             f"report for one; the setting is accepted and learns nothing."
+        ),
+    ),
+    CompatRule(
+        "C25",
+        "warn",
+        lambda f: f.options.no_gpu and not f.options.to_epub,
+        lambda f: (
+            "--no-gpu chooses where the PDF's OCR runs, and OCR only happens "
+            "on the --to-epub route; this run reads it and does nothing with "
+            "it."
         ),
     ),
 )
@@ -1980,6 +2002,22 @@ off. Minimum 1.
         help="PDF output layout for PDF inputs: top-bottom, side-by-side, all, or none",
     )
     parser.add_argument(
+        "--to-epub",
+        dest="to_epub",
+        action="store_true",
+        help="PDF only: extract the PDF to Markdown with OCR, translate it, "
+        "and write an EPUB with navigation next to the PDF "
+        "(<name>_bilingual.epub); the working bundle stays in <name>_book/ "
+        "for editing and resume.",
+    )
+    parser.add_argument(
+        "--no-gpu",
+        dest="no_gpu",
+        action="store_true",
+        help="PDF only, with --to-epub: run OCR on the CPU even when an "
+        "accelerator is available.",
+    )
+    parser.add_argument(
         "--retranslate",
         dest="retranslate",
         nargs=4,
@@ -2200,6 +2238,44 @@ def parse_args(argv):
     return build_parser().parse_args(argv)
 
 
+def run_to_epub(options, argv):
+    """`--to-epub` on a PDF: the bundle pipeline instead of the PDF loader.
+
+    Imported here, not at the top of the module: the pipeline pulls in
+    Pandoc handling and, one stage further, the PDF parser, and a run that
+    never asked for the route must not pay for either. Every failure on this
+    path is a `PipelineError` carrying the sentence the operator needs, so
+    it is printed as one line rather than raised as a traceback.
+    """
+    from book_maker.pipeline.errors import PipelineError
+    from book_maker.pipeline.messages import STAGE_FAILED
+    from book_maker.pipeline.to_epub import pdf_to_epub
+
+    try:
+        pdf_to_epub(
+            options.book_name,
+            argv,
+            no_gpu=options.no_gpu,
+            quiet=options.quiet,
+        )
+    except PipelineError as err:
+        detail = (
+            STAGE_FAILED.format(stage=err.stage, detail=err.detail)
+            if err.stage
+            else err.detail
+        )
+        print(f"[bold red]Error: {escape(detail)}[/bold red]")
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        # The stages save what they finished; the next run resumes from the
+        # bundle rather than extracting or translating it again.
+        print(
+            "[bold yellow]Interrupted. Rerun the same command to "
+            "resume.[/bold yellow]"
+        )
+        raise SystemExit(130)
+
+
 def main(argv=None, *, markdown_loader_class=None):
     """The command line, and the one seam an in-process caller may use.
 
@@ -2246,6 +2322,17 @@ def main(argv=None, *, markdown_loader_class=None):
     if not os.path.isfile(options.book_name):
         print(f"Error: the book {options.book_name!r} does not exist.")
         exit(1)
+
+    if options.to_epub and get_book_type(options.book_name) == "pdf":
+        # The PDF reading edition, which is a different route rather than a
+        # different setting: the PDF is extracted to Markdown and it is that
+        # Markdown this same CLI then translates, with the route's own flags
+        # stripped. So the divert is here, before an endpoint is resolved --
+        # everything below belongs to that inner run, which resolves it for
+        # a md book with the whole compatibility table applied to the book
+        # it is really translating. A PDF without the flag falls through to
+        # the legacy loader, unchanged.
+        return run_to_epub(options, legacy.argv)
 
     if options.plan_dry_run:
         # No translation happens, so no credentials are needed: build the
