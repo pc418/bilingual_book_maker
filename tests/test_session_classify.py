@@ -846,6 +846,14 @@ class TestTheLadderDegrades:
             "signature(s) are translated"
         )
 
+    def test_the_last_step_with_nothing_left_names_no_remainder(self):
+        # PIN (lead, 260920): "the remaining 0 signature(s)" is not a sentence
+        # an operator should read; the clause is dropped when nothing remains.
+        assert stop_line(0) == (
+            "plan: this endpoint missed the reply format twice even one at "
+            "a time; classification stops here"
+        )
+
     def test_a_success_between_two_failures_resets_the_counter(self):
         # fail, success, fail: the two misses are not consecutive, so
         # nothing degrades — this is the difference between a ladder and a

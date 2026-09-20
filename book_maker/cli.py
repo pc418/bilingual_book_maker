@@ -1598,8 +1598,9 @@ def dry_run_plan_divergence(facts):
         )
     return (
         f"the {api_format} route has no JSON-schema verdict, so the real run "
-        f"classifies this partition over a plain session — three signatures "
-        f"a turn, replies checked verbatim. The partition below is what it "
+        f"classifies this partition over a plain session — five signatures "
+        f"a turn, fewer when the endpoint keeps missing the reply format, "
+        f"replies checked verbatim. The partition below is what it "
         f"will be asked about; which rows come back skipped can differ from "
         f"a schema-classified run."
     )

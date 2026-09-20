@@ -101,11 +101,13 @@ def degrade_line(old, new):
 
 def stop_line(remaining):
     """The last step: below one per turn there is no smaller question."""
-    return (
+    line = (
         "plan: this endpoint missed the reply format twice even one at a "
-        f"time; classification stops here and the remaining {remaining} "
-        "signature(s) are translated"
+        "time; classification stops here"
     )
+    if remaining:
+        line += f" and the remaining {remaining} signature(s) are translated"
+    return line
 
 
 TRUNK = """\
