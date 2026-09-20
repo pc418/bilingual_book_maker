@@ -340,9 +340,10 @@ class ClassifierSession:
     The same prefix discipline `session_context` keeps for translation, for
     the same reason: every turn is the previous request plus its reply plus
     the new signatures, so an endpoint with prompt caching re-reads the
-    trunk at its cache rate instead of buying it again three signatures at
-    a time. Nothing already sent is ever rewritten — the classifier
-    restarts a session rather than editing one.
+    trunk at its cache rate instead of buying it again a rung's worth of
+    signatures at a time. Nothing already sent is ever rewritten — the
+    classifier restarts a session rather than editing one, and it changes
+    rung by asking a smaller turn, never by rewriting the trunk above it.
 
     Kept apart from `self.session`, which is the *translation* history:
     `--use_context` decides whether that exists, and this one is planning
