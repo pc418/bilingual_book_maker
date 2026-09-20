@@ -588,7 +588,7 @@ WARN_FIXTURES = [
     (
         # C25: OCR only happens on the --to-epub route, so on any other run
         # there is no device for the flag to choose
-        "C25",
+        "C26",
         ["--no-gpu"],
         {},
         "only happens on the --to-epub route",

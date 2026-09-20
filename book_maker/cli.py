@@ -1105,7 +1105,7 @@ COMPAT_RULES = (
         ),
     ),
     CompatRule(
-        "A12",
+        "A13",
         "stop",
         lambda f: f.options.to_epub and f.book_type != "pdf",
         lambda f: (
@@ -1458,7 +1458,7 @@ COMPAT_RULES = (
         ),
     ),
     CompatRule(
-        "C25",
+        "C26",
         "warn",
         lambda f: f.options.no_gpu and not f.options.to_epub,
         lambda f: (
