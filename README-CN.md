@@ -319,7 +319,7 @@ python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
 
 ### PDF 转 EPUB (实验性)
 
-**做什么。** `--to-epub` 用 OpenDataLoader 把 PDF 的文字层读成 Markdown，用 Markdown 加载器翻译它，再由 Pandoc 生成一本可重排的双语 EPUB，导航跟随标题。工作目录 `<name>_book/` 在 PDF 旁边：`source.md`、提取出的图片、`book_bilingual.md` 和一份清单；成书复制为 `<name>_bilingual.epub`。重跑同一条命令会复用提取结果和已完成的翻译；想重新翻译删掉 `book_bilingual.md`，想改原文就在翻译之前编辑 `source.md`。不加该参数时 PDF 走旧路由，输出双语 `.txt` 和 `--pdf_layout` 的版式。
+**做什么。** `--to-epub` 用 OpenDataLoader 把 PDF 的文字层读成 Markdown，用 Markdown 加载器翻译它，再由 Pandoc 生成一本可重排的**双语** EPUB，导航跟随标题：论文的每一段后面紧跟它的译文，成书可以重排、带目录。工作目录 `<name>_book/` 在 PDF 旁边：`source.md`、提取出的图片、`book_bilingual.md` 和一份清单；成书复制为 `<name>_bilingual.epub`。重跑同一条命令会复用提取结果和已完成的翻译；想重新翻译删掉 `book_bilingual.md`，想改原文就在翻译之前编辑 `source.md`。不加该参数时 PDF 走旧路由，输出双语 `.txt` 和 `--pdf_layout` 的版式。
 
 **什么时候用。** 想在电子书阅读器上读、带目录的论文或文字版书籍。该路由原样接受 Markdown 加载器的全部参数：`--use_context session`（推荐，PDF 会被提取成大量短块）、`--glossary`、`--parallel-workers`（不能与会话同用）、`--test` 用来便宜地看一眼。
 
@@ -347,6 +347,8 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 - 除 `--to-epub` 外的每个 PDF 参数在没走该路由时都会被报告为忽略；在非 PDF 书上加 `--to-epub` 会停止运行。
 
 该路由仍是实验性的：只在 arXiv 论文和少数几种其他生成器的 PDF 上核过，并未覆盖所有 PDF 形态。欢迎提 issue 和 PR；能分享的话请附上 PDF，或者 `source.md` 里出错的那一页。
+
+对结果的预期要按格式来定。PDF 是页面描述，不是文档：它只存字形和坐标，不知道什么是段落、标题、分栏和阅读顺序，所有提取器都只能把结构猜回来。能从中得到一本可重排、目录能用的双语 EPUB，已经是很好的结果；某个标题差了一级、某张表格变成了正文，是格式本身的局限，不是这次运行出了错，两者在 `source.md` 里改一下也就一分钟的事。
 
 ![一篇 arXiv 论文的阅读版：按标题生成的目录、双语正文、保留为图片的图表](./docs/img/pdf_reading_edition.webp)
 

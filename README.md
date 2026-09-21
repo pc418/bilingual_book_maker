@@ -428,8 +428,9 @@ python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
 
 **What it does.** `--to-epub` reads the PDF's text layer with OpenDataLoader
 into Markdown, translates that Markdown with the Markdown loader, and has
-Pandoc build a reflowable bilingual EPUB whose navigation follows the
-headings. The working bundle is `<name>_book/` beside the PDF: `source.md`,
+Pandoc build a reflowable **bilingual** EPUB whose navigation follows the
+headings: every paragraph of the paper followed by its translation, in a
+book that reflows and has a table of contents. The working bundle is `<name>_book/` beside the PDF: `source.md`,
 the extracted images, `book_bilingual.md` and a manifest; the finished book is
 copied out as `<name>_bilingual.epub`. Rerunning the same command reuses the
 extraction and a finished translation; delete `book_bilingual.md` to translate
@@ -504,6 +505,14 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 This route is experimental: it has been checked on arXiv papers and a handful
 of other producers, not on every PDF shape. Issues and PRs are welcome; attach
 the PDF if it can be shared, or the page of `source.md` that came out wrong.
+
+Set expectations by the format. A PDF is a page description, not a document:
+it stores glyphs at positions and knows nothing of paragraphs, headings,
+columns or reading order, so every extractor has to guess the structure back.
+A bilingual, reflowable EPUB with a working table of contents out of that is
+already a good result; a heading that lands one level off or a table that
+arrives as prose is the format showing through, not a broken run, and both
+are a minute's edit in `source.md`.
 
 ![An arXiv paper as a reading edition: the table of contents built from the headings, the bilingual text, and a figure kept as a picture](./docs/img/pdf_reading_edition.webp)
 
