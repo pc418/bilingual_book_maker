@@ -59,14 +59,13 @@ bbook_maker = "book_maker.cli:main"
 Homepage = "https://github.com/yihong0618/bilingual_book_maker"
 
 # The three requirement files are regenerated together by
-# tools/export_requirements.sh (hash-pinned exports of the default, pdf and
-# ocr groups from one lock); the autoexport entry below predates the split
-# and covers the base file only.
+# tools/export_requirements.sh: hash-pinned exports of the default, pdf and
+# ocr groups from one lock. The pdm-autoexport entry that used to sit here
+# wrote the base file alone, without hashes, on every lock update, which is
+# not what the committed file is; it is gone so a lock update cannot undo
+# the split.
 [tool.pdm]
 plugins = ["pdm-autoexport"]
-[[tool.pdm.autoexport]]
-filename = "requirements.txt"
-without-hashes = true
 [build-system]
 requires = ["pdm-backend>=2.0.0"]
 build-backend = "pdm.backend"
