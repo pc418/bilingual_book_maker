@@ -77,8 +77,12 @@ CREDENTIALED_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://[^/@\s]*:[^/@\s]*@")
 # asked. Editing the file changes nothing on the command line.
 FILE_FIELDS = ("prompt_arg", "glossary_path")
 
-# Set by the harness itself, so they say nothing about the translation.
-IGNORED_FIELDS = ("book_name", "resume")
+# Namespace fields that say nothing about what the model is asked: the two
+# the harness sets for itself, and the record of which spelling of the
+# glossary flag was typed. `--glossary` and `--terminology` are one flag
+# under two names, so a bundle finished under one word must be reused under
+# the other rather than translated -- and paid for -- a second time.
+IGNORED_FIELDS = ("book_name", "resume", "glossary_flag")
 
 
 def parse_bbm_options(bbm_options):
