@@ -424,7 +424,7 @@ python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
 - Ctrl+C leaves the usual checkpoint; `--resume` continues the run and reads
   `<book>_handoff.md` back, so the next window still inherits the summary.
 
-### PDF to EPUB (experimental)
+### PDF to **bilingual** EPUB (experimental)
 
 **What it does.** `--to-epub` reads the PDF's text layer with OpenDataLoader
 into Markdown, translates that Markdown with the Markdown loader, and has
@@ -733,7 +733,7 @@ are a minute's edit in `source.md`.
 
 - `--to-epub`, `--with-ocr`, `--no-gpu` (PDF only):
 
-  The PDF reading edition: the text layer becomes Markdown, the Markdown becomes a bilingual EPUB with navigation. See [PDF to EPUB](#pdf-to-epub-experimental) for the bundle, OCR and what to check in `source.md`.
+  The PDF reading edition: the text layer becomes Markdown, the Markdown becomes a bilingual EPUB with navigation. See [PDF to bilingual EPUB](#pdf-to-bilingual-epub-experimental) for the bundle, OCR and what to check in `source.md`.
 
 - `--sentence_mode`:
 

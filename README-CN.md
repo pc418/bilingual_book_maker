@@ -317,7 +317,7 @@ python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
 - 交接报告由模型来写。小模型写出的报告可能很差；压缩之后译文漂移，就用 `--glossary` 钉住术语，或者加 `--no-context-compact` 接受一个空白的接缝。
 - Ctrl+C 留下常规断点；`--resume` 续跑并读回 `<book>_handoff.md`，下一个窗口仍然继承摘要。
 
-### PDF 转 EPUB (实验性)
+### PDF 转 **双语** EPUB (实验性)
 
 **做什么。** `--to-epub` 用 OpenDataLoader 把 PDF 的文字层读成 Markdown，用 Markdown 加载器翻译它，再由 Pandoc 生成一本可重排的**双语** EPUB，导航跟随标题：论文的每一段后面紧跟它的译文，成书可以重排、带目录。工作目录 `<name>_book/` 在 PDF 旁边：`source.md`、提取出的图片、`book_bilingual.md` 和一份清单；成书复制为 `<name>_bilingual.epub`。重跑同一条命令会复用提取结果和已完成的翻译；想重新翻译删掉 `book_bilingual.md`，想改原文就在翻译之前编辑 `source.md`。不加该参数时 PDF 走旧路由，输出双语 `.txt` 和 `--pdf_layout` 的版式。
 
@@ -526,7 +526,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 
 - `--to-epub`、`--with-ocr`、`--no-gpu`（仅限 PDF）：
 
-  PDF 阅读版：文字层变成 Markdown，Markdown 变成带导航的双语 EPUB。工作目录、OCR 以及 `source.md` 里该核对什么，见 [PDF 转 EPUB](#pdf-转-epub-实验性)。
+  PDF 阅读版：文字层变成 Markdown，Markdown 变成带导航的双语 EPUB。工作目录、OCR 以及 `source.md` 里该核对什么，见 [PDF 转双语 EPUB](#pdf-转-双语-epub-实验性)。
 
 - `--sentence_mode`:
 
