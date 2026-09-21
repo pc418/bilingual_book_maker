@@ -33,7 +33,7 @@ if you want to use your Codex quota instead.
 `--provider` is an alternative way to pass credentials, through a JSON config file
 `bbm_providers.json`. 
 
-Epub tags classification is auto enabled on JSON-schema endpoints, and on any endpoint that can hold a conversation — the codex route and plain reseller proxies included — where the model is asked for exact `skip`/`translate` verdicts instead. Only routes with no conversation at all (the MT engines) fall back to translating `p` tags only, so some poetry or verse may be omitted there. See plan mode for details.
+Epub tags classification is auto enabled on JSON-schema endpoints, and on any endpoint that can hold a conversation — the codex route and plain reseller proxies included — where the model is asked for exact `skip`/`translate` verdicts instead. Only routes with no conversation at all (the MT engines) fall back to translating `p` tags only, so some poetry or verse may be omitted there. See [Plan mode](#plan-mode) for details.
 
 Older flags (`--model gpt4o`,
 `--model gemini`, `--openai_key`, …) still work: see
@@ -286,6 +286,217 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 - Once the translation is complete, a bilingual book named `${book_name}_bilingual.epub` would be generated for EPUB inputs; for TXT/MD/SRT inputs a bilingual text (or subtitle) file named `${book_name}_bilingual.txt` (or `_bilingual.srt`) will be generated. For **PDF inputs** the tool will produce a bilingual `.txt` fallback and will also attempt to create `${book_name}_bilingual.epub` — if EPUB creation fails, the TXT fallback remains so you do not need to retranslate.
 - If there are any errors or you wish to interrupt the translation by pressing `CTRL+C`, a temporary bilingual file (for example `{book_name}_bilingual_temp.epub` or `{book_name}_bilingual_temp.txt`) would be generated. You can simply rename it to any desired name.
 
+## Features
+
+The three switches that change how a book is read and translated, rather than
+where the requests go. Each is one flag; the rest of this section is when to
+reach for it and what to watch.
+
+### Plan mode
+
+**What it does.** By default an EPUB is translated through a plan: the loader
+partitions the whole book into units (paragraphs, headings, list items, table
+cells, blockquotes, verse lines, captions, any block that carries text),
+groups them by tag signature, asks the model which signatures are worth
+translating, and writes the answer to `<book>_plan.json`. Consecutive units
+then share one request up to the token budget (`--accumulated_num`) and the
+unit cap (`--max-batch-units`), which is what makes verse and short lines
+cheap. Without a plan, only the `--translate-tags` selection is translated,
+`<p>` by default, and poetry or a table sitting outside `<p>` is silently left
+in the source language.
+
+**When to use it.** Always, on an EPUB with an LLM route; it is the default and
+needs no flag. Preview first when the book is unusual (a textbook, a bilingual
+edition, a book whose body is not in `<p>`): `--plan-dry-run` prints the
+per-signature coverage table and writes the plan file without a key and
+without translating anything, so you can see what will be skipped before
+paying; it honours `--only_filelist` / `--exclude_filelist`. Turn it off with `--plan-classify none` when you want the old
+`--translate-tags` behaviour exactly.
+
+```shell
+# preview: what would be translated, what skipped (no key needed)
+python3 make_book.py --book_name my_book.epub --plan-dry-run
+# the default run classifies with the translating model, then translates
+python3 make_book.py --book_name my_book.epub --key ${key}
+# no classification: translate every unit of the partition
+python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify all
+# decide the plan yourself, or with a coding agent: the run stops after
+# writing the plan and printing instructions; rerun the same command to translate
+python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
+```
+
+- `--plan-classify` picks how the plan is decided: `auto` (the default: the
+  translating model rules, over a JSON schema where the endpoint verifiably
+  applies one, otherwise over a plain conversation with exact
+  `skip`/`translate`/`unsure` replies; unsure and unparsable rows are
+  translated), `none`, `all`, `model` (the same as auto, but an unresolved
+  row stops the run instead of falling back), `agent`.
+  `--plan-classify-model X` classifies with another model; set explicitly,
+  a classification failure aborts instead of falling back.
+- `--plan-min-coverage` (default 0.5): the run aborts when the plan covers
+  less than this fraction of the book's text. `0` disables the guard; values
+  above 0.9 tend to abort after the classification is already paid for.
+- `<book>_plan.json` is reused by every later run of the same book, `--test`
+  included; delete it to classify again. A `--test` run classifies the whole
+  book, not the slice, and says so.
+
+**Caveats.**
+
+- EPUB only. Markdown, txt and srt books have no tags to plan, and the plan
+  flags are reported as ignored there.
+- On a route with no conversation (`google`, `deepl`, `caiyun`, `tencent`,
+  `customapi`) there is no model to ask, so the run falls back to the
+  `--translate-tags` selection; asking for `--plan-classify model` there stops.
+- An automatic plan gives way to tag mode, with a printed reason, when it
+  cannot be built or when the run resumes a checkpoint written in tag mode;
+  an explicitly requested plan stops instead. `--retranslate`, `--batch` and
+  `--sentence_mode` contradict a plan and are not combined with one.
+- Small and on-device models: the plain-conversation classifier only needs
+  one-word answers, and anything else is translated by policy, so a weak
+  model errs towards translating too much rather than too little. Rows it
+  decided are marked `unnamed (…)` in the plan file. If the classification
+  keeps failing, `--plan-classify all` skips it. The grouping defaults are
+  deliberately small for the same reason; raise `--accumulated_num` and
+  `--max-batch-units` on a strong endpoint, and lower them again when the run
+  prints misalignment-recovery hints.
+- `--parallel-workers` with grouping (`--accumulated_num` above 1) records no
+  progress, so `--resume` cannot continue such a run; the three together are
+  refused.
+
+### Session mode
+
+**What it does.** `--use_context session` keeps one append-only conversation
+for the whole book instead of re-sending a few recent pairs with each request
+(the bare `--use_context`, window mode). Every request carries the history, so
+on an endpoint with prompt caching the model reads the last chapter or so at
+the cache rate and keeps names, register and terminology consistent. When the
+history reaches `--context-compact-at` (default `8192` estimated tokens, the
+seed included), the model writes a short handoff report, about 300 tokens,
+whose summary opens the next window; `<book>_handoff.md` holds the latest one
+and `--resume` reads it back.
+
+**When to use it.** Fiction and any long text where the same names and terms
+recur, on an endpoint that caches prompts (OpenAI, Anthropic, and most
+gateways in front of them). It is also the right setting for a paper on the
+PDF route, which extracts into many short blocks. Prefer window mode when the
+endpoint has no cache, when the model's context is small, or when you want
+`--parallel-workers`. The codex route is a session whether asked or not: its
+thread is the history.
+
+```shell
+python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
+# a model with a small input limit: bound the window to it (minimum 1500)
+python3 make_book.py --book_name my_book.epub --key ${key} --use_context session --context-compact-at 4000
+# roll over without a handoff report (cheaper, no continuity across the seam)
+python3 make_book.py --book_name my_book.epub --key ${key} --use_context session --no-context-compact
+```
+
+- `--context-compact-at N`: the budget for the whole window, handoff seed
+  included, so it can be set to the model's input limit. Minimum `1500`;
+  below that a window is mostly seed and seams, so use window mode instead.
+  On endpoints that classify the plan over a plain conversation it also
+  bounds the classifier's own thread (which restarts there, no handoff).
+- `--no-context-compact`: never ask for the report; the next window starts
+  empty.
+- `--glossary-auto on` keeps the renderings each handoff report establishes,
+  so recurring names survive the seams. It relies on the model reporting its
+  own renderings accurately, so it wants a capable model; the summary already
+  carries the recurring names, and `--glossary` pins the ones that matter
+  without needing either.
+
+**Caveats.**
+
+- Watch the progress bar's `cached=`. If it is still zero after a dozen
+  requests, the endpoint has no prompt cache and every request is paying for
+  the whole history at full price: Ctrl+C and rerun with window mode.
+- Refused with `--parallel-workers` (one history cannot be shared between
+  workers) and with `--model_list` (caches are per model, and one
+  conversation would be written by several).
+- EPUB and Markdown books only; txt and srt loaders do not carry a context,
+  and the compact flags are reported as ignored there.
+- Outside plan mode (a Markdown book, or `--plan-classify none`) grouping is
+  off, so every paragraph is its own request and each one re-reads the whole
+  history. Raise `--accumulated_num` so several paragraphs share a request;
+  the run warns about this at start.
+- The handoff is written by the model. On a small model the report can be
+  poor; if the text after a compaction drifts, pin terms with `--glossary`,
+  or pass `--no-context-compact` and accept an empty seam.
+- Ctrl+C leaves the usual checkpoint; `--resume` continues the run and reads
+  `<book>_handoff.md` back, so the next window still inherits the summary.
+
+### PDF to EPUB
+
+**What it does.** `--to-epub` reads the PDF's text layer with OpenDataLoader
+into Markdown, translates that Markdown with the Markdown loader, and has
+Pandoc build a reflowable bilingual EPUB whose navigation follows the
+headings. The working bundle is `<name>_book/` beside the PDF: `source.md`,
+the extracted images, `book_bilingual.md` and a manifest; the finished book is
+copied out as `<name>_bilingual.epub`. Rerunning the same command reuses the
+extraction and a finished translation; delete `book_bilingual.md` to translate
+again, or edit `source.md` before the translation runs. Without the flag a PDF
+takes the older route, which writes a bilingual `.txt` and the `--pdf_layout`
+outputs.
+
+**When to use it.** A paper or a typed book you want to read on an e-reader,
+with a table of contents. The route accepts every Markdown-loader flag
+unchanged: `--use_context session` (recommended, a PDF extracts into many
+short blocks), `--glossary`, `--parallel-workers` (not with a session),
+`--test` for a cheap first look.
+
+```shell
+# first look: extract, then translate only the first few blocks
+python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --test
+# the full run
+python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context session
+# a scanned PDF, or a typed one whose tables matter
+python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
+```
+
+- `--with-ocr` starts the OCR backend (the docling models from the
+  `opendataloader-pdf[hybrid]` extras, downloaded on the first run). A page
+  with no text layer is refused without it, never silently skipped. On a
+  typed PDF it adds table and layout detection, and reads no pictures.
+  Without it only the Java
+  engine runs: no models, no download, nothing to accelerate.
+- `--no-gpu` keeps the models on the CPU; the default detects an accelerator
+  and falls back to the CPU on its own.
+- Requirements: Java and Pandoc on PATH, plus the `opendataloader-pdf`
+  package.
+
+**Caveats.**
+
+- **Read `source.md` before paying for the full translation**, the headings
+  at least: they become the table of contents. The extractor's heading
+  detection is unreliable: an arXiv stamp, an author line or a drop cap can
+  arrive as a heading, a Word-produced PDF can arrive with almost none, and
+  `--with-ocr` flattens every heading to one level. Fix the Markdown in the
+  bundle and rerun; the extraction is not repeated.
+- Figures stay pictures and their labels are not translated. A figure that
+  hides text under clip windows (a PDF trick that makes a page read as
+  thousands of lines) is rasterized before extraction, one line per page on
+  the terminal; a chart drawn straight onto the page is not caught, and its
+  axis labels can leak into the text as short paragraphs. A page that
+  extracts far more text than a printed page holds is warned about; inspect
+  that page.
+- Tables: the Java engine loses them (they arrive as run-on paragraphs);
+  `--with-ocr` keeps them as tables but has been seen altering cell text and,
+  on Word-produced PDFs, dropping a paragraph of prose without a warning.
+  Compare a `--with-ocr` `source.md` against the PDF before trusting it.
+- The extractor does not escape Markdown syntax in prose. A sentence with
+  `\s`, `[u](y)` or `<k>` can be refused before translation as raw TeX, a
+  missing link target or raw HTML; the message names the block. Escape it in
+  `source.md` and rerun.
+- Display equations from older dvips or Ghostscript PDFs come out shredded
+  and out of order; a font without a Unicode mapping stops the engine with
+  no reading edition. Neither has a fix on our side.
+- The EPUB carries no `bbm_translation_metadata.json` and no embedded
+  glossary (Pandoc builds it), and `--no_disclosure` is not honoured on this
+  route yet: the credit line is always added. `--glossary-auto` learns only
+  when a compaction happens, so a short paper at the default budget learns
+  nothing.
+- Every PDF flag other than `--to-epub` is reported as ignored when the route
+  is not taken, and `--to-epub` on a non-PDF book stops the run.
+
 ## Params
 
 - `--model`:
@@ -364,31 +575,9 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   Use `--translate-tags` to specify tags need for translation. Use comma to separate multiple tags.
   For example: `--translate-tags h1,h2,h3,p,div`
 
-- `--plan-classify` (epub only):
+- `--plan-classify` (epub only), `--plan-dry-run`, `--plan-min-coverage`, `--max-batch-units`:
 
-  **Plan mode**: classify epub tags with the translating model, or with codex / claude code.
-
-  The value decides how is translation decision of each tag made:
-
-  - `auto` (default): when the book is an epub, ask the LLM what to translate. Only when the route cannot hold a conversation, and when the plan fails, translate the `--translate-tags` selection instead. Rows decided over a plain session appear in `<book>_plan.json` with an `unnamed (…)` content type naming how the verdict was reached rather than what the content is.
-  - `none`: no plan; only the `--translate-tags` selection — unselected, that defaults to `p`, most body text.
-  - `all`: translate the whole partition, no classification.
-  - `model`: the translating LLM judges, then translates. `--plan-classify-model X` picks the model that classifies.
-  - `agent`: writes the classification plan for the book and prints instructions to paste into your coding tool for classification. 
-  (or you could also do it by hand). Then run the translation with `--plan-classify agent` again.
-
-  - `--plan-dry-run`: print the per-signature table, write `<book>_plan.json`, and exit. Honors `--only_filelist` / `--exclude_filelist`.
-  - `<book>_plan.json`: the translation plan; delete it to classify again.
-  - `--plan-min-coverage` (default 0.5, range 0–1): plan mode aborts if the plan covers less than this fraction of the text. `0` disables the guard and values above `0.9` usually abort after classification is already paid for — both warn.
-
-  - `--max-batch-units`: the most units one grouped request may carry. Raise it together with `--accumulated_num` for fewer, larger (cheaper) requests; lower them once the run prints degradation warnings such as the misalignment-recovery hint. Content is also bounded by the token budget (`--accumulated_num`).
-
-  ```shell
-  # let the model judge which tags need translating
-  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify model
-  # or hand it to an agent: stops, prints instructions, then you give them to your AI
-  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
-  ```
+  Plan mode: the whole book is partitioned and the model decides which tag signatures to translate. On by default for EPUBs; see [Plan mode](#plan-mode) for the values, the preview and the caveats.
 
 - `--exclude-translate-tags`:
 
@@ -460,28 +649,9 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
   Use `--context_paragraph_limit` to set a limit on the number of context paragraphs when using the `--use_context` option. This applies to window mode only.
 
-- `--use_context session`:
+- `--use_context session`, `--context-compact-at`, `--no-context-compact`:
 
-  Session mode keeps one append-only history and re-reads it at the cache
-  price, so on endpoints that support caching the context can grow to about
-  a chapter. When the history reaches the compact budget, the model writes
-  a short handoff report (the run asks for ~300 tokens and truncates
-  anything runaway), whose summary seeds the next window; `<book>_handoff.md`
-  holds the latest snapshot, overwritten at each compaction.
-  Watch the progress bar's `cached=`: if it is still zero after a dozen
-  requests, the endpoint may not have a cache; Ctrl+C and switch to window
-  mode.
-
-  - `--context-compact-at`:
-
-    Session mode only. The estimated-token budget the whole window — the
-    inherited seed included — may reach before it is compacted into a
-    handoff report. Default `8192`, minimum `1500`: a window shorter than
-    that is mostly seed and seams, so below it use window mode instead.
-
-  - `--no-context-compact`:
-
-    Session mode only. Skip the handoff report. The window still rolls over at the budget, but the next one starts empty instead of inheriting a summary. Cheaper, at the cost of continuity across the seam.
+  Session mode: one growing history instead of a re-sent window, compacted into a handoff report at the budget. See [Session mode](#session-mode) for when it pays and when it does not.
 
 - `--glossary` / `--terminology`:
 
@@ -542,31 +712,9 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   extra PDF; `all` attempts both top-bottom and side-by-side layouts. The bilingual TXT and
   EPUB outputs are unaffected.
 
-- `--to-epub` (PDF only):
+- `--to-epub`, `--with-ocr`, `--no-gpu` (PDF only):
 
-  Read the PDF's text layer, translate the Markdown it recovers, and write a bilingual
-  EPUB with navigation next to the PDF as `<name>_bilingual.epub`. Figures are kept as
-  pictures, their labels are not translated as text. The working bundle stays in
-  `<name>_book/`: its `source.md` can be edited before translating, and rerunning the same
-  command resumes from what is already there instead of extracting or translating it
-  again. Needs Java and Pandoc on PATH, plus the `opendataloader-pdf` package. Without
-  this flag a PDF is translated the way it always has been. For a paper or a book, add
-  `--use_context session` so terms stay consistent across the many short blocks a PDF
-  extracts into; the default translates each block on its own. `--parallel-workers`
-  cannot be combined with that: one session is one history.
-
-- `--with-ocr` (PDF only, with `--to-epub`):
-
-  Start the OCR backend, the docling models of the `opendataloader-pdf[hybrid]` extras
-  (downloaded on the first run). Required for a scanned PDF: a page with no text layer is
-  refused without it, never silently skipped. On a typed PDF it adds table and layout
-  detection and reads no pictures. Without it only the Java engine runs: no models, no
-  download, nothing to accelerate.
-
-- `--no-gpu` (PDF only, with `--to-epub --with-ocr`):
-
-  Run the models on the CPU even when an accelerator is available. The default detects
-  one and falls back to CPU by itself.
+  The PDF reading edition: the text layer becomes Markdown, the Markdown becomes a bilingual EPUB with navigation. See [PDF to EPUB](#pdf-to-epub) for the bundle, OCR and what to check in `source.md`.
 
 - `--sentence_mode`:
 
