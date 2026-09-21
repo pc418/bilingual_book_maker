@@ -1476,6 +1476,15 @@ COMPAT_RULES = (
             "runs with --to-epub; this run reads it and does nothing with it."
         ),
     ),
+    CompatRule(
+        "C28",
+        "warn",
+        lambda f: bool(f.options.pages) and not f.options.to_epub,
+        lambda f: (
+            "--pages selects the pages the PDF route reads, and that route only "
+            "runs with --to-epub; this run reads it and translates the whole file."
+        ),
+    ),
 )
 
 
@@ -2035,6 +2044,16 @@ off. Minimum 1.
         "even when an accelerator is available.",
     )
     parser.add_argument(
+        "--pages",
+        dest="pages",
+        default=None,
+        metavar="PAGES",
+        help="PDF only, with --to-epub: the pages to read, numbered from 1 "
+        "(1-20, or 1,3,5-7); the rest of the PDF is left out. The book and "
+        "its bundle get the selection in their names (<name>_pages-1-20_...), "
+        "so a chapter never overwrites the whole book.",
+    )
+    parser.add_argument(
         "--retranslate",
         dest="retranslate",
         nargs=4,
@@ -2295,6 +2314,7 @@ def run_to_epub(options, argv):
             argv,
             no_gpu=options.no_gpu,
             with_ocr=options.with_ocr,
+            pages=options.pages,
             quiet=options.quiet,
         )
     except PipelineError as err:

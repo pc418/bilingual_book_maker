@@ -451,6 +451,8 @@ python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --test
 python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context session
 # a scanned PDF, or a typed one whose tables matter
 python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
+# one chapter: pages 12 to 30 only, into paper_pages-12-30_bilingual.epub
+python3 make_book.py --book_name paper.pdf --to-epub --pages 12-30 --key ${key} --use_context session
 ```
 
 - `--with-ocr` starts the OCR backend: the docling models, installed with
@@ -463,6 +465,16 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 - `--no-gpu` keeps the models on the CPU; the default detects an accelerator
   (NVIDIA CUDA, or Apple silicon's MPS from a native install, no flag
   needed) and falls back to the CPU on its own.
+- `--pages` reads only the pages named, numbered from 1 (`12-30`, or
+  `1,3,5-7`); the rest of the PDF is left out of the book, and nothing else
+  is extracted or paid for. The selection goes into the names, so a chapter
+  run sits beside the whole-book run instead of overwriting it:
+  `<name>_pages-12-30_book/` and `<name>_pages-12-30_bilingual.epub`.
+  Rerunning the same selection resumes that bundle. The contents keep only
+  the headings inside the selection; when it starts inside a section, the
+  prose before the first heading gets a heading naming the page (`Page 12`),
+  written into `source.md` before translation, so rename it there if you
+  like.
 - Requirements: **a Java runtime, 11 or newer**, on PATH. A JRE is enough,
   the engine is a jar; check with `java -version`, and if it is missing
   install Temurin from [Adoptium](https://adoptium.net/).

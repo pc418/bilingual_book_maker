@@ -91,6 +91,11 @@ FIGURES_RASTERIZED = (
     "Page(s) {pages}: {count} vector figure(s) rasterized; the reading edition "
     "shows them as pictures instead of their labels."
 )
+SELECTION_HEADING_ADDED = (
+    "Page {page}: the selection starts inside a section, so a heading "
+    '"Page {page}" was added above its prose; the table of contents needs '
+    "one there. Rename it in source.md before translating if you like."
+)
 PAGE_TOO_DENSE = (
     "Warning: page {page} extracted {chars} characters, several times what a "
     "printed page holds; inspect source.md before translating."

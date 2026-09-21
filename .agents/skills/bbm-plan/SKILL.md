@@ -320,7 +320,10 @@ opened, naming the missing one, so nothing is paid):
 **Two-page first look, always.** Run once with `--test` (the Markdown
 loader's slice) so the extraction happens and only a few blocks are paid
 for, then **read `<name>_book/source.md`, the headings at least**, before
-the full run: they become the EPUB's table of contents, and the extractor's
+the full run. On a long PDF make the first look `--pages 1-2 --test` (its
+bundle is `<name>_pages-1-2_book/`): extraction reads only those pages,
+and the whole-book bundle is created only by the full run. Read the
+headings before the full run: they become the EPUB's table of contents, and the extractor's
 heading detection is imperfect (an arXiv stamp, an author line or a drop
 cap can arrive as a heading; a Word-produced PDF can arrive with almost
 none; `--with-ocr` flattens headings to one level). A page whose Markdown
@@ -331,8 +334,8 @@ the bundle and rerun; the extraction is reused, a finished translation too
 (delete `book_bilingual.md` to translate again).
 
 ```bash
-# first look: extract, translate a few blocks, then read source.md
-python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-epub --test
+# first look: extract two pages, translate a few blocks, then read source.md
+python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-epub --pages 1-2 --test
 # the full run (a session: a paper extracts into many short blocks)
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-epub --use_context session --quiet
 ```
@@ -343,6 +346,7 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-ep
 | `--use_context session` | the default on the openai/anthropic routes here too (§1d); `--parallel-workers` is refused with it |
 | `--with-ocr` | a scanned PDF (the run refuses without it and says so), or tables the user needs kept; costs the `ocr` extra |
 | `--no-gpu` | with `--with-ocr`, when the accelerator misbehaves |
+| `--pages 12-30` | the user wants one chapter or a range, or the paper's bibliography and appendix are not worth paying for; numbered from 1. The book is `<name>_pages-12-30_bilingual.epub` beside the whole-book one, never over it. A selection starting mid-section gets a `Page 12` heading in `source.md`; rename it there before the full run if the user wants a real title |
 | `--glossary` | the same file contract as on an EPUB; worth it on a paper with recurring terms |
 
 What to tell the user up front, in one line each, because they are

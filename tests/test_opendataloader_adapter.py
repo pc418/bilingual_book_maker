@@ -45,6 +45,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     OCR_REQUIRED,
     PAGE_TOO_DENSE,
     PDF_OPTIONS_INERT,
+    SELECTION_HEADING_ADDED,
     SCANNED_PAGES,
 )
 
@@ -726,6 +727,114 @@ def test_the_bundle_it_produces_translates_and_exports_like_any_other(
     # The marker above the first heading must not become a chapter of its
     # own: that is an empty page with a table-of-contents entry.
     assert "page 1" not in nav
+
+
+MID_SECTION = """<!-- page 6 -->
+
+agent.
+
+Before held-out evaluation, we freeze the mechanism source, configuration,
+metrics, capability tolerances, and acceptance thresholds, so that nothing
+learned on the held-out tasks can leak back into the loop being measured.
+
+# 3. Experimental Evaluation
+
+The first paragraph of the section.
+
+<!-- page 7 -->
+
+## 3.1. Overall Comparison
+
+More prose.
+"""
+
+
+class TestASelectionThatStartsMidSection:
+    # PIN (owner ask 260921, docs/260921-feat-PDF_PAGES_FLAG.md): the
+    # first live run of --pages 6-7 translated two pages and then failed the
+    # export, because the selection opened with prose the previous page's
+    # heading owned and the table of contents had nothing to point at. The
+    # extraction now heads such prose with the page it starts on, in
+    # source.md, before anything is paid for.
+
+    @pytest.mark.parametrize(
+        "text,first_page,expected",
+        [
+            (MID_SECTION, 6, "<!-- page 6 -->\n\n# Page 6\n\nagent.\n"),
+            ("prose first\n\n# H\n", 4, "# Page 4\n\nprose first\n"),
+        ],
+    )
+    def test_prose_above_the_first_heading_gets_the_page_as_heading(
+        self, text, first_page, expected
+    ):
+        assert opendataloader.heading_for_mid_section(text, first_page).startswith(
+            expected
+        )
+
+    @pytest.mark.parametrize(
+        "text,first_page",
+        [
+            (MID_SECTION, 1),  # the document's own first page owns its front matter
+            (MID_SECTION, None),  # no selection at all
+            ("<!-- page 6 -->\n\n# 3. Eval\n\nprose\n", 6),  # already headed
+            ("<!-- page 6 -->\n", 6),  # nothing to head
+        ],
+    )
+    def test_nothing_is_added_when_nothing_needs_it(self, text, first_page):
+        assert opendataloader.heading_for_mid_section(text, first_page) is None
+
+    def test_the_extraction_writes_the_heading_and_says_so(
+        self, bundle, pdf, pandoc, accelerators, capsys
+    ):
+        opendataloader.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            page_range="6-7",
+            backend_factory=lambda device, **kw: backend(device, **kw),
+            convert=fake_convert(staging_markdown=MID_SECTION),
+        )
+        source = bundle.source.read_text(encoding="utf-8")
+        assert source.startswith("<!-- page 6 -->\n\n# Page 6\n\nagent.\n")
+        assert source.count("# Page 6") == 1
+        expected = SELECTION_HEADING_ADDED.format(page=6)
+        assert expected in capsys.readouterr().out
+        assert expected in bundle.read_manifest()["limitations"]
+
+    def test_a_selection_from_page_one_is_left_alone(
+        self, bundle, pdf, pandoc, accelerators, capsys
+    ):
+        opendataloader.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            page_range="1-2",
+            backend_factory=lambda device, **kw: backend(device, **kw),
+            convert=fake_convert(staging_markdown=MID_SECTION),
+        )
+        assert "# Page" not in bundle.source.read_text(encoding="utf-8")
+        assert "selection starts inside" not in capsys.readouterr().out
+
+    def test_the_headed_selection_translates_and_exports(
+        self, bundle, pdf, pandoc, accelerators, monkeypatch
+    ):
+        register_fake_format(monkeypatch)
+        opendataloader.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            page_range="6-7",
+            backend_factory=lambda device, **kw: backend(device, **kw),
+            convert=fake_convert(staging_markdown=MID_SECTION),
+        )
+        translate_bundle(
+            bundle, ["--api_format", "faketest", "--language", "zh-hans"], pandoc=pandoc
+        )
+        export_epub(bundle, pandoc=pandoc)
+        with zipfile.ZipFile(bundle.epub) as archive:
+            nav = archive.read("EPUB/nav.xhtml").decode("utf-8")
+        assert nav.count('<a href="text/ch') == 3
+        assert "Page 6" in nav and "#page-6" in nav
 
 
 def test_a_document_that_spells_itself_out_keeps_the_engines_own_triage(

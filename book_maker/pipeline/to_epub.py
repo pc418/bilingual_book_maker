@@ -19,7 +19,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .bundle import Bundle
+from .bundle import Bundle, parse_pages
 from .epub_export import export_epub
 from .errors import PipelineError
 from .messages import PANDOC_ON_PATH, PANDOC_REQUIRED, TO_EPUB_BUNDLE, TO_EPUB_COPY
@@ -35,7 +35,7 @@ EPUB_SUFFIX = "_bilingual.epub"
 # untouched -- the model, the key, the language, --test, --use_context, the
 # prompt, all of it.
 OWNED_OPTIONS = ("--to-epub", "--with-ocr", "--no-gpu")
-OWNED_VALUE_OPTIONS = ("--book_name",)
+OWNED_VALUE_OPTIONS = ("--book_name", "--pages")
 
 
 def translation_argv(argv):
@@ -62,14 +62,27 @@ def translation_argv(argv):
     return kept
 
 
-def bundle_path(pdf_path):
-    pdf = Path(pdf_path)
-    return pdf.parent / f"{pdf.stem}{BUNDLE_SUFFIX}"
+def selection_stem(pdf_path, pages=None):
+    """`<stem>` for the whole PDF, `<stem>_pages-6-7` for a page selection.
+
+    A selection gets its own bundle and its own book: a chapter run must
+    not overwrite the whole-book run beside it, and a rerun with the same
+    selection must find its own extraction and translation to resume.
+    """
+    stem = Path(pdf_path).stem
+    if pages:
+        return f"{stem}_pages-{''.join(str(pages).split())}"
+    return stem
 
 
-def epub_path(pdf_path):
+def bundle_path(pdf_path, pages=None):
     pdf = Path(pdf_path)
-    return pdf.parent / f"{pdf.stem}{EPUB_SUFFIX}"
+    return pdf.parent / f"{selection_stem(pdf, pages)}{BUNDLE_SUFFIX}"
+
+
+def epub_path(pdf_path, pages=None):
+    pdf = Path(pdf_path)
+    return pdf.parent / f"{selection_stem(pdf, pages)}{EPUB_SUFFIX}"
 
 
 def pdf_to_epub(
@@ -78,6 +91,7 @@ def pdf_to_epub(
     *,
     no_gpu=False,
     with_ocr=False,
+    pages=None,
     quiet=False,
     pandoc=None,
     prepare_stage=prepare,
@@ -91,8 +105,9 @@ def pdf_to_epub(
     nothing else is injectable.
     """
     pdf = Path(pdf_path)
-    # Both resolved before the PDF is opened: an unusable Pandoc or a
-    # translation option that does not parse must not cost an extraction.
+    # All resolved before the PDF is opened: an unusable Pandoc, a
+    # translation option or a page selection that does not parse must not
+    # cost an extraction.
     try:
         executable = find_pandoc(pandoc)
     except PipelineError as err:
@@ -100,14 +115,16 @@ def pdf_to_epub(
             raise  # too old: the message already names the fix
         raise PipelineError(PANDOC_ON_PATH)
     options = check_options(translation_argv(argv))
+    parse_pages(pages)  # a selection that does not parse is refused here too
 
-    bundle = Bundle(bundle_path(pdf)).create()
+    bundle = Bundle(bundle_path(pdf, pages)).create()
     print(TO_EPUB_BUNDLE.format(path=bundle.root))
     prepare_stage(
         bundle,
         pdf,
         pandoc=executable,
         device=device_for(no_gpu),
+        pages=pages,
         ocr=with_ocr,
         progress=not quiet,
     )
@@ -116,7 +133,7 @@ def pdf_to_epub(
 
     # Only now, with a validated book in the bundle: a copy made from a
     # failed export would put a broken EPUB under the name a reader opens.
-    destination = epub_path(pdf)
+    destination = epub_path(pdf, pages)
     # Through a sibling and a rename: a copy that dies halfway must not
     # leave a truncated file under the name a reader opens, and a previous
     # good book under that name survives until the new one is complete.

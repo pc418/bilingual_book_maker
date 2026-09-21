@@ -27,6 +27,7 @@ sections after it provide additional notes for selected workflows.
 | `--to-epub` | PDF only: read the PDF's text layer, translate the Markdown, write `<name>_bilingual.epub` beside it; figures stay pictures; the bundle stays in `<name>_book/` for editing and resume. Needs a Java runtime and Pandoc on PATH. |
 | `--with-ocr` | PDF only, with `--to-epub`: start the OCR backend (docling models; the `ocr` extra: `pip install "bbook_maker[ocr]"` or `pip install -r requirements-ocr.txt`). Required for scanned pages, which are refused without it; adds table detection on typed pages. |
 | `--no-gpu` | PDF only, with `--to-epub --with-ocr`: run the models on the CPU even when an accelerator is available. |
+| `--pages PAGES` | PDF only, with `--to-epub`: the pages to read, numbered from 1 (`12-30`, `1,3,5-7`); the rest is left out. The selection goes into the bundle and book names (`<name>_pages-12-30_…`), so a chapter never overwrites the whole book. A selection that starts inside a section gets a `Page N` heading above its first prose, in `source.md`. |
 | `--retranslate OUT FILE START END` | Retranslate an EPUB range in an existing output. EPUB only — refused elsewhere. |
 
 ### EPUB plan mode

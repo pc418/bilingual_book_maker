@@ -193,6 +193,16 @@ class TestStops:
         f = facts(["--book_name", "b.pdf", "--to-epub", "--with-ocr"], book_type="pdf")
         assert "C27" not in tripped(f)
 
+    def test_pages_beside_to_epub_is_not_warned_about(self):
+        f = facts(
+            ["--book_name", "b.pdf", "--to-epub", "--pages", "6-7"], book_type="pdf"
+        )
+        assert "C28" not in tripped(f)
+
+    def test_pages_without_to_epub_is_warned_about(self):
+        f = facts(["--book_name", "b.pdf", "--pages", "6-7"], book_type="pdf")
+        assert "C28" in tripped(f)
+
     def test_no_gpu_without_with_ocr_is_inert_even_on_the_route(self):
         f = facts(["--book_name", "b.pdf", "--to-epub", "--no-gpu"], book_type="pdf")
         assert "C26" in tripped(f)
@@ -612,6 +622,14 @@ WARN_FIXTURES = [
         ["--with-ocr"],
         {},
         "only runs with --to-epub",
+    ),
+    (
+        # C28: --pages selects what the PDF route reads, and the route only
+        # runs with --to-epub; the legacy loader translates the whole file
+        "C28",
+        ["--pages", "6-7"],
+        {},
+        "translates the whole file",
     ),
 ]
 

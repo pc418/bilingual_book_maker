@@ -31,8 +31,10 @@ def pdf(tmp_path):
 def stages(recorder, *, export=True, fail=None):
     """Fake extract/translate/export that only record being called."""
 
-    def prepare_stage(bundle, source, *, pandoc, device=None, ocr=False, progress=True):
-        recorder.append(("extract", device, ocr, progress))
+    def prepare_stage(
+        bundle, source, *, pandoc, device=None, pages=None, ocr=False, progress=True
+    ):
+        recorder.append(("extract", device, ocr, progress, pages))
         bundle.source.write_text("# Title\n\nProse.\n", encoding="utf-8")
 
     def translate_stage(bundle, options, *, pandoc):
@@ -68,12 +70,13 @@ class TestRouting:
     ):
         seen = {}
 
-        def fake(path, argv, *, no_gpu, with_ocr, quiet):
+        def fake(path, argv, *, no_gpu, with_ocr, pages, quiet):
             seen.update(
                 path=Path(path),
                 argv=list(argv),
                 no_gpu=no_gpu,
                 with_ocr=with_ocr,
+                pages=pages,
                 quiet=quiet,
             )
 
@@ -90,6 +93,7 @@ class TestRouting:
         assert seen["no_gpu"] is False
         # The models are opt-in: a plain run starts nothing but the Java engine.
         assert seen["with_ocr"] is False
+        assert seen["pages"] is None
         assert seen["quiet"] is False
         # every other option is the translation's, and is handed on as typed
         assert seen["argv"] == ["--book_name", str(pdf), "--to-epub", *TRANSLATION]
@@ -125,7 +129,20 @@ class TestRouting:
         cli.main(
             ["--book_name", str(pdf), "--to-epub", "--no-gpu", "--quiet", *TRANSLATION]
         )
-        assert seen == {"no_gpu": True, "with_ocr": False, "quiet": True}
+        assert seen == {"no_gpu": True, "with_ocr": False, "pages": None, "quiet": True}
+
+    def test_pages_reaches_the_pipeline(self, pdf, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            to_epub, "pdf_to_epub", lambda path, argv, **kwargs: seen.update(kwargs)
+        )
+        cli.main(["--book_name", str(pdf), "--to-epub", "--pages", "6-7", *TRANSLATION])
+        assert seen == {
+            "no_gpu": False,
+            "with_ocr": False,
+            "pages": "6-7",
+            "quiet": False,
+        }
 
     def test_with_ocr_reaches_the_pipeline(self, pdf, monkeypatch):
         seen = {}
@@ -133,7 +150,12 @@ class TestRouting:
             to_epub, "pdf_to_epub", lambda path, argv, **kwargs: seen.update(kwargs)
         )
         cli.main(["--book_name", str(pdf), "--to-epub", "--with-ocr", *TRANSLATION])
-        assert seen == {"no_gpu": False, "with_ocr": True, "quiet": False}
+        assert seen == {
+            "no_gpu": False,
+            "with_ocr": True,
+            "pages": None,
+            "quiet": False,
+        }
 
     def test_a_pdf_without_the_flag_still_takes_the_legacy_route(
         self, pdf, monkeypatch
@@ -219,16 +241,53 @@ class TestTheStages:
     def test_no_gpu_forces_cpu_and_the_default_detects(self, pdf, no_pandoc_lookup):
         order = []
         to_epub.pdf_to_epub(pdf, TRANSLATION, **stages(order))
-        assert order[0] == ("extract", "auto", False, True)
+        assert order[0] == ("extract", "auto", False, True, None)
 
         order = []
         to_epub.pdf_to_epub(pdf, TRANSLATION, no_gpu=True, quiet=True, **stages(order))
-        assert order[0] == ("extract", "cpu", False, False)
+        assert order[0] == ("extract", "cpu", False, False, None)
 
     def test_with_ocr_reaches_the_extract_stage(self, pdf, no_pandoc_lookup):
         order = []
         to_epub.pdf_to_epub(pdf, TRANSLATION, with_ocr=True, **stages(order))
-        assert order[0] == ("extract", "auto", True, True)
+        assert order[0] == ("extract", "auto", True, True, None)
+
+    def test_a_page_selection_gets_its_own_bundle_and_book(
+        self, pdf, no_pandoc_lookup, capsys
+    ):
+        # PIN (owner ask 260921, docs/260921-feat-PDF_PAGES_FLAG.md): a
+        # chapter run must not overwrite the whole-book run beside it, and
+        # a rerun with the same selection resumes its own bundle.
+        order = []
+        result = to_epub.pdf_to_epub(pdf, TRANSLATION, pages="6-7", **stages(order))
+        assert order[0] == ("extract", "auto", False, True, "6-7")
+        assert result == pdf.parent / "book_pages-6-7_bilingual.epub"
+        assert result.is_file()
+        bundle = pdf.parent / "book_pages-6-7_book"
+        assert (bundle / "source.md").is_file()
+        assert not (pdf.parent / "book_book").exists()
+        assert not (pdf.parent / "book_bilingual.epub").exists()
+        assert str(bundle) in capsys.readouterr().out
+
+    def test_a_selection_with_spaces_and_commas_still_names_a_file(
+        self, pdf, no_pandoc_lookup
+    ):
+        order = []
+        result = to_epub.pdf_to_epub(
+            pdf, TRANSLATION, pages="1, 3,5-7", **stages(order)
+        )
+        assert result == pdf.parent / "book_pages-1,3,5-7_bilingual.epub"
+        assert order[0][4] == "1, 3,5-7"
+
+    def test_a_selection_that_does_not_parse_is_refused_before_extraction(
+        self, pdf, no_pandoc_lookup
+    ):
+        order = []
+        with pytest.raises(PipelineError) as refused:
+            to_epub.pdf_to_epub(pdf, TRANSLATION, pages="7-6", **stages(order))
+        assert "ends before it starts" in refused.value.detail
+        assert order == []
+        assert not (pdf.parent / "book_pages-7-6_book").exists()
 
     def test_a_failed_export_copies_nothing(self, pdf, no_pandoc_lookup):
         order = []
@@ -279,6 +338,8 @@ class TestTheStages:
         (["--to-epub", "--model", "m"], ["--model", "m"]),
         (["--no-gpu", "--key", "k"], ["--key", "k"]),
         (["--with-ocr", "--key", "k"], ["--key", "k"]),
+        (["--pages", "6-7", "--key", "k"], ["--key", "k"]),
+        (["--pages=6-7", "--key", "k"], ["--key", "k"]),
         (["--book_name", "b.pdf", "--test"], ["--test"]),
         (["--book_name=b.pdf", "--test"], ["--test"]),
         # a value that happens to look like a flag this route owns is still

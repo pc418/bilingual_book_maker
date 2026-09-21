@@ -64,6 +64,7 @@ from .messages import (
     OCR_EMPTY_PAGES,
     OCR_REQUIRED,
     PAGE_TOO_DENSE,
+    SELECTION_HEADING_ADDED,
     PAGES_SCOPE,
     PAGE_SCOPE,
     SCANNED_PAGES,
@@ -504,6 +505,49 @@ def _prose(chunk):
     return IMAGE.sub(" ", COMMENT.sub(" ", chunk)).strip()
 
 
+FIRST_CONTENT_HEADING = re.compile(r"^#{1,6}\s+\S")
+LEADING_MARKER = re.compile(r"^<!--.*-->$")
+
+
+def first_selected_page(page_range):
+    """The first page of a selection, from 1; None for the whole PDF."""
+    ranges = parse_pages(page_range)
+    return ranges[0][0] if ranges else None
+
+
+def heading_for_mid_section(markdown_text, first_page):
+    """The Markdown with a heading above a selection that starts mid-section.
+
+    A page selection normally begins inside a section, so the extraction
+    opens with prose the previous pages' heading would have owned. The
+    EPUB's table of contents follows the headings and the export refuses
+    prose above the first one, so the extraction gets a heading naming the
+    page it starts on -- written into source.md, where the operator sees
+    it before anything is paid for and can rename it. Only a selection
+    that starts after page 1 gets one; the document's own first page owns
+    its front matter, and a selection whose first content is a heading
+    needs nothing. Returns None when nothing was added.
+    """
+    if not first_page or first_page < 2:
+        return None
+    lines = markdown_text.splitlines()
+    insert_at = 0
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or LEADING_MARKER.match(stripped):
+            insert_at = index + 1
+            continue
+        if FIRST_CONTENT_HEADING.match(stripped):
+            return None
+        break
+    else:
+        return None  # nothing but markers: no prose to head
+    heading = [f"# Page {first_page}", ""]
+    if insert_at and lines[insert_at - 1].strip():
+        heading.insert(0, "")
+    return "\n".join(lines[:insert_at] + heading + lines[insert_at:]) + "\n"
+
+
 def blank_pages(markdown_text):
     """`(page numbers that carry no prose, whether any page does)`."""
     parts = PAGE_MARKER.split(markdown_text)
@@ -697,7 +741,13 @@ def extract_pdf(
     try:
         markdown = _converted_markdown(staging, pdf)
         silent = check_recognised_text(markdown, missing)
-        dense = dense_pages(markdown.read_text(encoding="utf-8"))
+        text = markdown.read_text(encoding="utf-8")
+        headed = heading_for_mid_section(text, first_selected_page(page_range))
+        if headed is not None:
+            text = headed
+            markdown.write_text(text, encoding="utf-8")
+            print(SELECTION_HEADING_ADDED.format(page=first_selected_page(page_range)))
+        dense = dense_pages(text)
         for number, chars in dense:
             print(PAGE_TOO_DENSE.format(page=number, chars=chars))
         report = import_markdown(
@@ -729,6 +779,10 @@ def extract_pdf(
             OCR_EMPTY_PAGES.format(pages=", ".join(str(n) for n in silent))
         )
     limitations.extend(_rasterized_lines(hidden))
+    if headed is not None:
+        limitations.append(
+            SELECTION_HEADING_ADDED.format(page=first_selected_page(page_range))
+        )
     for number, chars in dense:
         limitations.append(PAGE_TOO_DENSE.format(page=number, chars=chars))
     bundle.add_limitations(limitations)
