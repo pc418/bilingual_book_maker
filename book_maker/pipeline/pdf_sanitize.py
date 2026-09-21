@@ -51,14 +51,17 @@ WHOLE_PAGE_AREA = 0.7
 # drawing alone. A callout box is one rectangle around prose; the paper's
 # plainest chart drew seventeen. A guard, not a measurement.
 FIGURE_MIN_DRAWINGS = 8
-# The most visible text a form may carry and still be a figure by drawing
-# alone. A chart's labels, legend and axis titles run to a few hundred
-# characters; a page body some producers wrap in a form with a few rules
-# runs to a thousand and more, and it must stay text. Six hundred is a
-# guess between the two, not a measurement; a chart with more labels than
-# that keeps its labels as prose, which is a blemish, where a page body
-# turned into a picture is a loss.
-FIGURE_MAX_LABEL_CHARS = 600
+# The most shown text per drawn path a form may carry and still be a
+# figure by drawing alone. Measured on the arXiv paper (260920): its seven
+# charts show 0.7 to 13.5 characters of label per path; a page body wrapped
+# in a form with eight rules, the shape a reviewer built to break the count
+# alone, shows 129 per path, and it must stay text. Forty sits between the
+# two as a guess, not a measurement: a chart with fewer paths than that
+# per label keeps its labels as prose, a blemish, where a page body turned
+# into a picture is a loss. An absolute cap on shown text was tried first
+# and spared three of the paper's charts, whose labels then made 570
+# lines of prose.
+FIGURE_CHARS_PER_DRAWING = 40
 # Resolution of the picture that replaces a figure. Body text in a figure
 # is small; 200 DPI keeps it legible in a reader without the file bloating.
 RASTER_DPI = 200
@@ -295,7 +298,10 @@ def _examine(raw, page, textpage, page_box, index, top):
         return None
     if hidden >= HIDDEN_TEXT_THRESHOLD:
         return _entry(index, REASON_HIDDEN, hidden, visible, bounds)
-    if drawings >= FIGURE_MIN_DRAWINGS and visible < FIGURE_MAX_LABEL_CHARS:
+    if (
+        drawings >= FIGURE_MIN_DRAWINGS
+        and visible <= FIGURE_CHARS_PER_DRAWING * drawings
+    ):
         return _entry(index, REASON_FIGURE, hidden, visible, bounds)
     return None
 

@@ -1603,9 +1603,9 @@ WRAPPED_BODY = ["A line of a page body wrapped in a form."] * 20  # 800 chars
 
 
 def test_a_page_body_wrapped_with_rules_is_left_as_text(tmp_path):
-    # Codex re-verify 260920: a form drawing eight rules around a thousand
-    # characters of prose is a page body, not a chart, however many paths
-    # it draws.
+    # Codex re-verify 260920: a form drawing eight rules around eight
+    # hundred characters of prose is a page body, not a chart: a hundred
+    # characters per path, where the paper's charts show at most fourteen.
     pdfium_or_skip()
     path = write_pdf(
         tmp_path / "body.pdf", ["Body."], figure=(1, WRAPPED_BODY), figure_clip=False
