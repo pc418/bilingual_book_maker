@@ -505,6 +505,8 @@ This route is experimental: it has been checked on arXiv papers and a handful
 of other producers, not on every PDF shape. Issues and PRs are welcome; attach
 the PDF if it can be shared, or the page of `source.md` that came out wrong.
 
+![An arXiv paper as a reading edition: the table of contents built from the headings, the bilingual text, and a figure kept as a picture](./docs/img/pdf_reading_edition.webp)
+
 ## Params
 
 - `--model`:

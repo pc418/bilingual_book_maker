@@ -348,6 +348,8 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 
 该路由仍是实验性的：只在 arXiv 论文和少数几种其他生成器的 PDF 上核过，并未覆盖所有 PDF 形态。欢迎提 issue 和 PR；能分享的话请附上 PDF，或者 `source.md` 里出错的那一页。
 
+![一篇 arXiv 论文的阅读版：按标题生成的目录、双语正文、保留为图片的图表](./docs/img/pdf_reading_edition.webp)
+
 ## 参数说明
 
 - `--model`:
