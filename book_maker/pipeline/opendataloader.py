@@ -57,6 +57,9 @@ from .messages import (
     EXTRACT_PROGRESS_LABEL,
     HIDDEN_TEXT_RASTERIZED,
     JAVA_REQUIRED,
+    OCR_NOT_INSTALLED,
+    PDF_ROUTE_NOT_INSTALLED,
+    PDFIUM_UNUSABLE,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
     OCR_REQUIRED,
@@ -148,11 +151,7 @@ def resolve_device(requested):
             decide_device,
         )
     except ImportError as err:
-        raise PipelineError(
-            f"the OpenDataLoader hybrid stack is not installed "
-            f'(pip install "opendataloader-pdf[hybrid]"): {err}',
-            stage=STAGE,
-        )
+        raise PipelineError(OCR_NOT_INSTALLED.format(err=err), stage=STAGE)
     try:
         resolved = decide_device(requested)
     except AcceleratorDeviceNotAvailableError:
@@ -375,7 +374,7 @@ SCAN_MAX_CHARS = 200
 def text_layer_report(pdf_path, page_range=None):
     """`(pages the text layer does not spell out, pages examined)`, from 1.
 
-    pypdfium2 is the renderer the hybrid stack already carries, and reading
+    pypdfium2 is in the pdf extra for exactly this, and reading
     what the page itself says is the only honest way to know whether the
     engine's own triage may skip it: a page with no characters, or a page
     that is one big picture with a few characters stamped on it, has
@@ -385,20 +384,12 @@ def text_layer_report(pdf_path, page_range=None):
     try:
         import pypdfium2 as pdfium
     except ImportError as err:
-        raise PipelineError(
-            f"the OpenDataLoader hybrid stack is not installed "
-            f'(pip install "opendataloader-pdf[hybrid]"): {err}',
-            stage=STAGE,
-        )
+        raise PipelineError(PDF_ROUTE_NOT_INSTALLED.format(err=err), stage=STAGE)
     if not hasattr(pdfium, "PdfDocument"):
         # An empty `pypdfium2` directory left behind by an uninstall imports
         # perfectly well and can do nothing; say that, rather than blaming
         # the PDF for it.
-        raise PipelineError(
-            "pypdfium2 is installed but unusable (no PdfDocument); reinstall "
-            'it with pip install "opendataloader-pdf[hybrid]"',
-            stage=STAGE,
-        )
+        raise PipelineError(PDFIUM_UNUSABLE, stage=STAGE)
     ranges = parse_pages(page_range)
     missing = []
     examined = 0
@@ -827,11 +818,7 @@ def _load_converter():
     try:
         import opendataloader_pdf
     except ImportError as err:
-        raise PipelineError(
-            f"opendataloader-pdf is not installed "
-            f'(pip install "opendataloader-pdf[hybrid]"): {err}',
-            stage=STAGE,
-        )
+        raise PipelineError(PDF_ROUTE_NOT_INSTALLED.format(err=err), stage=STAGE)
     return opendataloader_pdf.convert
 
 

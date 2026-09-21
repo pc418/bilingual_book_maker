@@ -306,7 +306,10 @@ def test_a_missing_hybrid_stack_is_an_error_not_a_cpu_fallback(monkeypatch):
         monkeypatch.setitem(sys.modules, name, None)
     with pytest.raises(PipelineError) as refused:
         opendataloader.resolve_device("auto")
-    assert "opendataloader-pdf[hybrid]" in refused.value.detail
+    # PIN (owner 260921, docs/260921-fix-PDF_DEPS_OCR_EXTRA.md): the OCR
+    # runtime is the `ocr` extra, and the refusal says how to install it.
+    assert 'pip install "bbook_maker[ocr]"' in refused.value.detail
+    assert "requirements-ocr.txt" in refused.value.detail
 
 
 def test_the_real_docling_decision_is_reused():
@@ -1462,7 +1465,7 @@ def test_only_the_selected_pages_are_sanitized(tmp_path):
 # --------------------------------------------------------------------------
 # The text layer, read from real PDFs
 # --------------------------------------------------------------------------
-MISSING_PDFIUM = 'pypdfium2 is not installed (pip install "opendataloader-pdf[hybrid]")'
+MISSING_PDFIUM = 'pypdfium2 is not installed (pip install "bbook_maker[pdf]")'
 
 
 def pdfium_or_skip():

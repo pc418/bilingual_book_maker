@@ -24,8 +24,8 @@ sections after it provide additional notes for selected workflows.
 | `--translation_style CSS` | CSS applied to translated EPUB entries. |
 | `--translation_color COLOR` | Color-only shorthand; `--translation_style` takes precedence. |
 | `--pdf_layout MODE` | Additional PDF output: `none`, `top-bottom`, `side-by-side`, or `all`. |
-| `--to-epub` | PDF only: read the PDF's text layer, translate the Markdown, write `<name>_bilingual.epub` beside it; figures stay pictures; the bundle stays in `<name>_book/` for editing and resume. |
-| `--with-ocr` | PDF only, with `--to-epub`: start the OCR backend (docling models). Required for scanned pages, which are refused without it; adds table detection on typed pages. |
+| `--to-epub` | PDF only: read the PDF's text layer, translate the Markdown, write `<name>_bilingual.epub` beside it; figures stay pictures; the bundle stays in `<name>_book/` for editing and resume. Needs the `pdf` extra (`pip install "bbook_maker[pdf]"` or `pip install -r requirements-pdf.txt`), a Java runtime and Pandoc on PATH. |
+| `--with-ocr` | PDF only, with `--to-epub`: start the OCR backend (docling models; the `ocr` extra: `pip install "bbook_maker[ocr]"` or `pip install -r requirements-ocr.txt`). Required for scanned pages, which are refused without it; adds table detection on typed pages. |
 | `--no-gpu` | PDF only, with `--to-epub --with-ocr`: run the models on the CPU even when an accelerator is available. |
 | `--retranslate OUT FILE START END` | Retranslate an EPUB range in an existing output. EPUB only — refused elsewhere. |
 

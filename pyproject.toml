@@ -22,23 +22,35 @@ dependencies = [
     "google-genai",
     # chat.completions.parse (Structured Outputs) is unavailable before 1.92.
     "openai>=1.92.0",
-    # The local PDF parser and its hybrid OCR backend. The extra is what
-    # installs docling and the models' runtime; without it the PDF path
-    # has a Java engine and no OCR, which is the one
-    # substitution that parser must never make silently. 2.5.10 is the
-    # version this was built and verified against: it is the one whose
-    # `convert(hybrid=..., hybrid_url=..., hybrid_fallback=...)` signature
-    # and whose `opendataloader-pdf-hybrid --device` flag were checked,
-    # rather than a lower bound guessed from a changelog.
-    "opendataloader-pdf[hybrid]>=2.5.10",
     "pydantic>=2.0",
     "requests",
     "rich",
+    # SOCKS proxies: httpx honours all_proxy=socks5://… (common in front of
+    # the API for many of this tool's users) only with socksio, and raises
+    # on every request without it. The pinned requirements.txt used to
+    # carry it through a stale lock entry; declared, so a pip install has
+    # it too.
+    "socksio",
     "tenacity",
     "tiktoken",
     "tqdm",
     "PyMuPDF",
 ]
+
+[project.optional-dependencies]
+# The PDF route (--to-epub) is opt-in end to end: nothing of it is a base
+# dependency, so an existing install is untouched (owner, 260921).
+# `pdf`: the local PDF parser, a Java engine behind a thin wrapper that
+# declares no Python dependencies of its own (the jar is inside; 2.5.10 is
+# the version this was built and verified against, the one whose
+# `convert(hybrid=..., hybrid_url=..., hybrid_fallback=...)` signature and
+# `opendataloader-pdf-hybrid --device` flag were checked); pdfium, which
+# measures what a page shows before the engines read it and tells a scanned
+# page from a typed one; Pillow, on which the sanitizer composes a figure's
+# rendering. `ocr`: the same plus the parser's OCR backend (docling, torch:
+# several gigabytes), for --with-ocr.
+pdf = ["opendataloader-pdf>=2.5.10", "pypdfium2>=5", "pillow>=10"]
+ocr = ["opendataloader-pdf[hybrid]>=2.5.10", "pypdfium2>=5", "pillow>=10"]
 
 [project.scripts]
 bbook_maker = "book_maker.cli:main"

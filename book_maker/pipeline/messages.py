@@ -32,7 +32,22 @@ DEVICE_SELECTED = "OpenDataLoader device: {device}."
 DEVICE_CPU_FALLBACK = "OpenDataLoader device: cpu (no supported accelerator detected)."
 DEVICE_UNAVAILABLE = "Requested OpenDataLoader device is unavailable: {device}."
 JAVA_REQUIRED = (
-    "OpenDataLoader requires Java; install a supported Java runtime and retry."
+    "OpenDataLoader requires Java 11 or newer on PATH (a JRE is enough); "
+    "install one, for example Temurin from https://adoptium.net/, and retry."
+)
+PDF_ROUTE_NOT_INSTALLED = (
+    "the PDF route's packages are not installed; --to-epub needs the pdf "
+    'extra: pip install "bbook_maker[pdf]" (from a checkout: pip install -r '
+    "requirements-pdf.txt). Detail: {err}"
+)
+PDFIUM_UNUSABLE = (
+    "pypdfium2 is installed but unusable (no PdfDocument); reinstall it with "
+    "pip install --force-reinstall pypdfium2"
+)
+OCR_NOT_INSTALLED = (
+    "the OCR runtime is not installed; --with-ocr needs the ocr extra: "
+    'pip install "bbook_maker[ocr]" (from a checkout: pip install -r '
+    "requirements-ocr.txt). Detail: {err}"
 )
 BACKEND_FAILED = "OpenDataLoader backend failed: {detail}"
 SCANNED_PAGES = (

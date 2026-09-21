@@ -27,6 +27,7 @@ from pathlib import Path
 
 from .bundle import parse_pages
 from .errors import PipelineError
+from .messages import PDF_ROUTE_NOT_INSTALLED, PDFIUM_UNUSABLE
 
 STAGE = "extract"
 
@@ -77,18 +78,11 @@ def _pdfium():
     try:
         import pypdfium2 as pdfium
         import pypdfium2.raw as raw
+        from PIL import Image  # noqa: F401 -- the rasterizer's canvas, checked here
     except ImportError as err:
-        raise PipelineError(
-            f"the OpenDataLoader hybrid stack is not installed "
-            f'(pip install "opendataloader-pdf[hybrid]"): {err}',
-            stage=STAGE,
-        )
+        raise PipelineError(PDF_ROUTE_NOT_INSTALLED.format(err=err), stage=STAGE)
     if not hasattr(pdfium, "PdfDocument"):
-        raise PipelineError(
-            "pypdfium2 is installed but unusable (no PdfDocument); reinstall "
-            'it with pip install "opendataloader-pdf[hybrid]"',
-            stage=STAGE,
-        )
+        raise PipelineError(PDFIUM_UNUSABLE, stage=STAGE)
     return pdfium, raw
 
 

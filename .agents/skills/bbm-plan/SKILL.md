@@ -1,6 +1,6 @@
 ---
 name: bbm-plan
-description: Translate a whole EPUB into a bilingual book with bilingual_book_maker's plan mode - greedy partition, agent-reviewed classification plan, then a full resumable run. Use when the user wants a book translated well (running heads, page numbers, and apparatus skipped deliberately) rather than a quick --translate-tags pass, or asks for "plan mode" / "bbm" translation.
+description: Translate a whole EPUB into a bilingual book with bilingual_book_maker's plan mode - greedy partition, agent-reviewed classification plan, then a full resumable run - or a PDF into a bilingual, reflowable EPUB through the PDF route (--to-epub). Use when the user wants a book translated well (running heads, page numbers, and apparatus skipped deliberately) rather than a quick --translate-tags pass, asks for "plan mode" / "bbm" translation, or hands over a PDF to translate.
 ---
 
 # bbm-plan: plan-mode EPUB translation
@@ -13,7 +13,8 @@ the main agent with full session context; never delegate plan editing to a
 subagent or a small/fast model.
 
 Repo: the repository this skill ships in (`make_book.py` at its root). Run
-every command from the repo root. Plan mode is **epub-only**.
+every command from the repo root. Plan mode is **epub-only**; a PDF takes
+the route in §1e instead, which has no plan step.
 
 You are the trained CLI operator. You pick every flag from the **flag menu**
 below and state each choice with a one-line reason; the menu's defaults are
@@ -271,6 +272,82 @@ Common to all of them, per step: `--plan-classify agent` always; the full
 run adds `--quiet`, and `--resume` only once a cache exists (§5); the
 optional smoke adds `--quiet --test --test_num 8`. Nothing from the "Never
 pass in plan mode" list, ever.
+
+## 1e. A PDF: recommend the bilingual EPUB, not the txt
+
+When the book is a `.pdf`, recommend `--to-epub` and say why in one line:
+it reads the PDF's text layer into Markdown, translates that, and writes a
+**bilingual, reflowable EPUB with a table of contents** next to the PDF
+(`<name>_bilingual.epub`), every paragraph followed by its translation.
+Without the flag a PDF takes the old route, which writes a bilingual `.txt`
+with no structure; only offer that if the user asks for txt. This route is
+experimental and the README says so; a PDF is a page description with no
+paragraphs or headings in it, so the extractor guesses the structure back,
+and a reflowable bilingual EPUB with a working TOC out of that is already
+a good result.
+
+There is no plan step on this path: the Markdown loader translates every
+block, so `--plan-classify agent` and the whole plan/classify sequence of
+§2–§3 do not apply. Credentials and route (§0), language and prompt (§1),
+the context flags of §1d and the delivery rules of §6 apply unchanged;
+every md-loader flag works the same here (`--glossary`, `--parallel-workers`
+except with a session, `--test`).
+
+**Before the first command**, check the machine, in this order, and stop
+with the install line if one is missing (the run refuses before the PDF is
+opened, naming the missing one, so nothing is paid):
+
+1. The route's packages are an extra, not part of a plain install:
+   `pip install "bbook_maker[pdf]"`, or from a checkout
+   `pip install -r requirements-pdf.txt` (about 25 MB, the engine's jar
+   included). Check: `python -c "import opendataloader_pdf, pypdfium2, PIL"`.
+2. A Java runtime, 11 or newer, on PATH (`java -version`; a JRE is
+   enough, the extractor is a jar; Temurin from https://adoptium.net/).
+3. Pandoc on PATH (`pandoc -v`; https://pandoc.org/installing.html).
+4. Only for a scanned PDF, or a typed one whose tables matter:
+   `--with-ocr`, which needs the `ocr` extra instead
+   (`pip install "bbook_maker[ocr]"` / `requirements-ocr.txt`): several
+   gigabytes with torch, and the docling models download on the first run.
+   Do not install it speculatively; a page with no text layer is refused
+   without the flag, never silently skipped, so the run tells you when it
+   is needed. `--no-gpu` keeps those models on the CPU.
+
+**Two-page first look, always.** Run once with `--test` (the Markdown
+loader's slice) so the extraction happens and only a few blocks are paid
+for, then **read `<name>_book/source.md`, the headings at least**, before
+the full run: they become the EPUB's table of contents, and the extractor's
+heading detection is imperfect (an arXiv stamp, an author line or a drop
+cap can arrive as a heading; a Word-produced PDF can arrive with almost
+none; `--with-ocr` flattens headings to one level). A page whose Markdown
+is thousands of lines is trash, not a long page: the run warns about a page
+that extracted far more text than a printed page holds, and about figures
+it rasterized because they hid text under clip windows. Fix the Markdown in
+the bundle and rerun; the extraction is reused, a finished translation too
+(delete `book_bilingual.md` to translate again).
+
+```bash
+# first look: extract, translate a few blocks, then read source.md
+python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-epub --test
+# the full run (a session: a paper extracts into many short blocks)
+python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-epub --use_context session --quiet
+```
+
+| flag | when |
+|---|---|
+| `--to-epub` | every PDF, unless the user asked for txt |
+| `--use_context session` | the default on the openai/anthropic routes here too (§1d); `--parallel-workers` is refused with it |
+| `--with-ocr` | a scanned PDF (the run refuses without it and says so), or tables the user needs kept; costs the `ocr` extra |
+| `--no-gpu` | with `--with-ocr`, when the accelerator misbehaves |
+| `--glossary` | the same file contract as on an EPUB; worth it on a paper with recurring terms |
+
+What to tell the user up front, in one line each, because they are
+limits of the format rather than of the run: figures stay pictures and
+their labels are not translated; the Java engine loses tables (they arrive
+as prose) and `--with-ocr` keeps them but can alter cell text; a sentence
+containing `\s`, `[u](y)` or `<k>` can be refused before translation as raw
+TeX, a missing link or raw HTML (the message names the block; escape it in
+`source.md` and rerun); the EPUB carries no translation-metadata file and
+`--no_disclosure` is not honoured on this route yet.
 
 ## 2. Plan (agent mode translates nothing)
 
@@ -567,7 +644,11 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `--only_filelist / --exclude_filelist names N document(s) this book does not have` | a typo, caught before anything is paid for; the message lists the near matches |
 | `--use_context session is not implemented for the … route` | that route keeps no history; use bare `--use_context`, or a route that does (§1d) |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
-| `--use_context session` not supported for *txt/srt/pdf* | those loaders never hand context to the model; epub is where this workflow lives anyway |
+| `--use_context session` not supported for *txt/srt*, or a *pdf* without `--to-epub` | those loaders never hand context to the model; a PDF gets it through `--to-epub` (§1e) |
+| `the PDF route's packages are not installed; --to-epub needs the pdf extra …` | `pip install "bbook_maker[pdf]"` (checkout: `-r requirements-pdf.txt`); nothing was paid |
+| `the OCR runtime is not installed; --with-ocr needs the ocr extra …` | `pip install "bbook_maker[ocr]"`; several gigabytes, only when a scan or tables demand it |
+| `OpenDataLoader requires Java 11 or newer on PATH …` / `Pandoc is required for --to-epub …` | install them (§1e); both are checked before the PDF is opened |
+| `N of M selected pages have no text layer …; rerun with --with-ocr` | a scanned PDF; the flag and the `ocr` extra, not a different tool |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
 | codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints; rerun with `--resume` after the time it names |

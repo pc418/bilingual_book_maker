@@ -38,6 +38,23 @@ jobs:
       - name: install python requirements
         run: pip install -r requirements.txt
 
+      # The PDF route (--to-epub) is opt-in for users (the `pdf` extra); CI
+      # opts in so its pipeline tests and the smoke at the end run rather
+      # than skip. The route reads the PDF with a Java engine (a jar inside
+      # the opendataloader-pdf wheel; a JRE is enough) and builds the EPUB
+      # with Pandoc. The OCR backend (requirements-ocr.txt: docling, torch)
+      # is deliberately not installed here; nothing in CI passes --with-ocr.
+      - name: install the PDF route's packages (the pdf extra)
+        run: pip install -r requirements-pdf.txt
+      - name: install a Java runtime (the PDF route's engine)
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          java-package: jre
+      - name: install Pandoc (the PDF route's EPUB builder)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq pandoc
+
       - name: Test install
         run: |
             pip install .
@@ -52,6 +69,17 @@ jobs:
         run: |
             pip install pytest
             pytest -q
+
+      # The PDF route end to end without a model: a two-page typed PDF built
+      # by the test helper, read by the Java engine, its text checked in the
+      # extracted Markdown. Hermetic: the jar ships in the wheel, nothing is
+      # downloaded, no key is used.
+      - name: PDF route smoke (Java engine, two pages, no OCR)
+        run: |
+            python -c "from pathlib import Path; from tests.pipeline_helpers import write_pdf; write_pdf(Path('ci_smoke.pdf'), pages=('The first page of a typed PDF, with a full sentence of prose on it.', 'The second page of it, also a sentence long.'))"
+            python tools/pdf_to_book.py extract ci_smoke.pdf --output ci_smoke_book --pages 1-2
+            grep -q "first page" ci_smoke_book/source.md
+            grep -q "second page" ci_smoke_book/source.md
 
       # Live smokes against the free Google endpoint, manual-only: it
       # rate-limits and times out from CI runner IPs even behind retries,

@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS core
 
 LABEL org.opencontainers.image.source="https://github.com/yihong0618/bilingual_book_maker" \
       org.opencontainers.image.description="AI translation tool that creates bilingual epub/txt/srt/md books" \
@@ -21,19 +21,40 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY book_maker/ ./book_maker/
 COPY make_book.py ./
 
-RUN groupadd --gid 1000 bbm \
-    && useradd --uid 1000 --gid 1000 --no-create-home --shell /usr/sbin/nologin bbm \
-    # The CLI writes two directories relative to the working directory:
-    # log/buglog.txt on every epub run, and batch_files/ on the openai batch
-    # route. Pre-create them writable; /app itself stays root-owned so the
-    # container cannot rewrite its own code. Group root + g+w keeps them
-    # writable under `docker run --user <uid>` too, since an overridden uid
-    # still runs with gid 0.
-    && mkdir -p /app/log /app/batch_files \
-    && chown 1000:0 /app/log /app/batch_files \
-    && chmod 775 /app/log /app/batch_files
-USER 1000:1000
+# The CLI writes two directories relative to the working directory:
+# log/buglog.txt on every epub run, and batch_files/ on the openai batch
+# route. Pre-created and world-writable so `docker run --user <uid>` works
+# too. The container runs as root otherwise (owner, 260921): it holds one
+# book and one key, and writing into the mounted folder must always work.
+RUN mkdir -p /app/log /app/batch_files \
+    && chmod 777 /app/log /app/batch_files
 
 # argv is passed through verbatim, so every CLI flag works unchanged.
 ENTRYPOINT ["python", "make_book.py"]
 CMD ["--help"]
+
+# ---------------------------------------------------------------------------
+# The `ocr` tag: the PDF route (--to-epub) with its OCR backend. The image
+# above carries none of it. This stage adds a Java runtime (the extractor is
+# a jar; a JRE is enough), Pandoc (builds the EPUB) and the route's Python
+# packages with the OCR runtime pinned in requirements-ocr.txt (docling,
+# torch: several gigabytes on amd64 with the CUDA wheels), which is why it
+# is its own tag and never `latest`.
+#   GPU: on a Linux host with an NVIDIA driver and the NVIDIA Container
+#   Toolkit, `docker run --gpus all` is all it takes; torch's wheels carry
+#   the CUDA runtime. On macOS the container is CPU-only whatever is passed:
+#   Docker runs a Linux VM that cannot see the Metal accelerator.
+#   Codex: the codex route drives a `codex` binary signed in on the host;
+#   neither the binary nor the login is in this image.
+# The docling models download on the first --with-ocr run into
+# /root/.cache; mount a volume there to keep them between runs.
+FROM core AS ocr
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends default-jre-headless pandoc \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements-ocr.txt ./
+RUN pip install --no-cache-dir -r requirements-ocr.txt
+
+# The last stage is what a plain `docker build .` produces, so the small
+# image stays the default; this stage is `core` under another name.
+FROM core AS default

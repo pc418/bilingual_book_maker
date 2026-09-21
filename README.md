@@ -453,20 +453,25 @@ python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context 
 python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
 ```
 
-- `--with-ocr` starts the OCR backend (the docling models from the
-  `opendataloader-pdf[hybrid]` extras, downloaded on the first run). A page
+- `--with-ocr` starts the OCR backend: the docling models, installed with
+  `pip install "bbook_maker[ocr]"` (from a checkout, `pip install -r
+  requirements-ocr.txt`) and downloaded on the first run. A page
   with no text layer is refused without it, never silently skipped. On a
   typed PDF it adds table and layout detection, and reads no pictures.
   Without it only the Java
   engine runs: no models, no download, nothing to accelerate.
 - `--no-gpu` keeps the models on the CPU; the default detects an accelerator
   and falls back to the CPU on its own.
-- Requirements: **Java 11 or newer** on PATH (check with `java -version`; if it
-  is missing, install a JDK from [Adoptium](https://adoptium.net/)),
-  [Pandoc](https://pandoc.org/installing.html) on PATH, and the
-  `opendataloader-pdf` package (`pip install opendataloader-pdf`, or
-  `"opendataloader-pdf[hybrid]"` for `--with-ocr`). A missing one is refused
-  before the PDF is opened, with a message naming it.
+- Requirements: **a Java runtime, 11 or newer**, on PATH. A JRE is enough,
+  the engine is a jar; check with `java -version`, and if it is missing
+  install Temurin from [Adoptium](https://adoptium.net/).
+  [Pandoc](https://pandoc.org/installing.html) on PATH. The route's Python
+  packages are an extra, so a plain install carries none of them:
+  `pip install "bbook_maker[pdf]"` (from a checkout, `pip install -r
+  requirements-pdf.txt`), about 25 MB with the engine's jar. `--with-ocr`
+  needs `[ocr]` instead (`requirements-ocr.txt`): the same packages plus the
+  OCR runtime, several gigabytes with torch. A missing one is refused before
+  the PDF is opened, with a message naming it.
 
 **Caveats.**
 
@@ -942,7 +947,18 @@ For example, a quick test needing no key at all, over the free Google route:
 docker run --rm -v /home/user/my_books:/book ghcr.io/yihong0618/bilingual_book_maker:latest --book_name /book/animal_farm.epub --api_format google --test --test_num 1 --language zh-hant
 ```
 
-The container runs as a non-root user (uid 1000). On Linux, if the mounted folder is not writable for that uid, add `--user $(id -u)` (uid only — the image keeps its internal directories group-writable for exactly this case). API keys can also be passed as environment variables (`-e OPENAI_API_KEY=sk-XXX`) instead of `--key`.
+The container runs as root, so writing into the mounted folder always works; on Linux the files it writes there belong to root (`chown` them afterwards, or add `--user $(id -u)`). API keys can also be passed as environment variables (`-e OPENAI_API_KEY=sk-XXX`) instead of `--key`.
+
+**The PDF route in Docker is the `ocr` tag.** The default image carries none of it (no Java, no Pandoc, none of the route's packages), so it stays a few hundred megabytes and is unchanged for everyone else. `ghcr.io/yihong0618/bilingual_book_maker:ocr` adds all of it, several gigabytes with torch, and runs `--to-epub` with or without `--with-ocr`:
+
+```shell
+docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yihong0618/bilingual_book_maker:ocr --book_name /book/paper.pdf --to-epub --with-ocr --key "${openai_key}" --use_context session
+```
+
+The named volume keeps the docling models between runs; they download on the first `--with-ocr` run. Two limits to know before reaching for it:
+
+- **GPU** is Linux plus NVIDIA only: install the NVIDIA Container Toolkit on the host and add `--gpus all`; torch's wheels carry the CUDA runtime, so nothing else is needed. On macOS the container is CPU-only whatever you pass, because Docker runs a Linux VM that cannot see the Metal accelerator. For Apple silicon acceleration run the tool natively.
+- **The codex route** is not available in either image: it drives a `codex` binary that is signed in on the host, and neither the binary nor the login lives in the container. Use an API route in Docker.
 
 To build the image yourself instead of pulling:
 

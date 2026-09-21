@@ -108,6 +108,7 @@ _FOREIGN_FLAGS = frozenset(
         "--mount",
         "--tag",
         "--user",
+        "--gpus",  # docker run, in the README's ocr-tag paragraph
         "--flag",
         "--git-common-dir",
     }

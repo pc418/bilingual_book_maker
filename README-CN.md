@@ -332,9 +332,9 @@ python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context 
 python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
 ```
 
-- `--with-ocr` 启动 OCR 后端（`opendataloader-pdf[hybrid]` 依赖中的 docling 模型，首次运行时下载）。没有文字层的页面在不加它时会被拒绝，绝不会被悄悄跳过。文字版 PDF 上它额外提供表格和版面识别，不会读取图片。不加它时只运行 Java 引擎：没有模型，没有下载，也没有需要加速的东西。
+- `--with-ocr` 启动 OCR 后端：docling 模型，用 `pip install "bbook_maker[ocr]"` 安装（从源码目录则 `pip install -r requirements-ocr.txt`），首次运行时下载。没有文字层的页面在不加它时会被拒绝，绝不会被悄悄跳过。文字版 PDF 上它额外提供表格和版面识别，不会读取图片。不加它时只运行 Java 引擎：没有模型，没有下载，也没有需要加速的东西。
 - `--no-gpu` 让模型留在 CPU 上；默认自动检测加速器，没有时自行回退到 CPU。
-- 需要：PATH 中有 **Java 11 或更新版本**（用 `java -version` 检查；没有的话从 [Adoptium](https://adoptium.net/) 装一个 JDK）、PATH 中有 [Pandoc](https://pandoc.org/installing.html)，以及 `opendataloader-pdf` 包（`pip install opendataloader-pdf`，要用 `--with-ocr` 则装 `"opendataloader-pdf[hybrid]"`）。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
+- 需要：PATH 中有 **Java 运行时，11 或更新版本**。JRE 就够了，引擎是一个 jar；用 `java -version` 检查，没有的话从 [Adoptium](https://adoptium.net/) 装 Temurin。PATH 中有 [Pandoc](https://pandoc.org/installing.html)。这条路由的 Python 包是一个 extra，普通安装一个都不带：`pip install "bbook_maker[pdf]"`（从源码目录则 `pip install -r requirements-pdf.txt`），连引擎的 jar 约 25 MB。`--with-ocr` 则要装 `[ocr]`（`requirements-ocr.txt`）：同样的包再加上 OCR 运行时，带着 torch 有好几个 GB。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
 
 **注意事项。**
 
@@ -718,7 +718,18 @@ docker run --rm -v ${folder_path}:/book ghcr.io/yihong0618/bilingual_book_maker:
 docker run --rm -v /home/user/my_books:/book ghcr.io/yihong0618/bilingual_book_maker:latest --book_name /book/animal_farm.epub --api_format google --test --test_num 1 --language zh-hant
 ```
 
-容器以非 root 用户（uid 1000）运行。在 Linux 上，如果挂载的文件夹对该 uid 不可写，加上 `--user $(id -u)`（只写 uid 即可——镜像内部目录对组保持可写，正是为了这种情况）。API key 也可以用环境变量传入（`-e OPENAI_API_KEY=sk-XXX`）来代替 `--key`。
+容器以 root 运行，所以往挂载的文件夹里写东西总是可以的；在 Linux 上写出的文件归 root 所有（事后 `chown` 一下，或者加 `--user $(id -u)`）。API key 也可以用环境变量传入（`-e OPENAI_API_KEY=sk-XXX`）来代替 `--key`。
+
+**Docker 里的 PDF 路由是 `ocr` 标签。** 默认镜像不带这条路由的任何东西（没有 Java、Pandoc，也没有这条路由的 Python 包），所以只有几百 MB，对其他人来说没有任何变化。`ghcr.io/yihong0618/bilingual_book_maker:ocr` 把这些全部加上，带着 torch 有好几个 GB，`--to-epub` 加不加 `--with-ocr` 都能跑：
+
+```shell
+docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yihong0618/bilingual_book_maker:ocr --book_name /book/paper.pdf --to-epub --with-ocr --key "${openai_key}" --use_context session
+```
+
+具名卷 `bbm-models` 让 docling 模型在多次运行之间保留下来；模型在第一次 `--with-ocr` 运行时下载。用之前要知道两个限制：
+
+- **GPU** 只有 Linux 加 NVIDIA 这一条路：宿主机装好 NVIDIA Container Toolkit，再加 `--gpus all`；torch 的 wheel 自带 CUDA 运行时，别的不用装。macOS 上容器不管传什么都只用 CPU，因为 Docker 跑在一个看不见 Metal 加速器的 Linux 虚拟机里。想用 Apple 芯片加速，请在本机直接运行。
+- **codex 路由**两个镜像里都没有：它驱动的是宿主机上已登录的 `codex` 程序，程序和登录状态都不在容器里。Docker 里请用 API 路由。
 
 如果想自己构建镜像而不是拉取：
 
