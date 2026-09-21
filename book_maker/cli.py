@@ -2238,6 +2238,27 @@ def parse_args(argv):
     return build_parser().parse_args(argv)
 
 
+# Said in one place because two runs have to say it: `main` refuses the pair
+# below, and the `--to-epub` harness refuses it *before* it pays for a PDF
+# extraction, which is the only way an operator hears it in time. The
+# condition is the parsed options and nothing else -- no endpoint, no
+# translator -- so both callers can ask it at the moment they can act on it.
+PARALLEL_SESSION_REFUSAL = (
+    "--parallel-workers is not supported with --use_context session: one "
+    "history is the context, and a worker cannot share it. Use bare "
+    "--use_context to keep the workers, or drop --parallel-workers to keep "
+    "the session."
+)
+
+
+def parallel_session_conflict(options):
+    """Whether this command line asks for workers and one session history."""
+    return (
+        getattr(options, "parallel_workers", 1) > 1
+        and getattr(options, "context_mode", None) == "session"
+    )
+
+
 def run_to_epub(options, argv):
     """`--to-epub` on a PDF: the bundle pipeline instead of the PDF loader.
 
@@ -2500,13 +2521,8 @@ def main(argv=None, *, markdown_loader_class=None):
 
     # Session mode is one growing history. Workers cannot share it, and one
     # each is window mode at session prices.
-    if options.parallel_workers > 1 and options.context_mode == "session":
-        print(
-            "[bold red]Error: --parallel-workers is not supported with "
-            "--use_context session: one history is the context, and a worker "
-            "cannot share it. Use bare --use_context to keep the workers, or "
-            "drop --parallel-workers to keep the session.[/bold red]"
-        )
+    if parallel_session_conflict(options):
+        print(f"[bold red]Error: {PARALLEL_SESSION_REFUSAL}[/bold red]")
         exit(1)
 
     # Parallel workers each get a clone carrying their own chapter context.
