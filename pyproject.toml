@@ -58,6 +58,10 @@ bbook_maker = "book_maker.cli:main"
 [project.urls]
 Homepage = "https://github.com/yihong0618/bilingual_book_maker"
 
+# The three requirement files are regenerated together by
+# tools/export_requirements.sh (hash-pinned exports of the default, pdf and
+# ocr groups from one lock); the autoexport entry below predates the split
+# and covers the base file only.
 [tool.pdm]
 plugins = ["pdm-autoexport"]
 [[tool.pdm.autoexport]]

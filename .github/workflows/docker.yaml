@@ -65,6 +65,13 @@ jobs:
         with:
           # metadata-action lowercases the repository name for us.
           images: ghcr.io/${{ github.repository }}
+          # A semver tag would otherwise add `latest` implicitly, for both
+          # matrix entries, so a release could publish the OCR image as
+          # `latest`. The rolling tags are the explicit `raw` rule below and
+          # nothing else: `latest`/`ocr` follow the default branch, releases
+          # get `<version>` and `<version>-ocr`.
+          flavor: |
+            latest=false
           tags: |
             type=raw,value=${{ matrix.rolling }},enable={{is_default_branch}}
             type=semver,pattern={{version}},suffix=${{ matrix.suffix }}
