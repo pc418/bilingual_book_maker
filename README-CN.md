@@ -30,7 +30,7 @@ bilingual_book_maker 是一个 AI 翻译工具，使用 ChatGPT 帮助用户制�
 `--provider` 是另一种传凭据的方式，通过 JSON 配置文件 `bbm_providers.json`。
 
 epub 标签分类在支持 JSON Schema 的接口上自动开启，在其他任何能对话的接口（含 codex 路由和普通转售代理）上也会开启，改为让模型直接回答 `skip`/`translate`；只有完全不能对话的路由（机器翻译引擎）才只翻译 `p` 标签，
-因此诗歌等内容可能不会被翻译。详见计划模式。
+因此诗歌等内容可能不会被翻译。详见[计划模式](#计划模式)。
 
 旧参数（`--model gpt4o`、`--model gemini`、`--openai_key` 等）仍然可用：详见
 [模型与语言](./docs/model_lang.md)。
@@ -256,6 +256,96 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 - 翻译完会生成一本 `{book_name}_bilingual.epub` 的双语书
 - 如果出现了错误或使用 `CTRL+C` 中断命令，不想接下来继续翻译了，会生成一本 `{book_name}_bilingual_temp.epub` 的书，直接改成你想要的名字就可以了
 
+## 功能
+
+这三个开关改变的是一本书被怎样读取和翻译，而不是请求发往哪里。每个都只是一个参数；本节说的是什么时候该用、用的时候盯着什么。
+
+### 计划模式
+
+**做什么。** EPUB 默认通过一份计划来翻译：加载器把整本书切分成翻译单元（段落、标题、列表项、表格单元格、引用块、诗行、图注，凡是带文字的块级元素），按标签签名分组，问模型哪些签名值得翻译，把答案写进 `<book>_plan.json`。随后连续的单元合并进同一个请求，直到 token 预算（`--accumulated_num`）或单元上限（`--max-batch-units`），诗行和短句因此变得便宜。没有计划时只翻译 `--translate-tags` 选中的标签，默认是 `<p>`，不在 `<p>` 里的诗歌或表格会悄悄留在原文。
+
+**什么时候用。** 只要是 EPUB 加 LLM 路由，就一直用：它是默认值，不需要参数。书不寻常时（教材、双语版、正文不在 `<p>` 里的书）先预览：`--plan-dry-run` 打印按签名分组的覆盖表并写出计划文件，不需要 key，不翻译任何东西，付费之前就能看到哪些会被跳过；它遵守 `--only_filelist` / `--exclude_filelist`。想要和旧的 `--translate-tags` 完全一样的行为，用 `--plan-classify none` 关掉。
+
+```shell
+# 预览：哪些会翻、哪些会跳过（不需要 key）
+python3 make_book.py --book_name my_book.epub --plan-dry-run
+# 默认运行：用翻译模型分类，然后翻译
+python3 make_book.py --book_name my_book.epub --key ${key}
+# 不分类：翻译分区里的每一个单元
+python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify all
+# 自己决定计划，或交给 coding agent：写出计划、打印指引后停下；
+# 之后再跑同一条命令即翻译
+python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
+```
+
+- `--plan-classify` 决定计划怎么判定：`auto`（默认：由翻译模型判定，在能验证接口严格执行 JSON schema 时走结构化输出，否则走普通对话，要求精确回答 `skip`/`translate`/`unsure`；unsure 和解析不了的行一律翻译）、`none`、`all`、`model`（同 auto，但有未判定的行时停止而不是回退）、`agent`。`--plan-classify-model X` 用另一个模型分类；显式指定后，分类失败会中止而不是回退。
+- `--plan-min-coverage`（默认 0.5）：计划覆盖的正文比例低于该值时中止。`0` 关闭该闸门；高于 0.9 的值多半会在分类已付费之后才中止。
+- `<book>_plan.json` 会被同一本书之后的每次运行复用，`--test` 也一样；想重新分类先删掉它。`--test` 分类的是整本书而不是那一小段，运行时会说明。
+
+**注意事项。**
+
+- 仅限 EPUB。Markdown、txt、srt 没有标签可以规划，计划参数在那里会被报告为忽略。
+- 不能对话的路由（`google`、`deepl`、`caiyun`、`tencent`、`customapi`）没有模型可问，运行回退到 `--translate-tags` 选中的标签；在这些路由上要求 `--plan-classify model` 会直接停止。
+- 自动开启的计划在建不起来时、或续跑一个标签模式写下的断点时，会打印原因并退回标签模式；显式要求的计划则停止。`--retranslate`、`--batch`、`--sentence_mode` 与计划相矛盾，不能同用。
+- 小模型和本地模型：普通对话分类只要求一个词的回答，其余一律按策略翻译，所以弱模型的偏差是翻得太多，不是翻得太少。它判定的行在计划文件里标为 `unnamed (…)`。分类反复失败时，`--plan-classify all` 跳过分类。合并请求的默认值也出于同一原因刻意偏小；强端点上可以调高 `--accumulated_num` 和 `--max-batch-units`，运行开始打印错位恢复提示时再调回去。
+- `--parallel-workers` 加合并请求（`--accumulated_num` 大于 1）不记录进度，`--resume` 无从续跑；三者同用会被拒绝。
+
+### 会话模式
+
+**做什么。** `--use_context session` 为整本书维护一份只追加的对话，而不是每次请求重发最近几对原译文（不带值的 `--use_context`，即 window 模式）。每个请求都带着整段历史，所以在支持提示缓存的端点上，模型以缓存价重读大约一章的内容，人名、语域和术语得以前后一致。历史达到 `--context-compact-at`（默认 `8192` 估算 token，含种子）时，模型写一份约 300 token 的交接报告，其摘要开启下一个窗口；`<book>_handoff.md` 保存最新一份，`--resume` 会读回它。
+
+**什么时候用。** 小说和任何同一批名字、术语反复出现的长文本，且端点支持提示缓存（OpenAI、Anthropic，以及它们前面的多数网关）。PDF 路由上翻译论文也应当用它，PDF 会被提取成大量短块。端点没有缓存、模型上下文很小、或者想用 `--parallel-workers` 时，用 window 模式。codex 路由不论是否要求都是会话：它的线程就是历史。
+
+```shell
+python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
+# 输入上限很小的模型：把窗口限制到它的上限（最小 1500）
+python3 make_book.py --book_name my_book.epub --key ${key} --use_context session --context-compact-at 4000
+# 不写交接报告直接滚动（更省，接缝处没有连续性）
+python3 make_book.py --book_name my_book.epub --key ${key} --use_context session --no-context-compact
+```
+
+- `--context-compact-at N`：整个窗口的预算，含交接种子，所以可以直接设成模型的输入上限。最小 `1500`；再小的窗口几乎全是种子和接缝，改用 window 模式。在通过普通对话分类计划的端点上，它也限制分类器自己的线程（那里只重启，没有交接）。
+- `--no-context-compact`：从不索要报告；下一个窗口从空白开始。
+- `--glossary-auto on` 保留每份交接报告确立的译法，让反复出现的名字跨过接缝。它依赖模型准确报告自己的译法，所以需要一个够强的模型；摘要本身已经带着反复出现的名字，`--glossary` 可以钉住要紧的那几个，两者都不需要。
+
+**注意事项。**
+
+- 盯着进度条上的 `cached=`。十几个请求之后仍是 0，说明端点没有提示缓存，每个请求都在按全价付整段历史：Ctrl+C，改用 window 模式重跑。
+- 与 `--parallel-workers` 同用会被拒绝（一条历史不能在 worker 之间共享），与 `--model_list` 同用也会（缓存按模型计，一场对话会由几个模型来写）。
+- 仅限 EPUB 和 Markdown；txt 和 srt 加载器不带上下文，压缩参数在那里会被报告为忽略。
+- 计划模式之外（Markdown 书，或 `--plan-classify none`）不合并请求，每个段落单独一个请求，每次都重读整段历史。调高 `--accumulated_num` 让几个段落共用一个请求；运行开始时会警告这一点。
+- 交接报告由模型来写。小模型写出的报告可能很差；压缩之后译文漂移，就用 `--glossary` 钉住术语，或者加 `--no-context-compact` 接受一个空白的接缝。
+- Ctrl+C 留下常规断点；`--resume` 续跑并读回 `<book>_handoff.md`，下一个窗口仍然继承摘要。
+
+### PDF 转 EPUB
+
+**做什么。** `--to-epub` 用 OpenDataLoader 把 PDF 的文字层读成 Markdown，用 Markdown 加载器翻译它，再由 Pandoc 生成一本可重排的双语 EPUB，导航跟随标题。工作目录 `<name>_book/` 在 PDF 旁边：`source.md`、提取出的图片、`book_bilingual.md` 和一份清单；成书复制为 `<name>_bilingual.epub`。重跑同一条命令会复用提取结果和已完成的翻译；想重新翻译删掉 `book_bilingual.md`，想改原文就在翻译之前编辑 `source.md`。不加该参数时 PDF 走旧路由，输出双语 `.txt` 和 `--pdf_layout` 的版式。
+
+**什么时候用。** 想在电子书阅读器上读、带目录的论文或文字版书籍。该路由原样接受 Markdown 加载器的全部参数：`--use_context session`（推荐，PDF 会被提取成大量短块）、`--glossary`、`--parallel-workers`（不能与会话同用）、`--test` 用来便宜地看一眼。
+
+```shell
+# 先看一眼：提取后只翻译开头几个块
+python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --test
+# 完整运行
+python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context session
+# 扫描版 PDF，或者表格要紧的文字版 PDF
+python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
+```
+
+- `--with-ocr` 启动 OCR 后端（`opendataloader-pdf[hybrid]` 依赖中的 docling 模型，首次运行时下载）。没有文字层的页面在不加它时会被拒绝，绝不会被悄悄跳过。文字版 PDF 上它额外提供表格和版面识别，不会读取图片。不加它时只运行 Java 引擎：没有模型，没有下载，也没有需要加速的东西。
+- `--no-gpu` 让模型留在 CPU 上；默认自动检测加速器，没有时自行回退到 CPU。
+- 需要：PATH 中的 Java 和 Pandoc，以及 `opendataloader-pdf` 包。
+
+**注意事项。**
+
+- **付费翻译整本之前先读 `source.md`**，至少读标题：它们会变成目录。提取器的标题识别不可靠：arXiv 印章、作者行、首字下沉都可能变成标题，Word 生成的 PDF 可能几乎没有标题，`--with-ocr` 会把所有标题压成同一级。在工作目录里改好 Markdown 再重跑，提取不会重做。
+- 图表保留为图片，图中标注不翻译。把文字藏在裁剪窗口下的图（一种让一页读出几千行的 PDF 手法）会在提取前被栅格化，终端上每页一行；直接画在页面上的图表不会被捕获，坐标轴标签可能以短段落的形式漏进正文。一页提取出的文字远超印刷页容量时会警告，检查那一页。
+- 表格：Java 引擎会丢掉表格（变成连成一片的段落）；`--with-ocr` 保留表格，但见过它改动单元格文字，在 Word 生成的 PDF 上还见过它不加警告地丢掉一整段正文。`--with-ocr` 的 `source.md` 要对照 PDF 核过再信。
+- 提取器不转义正文里的 Markdown 语法。含 `\s`、`[u](y)` 或 `<k>` 的句子可能在翻译前被当作原始 TeX、缺失的链接目标或原始 HTML 而拒绝；消息会指出是哪一块。在 `source.md` 里转义后重跑。
+- 旧的 dvips 或 Ghostscript PDF 里的行间公式会被拆碎、乱序；没有 Unicode 映射的字体会让引擎停下，没有成书。这两项我们这边没有解法。
+- EPUB 不带 `bbm_translation_metadata.json`，也不内嵌术语表（书由 Pandoc 生成），`--no_disclosure` 在该路由上暂未生效：署名行总会加上。`--glossary-auto` 只在压缩发生时学习，短论文在默认预算下学不到任何东西。
+- 除 `--to-epub` 外的每个 PDF 参数在没走该路由时都会被报告为忽略；在非 PDF 书上加 `--to-epub` 会停止运行。
+
 ## 参数说明
 
 - `--model`:
@@ -328,30 +418,9 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
   指定需要翻译的标签，使用逗号分隔多个标签。epub 由 html 文件组成，默认情况下，只翻译 `<p>` 中的内容。例如: `--translate-tags h1,h2,h3,p,div`
 
-- `--plan-classify`
-  **计划模式（仅 epub）**：使用进行翻译的模型，或 codex / claude code，对 epub 标签进行分类。
+- `--plan-classify`（仅 epub）、`--plan-dry-run`、`--plan-min-coverage`、`--max-batch-units`：
 
-  取值决定每个标签的翻译与否如何判断：
-
-  - `auto`（默认）：书籍是 epub 时，问 LLM 该翻哪段。只有路由不能对话时，以及计划出错时，仅翻译 `--translate-tags` 选中的标签。经纯会话判定的行在 `<book>_plan.json` 中以 `unnamed (…)` 内容类型标注判定方式。
-  - `none`：不建计划，仅 `--translate-tags` 选中的标签，未选中则仅翻译`p`，即多数正文。
-  - `all`：翻译整个分区，不做分类。
-  - `model`：使用进行翻译的 LLM 进行判断，然后翻译。可用 `--plan-classify-model X` 指定分类用的模型。
-  - `agent`：对选中书籍输出分类计划。并输出指引，直接复制至你的coding tool进行分类
-  （也可以自己手工完成）。之后再次以 `--plan-classify agent` 运行翻译。
-
-  - `--plan-dry-run`：仅打印按标签签名分组的表格，写出 `<book>_plan.json` 后退出。同时遵守 `--only_filelist` / `--exclude_filelist`。
-  - `<book>_plan.json`：翻译计划；想重新分类请先删除该文件。
-  - `--plan-min-coverage`（默认 0.5，范围 0–1）：如果计划覆盖的正文比例低于该阈值，计划模式会直接报错退出。`0` 关闭该闸门，高于 `0.9` 的值多半会在分类已付费之后中止——两种情况都会警告。
-
-  - `--max-batch-units`:一个合并请求最多携带的段落数。想要更少、更大的请求（低成本）就把它和 `--accumulated_num` 一起调高。运行开始打印错位恢复等退化提示时则应调低。内容量同时由 token 预算（`--accumulated_num`）约束。
-
-  ```shell
-  # 使用模型判断哪些标签需要翻译
-  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify model
-  # 或交给 agent 判断：停下、打印指引，然后由你交给你的 AI
-  python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
-  ```
+  计划模式：整本书切分后由模型决定哪些标签签名要翻译。EPUB 默认开启；取值、预览和注意事项见[计划模式](#计划模式)。
 
 - `--exclude-translate-tags`:
 
@@ -401,21 +470,9 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
     使用`--use_context`选项时，使用`--context_paragraph_limit`设置上下文段落数限制（仅 window 模式）。
 
-- `--use_context session`:
+- `--use_context session`、`--context-compact-at`、`--no-context-compact`：
 
-  session 模式维护一份
-  只追加的历史，每次按缓存价重读，所以对于支持缓存的的端点，上下文可以长到约整章。历史达到压缩预算时，模型
-  写一份交接报告，用来播种下一个窗口，并追加到 `<book>_handoff.md`。
-  注意看进度条上的
-  `cached=`：若十几个请求之后仍是 0，说明端点可能没有缓存机制，可Ctrl+C后改用 window 模式。
-
-  - `--context-compact-at`:
-
-    仅 session 模式。历史在被压缩成交接报告前可以达到的估算 token 预算。默认 `8192`，最小值 `500`。
-
-  - `--no-context-compact`:
-
-    仅 session 模式。跳过交接报告：历史仍在达到预算时滚动，但下一个窗口从空白开始，不继承摘要。更省钱，代价是接缝处的连续性。
+  会话模式：一份不断增长的历史代替重发的窗口，达到预算时压缩成交接报告。何时划算、何时不划算见[会话模式](#会话模式)。
 
 - `--glossary` / `--terminology`:
 
@@ -461,26 +518,9 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   为 PDF 输入选择额外生成的双语 PDF 版式。默认 `none` 不额外生成 PDF；
   `all` 会同时尝试上下对照和左右对照。双语 TXT 和 EPUB 输出不受该参数影响。
 
-- `--to-epub`（仅限 PDF）：
+- `--to-epub`、`--with-ocr`、`--no-gpu`（仅限 PDF）：
 
-  读取 PDF 的文字层，翻译得到的 Markdown，并在 PDF 旁生成带导航的双语 EPUB
-  `<name>_bilingual.epub`。图表保留为图片，图中的标注不会被当作正文翻译。工作目录保留在
-  `<name>_book/`：可以先编辑其中的 `source.md` 再翻译，重复执行同一条命令会从已完成的
-  部分继续，而不会重新提取或重新翻译。需要 Java、PATH 中的 Pandoc，以及
-  `opendataloader-pdf` 包。不加该参数时，PDF 仍按原有方式翻译。翻译论文或整本书时建议
-  加上 `--use_context session`：PDF 会被提取成大量短块，会话上下文能让术语前后一致；
-  默认是逐块独立翻译。`--parallel-workers` 不能与之同用：一个会话只有一条历史。
-
-- `--with-ocr`（仅限 PDF，需配合 `--to-epub`）：
-
-  启动 OCR 后端，即 `opendataloader-pdf[hybrid]` 依赖中的 docling 模型（首次运行时下载）。
-  扫描版 PDF 必须加上：没有文字层的页面在不加该参数时会被拒绝，绝不会被悄悄跳过。对于
-  文字版 PDF，它额外提供表格和版面识别，不会读取图片。不加该参数时只运行 Java 引擎：
-  没有模型，没有下载，也没有需要加速的东西。
-
-- `--no-gpu`（仅限 PDF，需配合 `--to-epub --with-ocr`）：
-
-  即使有可用的加速器，也在 CPU 上运行模型。默认会自动检测加速器，没有时回退到 CPU。
+  PDF 阅读版：文字层变成 Markdown，Markdown 变成带导航的双语 EPUB。工作目录、OCR 以及 `source.md` 里该核对什么，见 [PDF 转 EPUB](#pdf-转-epub)。
 
 - `--sentence_mode`:
 
