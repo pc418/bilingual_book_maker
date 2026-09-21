@@ -42,7 +42,7 @@ from pathlib import Path
 from .bundle import EXTRACTION_JOB, one_based_pages, parse_pages, sha256_file
 from .errors import PipelineError
 from .importer import import_markdown
-from .pdf_sanitize import sanitize_pdf
+from .pdf_sanitize import picture_share, sanitize_pdf
 from .messages import (
     BACKEND_FAILED,
     DEVICE_CPU_FALLBACK,
@@ -52,6 +52,7 @@ from .messages import (
     ENGINE_LAYOUT,
     ENGINE_OCR,
     EXTRACT_DONE,
+    FIGURE_KEPT,
     FIGURES_RASTERIZED,
     EXTRACT_PROGRESS_LABEL,
     HIDDEN_TEXT_RASTERIZED,
@@ -422,7 +423,7 @@ def text_layer_report(pdf_path, page_range=None):
                 textpage.close()
             chars = len(text.strip())
             if not chars or (
-                chars < SCAN_MAX_CHARS and _picture_share(page) >= SCAN_IMAGE_AREA
+                chars < SCAN_MAX_CHARS and picture_share(page) >= SCAN_IMAGE_AREA
             ):
                 missing.append(number)
             page.close()
@@ -435,24 +436,6 @@ def text_layer_report(pdf_path, page_range=None):
     finally:
         document.close()
     return missing, examined
-
-
-def _picture_share(page):
-    """How much of the page its page-level pictures cover, 0 to 1."""
-    import pypdfium2.raw as raw
-
-    width, height = page.get_size()
-    if not width or not height:
-        return 0.0
-    covered = 0.0
-    for obj in page.get_objects(max_depth=0):
-        if obj.type != raw.FPDF_PAGEOBJ_IMAGE:
-            continue
-        left, bottom, right, top = obj.get_bounds()
-        covered += max(0.0, min(right, width) - max(left, 0.0)) * max(
-            0.0, min(top, height) - max(bottom, 0.0)
-        )
-    return min(1.0, covered / (width * height))
 
 
 def _read_from(log, offset):
@@ -788,23 +771,35 @@ def _backend_options(backend, triage):
 
 
 def _rasterized_lines(report):
-    """What the operator is told about rasterized figures: one line per
-    page hiding text, one line for every drawn figure together."""
+    """What the operator is told about the figures: one line per page whose
+    hidden text is now in a picture, one line for every drawn figure
+    together, and one line per figure that could not be drawn and stays --
+    its text is then still there for the engines to read, and the operator
+    is told so rather than told it was dealt with."""
     lines = []
     figures = {}
     for entry in report:
         hidden = sum(
             item["hidden"]
             for item in entry["objects"]
-            if item["reason"] == "hidden-text"
+            if item["reason"] == "hidden-text" and "rasterized" in item
         )
         if hidden:
             lines.append(
                 HIDDEN_TEXT_RASTERIZED.format(page=entry["page"], hidden=hidden)
             )
-        drawn = sum(1 for item in entry["objects"] if item["reason"] == "figure")
+        drawn = sum(
+            1
+            for item in entry["objects"]
+            if item["reason"] == "figure" and "rasterized" in item
+        )
         if drawn:
             figures[entry["page"]] = drawn
+        for item in entry["objects"]:
+            if item.get("kept"):
+                lines.append(
+                    FIGURE_KEPT.format(page=entry["page"], hidden=item["hidden"])
+                )
     if figures:
         lines.append(
             FIGURES_RASTERIZED.format(

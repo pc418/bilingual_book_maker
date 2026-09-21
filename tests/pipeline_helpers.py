@@ -129,7 +129,11 @@ def write_pdf(
     figure_clip=True,
     figure_draws=True,
     figure_scale=1.0,
+    figure_shown=1,
     scan=None,
+    scan_nested=False,
+    text_clip=None,
+    cropbox=None,
 ):
     """A real PDF, one page per entry; `None` writes a page with no text.
 
@@ -144,9 +148,17 @@ def write_pdf(
     figure whose clipped-away copies flooded the extraction (260920).
     `figure_scale` enlarges it; 2.5 makes it a whole-page wrapper.
 
+    `figure_shown` is how many of its lines the window shows.
+
     `scan=(page numbers)` covers those pages with one picture, the way a
     scanner's PDF does; whatever text the page entry carries sits on top of
-    it, as a stamped page number would.
+    it, as a stamped page number would. `scan_nested` draws that picture
+    from inside a Form XObject, as some scanners' producers do.
+
+    `text_clip=(left, bottom, width, height)` puts every page's own text
+    under that clip window, the page-level shape of clipped-away text.
+    `cropbox=(left, bottom, right, top)` is written on the page tree, so
+    every page inherits it rather than carrying its own.
     """
     objects = []
     figure_page, figure_lines = figure if figure else (None, ())
@@ -184,6 +196,10 @@ def write_pdf(
                 b"BT /F1 18 Tf 72 %d Td (%s) Tj ET" % (700 - 24 * i, escape(line))
                 for i, line in enumerate(str(text).split("\n"))
             )
+            if text_clip is not None:
+                stream = (
+                    b"q %.2f %.2f %.2f %.2f re W n " % tuple(text_clip) + stream + b" Q"
+                )
         resources = b"/Font << /F1 %d 0 R >>" % font
         if number in scan:
             if picture is None:
@@ -192,8 +208,17 @@ def write_pdf(
                     b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\n"
                     b"stream\n\xc0\nendstream"
                 )
-            stream = b"q 612 0 0 792 0 0 cm /Im1 Do Q " + stream
-            resources += b" /XObject << /Im1 %d 0 R >>" % picture
+            if scan_nested:
+                wrapper = add(
+                    b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] "
+                    b"/Resources << /XObject << /Im1 %d 0 R >> >> /Length 30 >>\n"
+                    b"stream\nq 612 0 0 792 0 0 cm /Im1 Do Q\nendstream" % picture
+                )
+                stream = b"q /Sx Do Q " + stream
+                resources += b" /XObject << /Sx %d 0 R >>" % wrapper
+            else:
+                stream = b"q 612 0 0 792 0 0 cm /Im1 Do Q " + stream
+                resources += b" /XObject << /Im1 %d 0 R >>" % picture
         if number == figure_page:
             # Eight bars, the way a chart draws: enough paths to be a figure
             # by drawing alone (FIGURE_MIN_DRAWINGS), where a callout box's
@@ -213,17 +238,26 @@ def write_pdf(
                 b"/Resources << /Font << /F1 %d 0 R >> >> /Length %d >>\n"
                 b"stream\n%s\nendstream" % (font, len(drawing), drawing)
             )
-            # A window over the form's first line and nothing below it.
-            window = b"0 272 300 28 re W n " if figure_clip else b""
+            # A window over the form's first `figure_shown` lines and
+            # nothing below them.
+            bottom = 284 - 14 * figure_shown
+            window = (
+                b"0 %d 300 %d re W n " % (bottom, 300 - bottom) if figure_clip else b""
+            )
             stream += b" q %.2f 0 0 %.2f 10 10 cm %s/Fx Do Q" % (
                 figure_scale,
                 figure_scale,
                 window,
             )
-            if picture is not None and number in scan:
+            if picture is not None and number in scan and not scan_nested:
                 resources = resources.replace(
                     b"/XObject << /Im1 %d 0 R >>" % picture,
                     b"/XObject << /Im1 %d 0 R /Fx %d 0 R >>" % (picture, form),
+                )
+            elif picture is not None and number in scan:
+                resources = resources.replace(
+                    b"/XObject << /Sx %d 0 R >>" % wrapper,
+                    b"/XObject << /Sx %d 0 R /Fx %d 0 R >>" % (wrapper, form),
                 )
             else:
                 resources += b" /XObject << /Fx %d 0 R >>" % form
@@ -237,9 +271,11 @@ def write_pdf(
             )
         )
     objects[catalog - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % tree
-    objects[tree - 1] = b"<< /Type /Pages /Kids [%s] /Count %d >>" % (
+    inherited = b"/CropBox [%.2f %.2f %.2f %.2f]" % tuple(cropbox) if cropbox else b""
+    objects[tree - 1] = b"<< /Type /Pages /Kids [%s] /Count %d %s >>" % (
         b" ".join(b"%d 0 R" % kid for kid in kids),
         len(kids),
+        inherited,
     )
 
     out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")

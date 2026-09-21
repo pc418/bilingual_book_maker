@@ -36,6 +36,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     DEVICE_CPU_FALLBACK,
     DEVICE_SELECTED,
     DEVICE_UNAVAILABLE,
+    FIGURE_KEPT,
     FIGURES_RASTERIZED,
     HIDDEN_TEXT_RASTERIZED,
     JAVA_REQUIRED,
@@ -1178,6 +1179,7 @@ FIGURE_REPORT = [
                 "hidden": 85525,
                 "visible": 896,
                 "bounds": [0, 0, 1, 1],
+                "rasterized": [0, 0, 1, 1],
             }
         ],
     },
@@ -1190,6 +1192,7 @@ FIGURE_REPORT = [
                 "hidden": 0,
                 "visible": 209,
                 "bounds": [0, 0, 1, 1],
+                "rasterized": [0, 0, 1, 1],
             },
             {
                 "index": 5,
@@ -1197,6 +1200,7 @@ FIGURE_REPORT = [
                 "hidden": 0,
                 "visible": 40,
                 "bounds": [0, 0, 1, 1],
+                "rasterized": [0, 0, 1, 1],
             },
         ],
     },
@@ -1570,3 +1574,112 @@ def test_verbose_backend_does_not_block_on_unread_output(tmp_path):
         process = instance.process
         assert marker.read_text() == "ready"
     assert process.poll() is not None
+
+
+def test_a_figure_that_drew_nothing_is_reported_as_kept_not_rasterized():
+    # Codex re-verify 260920: the pass leaves an object whose render came
+    # out empty; the operator was still told it was rasterized.
+    report = [
+        {
+            "page": 4,
+            "objects": [
+                {
+                    "index": 1,
+                    "reason": "hidden-text",
+                    "hidden": 500,
+                    "visible": 3,
+                    "bounds": [0, 0, 1, 1],
+                    "kept": True,
+                }
+            ],
+        }
+    ]
+    assert opendataloader._rasterized_lines(report) == [
+        FIGURE_KEPT.format(page=4, hidden=500)
+    ]
+
+
+WRAPPED_BODY = ["A line of a page body wrapped in a form."] * 20  # 800 chars
+
+
+def test_a_page_body_wrapped_with_rules_is_left_as_text(tmp_path):
+    # Codex re-verify 260920: a form drawing eight rules around a thousand
+    # characters of prose is a page body, not a chart, however many paths
+    # it draws.
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "body.pdf", ["Body."], figure=(1, WRAPPED_BODY), figure_clip=False
+    )
+    assert report_of(path) == []
+
+
+def test_a_form_showing_more_text_than_it_hides_is_left_as_text(tmp_path):
+    # Twelve of twenty lines shown: 320 hidden characters are past the
+    # threshold, but the 480 shown would be lost with them.
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "overflow.pdf",
+        ["Body."],
+        figure=(1, WRAPPED_BODY),
+        figure_shown=12,
+        figure_draws=False,
+    )
+    assert report_of(path) == []
+    hidden_mostly = write_pdf(
+        tmp_path / "hidden.pdf",
+        ["Body."],
+        figure=(1, WRAPPED_BODY),
+        figure_shown=1,
+        figure_draws=False,
+    )
+    ((figure,),) = [entry["objects"] for entry in report_of(hidden_mostly)]
+    assert figure["reason"] == "hidden-text"
+    assert (figure["hidden"], figure["visible"]) == (760, 40)
+
+
+def test_page_text_partly_under_a_clip_stays(tmp_path):
+    # Codex re-verify 260920: a page-level run a clip cuts in two was taken
+    # out whole, its shown part with it. Only a run nothing of which shows
+    # is taken out.
+    pdfium_or_skip()
+    partly = write_pdf(
+        tmp_path / "partly.pdf", ["ABCDEFGHIJKLMNO"], text_clip=(72, 0, 30, 792)
+    )
+    assert report_of(partly) == []
+    wholly = write_pdf(
+        tmp_path / "wholly.pdf", ["ABCDEFGHIJKLMNO"], text_clip=(0, 0, 612, 100)
+    )
+    ((run,),) = [entry["objects"] for entry in report_of(wholly)]
+    assert run["reason"] == "clipped-text"
+    assert run["hidden"] == len("ABCDEFGHIJKLMNO")
+
+
+def test_an_inherited_crop_box_is_the_page(tmp_path):
+    # Codex re-verify 260920: a crop box on the page tree, not the page,
+    # was read as the media box, so a form that fills the cropped page
+    # counted as a figure rather than a wrapper.
+    pdfium_or_skip()
+    # (No page text: the fixture writes it at the top of the letter page,
+    # outside this crop box, where it is rightly invisible.)
+    path = write_pdf(
+        tmp_path / "cropped.pdf",
+        [None],
+        figure=(1, FIGURE_LINES[:3]),
+        figure_clip=False,
+        cropbox=(0, 0, 320, 320),
+    )
+    assert report_of(path) == []
+
+
+def test_a_scan_drawn_from_inside_a_form_is_still_a_scan(tmp_path):
+    # Codex re-verify 260920: the page image wrapped in a Form XObject
+    # counted as no picture at all, and the stamped number made the page
+    # "typed".
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "nested.pdf",
+        ["17", "Page two is typed and says so."],
+        scan=(1,),
+        scan_nested=True,
+    )
+    assert real_text_layer_report(path) == ([1], 2)

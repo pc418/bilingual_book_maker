@@ -55,6 +55,11 @@ HIDDEN_TEXT_RASTERIZED = (
     "Page {page}: a figure carrying {hidden} characters of clipped-away text "
     "was rasterized; the reading edition shows it as a picture."
 )
+FIGURE_KEPT = (
+    "Page {page}: a figure hiding {hidden} characters of clipped-away text "
+    "drew nothing on its own and was left in place; that text may reach the "
+    "extraction, so read source.md for that page."
+)
 FIGURES_RASTERIZED = (
     "Page(s) {pages}: {count} vector figure(s) rasterized; the reading edition "
     "shows them as pictures instead of their labels."

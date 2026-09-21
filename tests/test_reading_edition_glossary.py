@@ -148,7 +148,7 @@ def test_the_translate_stage_is_handed_both_flags(tmp_path, monkeypatch):
     monkeypatch.setattr(to_epub, "find_pandoc", lambda explicit=None: "pandoc")
     handed = []
 
-    def prepare_stage(bundle, source, *, pandoc, device=None, progress=True):
+    def prepare_stage(bundle, source, *, pandoc, device=None, ocr=False, progress=True):
         bundle.source.write_text(SOURCE, encoding="utf-8")
 
     def translate_stage(bundle, options, *, pandoc):

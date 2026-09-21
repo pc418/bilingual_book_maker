@@ -51,6 +51,14 @@ WHOLE_PAGE_AREA = 0.7
 # drawing alone. A callout box is one rectangle around prose; the paper's
 # plainest chart drew seventeen. A guard, not a measurement.
 FIGURE_MIN_DRAWINGS = 8
+# The most visible text a form may carry and still be a figure by drawing
+# alone. A chart's labels, legend and axis titles run to a few hundred
+# characters; a page body some producers wrap in a form with a few rules
+# runs to a thousand and more, and it must stay text. Six hundred is a
+# guess between the two, not a measurement; a chart with more labels than
+# that keeps its labels as prose, which is a blemish, where a page body
+# turned into a picture is a loss.
+FIGURE_MAX_LABEL_CHARS = 600
 # Resolution of the picture that replaces a figure. Body text in a figure
 # is small; 200 DPI keeps it legible in a reader without the file bloating.
 RASTER_DPI = 200
@@ -177,8 +185,35 @@ def _visible_fraction(raw, obj, page_box):
 
 
 def _page_box(page):
-    left, bottom, right, top = page.get_cropbox()
+    # The effective page: media box cut to the crop box, inherited or not.
+    left, bottom, right, top = page.get_bbox()
     return (float(left), float(bottom), float(right), float(top))
+
+
+def picture_share(page):
+    """How much of the effective page its pictures cover, 0 to 1.
+
+    Pictures at any depth, in page space, cut to their clips: a scanner's
+    page image is as often wrapped in a form as drawn directly. Overlaps
+    are summed, not unioned; two pictures each covering half a page make
+    a scan by this measure too, which is the right answer for a page that
+    is pictures and nothing else.
+    """
+    pdfium, raw = _pdfium()
+    page_box = _page_box(page)
+    total = _area(page_box)
+    if total <= 0:
+        return 0.0
+    covered = 0.0
+    for obj in page.get_objects(max_depth=16):
+        if obj.type != raw.FPDF_PAGEOBJ_IMAGE:
+            continue
+        box, clip = _page_space(raw, obj)
+        shown = _intersect(box, page_box)
+        if clip is not None:
+            shown = _intersect(shown, clip)
+        covered += _area(shown)
+    return min(1.0, covered / total)
 
 
 def figure_report(document, page_numbers):
@@ -191,7 +226,9 @@ def figure_report(document, page_numbers):
     that draws at least `FIGURE_MIN_DRAWINGS` paths or pictures; both only
     when the form covers between `FIGURE_MIN_AREA` and `WHOLE_PAGE_AREA` of
     the page, and both replaced by a picture. `clipped-text`, a page-level
-    text object its own clip hides, removed as it is.
+    text object its own clip hides entirely, removed as it is; one that
+    shows any part stays, its hidden part reaching the extraction rather
+    than its shown part leaving the page.
     """
     pdfium, raw = _pdfium()
     report = []
@@ -229,7 +266,7 @@ def _examine(raw, page, textpage, page_box, index, top):
     bounds = top.get_bounds()
     if top.type == raw.FPDF_PAGEOBJ_TEXT:
         length = _text_length(raw, top.raw, textpage.raw)
-        if not length or _visible_fraction(raw, top, page_box) >= VISIBLE_FRACTION:
+        if not length or _visible_fraction(raw, top, page_box) > 0:
             return None
         return _entry(index, REASON_CLIPPED, length, 0, bounds)
     if top.type != raw.FPDF_PAGEOBJ_FORM:
@@ -251,9 +288,12 @@ def _examine(raw, page, textpage, page_box, index, top):
     area = _area(_intersect(bounds, page_box)) / _area(page_box)
     if not FIGURE_MIN_AREA <= area < WHOLE_PAGE_AREA:
         return None
-    if hidden >= HIDDEN_TEXT_THRESHOLD:
+    # A form that shows more text than it hides is a page body with an
+    # overflow, not a figure; its hidden part is a bounded leak where its
+    # shown part would be a loss.
+    if hidden >= HIDDEN_TEXT_THRESHOLD and hidden >= visible:
         return _entry(index, REASON_HIDDEN, hidden, visible, bounds)
-    if drawings >= FIGURE_MIN_DRAWINGS:
+    if drawings >= FIGURE_MIN_DRAWINGS and visible < FIGURE_MAX_LABEL_CHARS:
         return _entry(index, REASON_FIGURE, hidden, visible, bounds)
     return None
 
