@@ -122,14 +122,20 @@ def write_fixture(directory, text=FIXTURE):
     return book
 
 
-def write_pdf(path, pages=("Hello from an embedded text layer.",)):
+def write_pdf(path, pages=("Hello from an embedded text layer.",), figure=None):
     """A real PDF, one page per entry; `None` writes a page with no text.
 
     Built by hand rather than by a library: the tests need a file pdfium
     can actually open and read, and the only thing they vary is whether a
     page carries a text layer at all.
+
+    `figure=(page number, lines)` also draws a vector figure on that page:
+    a Form XObject writing `lines` of text, placed under a clip window so
+    small that only its first line shows -- the shape of the arXiv teaser
+    figure whose clipped-away copies flooded the extraction (260920).
     """
     objects = []
+    figure_page, figure_lines = figure if figure else (None, ())
 
     def add(body):
         objects.append(body)
@@ -142,26 +148,43 @@ def write_pdf(path, pages=("Hello from an embedded text layer.",)):
         b"/Encoding /WinAnsiEncoding >>"
     )
     kids = []
-    for text in pages:
+
+    def escape(text):
+        return (
+            str(text)
+            .replace("\\", r"\\")
+            .replace("(", r"\(")
+            .replace(")", r"\)")
+            .encode("ascii", "replace")
+        )
+
+    for number, text in enumerate(pages, start=1):
         if text is None:
             stream = b""
         else:
-            escaped = (
-                str(text)
-                .replace("\\", r"\\")
-                .replace("(", r"\(")
-                .replace(")", r"\)")
-                .encode("ascii", "replace")
+            stream = b"BT /F1 18 Tf 72 700 Td (" + escape(text) + b") Tj ET"
+        resources = b"/Font << /F1 %d 0 R >>" % font
+        if number == figure_page:
+            drawing = b"0 0 1 rg 0 0 300 300 re f " + b" ".join(
+                b"BT /F1 12 Tf 10 %d Td (%s) Tj ET" % (280 - 14 * i, escape(line))
+                for i, line in enumerate(figure_lines)
             )
-            stream = b"BT /F1 18 Tf 72 700 Td (" + escaped + b") Tj ET"
+            form = add(
+                b"<< /Type /XObject /Subtype /Form /BBox [0 0 300 300] "
+                b"/Resources << /Font << /F1 %d 0 R >> >> /Length %d >>\n"
+                b"stream\n%s\nendstream" % (font, len(drawing), drawing)
+            )
+            # A 300x20 window at (72, 372): the form's first line and
+            # nothing below it.
+            stream += b" q 1 0 0 1 72 100 cm 0 272 300 28 re W n /Fx Do Q"
+            resources += b" /XObject << /Fx %d 0 R >>" % form
         content = add(
             b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream)
         )
         kids.append(
             add(
                 b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] "
-                b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>"
-                % (tree, font, content)
+                b"/Resources << %s >> /Contents %d 0 R >>" % (tree, resources, content)
             )
         )
     objects[catalog - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % tree

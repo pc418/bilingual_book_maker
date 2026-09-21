@@ -42,16 +42,21 @@ from pathlib import Path
 from .bundle import EXTRACTION_JOB, one_based_pages, parse_pages, sha256_file
 from .errors import PipelineError
 from .importer import import_markdown
+from .pdf_sanitize import sanitize_pdf
 from .messages import (
     BACKEND_FAILED,
     DEVICE_CPU_FALLBACK,
     DEVICE_SELECTED,
     DEVICE_UNAVAILABLE,
+    ENGINE_LAYOUT,
+    ENGINE_OCR,
     EXTRACT_DONE,
     EXTRACT_PROGRESS_LABEL,
+    HIDDEN_TEXT_RASTERIZED,
     JAVA_REQUIRED,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
+    PAGE_TOO_DENSE,
     PAGES_SCOPE,
     PAGE_SCOPE,
     SCANNED_PAGES,
@@ -111,6 +116,11 @@ TRIAGE_AUTO = "auto"
 TRIAGE_FULL = "full"
 
 PAGE_MARKER = re.compile(r"<!--\s*page\s+(\d+)\s*-->")
+# More prose than a printed page can show. A dense two-column page at nine
+# points holds six or seven thousand characters; the measured failure
+# (arXiv 2609.20519, page 1) returned a hundred thousand. Well above the
+# first, well below the second; a warning, not a refusal.
+PAGE_CHARS_LIMIT = 12000
 COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
@@ -164,6 +174,7 @@ class HybridBackend:
         self,
         device,
         *,
+        ocr=True,
         host=HOST,
         port=None,
         readiness_timeout=READINESS_TIMEOUT,
@@ -174,6 +185,7 @@ class HybridBackend:
         probe=None,
     ):
         self.device = device
+        self.ocr = ocr
         self.host = host
         self.port = port or free_port(host)
         self.readiness_timeout = readiness_timeout
@@ -198,6 +210,12 @@ class HybridBackend:
         this machine. `--no-enrich-picture-description` is the default and
         is stated anyway, because an invented caption is the one output
         this pipeline must never translate.
+
+        `--no-ocr` when every selected page has a text layer: the models
+        otherwise read the pictures too, and a chart's labels come back as
+        paragraphs -- measured on a rasterized figure, whose panel titles
+        even came back as headings. A page with no text layer is the one
+        case the models must read, and then every picture is read with it.
         """
         executable = shutil.which("opendataloader-pdf-hybrid")
         launcher = (
@@ -205,7 +223,7 @@ class HybridBackend:
             if executable
             else [sys.executable, "-m", "opendataloader_pdf.hybrid_server"]
         )
-        return launcher + [
+        command = launcher + [
             "--host",
             self.host,
             "--port",
@@ -214,6 +232,9 @@ class HybridBackend:
             self.device,
             "--no-enrich-picture-description",
         ]
+        if not self.ocr:
+            command.append("--no-ocr")
+        return command
 
     def _http_health(self, url):
         try:
@@ -489,6 +510,17 @@ def blank_pages(markdown_text):
     return blank, any_prose
 
 
+def dense_pages(markdown_text, limit=PAGE_CHARS_LIMIT):
+    """`[(page number, characters)]` for pages carrying more prose than fits."""
+    parts = PAGE_MARKER.split(markdown_text)
+    dense = []
+    for number, body in zip(parts[1::2], parts[2::2]):
+        chars = len(_prose(body))
+        if chars > limit:
+            dense.append((int(number), chars))
+    return dense
+
+
 def check_recognised_text(markdown_path, missing):
     """What the OCR pass actually returned for the pages that needed it.
 
@@ -534,22 +566,36 @@ def extract_pdf(
     resolved, message = resolve_device(device)
     print(message)
 
-    # Asked before the models are started, because it decides how they are
-    # used: pages the engine cannot read itself have to be sent to them.
-    missing, examined = text_layer_report(pdf, page_range)
-    triage = TRIAGE_FULL if missing else TRIAGE_AUTO
-    if missing:
-        print(SCANNED_PAGES.format(count=len(missing), total=examined))
-
     bundle.set_stage(STAGE, "running", parser=PARSER, device=resolved)
     staging = bundle.work_file("extraction")
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
+    # Text the PDF hides is taken out before either engine reads it: a
+    # figure that clips most of its own text away is put back as a picture,
+    # in a copy the engines are handed instead of the original.
+    sanitized, hidden = sanitize_pdf(pdf, staging, page_range)
+    for entry in hidden:
+        print(
+            HIDDEN_TEXT_RASTERIZED.format(
+                page=entry["page"],
+                hidden=sum(item["hidden"] for item in entry["objects"]),
+            )
+        )
+    source = sanitized if sanitized is not None else pdf
+
+    # Asked before the models are started, because it decides how they are
+    # used: pages the engine cannot read itself have to be sent to them.
+    missing, examined = text_layer_report(source, page_range)
+    triage = TRIAGE_FULL if missing else TRIAGE_AUTO
+    if missing:
+        print(SCANNED_PAGES.format(count=len(missing), total=examined))
+
     scope = (PAGE_SCOPE if examined == 1 else PAGES_SCOPE).format(count=examined)
+    engine = ENGINE_OCR if missing else ENGINE_LAYOUT
     line = ProgressLine(
-        EXTRACT_PROGRESS_LABEL.format(scope=scope, device=resolved),
+        EXTRACT_PROGRESS_LABEL.format(scope=scope, engine=engine, device=resolved),
         enabled=progress,
     )
     # Both engines' last words, for the failure message. `quiet=False` below
@@ -564,7 +610,7 @@ def extract_pdf(
                 transcript.append(entry)
                 line.note(entry)
 
-    backend = backend_factory(resolved)
+    backend = backend_factory(resolved, ocr=bool(missing))
     reader = getattr(backend, "new_output", None)
     finished = False
     # Started before the backend is: loading the models is part of the wait
@@ -581,7 +627,7 @@ def extract_pdf(
                     # past the operator.
                     with contextlib.redirect_stdout(_LineSink(note)):
                         converter(
-                            str(pdf),
+                            str(source),
                             output_dir=str(staging),
                             format="markdown",
                             image_output="external",
@@ -615,7 +661,10 @@ def extract_pdf(
     finally:
         line.finish(
             EXTRACT_DONE.format(
-                scope=scope, device=resolved, elapsed=int(line.elapsed())
+                scope=scope,
+                engine=engine,
+                device=resolved,
+                elapsed=int(line.elapsed()),
             )
             if finished
             else None
@@ -624,6 +673,9 @@ def extract_pdf(
     try:
         markdown = _converted_markdown(staging, pdf)
         silent = check_recognised_text(markdown, missing)
+        dense = dense_pages(markdown.read_text(encoding="utf-8"))
+        for number, chars in dense:
+            print(PAGE_TOO_DENSE.format(page=number, chars=chars))
         report = import_markdown(
             bundle, markdown, pandoc=pandoc, origin=pdf, stage=STAGE, kind="pdf"
         )
@@ -641,6 +693,7 @@ def extract_pdf(
         triage=triage,
         scanned=missing,
         examined=examined,
+        hidden=hidden,
     )
     limitations = [
         "Extraction reading order, headings and diacritics are not verified "
@@ -650,6 +703,15 @@ def extract_pdf(
         limitations.append(
             OCR_EMPTY_PAGES.format(pages=", ".join(str(n) for n in silent))
         )
+    for entry in hidden:
+        limitations.append(
+            HIDDEN_TEXT_RASTERIZED.format(
+                page=entry["page"],
+                hidden=sum(item["hidden"] for item in entry["objects"]),
+            )
+        )
+    for number, chars in dense:
+        limitations.append(PAGE_TOO_DENSE.format(page=number, chars=chars))
     bundle.add_limitations(limitations)
     return report
 
@@ -720,6 +782,7 @@ def _write_provenance(
     triage=TRIAGE_AUTO,
     scanned=(),
     examined=0,
+    hidden=(),
 ):
     version = _installed_version()
     bundle.work.mkdir(parents=True, exist_ok=True)
@@ -755,6 +818,12 @@ def _write_provenance(
             # had to be read by the OCR models.
             "pages_without_text_layer": list(scanned),
             "pages_examined": examined,
+            # Whether the backend read pictures at all: only when a page
+            # had no text layer, so a typed document's charts stay pictures.
+            "ocr": bool(scanned),
+            # Figures whose clipped-away text was taken out and which the
+            # engines therefore saw as pictures: page, object, characters.
+            "hidden_text_figures": list(hidden),
             "pdf": pdf.name,
             "pdf_sha256": sha256_file(pdf),
             "page_range": page_range,

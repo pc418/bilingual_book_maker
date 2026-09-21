@@ -30,14 +30,17 @@ from book_maker.pipeline import opendataloader  # noqa: E402
 from book_maker.pipeline.bundle import EXTRACTION_JOB, Bundle  # noqa: E402
 from book_maker.pipeline.epub_export import export_epub  # noqa: E402
 from book_maker.pipeline.errors import PipelineError  # noqa: E402
+from book_maker.pipeline import pdf_sanitize  # noqa: E402
 from book_maker.pipeline.messages import (  # noqa: E402
     BACKEND_FAILED,
     DEVICE_CPU_FALLBACK,
     DEVICE_SELECTED,
     DEVICE_UNAVAILABLE,
+    HIDDEN_TEXT_RASTERIZED,
     JAVA_REQUIRED,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
+    PAGE_TOO_DENSE,
     PDF_OPTIONS_INERT,
     SCANNED_PAGES,
 )
@@ -107,6 +110,29 @@ def text_layer(monkeypatch):
         return list(state["missing"]), state["examined"]
 
     monkeypatch.setattr(opendataloader, "text_layer_report", report)
+    return state
+
+
+@pytest.fixture(autouse=True)
+def sanitizer(monkeypatch):
+    """What the hidden-text pass found, under the test's control.
+
+    The real pass needs pypdfium2 and a real PDF (its own tests are further
+    down); by default nothing is hidden and the original is what the
+    engines read.
+    """
+    state = {"report": [], "sanitized": None}
+
+    def sanitize(pdf_path, output_dir, page_range=None):
+        state["asked"] = (Path(pdf_path), Path(output_dir), page_range)
+        if state["sanitized"] is not None:
+            copy = Path(output_dir) / "sanitized" / Path(pdf_path).name
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes(state["sanitized"])
+            return copy, list(state["report"])
+        return None, list(state["report"])
+
+    monkeypatch.setattr(opendataloader, "sanitize_pdf", sanitize)
     return state
 
 
@@ -311,6 +337,32 @@ def test_the_backend_is_started_on_loopback_with_the_resolved_device():
         assert instance.probed_urls == [instance.url]
 
 
+def test_ocr_is_off_when_every_page_spells_itself_out():
+    with backend("mps", ocr=False) as instance:
+        assert "--no-ocr" in instance.started_commands[0]
+    with backend("mps") as instance:
+        assert "--no-ocr" not in instance.started_commands[0]
+
+
+def test_the_models_read_pictures_only_when_a_page_has_no_text_layer(
+    bundle, pdf, pandoc, accelerators, text_layer
+):
+    factories = []
+
+    def factory(device, **kw):
+        factories.append(kw)
+        return backend(device, **kw)
+
+    opendataloader.extract_pdf(
+        bundle, pdf, pandoc=pandoc, backend_factory=factory, convert=fake_convert()
+    )
+    text_layer["missing"] = [2]
+    opendataloader.extract_pdf(
+        bundle, pdf, pandoc=pandoc, backend_factory=factory, convert=fake_convert()
+    )
+    assert [kw["ocr"] for kw in factories] == [False, True]
+
+
 def test_readiness_is_waited_for(monkeypatch):
     instance = backend("cpu", ready_after=3)
     with instance:
@@ -419,7 +471,7 @@ def fake_convert(staging_markdown=CONVERTED, image=PNG, fail=None):
     calls = []
 
     def convert(input_path, **kwargs):
-        calls.append(kwargs)
+        calls.append(dict(kwargs, input_path=input_path))
         if fail is not None:
             raise fail
         output = Path(kwargs["output_dir"])
@@ -445,7 +497,7 @@ def test_a_conversion_produces_the_same_bundle_contract(
         pandoc=pandoc,
         device="auto",
         page_range="1-2",
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
     )
 
@@ -474,6 +526,7 @@ def test_a_conversion_produces_the_same_bundle_contract(
     assert extraction["device_requested"] == "auto"
     assert extraction["hybrid_fallback"] is False
     assert extraction["picture_description"] is False
+    assert extraction["ocr"] is False
     assert extraction["page_numbering"] == "1-based input, 1-based request"
     assert extraction["cost_cents"] is None
 
@@ -499,12 +552,12 @@ def test_the_conversion_says_it_is_running_and_what_it_said_last(
         bundle,
         pdf,
         pandoc=pandoc,
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
     )
     out = capsys.readouterr().out
-    assert "Extracting PDF: 2 pages, OCR on mps, 0s" in out
-    assert "PDF extracted: 2 pages, OCR on mps," in out
+    assert "Extracting PDF: 2 pages, layout models on mps, 0s" in out
+    assert "PDF extracted: 2 pages, layout models on mps," in out
     # the engine's own log line is not printed on its own account
     assert "INFO: Number of pages: 2" not in out
 
@@ -566,7 +619,7 @@ def test_a_quiet_extraction_prints_no_progress_at_all(
         bundle,
         pdf,
         pandoc=pandoc,
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(),
         progress=False,
     )
@@ -594,7 +647,7 @@ def test_a_failed_conversion_quotes_what_the_engines_said_last(
             bundle,
             pdf,
             pandoc=pandoc,
-            backend_factory=lambda device: backend(device),
+            backend_factory=lambda device, **kw: backend(device, **kw),
             convert=convert,
         )
     assert "cannot read the document catalog" in failed.value.detail
@@ -623,7 +676,7 @@ def test_the_bundle_it_produces_translates_and_exports_like_any_other(
         bundle,
         pdf,
         pandoc=pandoc,
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(),
     )
     translate_bundle(
@@ -664,7 +717,7 @@ def test_a_document_that_spells_itself_out_keeps_the_engines_own_triage(
         pdf,
         pandoc=pandoc,
         page_range="1-2",
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
     )
     assert convert.calls[0]["hybrid_mode"] == opendataloader.TRIAGE_AUTO
@@ -689,7 +742,7 @@ def test_a_page_with_no_text_layer_sends_every_page_to_the_backend(
         bundle,
         pdf,
         pandoc=pandoc,
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
     )
     assert convert.calls[0]["hybrid_mode"] == opendataloader.TRIAGE_FULL
@@ -698,6 +751,7 @@ def test_a_page_with_no_text_layer_sends_every_page_to_the_backend(
     extraction = bundle.read_manifest()["extraction"]
     assert extraction["hybrid_mode"] == "full"
     assert extraction["pages_without_text_layer"] == [2]
+    assert extraction["ocr"] is True
     job = json.loads(bundle.work_file(EXTRACTION_JOB).read_text(encoding="utf-8"))
     assert job["hybrid_mode"] == "full"
 
@@ -712,7 +766,7 @@ def test_ocr_that_returned_nothing_is_a_failure_not_an_empty_book(
             bundle,
             pdf,
             pandoc=pandoc,
-            backend_factory=lambda device: backend(device),
+            backend_factory=lambda device, **kw: backend(device, **kw),
             convert=fake_convert(
                 staging_markdown="<!-- page 1 -->\n\n![](<images/imageFile1.png>)\n"
             ),
@@ -732,7 +786,7 @@ def test_one_page_the_models_could_not_read_is_reported_not_hidden(
         bundle,
         pdf,
         pandoc=pandoc,
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(
             staging_markdown=(
                 "<!-- page 1 -->\n\n# Scanned Chapter\n\nWords the models read.\n"
@@ -751,7 +805,7 @@ def test_a_conversion_failure_stops_the_backend_and_fails_the_stage(
 ):
     processes = []
 
-    def factory(device):
+    def factory(device, **kw):
         instance = backend(device, process=FakeProcess())
         processes.append(instance)
         return instance
@@ -775,7 +829,7 @@ def test_a_conversion_failure_stops_the_backend_and_fails_the_stage(
 def test_an_interruption_stops_the_backend_it_owns(bundle, pdf, pandoc, accelerators):
     owned = []
 
-    def factory(device):
+    def factory(device, **kw):
         instance = backend(device, process=FakeProcess())
         owned.append(instance)
         return instance
@@ -797,7 +851,7 @@ def test_an_empty_conversion_is_an_error(bundle, pdf, pandoc, accelerators):
             bundle,
             pdf,
             pandoc=pandoc,
-            backend_factory=lambda device: backend(device),
+            backend_factory=lambda device, **kw: backend(device, **kw),
             convert=fake_convert(staging_markdown="   \n"),
         )
     assert "no content" in failed.value.detail
@@ -835,7 +889,7 @@ def test_a_bundle_holding_a_datalab_job_is_not_converted_locally(
             bundle,
             pdf,
             pandoc=pandoc,
-            backend_factory=lambda device: backend(device),
+            backend_factory=lambda device, **kw: backend(device, **kw),
             convert=fake_convert(),
         )
     assert "holds a datalab extraction" in refused.value.detail
@@ -1029,7 +1083,7 @@ def test_a_finished_run_does_not_extract_again_or_clobber_an_edited_source(
         bundle,
         pdf,
         pandoc=pandoc,
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(),
     )
     edited = bundle.source.read_text(encoding="utf-8").replace(
@@ -1074,13 +1128,170 @@ def test_a_rerun_with_a_different_page_selection_extracts_again(
         pdf,
         pandoc=pandoc,
         page_range="1-2",
-        backend_factory=lambda device: backend(device),
+        backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(),
     )
     harness = load_harness()
     assert harness.already_prepared(bundle, pdf, "opendataloader", "1-2")
     assert not harness.already_prepared(bundle, pdf, "opendataloader", "3-4")
     assert not harness.already_prepared(bundle, pdf, "datalab", "1-2")
+
+
+# --------------------------------------------------------------------------
+# Hidden text: what the engines are handed, and what the operator is told
+# --------------------------------------------------------------------------
+FIGURE_REPORT = [
+    {
+        "page": 1,
+        "objects": [
+            {"index": 3, "hidden": 85525, "visible": 896, "bounds": [0, 0, 1, 1]}
+        ],
+    }
+]
+
+
+def test_a_figure_hiding_text_is_rasterized_before_the_engines_read_it(
+    bundle, pdf, pandoc, accelerators, sanitizer, text_layer, capsys
+):
+    sanitizer["report"] = FIGURE_REPORT
+    sanitizer["sanitized"] = b"%PDF-1.7\n%sanitized\n"
+    convert = fake_convert()
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        page_range="1-2",
+        backend_factory=lambda device, **kw: backend(device, **kw),
+        convert=convert,
+    )
+    handed = Path(convert.calls[0]["input_path"])
+    # The engines read the copy, named like the original so the Markdown
+    # keeps its stem; the original is what the pass was asked about.
+    assert handed != pdf and handed.name == pdf.name
+    assert handed.read_bytes() == b"%PDF-1.7\n%sanitized\n"
+    assert sanitizer["asked"] == (pdf, bundle.work_file("extraction"), "1-2")
+    # The text-layer triage looks at what the engines will read.
+    assert text_layer["asked"][0] == handed
+    line = HIDDEN_TEXT_RASTERIZED.format(page=1, hidden=85525)
+    assert line in capsys.readouterr().out
+    manifest = bundle.read_manifest()
+    assert manifest["extraction"]["hidden_text_figures"] == FIGURE_REPORT
+    assert line in manifest["limitations"]
+    # Provenance still names the operator's file, not the working copy.
+    assert manifest["extraction"]["pdf"] == pdf.name
+
+
+def test_a_document_hiding_nothing_is_read_as_it_is(
+    bundle, pdf, pandoc, accelerators, sanitizer
+):
+    convert = fake_convert()
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        backend_factory=lambda device, **kw: backend(device, **kw),
+        convert=convert,
+    )
+    assert Path(convert.calls[0]["input_path"]) == pdf
+    manifest = bundle.read_manifest()
+    assert manifest["extraction"]["hidden_text_figures"] == []
+    assert not any("rasterized" in line for line in manifest["limitations"])
+
+
+def test_a_page_with_more_prose_than_a_page_holds_is_called_out(
+    bundle, pdf, pandoc, accelerators, capsys
+):
+    flood = "<!-- page 1 -->\n\n# Title\n\n" + ("(a) Previous methods\n\n" * 700)
+    flood += "<!-- page 2 -->\n\nAn ordinary page.\n"
+    convert = fake_convert(staging_markdown=flood)
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        backend_factory=lambda device, **kw: backend(device, **kw),
+        convert=convert,
+    )
+    out = capsys.readouterr().out
+    assert "Warning: page 1 extracted" in out
+    assert "page 2 extracted" not in out
+    limitations = bundle.read_manifest()["limitations"]
+    assert any(line.startswith("Warning: page 1 extracted") for line in limitations)
+
+
+def test_dense_pages_counts_prose_not_markers_or_pictures():
+    text = (
+        "<!-- page 1 -->\n\n" + "x" * 30 + "\n\n"
+        "<!-- page 2 -->\n\n![](<images/imageFile1.png>)\n\n" + "y" * 10 + "\n"
+    )
+    assert opendataloader.dense_pages(text, limit=20) == [(1, 30)]
+    assert opendataloader.dense_pages(text, limit=40) == []
+
+
+# --------------------------------------------------------------------------
+# Hidden text, found in real PDFs
+# --------------------------------------------------------------------------
+FIGURE_LINES = [f"Clipped figure line {n} that nobody sees" for n in range(30)]
+
+
+def test_the_clipped_away_text_of_a_figure_is_found_and_the_rest_is_not(tmp_path):
+    pdfium_or_skip()
+    import pypdfium2 as pdfium
+
+    path = write_pdf(
+        tmp_path / "figure.pdf",
+        ["Body text on page one.", "Body text on page two."],
+        figure=(1, FIGURE_LINES),
+    )
+    document = pdfium.PdfDocument(str(path))
+    report = pdf_sanitize.hidden_text_report(document, [1, 2])
+    document.close()
+    assert [entry["page"] for entry in report] == [1]
+    (figure,) = report[0]["objects"]
+    # Everything but the first line is under the clip.
+    assert figure["hidden"] == sum(len(line) for line in FIGURE_LINES[1:])
+    assert figure["visible"] == len(FIGURE_LINES[0])
+
+
+def test_a_figure_hiding_text_becomes_a_picture_in_a_copy(tmp_path):
+    pdfium_or_skip()
+    import pypdfium2 as pdfium
+
+    path = write_pdf(
+        tmp_path / "figure.pdf",
+        ["Body text on page one.", "Body text on page two."],
+        figure=(1, FIGURE_LINES),
+    )
+    original = path.read_bytes()
+    copy, report = pdf_sanitize.sanitize_pdf(path, tmp_path / "work")
+    assert path.read_bytes() == original
+    assert copy == tmp_path / "work" / "sanitized" / "figure.pdf"
+    assert report[0]["objects"][0]["rasterized"]
+
+    document = pdfium.PdfDocument(str(copy))
+    first = document[0].get_textpage().get_text_range()
+    second = document[1].get_textpage().get_text_range()
+    kinds = [obj.type for obj in document[0].get_objects(max_depth=0)]
+    document.close()
+    assert "Body text on page one." in first
+    assert "Clipped figure line" not in first
+    assert second.strip() == "Body text on page two."
+    assert pdfium.raw.FPDF_PAGEOBJ_IMAGE in kinds
+    assert pdfium.raw.FPDF_PAGEOBJ_FORM not in kinds
+
+
+def test_a_document_hiding_nothing_gets_no_copy(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(tmp_path / "plain.pdf", ["Page one.", "Page two."])
+    assert pdf_sanitize.sanitize_pdf(path, tmp_path / "work") == (None, [])
+    assert not (tmp_path / "work").exists()
+
+
+def test_only_the_selected_pages_are_sanitized(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "figure.pdf", ["One.", "Two."], figure=(1, FIGURE_LINES)
+    )
+    assert pdf_sanitize.sanitize_pdf(path, tmp_path / "work", "2") == (None, [])
 
 
 # --------------------------------------------------------------------------

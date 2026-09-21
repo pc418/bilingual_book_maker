@@ -47,6 +47,14 @@ OCR_EMPTY_PAGES = (
     "Warning: no text was recognised on page(s) {pages}; check source.md "
     "before translating."
 )
+HIDDEN_TEXT_RASTERIZED = (
+    "Page {page}: a figure carrying {hidden} characters of clipped-away text "
+    "was rasterized; the reading edition shows it as a picture."
+)
+PAGE_TOO_DENSE = (
+    "Warning: page {page} extracted {chars} characters, several times what a "
+    "printed page holds; inspect source.md before translating."
+)
 
 # Progress. The line is rewritten in place on a terminal and printed every
 # ten seconds into a log, so it says the same thing either way: what is
@@ -54,8 +62,12 @@ OCR_EMPTY_PAGES = (
 # the OCR backend said for itself.
 PROGRESS_LINE = "{label}, {elapsed}s"
 PROGRESS_LINE_DETAIL = "{label}, {elapsed}s - {detail}"
-EXTRACT_PROGRESS_LABEL = "Extracting PDF: {scope}, OCR on {device}"
-EXTRACT_DONE = "PDF extracted: {scope}, OCR on {device}, {elapsed}s."
+EXTRACT_PROGRESS_LABEL = "Extracting PDF: {scope}, {engine} on {device}"
+EXTRACT_DONE = "PDF extracted: {scope}, {engine} on {device}, {elapsed}s."
+# What the backend is doing on that device: reading pages nobody typed, or
+# only laying out pages that spell themselves out.
+ENGINE_OCR = "OCR"
+ENGINE_LAYOUT = "layout models"
 PAGE_SCOPE = "{count} page"
 PAGES_SCOPE = "{count} pages"
 
