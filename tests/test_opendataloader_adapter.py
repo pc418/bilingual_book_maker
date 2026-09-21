@@ -524,16 +524,37 @@ def test_reading_the_backend_log_leaves_the_shared_offset_alone(accelerators):
     subprocess.run(
         ["sh", "-c", "printf 'INFO: first\\n'"], stdout=instance._log, check=True
     )
-    before = os.lseek(fd, 0, os.SEEK_CUR)
+    # Park the shared offset somewhere that is not the end: a seek-and-read
+    # implementation leaves it at the end, and this one must not touch it.
+    os.lseek(fd, 3, os.SEEK_SET)
 
     assert instance.new_output() == "INFO: first\n"
-    assert os.lseek(fd, 0, os.SEEK_CUR) == before
+    assert os.lseek(fd, 0, os.SEEK_CUR) == 3
 
+    os.lseek(fd, 0, os.SEEK_END)
     subprocess.run(
         ["sh", "-c", "printf 'INFO: second\\n'"], stdout=instance._log, check=True
     )
     assert instance.new_output() == "INFO: second\n"
     assert instance.new_output() == ""
+    instance._log.close()
+    instance._log = None
+
+
+def test_the_backend_log_is_still_read_where_pread_does_not_exist(
+    accelerators, monkeypatch
+):
+    # Windows has no os.pread; the read must still work there, on the shared
+    # offset, rather than kill the progress thread with an AttributeError.
+    import tempfile
+
+    monkeypatch.delattr(opendataloader.os, "pread", raising=False)
+    instance = backend()
+    instance._log = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+    instance._log.write("INFO: one\nINFO: two\n")
+    assert instance.new_output() == "INFO: one\nINFO: two\n"
+    instance._log.write("INFO: three\n")
+    assert instance.new_output() == "INFO: three\n"
     instance._log.close()
     instance._log = None
 

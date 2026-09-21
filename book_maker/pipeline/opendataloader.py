@@ -277,19 +277,10 @@ class HybridBackend:
         if self._log is None:
             return ""
         try:
-            # `pread`, never `seek` + `read`: the child writes through a
-            # duplicate of this descriptor, and duplicates share one file
-            # offset, so seeking here would move where its next line lands.
             # Our own buffered writes (the start-up banner, a test's fake
             # process) must be on disk before the size is read.
             self._log.flush()
-            fd = self._log.fileno()
-            size = os.fstat(fd).st_size
-            chunk = (
-                os.pread(fd, size - self._read, self._read)
-                if size > self._read
-                else b""
-            )
+            chunk = _read_from(self._log, self._read)
         except (OSError, ValueError):
             # The log is closed once the backend has been stopped.
             return ""
@@ -408,6 +399,28 @@ def text_layer_report(pdf_path, page_range=None):
     finally:
         document.close()
     return missing, examined
+
+
+def _read_from(log, offset):
+    """The bytes of `log` from `offset` to its end, without seeking.
+
+    The child writes through a duplicate of this descriptor, and duplicates
+    share one file offset, so a `seek` here would move where its next line
+    lands. `pread` reads at an offset of its own; where it does not exist
+    (Windows) the shared-offset read is what there is, and its window -- the
+    child writing between the seek and the read -- costs a garbled
+    diagnostic line at worst, never the conversion.
+    """
+    fd = log.fileno()
+    size = os.fstat(fd).st_size
+    if size <= offset:
+        return b""
+    pread = getattr(os, "pread", None)
+    if pread is not None:
+        return pread(fd, size - offset, offset)
+    raw = log.buffer
+    raw.seek(offset)
+    return raw.read()
 
 
 def backend_note(line):
