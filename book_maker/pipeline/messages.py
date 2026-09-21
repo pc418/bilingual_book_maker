@@ -67,6 +67,10 @@ PANDOC_ON_PATH = (
 )
 TO_EPUB_BUNDLE = "Working bundle: {path}"
 TO_EPUB_COPY = "Bilingual EPUB saved beside the PDF: {path}"
+TRANSLATION_REUSED = (
+    "Translation reused: {path} (same source and settings; delete it to "
+    "translate again)."
+)
 
 # Argument and subcommand help, as authored.
 DESCRIPTION = "Create bilingual Markdown and a reflowable EPUB from PDF or Markdown."

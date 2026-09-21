@@ -32,6 +32,7 @@ from .messages import (
     BILINGUAL_MARKDOWN_SAVED,
     SETTINGS_CHANGED,
     STAGE_COMPLETE,
+    TRANSLATION_REUSED,
 )
 from .preflight import inspect
 from .reading_edition import reading_edition_loader_class
@@ -244,6 +245,12 @@ def translate_bundle(bundle, bbm_options, *, pandoc, main=None):
     bundle.add_limitations(report.preserved_lines())
 
     fingerprint = translation_fingerprint(bundle, bbm_options, options)
+    if _already_translated(bundle, manifest, stages, fingerprint):
+        # Same source, same settings, the recorded output still in place:
+        # running the translation again would buy the same book twice. A
+        # rerun after a failed export, or to rebuild the EPUB, lands here.
+        print(TRANSLATION_REUSED.format(path=bundle.bilingual_markdown))
+        return bundle.bilingual_markdown
     resume = _resume_decision(bundle, manifest, fingerprint)
 
     tag = language_tag(options)
@@ -330,6 +337,27 @@ def _refuse_to_clobber_edits(bundle, manifest):
     if recorded and recorded == actual:
         return
     raise PipelineError(BILINGUAL_EDITED, stage=STAGE)
+
+
+def _already_translated(bundle, manifest, stages, fingerprint):
+    """Whether the bundle already holds this exact translation, finished.
+
+    Three things must agree: the stage completed, the recorded fingerprint
+    is this run's (source, options, formatter), and the bilingual file is
+    the one that run wrote (`_refuse_to_clobber_edits` has already refused
+    an edited one, so a hash match here means untouched). Deleting the
+    bilingual file is how a translation is redone on purpose.
+    """
+    if (stages.get(STAGE) or {}).get("status") != "completed":
+        return False
+    if (manifest.get("translation") or {}).get("fingerprint") != fingerprint:
+        return False
+    if not bundle.bilingual_markdown.is_file():
+        return False
+    recorded = ((manifest.get("outputs") or {}).get("bilingual_markdown") or {}).get(
+        "sha256"
+    )
+    return bool(recorded) and recorded == sha256_file(bundle.bilingual_markdown)
 
 
 def _resume_decision(bundle, manifest, fingerprint):

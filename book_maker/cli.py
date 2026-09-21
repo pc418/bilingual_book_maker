@@ -2290,10 +2290,8 @@ def main(argv=None, *, markdown_loader_class=None):
     """
     # Old command lines are rewritten into the endpoint surface before the
     # parser sees them; see book_maker/legacy_cli.py.
-    legacy = translate_legacy_argv(sys.argv[1:] if argv is None else list(argv))
-    for notice in legacy.notices:
-        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
-
+    raw_argv = sys.argv[1:] if argv is None else list(argv)
+    legacy = translate_legacy_argv(raw_argv)
     options = parse_args(legacy.argv)
     # None is "not typed": --accumulated_num keeps its explicitness (plan
     # mode defaults the budget by context mode, and an explicit 1 must still
@@ -2332,7 +2330,15 @@ def main(argv=None, *, markdown_loader_class=None):
         # a md book with the whole compatibility table applied to the book
         # it is really translating. A PDF without the flag falls through to
         # the legacy loader, unchanged.
-        return run_to_epub(options, legacy.argv)
+        # The inner run gets the command line as typed, not the rewritten
+        # one: the legacy rewrite also names the env variable an old alias
+        # implied its key lives in, and that is read by the run that
+        # resolves the endpoint, which is the inner one. It prints the
+        # deprecation notices too, which is why they wait until here.
+        return run_to_epub(options, raw_argv)
+
+    for notice in legacy.notices:
+        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
 
     if options.plan_dry_run:
         # No translation happens, so no credentials are needed: build the

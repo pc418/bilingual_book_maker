@@ -86,6 +86,29 @@ class TestRouting:
         # every other option is the translation's, and is handed on as typed
         assert seen["argv"] == ["--book_name", str(pdf), "--to-epub", *TRANSLATION]
 
+    def test_the_inner_run_gets_the_command_line_as_typed(self, pdf, monkeypatch):
+        # PIN (lead, 260920, Codex review): the legacy rewrite is the inner
+        # run's to do -- it also names the env variable an old alias implies
+        # its key lives in, and only the run that resolves the endpoint reads
+        # that. So the divert passes the raw argv, old flags included.
+        seen = {}
+        monkeypatch.setattr(
+            to_epub,
+            "pdf_to_epub",
+            lambda path, argv, **kwargs: seen.update(argv=list(argv)),
+        )
+        typed = [
+            "--book_name",
+            str(pdf),
+            "--to-epub",
+            "--model",
+            "gemini",
+            "--language",
+            "ja",
+        ]
+        cli.main(typed)
+        assert seen["argv"] == typed
+
     def test_no_gpu_and_quiet_reach_the_pipeline(self, pdf, monkeypatch):
         seen = {}
         monkeypatch.setattr(
@@ -195,6 +218,30 @@ class TestTheStages:
         assert "navigation is invalid" in refused.value.detail
         # the name a reader opens must never hold a half-built book
         assert not (pdf.parent / "book_bilingual.epub").exists()
+
+    def test_a_previous_book_survives_a_copy_that_dies(
+        self, pdf, no_pandoc_lookup, monkeypatch
+    ):
+        # PIN (lead, 260920, Codex review): the name a reader opens is
+        # replaced atomically; a copy that dies halfway leaves the old book
+        # in place and no partial file beside it.
+        destination = pdf.parent / "book_bilingual.epub"
+        destination.write_bytes(b"the previous good book")
+
+        def dies(src, dst):
+            Path(dst).write_bytes(b"half")
+            raise OSError("disk full")
+
+        monkeypatch.setattr(to_epub.shutil, "copyfile", dies)
+        with pytest.raises(PipelineError) as refused:
+            to_epub.pdf_to_epub(pdf, TRANSLATION, **stages([]))
+        assert "disk full" in refused.value.detail
+        assert destination.read_bytes() == b"the previous good book"
+        assert not list(pdf.parent.glob("*.part"))
+
+    def test_a_finished_copy_leaves_no_partial_file(self, pdf, no_pandoc_lookup):
+        to_epub.pdf_to_epub(pdf, TRANSLATION, **stages([]))
+        assert not list(pdf.parent.glob("*.part"))
 
     def test_the_translation_options_are_parsed_before_anything_is_extracted(
         self, pdf, no_pandoc_lookup

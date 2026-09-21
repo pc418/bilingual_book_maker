@@ -392,6 +392,37 @@ def test_resume_translates_only_the_pending_blocks(tmp_path, pandoc, fake_format
     assert bundle.stage_status("translate") == "completed"
 
 
+def test_a_completed_translation_is_reused_on_rerun(
+    tmp_path, pandoc, fake_format, capsys
+):
+    # PIN (lead, 260920, Codex review of feat/pdf-cli-flags): rerunning the
+    # same command over a finished bundle -- after a failed export, or to
+    # rebuild the EPUB -- must not buy the same translation twice.
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    written = bundle.bilingual_markdown.read_bytes()
+
+    FakeTranslator.instances = []
+    result = translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+
+    assert result == bundle.bilingual_markdown
+    assert [t for i in FakeTranslator.instances for t in i.translated] == []
+    assert bundle.bilingual_markdown.read_bytes() == written
+    assert bundle.stage_status("translate") == "completed"
+    assert "Translation reused" in capsys.readouterr().out
+
+
+def test_deleting_the_bilingual_file_translates_again(tmp_path, pandoc, fake_format):
+    bundle = prepared(tmp_path, pandoc)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    bundle.bilingual_markdown.unlink()
+
+    FakeTranslator.instances = []
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    assert [t for i in FakeTranslator.instances for t in i.translated]
+    assert bundle.bilingual_markdown.is_file()
+
+
 @pytest.mark.parametrize(
     "changed",
     [

@@ -15,6 +15,7 @@ writes). The copy is made after the export has validated its navigation, so
 the file next to the PDF is never a half-built one.
 """
 
+import os
 import shutil
 from pathlib import Path
 
@@ -112,6 +113,15 @@ def pdf_to_epub(
     # Only now, with a validated book in the bundle: a copy made from a
     # failed export would put a broken EPUB under the name a reader opens.
     destination = epub_path(pdf)
-    shutil.copyfile(built, destination)
+    # Through a sibling and a rename: a copy that dies halfway must not
+    # leave a truncated file under the name a reader opens, and a previous
+    # good book under that name survives until the new one is complete.
+    partial = destination.with_name(destination.name + ".part")
+    try:
+        shutil.copyfile(built, partial)
+        os.replace(partial, destination)
+    except OSError as err:
+        partial.unlink(missing_ok=True)
+        raise PipelineError(f"could not save {destination}: {err}", stage="export")
     print(TO_EPUB_COPY.format(path=destination))
     return destination

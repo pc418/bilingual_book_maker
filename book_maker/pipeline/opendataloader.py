@@ -26,6 +26,7 @@ so a backend error cannot quietly demote the run to Java-only extraction.
 import contextlib
 import io
 import json
+import os
 import re
 import shutil
 import socket
@@ -276,10 +277,19 @@ class HybridBackend:
         if self._log is None:
             return ""
         try:
+            # `pread`, never `seek` + `read`: the child writes through a
+            # duplicate of this descriptor, and duplicates share one file
+            # offset, so seeking here would move where its next line lands.
+            # Our own buffered writes (the start-up banner, a test's fake
+            # process) must be on disk before the size is read.
             self._log.flush()
-            raw = self._log.buffer
-            raw.seek(self._read)
-            chunk = raw.read()
+            fd = self._log.fileno()
+            size = os.fstat(fd).st_size
+            chunk = (
+                os.pread(fd, size - self._read, self._read)
+                if size > self._read
+                else b""
+            )
         except (OSError, ValueError):
             # The log is closed once the backend has been stopped.
             return ""

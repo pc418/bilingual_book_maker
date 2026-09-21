@@ -509,6 +509,35 @@ def test_the_conversion_says_it_is_running_and_what_it_said_last(
     assert "INFO: Number of pages: 2" not in out
 
 
+def test_reading_the_backend_log_leaves_the_shared_offset_alone(accelerators):
+    # PIN (lead, 260920, Codex review): the child writes through a duplicate
+    # of this descriptor, and duplicates share one offset; a read that
+    # seeks would move where the child's next line lands. So the read is a
+    # pread, and the offset a real child would write at is untouched.
+    import os
+    import subprocess
+    import tempfile
+
+    instance = backend()
+    instance._log = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+    fd = instance._log.fileno()
+    subprocess.run(
+        ["sh", "-c", "printf 'INFO: first\\n'"], stdout=instance._log, check=True
+    )
+    before = os.lseek(fd, 0, os.SEEK_CUR)
+
+    assert instance.new_output() == "INFO: first\n"
+    assert os.lseek(fd, 0, os.SEEK_CUR) == before
+
+    subprocess.run(
+        ["sh", "-c", "printf 'INFO: second\\n'"], stdout=instance._log, check=True
+    )
+    assert instance.new_output() == "INFO: second\n"
+    assert instance.new_output() == ""
+    instance._log.close()
+    instance._log = None
+
+
 def test_a_quiet_extraction_prints_no_progress_at_all(
     bundle, pdf, pandoc, accelerators, capsys
 ):
