@@ -1,4 +1,4 @@
-"""Text a PDF carries but never shows, taken out before the extractor sees it.
+"""Figures taken out of a PDF's text layer before the extractor sees it.
 
 Measured on arXiv 2609.20519, page 1: 3,325 characters are visible and
 85,525 are not. The teaser figure is a vector drawing whose whole content
@@ -6,20 +6,23 @@ is instantiated some 140 times, each copy under a small clip window that
 shows one tile of it, and every extractor tried -- OpenDataLoader's Java
 engine, its docling backend, poppler -- reads all 140 copies, because none
 of them honours clipping. The reading edition then held 9,386 translation
-units for a fifteen-page paper, most of them "(a) Previous methods".
+units for a fifteen-page paper, most of them "(a) Previous methods". The
+paper's other figures are plainer: a chart's axis labels came back as
+paragraphs, its panel titles as headings, and its lines not at all, since
+the extractor exports no vector drawing as a picture.
 
-pdfium exposes the clips, on the form objects rather than on the text
-inside them, so the text's visibility is computed here by composing each
-ancestor's matrix and clip outward to page space. A page-level object with
-more than a little clipped-away text under it is a figure, and a figure is
+pdfium exposes the clips, so the text's visibility is computed here by
+composing each object's own clip and its ancestors' matrices and clips
+outward to page space. A page-level form that hides text under its clips,
+or that draws and covers part of the page, is a figure, and a figure is
 what the reader wants to see, not read: it is rendered on its own, removed
-from the page and put back as that picture, in a sanitized copy of the
-PDF that the extractor reads instead of the original. Everything else on
-the page stays as it was, text included.
+from the page and put back at the same place in the stacking order as that
+picture, in a sanitized copy of the PDF that the extractor reads instead of
+the original. A page-level text object hidden by its own clip is simply
+taken out. Everything else on the page stays as it was, text included.
 """
 
 import ctypes
-from collections import defaultdict
 from pathlib import Path
 
 from .bundle import parse_pages
@@ -35,18 +38,28 @@ HIDDEN_TEXT_THRESHOLD = 200
 # Below this share of its box inside the effective clip, a text object is
 # counted as hidden. Half: a label cut in two is still shown.
 VISIBLE_FRACTION = 0.5
+# A page-level form that draws is a figure when it covers this much of the
+# page or more -- below it, a bullet or a logo glyph -- and less than the
+# whole-page share, above which it is a wrapper some producers put every
+# page in (pdfpages, print-to-PDF), whose text must stay text. Neither
+# reason rasterizes a wrapper: a page body and its illustration sharing
+# one form keep their text, and the extractor's density warning is what
+# says so.
+FIGURE_MIN_AREA = 0.02
+WHOLE_PAGE_AREA = 0.7
+# How many paths or pictures a form must draw before it is a figure by
+# drawing alone. A callout box is one rectangle around prose; the paper's
+# plainest chart drew seventeen. A guard, not a measurement.
+FIGURE_MIN_DRAWINGS = 8
 # Resolution of the picture that replaces a figure. Body text in a figure
 # is small; 200 DPI keeps it legible in a reader without the file bloating.
 RASTER_DPI = 200
 
-# A page-level form that draws is a figure when it covers this much of the
-# page or more -- below it, a bullet or a logo glyph -- and less than the
-# whole-page share, above which it is a wrapper some producers put every
-# page in (pdfpages, print-to-PDF), whose text must stay text.
-FIGURE_MIN_AREA = 0.02
-WHOLE_PAGE_AREA = 0.7
-
 SANITIZED_DIR = "sanitized"
+
+REASON_HIDDEN = "hidden-text"
+REASON_FIGURE = "figure"
+REASON_CLIPPED = "clipped-text"
 
 
 def _pdfium():
@@ -98,21 +111,29 @@ def _area(box):
 
 
 def _clip_box(raw, pageobj):
-    """The bounding box of an object's clip path, in its parent's space."""
+    """The box an object's clip confines it to, in its parent's space.
+
+    A clip is the intersection of its paths, so each path's bounding box
+    narrows the result; a path that is not a rectangle is over-approximated
+    by its box, which can only count text as visible, never as hidden.
+    """
     clip = raw.FPDFPageObj_GetClipPath(pageobj)
     if not clip:
         return None
-    xs, ys = [], []
+    box = None
     for index in range(raw.FPDFClipPath_CountPaths(clip)):
+        xs, ys = [], []
         for segment in range(raw.FPDFClipPath_CountPathSegments(clip, index)):
             point = raw.FPDFClipPath_GetPathSegment(clip, index, segment)
             x, y = ctypes.c_float(), ctypes.c_float()
             if raw.FPDFPathSegment_GetPoint(point, x, y):
                 xs.append(x.value)
                 ys.append(y.value)
-    if not xs:
-        return None
-    return (min(xs), min(ys), max(xs), max(ys))
+        if not xs:
+            continue
+        own = (min(xs), min(ys), max(xs), max(ys))
+        box = own if box is None else _intersect(box, own)
+    return box
 
 
 def _text_length(raw, pageobj, textpage):
@@ -124,16 +145,17 @@ def _text_length(raw, pageobj, textpage):
     return len(bytes(buffer).decode("utf-16-le", errors="replace").rstrip("\x00"))
 
 
-def _page_space(raw, obj, top):
-    """`(box, clip)` of an object nested under `top`, in page space.
+def _page_space(raw, obj):
+    """`(box, clip)` of an object in page space.
 
     pdfium keeps each object's bounds and clip in its parent's coordinate
-    space; walking outward, each ancestor's matrix carries both into the
-    next space up and its own clip narrows what is left.
+    space. The object's own clip comes first; walking outward, each
+    ancestor's matrix carries both into the next space up and the
+    ancestor's clip narrows what is left.
     """
     box = obj.get_bounds()
-    clip = None
-    ancestor = obj.container if obj is not top else None
+    clip = _clip_box(raw, obj.raw)
+    ancestor = obj.container
     while ancestor is not None:
         matrix = ancestor.get_matrix().get()
         box = _transform(matrix, box)
@@ -146,66 +168,56 @@ def _page_space(raw, obj, top):
     return box, clip
 
 
+def _visible_fraction(raw, obj, page_box):
+    box, clip = _page_space(raw, obj)
+    shown = _intersect(box, page_box)
+    if clip is not None:
+        shown = _intersect(shown, clip)
+    return _area(shown) / _area(box) if _area(box) > 0 else 1.0
+
+
+def _page_box(page):
+    left, bottom, right, top = page.get_cropbox()
+    return (float(left), float(bottom), float(right), float(top))
+
+
 def figure_report(document, page_numbers):
-    """Page-level objects to rasterize, per page, numbered from 1.
+    """Page-level objects to take out, per page, numbered from 1.
 
     `[{"page": n, "objects": [{"index": i, "reason": r, "hidden": chars,
     "visible": chars, "bounds": [l, b, r, t]}]}]`, listing only pages with
-    at least one. Two reasons: `hidden-text`, a form hiding at least
+    at least one. Three reasons: `hidden-text`, a form hiding at least
     `HIDDEN_TEXT_THRESHOLD` characters under its clips; `figure`, a form
-    that draws (paths or pictures) and covers between `FIGURE_MIN_AREA`
-    and `WHOLE_PAGE_AREA` of the page -- an included drawing, whose axis
-    labels the extractor would otherwise return as paragraphs and whose
-    lines it would not return at all.
+    that draws at least `FIGURE_MIN_DRAWINGS` paths or pictures; both only
+    when the form covers between `FIGURE_MIN_AREA` and `WHOLE_PAGE_AREA` of
+    the page, and both replaced by a picture. `clipped-text`, a page-level
+    text object its own clip hides, removed as it is.
     """
     pdfium, raw = _pdfium()
     report = []
     for number in page_numbers:
-        page = document[number - 1]
-        width, height = page.get_size()
-        page_box = (0.0, 0.0, float(width), float(height))
-        textpage = page.get_textpage()
+        try:
+            page = document[number - 1]
+            page_box = _page_box(page)
+            textpage = page.get_textpage()
+        except Exception as err:
+            raise PipelineError(
+                f"page {number} could not be read: {type(err).__name__}: {err}",
+                stage=STAGE,
+            )
         flagged = []
         try:
             for index, top in enumerate(page.get_objects(max_depth=0)):
-                if top.type != raw.FPDF_PAGEOBJ_FORM:
-                    continue
-                hidden = visible = drawings = 0
-                for obj in page.get_objects(max_depth=16, form=top, level=1):
-                    if obj.type in (raw.FPDF_PAGEOBJ_PATH, raw.FPDF_PAGEOBJ_IMAGE):
-                        drawings += 1
-                        continue
-                    if obj.type != raw.FPDF_PAGEOBJ_TEXT:
-                        continue
-                    length = _text_length(raw, obj.raw, textpage.raw)
-                    if not length:
-                        continue
-                    box, clip = _page_space(raw, obj, top)
-                    shown = _intersect(box, page_box)
-                    if clip is not None:
-                        shown = _intersect(shown, clip)
-                    fraction = _area(shown) / _area(box) if _area(box) > 0 else 1.0
-                    if fraction < VISIBLE_FRACTION:
-                        hidden += length
-                    else:
-                        visible += length
-                bounds = top.get_bounds()
-                area = _area(_intersect(bounds, page_box)) / _area(page_box)
-                if hidden >= HIDDEN_TEXT_THRESHOLD:
-                    reason = "hidden-text"
-                elif drawings and FIGURE_MIN_AREA <= area < WHOLE_PAGE_AREA:
-                    reason = "figure"
-                else:
-                    continue
-                flagged.append(
-                    {
-                        "index": index,
-                        "reason": reason,
-                        "hidden": hidden,
-                        "visible": visible,
-                        "bounds": [round(v, 2) for v in bounds],
-                    }
-                )
+                entry = _examine(raw, page, textpage, page_box, index, top)
+                if entry is not None:
+                    flagged.append(entry)
+        except PipelineError:
+            raise
+        except Exception as err:
+            raise PipelineError(
+                f"page {number} could not be examined: {type(err).__name__}: {err}",
+                stage=STAGE,
+            )
         finally:
             textpage.close()
         if flagged:
@@ -213,16 +225,47 @@ def figure_report(document, page_numbers):
     return report
 
 
-def _address(obj):
-    return ctypes.cast(obj.raw, ctypes.c_void_p).value
+def _examine(raw, page, textpage, page_box, index, top):
+    bounds = top.get_bounds()
+    if top.type == raw.FPDF_PAGEOBJ_TEXT:
+        length = _text_length(raw, top.raw, textpage.raw)
+        if not length or _visible_fraction(raw, top, page_box) >= VISIBLE_FRACTION:
+            return None
+        return _entry(index, REASON_CLIPPED, length, 0, bounds)
+    if top.type != raw.FPDF_PAGEOBJ_FORM:
+        return None
+    hidden = visible = drawings = 0
+    for obj in page.get_objects(max_depth=16, form=top, level=1):
+        if obj.type in (raw.FPDF_PAGEOBJ_PATH, raw.FPDF_PAGEOBJ_IMAGE):
+            drawings += 1
+            continue
+        if obj.type != raw.FPDF_PAGEOBJ_TEXT:
+            continue
+        length = _text_length(raw, obj.raw, textpage.raw)
+        if not length:
+            continue
+        if _visible_fraction(raw, obj, page_box) < VISIBLE_FRACTION:
+            hidden += length
+        else:
+            visible += length
+    area = _area(_intersect(bounds, page_box)) / _area(page_box)
+    if not FIGURE_MIN_AREA <= area < WHOLE_PAGE_AREA:
+        return None
+    if hidden >= HIDDEN_TEXT_THRESHOLD:
+        return _entry(index, REASON_HIDDEN, hidden, visible, bounds)
+    if drawings >= FIGURE_MIN_DRAWINGS:
+        return _entry(index, REASON_FIGURE, hidden, visible, bounds)
+    return None
 
 
-def _index_of(page, target):
-    wanted = _address(target)
-    for index, obj in enumerate(page.get_objects(max_depth=0)):
-        if _address(obj) == wanted:
-            return index
-    raise PipelineError("a page object vanished while it was being examined", STAGE)
+def _entry(index, reason, hidden, visible, bounds):
+    return {
+        "index": index,
+        "reason": reason,
+        "hidden": hidden,
+        "visible": visible,
+        "bounds": [round(v, 2) for v in bounds],
+    }
 
 
 def _render_alone(pdfium, document, page_number, index, bounds, dpi):
@@ -230,25 +273,37 @@ def _render_alone(pdfium, document, page_number, index, bounds, dpi):
 
     Drawn over nothing, so the box is tightened to the pixels the object
     actually put down: a figure's bounds run to wherever its clipped-away
-    content reached, which is not where the reader sees it.
+    content reached, which is not where the reader sees it. The scratch
+    page is rendered unrotated, so the crop and the box share the page's
+    own coordinates whatever `/Rotate` says; the picture put back rotates
+    with the page as the drawing did. `(None, None)` when nothing was
+    drawn; the caller then leaves the object alone.
     """
     scratch = pdfium.PdfDocument.new()
     try:
         scratch.import_pages(document, pages=[page_number - 1])
         page = scratch[0]
-        width, height = page.get_size()
+        page.set_rotation(0)
         for position, obj in reversed(list(enumerate(page.get_objects(max_depth=0)))):
             if position != index:
                 page.remove_obj(obj)
                 obj.close()
         page.gen_content()
-        left, bottom, right, top = _intersect(bounds, (0, 0, width, height))
+        crop_left, crop_bottom, crop_right, crop_top = _page_box(page)
+        left, bottom, right, top = _intersect(
+            bounds, (crop_left, crop_bottom, crop_right, crop_top)
+        )
         if _area((left, bottom, right, top)) <= 0:
             return None, None
         scale = dpi / 72.0
         bitmap = page.render(
             scale=scale,
-            crop=(left, bottom, width - right, height - top),
+            crop=(
+                left - crop_left,
+                bottom - crop_bottom,
+                crop_right - right,
+                crop_top - top,
+            ),
             fill_color=(255, 255, 255, 0),
         )
         drawn = bitmap.to_pil().convert("RGBA")
@@ -264,6 +319,8 @@ def _render_alone(pdfium, document, page_number, index, bounds, dpi):
         )
         from PIL import Image
 
+        # Flattened on white on purpose: a transparent chart vanishes in a
+        # reader's dark mode, and a figure sits in space of its own.
         picture = Image.new("RGB", drawn.size, (255, 255, 255))
         picture.paste(drawn, mask=drawn.getchannel("A"))
         return picture, placed
@@ -271,12 +328,26 @@ def _render_alone(pdfium, document, page_number, index, bounds, dpi):
         scratch.close()
 
 
+def _insert_at(pdfium, raw, page, obj, index):
+    """`page.insert_obj`, at the position the removed object held."""
+    if hasattr(raw, "FPDFPage_InsertObjectAtIndex"):
+        ok = raw.FPDFPage_InsertObjectAtIndex(page, obj, index)
+        if not ok:
+            raise pdfium.PdfiumError("Failed to insert object at index.")
+        obj._detach_finalizer()
+        obj.page = page
+    else:  # pragma: no cover - older pdfium: appended, on top of the page
+        page.insert_obj(obj)
+
+
 def sanitize_pdf(pdf_path, output_dir, page_range=None, *, dpi=RASTER_DPI):
-    """A copy of the PDF with its figures rasterized, or None.
+    """A copy of the PDF with its figures taken out of the text, or None.
 
     Returns `(path or None, report)`: the path of the sanitized copy under
     `output_dir` when any page changed, and the `figure_report` of what
-    was found. The original is never written to.
+    was found, each replaced object carrying `rasterized` (its picture's
+    box) or `removed`, and an object whose render came back empty carrying
+    `kept`. The original is never written to.
     """
     pdfium, raw = _pdfium()
     pdf = Path(pdf_path)
@@ -295,42 +366,68 @@ def sanitize_pdf(pdf_path, output_dir, page_range=None, *, dpi=RASTER_DPI):
             if not ranges or any(start <= number <= end for start, end in ranges)
         ]
         report = figure_report(document, numbers)
-        if not report:
-            return None, report
+        changed = False
         for entry in report:
-            page = document[entry["page"] - 1]
-            # Highest index first, so removing one object does not shift
-            # the index of the next.
-            for flagged in sorted(entry["objects"], key=lambda f: -f["index"]):
-                image, placed = _render_alone(
-                    pdfium,
-                    document,
-                    entry["page"],
-                    flagged["index"],
-                    flagged["bounds"],
-                    dpi,
+            try:
+                changed |= _apply(pdfium, raw, document, entry, dpi)
+            except PipelineError:
+                raise
+            except Exception as err:
+                raise PipelineError(
+                    f"page {entry['page']} could not be sanitized: "
+                    f"{type(err).__name__}: {err}",
+                    stage=STAGE,
                 )
-                target = list(page.get_objects(max_depth=0))[flagged["index"]]
-                page.remove_obj(target)
-                target.close()
-                if image is None:
-                    continue
-                left, bottom, right, top = placed
-                picture = pdfium.PdfImage.new(document)
-                picture.set_bitmap(pdfium.PdfBitmap.from_pil(image))
-                picture.set_matrix(
-                    pdfium.PdfMatrix()
-                    .scale(right - left, top - bottom)
-                    .translate(left, bottom)
-                )
-                page.insert_obj(picture)
-                flagged["rasterized"] = [round(v, 2) for v in placed]
-            page.gen_content()
+        if not changed:
+            return None, report
         output = Path(output_dir) / SANITIZED_DIR
         output.mkdir(parents=True, exist_ok=True)
         target = output / pdf.name
-        with open(target, "wb") as handle:
-            document.save(handle)
+        try:
+            with open(target, "wb") as handle:
+                document.save(handle)
+        except Exception as err:
+            raise PipelineError(
+                f"the sanitized copy could not be written: {type(err).__name__}: {err}",
+                stage=STAGE,
+            )
         return target, report
     finally:
         document.close()
+
+
+def _apply(pdfium, raw, document, entry, dpi):
+    page = document[entry["page"] - 1]
+    changed = False
+    # Highest index first, so replacing one object does not shift the
+    # index of the next; each picture goes back where its object was.
+    for flagged in sorted(entry["objects"], key=lambda f: -f["index"]):
+        index = flagged["index"]
+        if flagged["reason"] == REASON_CLIPPED:
+            target = list(page.get_objects(max_depth=0))[index]
+            page.remove_obj(target)
+            target.close()
+            flagged["removed"] = True
+            changed = True
+            continue
+        image, placed = _render_alone(
+            pdfium, document, entry["page"], index, flagged["bounds"], dpi
+        )
+        if image is None:
+            flagged["kept"] = True
+            continue
+        target = list(page.get_objects(max_depth=0))[index]
+        page.remove_obj(target)
+        target.close()
+        left, bottom, right, top = placed
+        picture = pdfium.PdfImage.new(document)
+        picture.set_bitmap(pdfium.PdfBitmap.from_pil(image))
+        picture.set_matrix(
+            pdfium.PdfMatrix().scale(right - left, top - bottom).translate(left, bottom)
+        )
+        _insert_at(pdfium, raw, page, picture, index)
+        flagged["rasterized"] = [round(v, 2) for v in placed]
+        changed = True
+    if changed:
+        page.gen_content()
+    return changed

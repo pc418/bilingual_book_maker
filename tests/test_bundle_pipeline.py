@@ -883,3 +883,41 @@ def test_an_internal_link_written_against_the_source_still_resolves(
         )
     assert 'id="notes"' in body and 'id="notes-1"' in body
     assert "#notes-1" in body
+
+
+class _NumberedTranslator(FakeTranslator):
+    # A model that keeps the source's numbering, the way a real one does
+    # for a paper's "1. Introduction".
+    def _answer(self, text):
+        stripped = text.strip()
+        if stripped.startswith("#"):
+            hashes, _, title = stripped.partition(" ")
+            number, _, rest = title.partition(" ")
+            return f"{hashes} {number} 译:{rest}"
+        if stripped.startswith("A step"):
+            return "(a) 译:" + stripped
+        return f"译:{stripped}"
+
+
+def test_a_numbered_translation_stays_prose(tmp_path, pandoc, monkeypatch):
+    # PIN (lead, 260920, arXiv 2609.20519 run): "1. Introduction" came back
+    # as "1. 引言", which Pandoc read as an ordered list inside the
+    # translation div; the escaped marker keeps it a heading's prose. A
+    # source block that is itself a list keeps its markers.
+    from pipeline_helpers import register_fake_format
+
+    register_fake_format(monkeypatch, cls=_NumberedTranslator)
+    text = "# 1. Introduction\n\nA step.\n\n1. first\n2. second\n"
+    bundle = prepared(tmp_path, pandoc, text)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    bilingual = bundle.bilingual_markdown.read_text(encoding="utf-8")
+    assert "1\\. 译:Introduction" in bilingual
+    assert "(a\\) 译:A step." in bilingual
+    parsed = blocks(pandoc, bilingual)
+    lists = [b for b in parsed if b["t"] == "OrderedList"]
+    # the source's own list, translated, and nothing else
+    assert len(lists) == 1
+    divs = translation_divs(parsed)
+    assert not any(
+        inner["t"] == "OrderedList" for div in divs[:2] for inner in div["c"][1]
+    )

@@ -48,6 +48,7 @@ from .messages import (
     DEVICE_CPU_FALLBACK,
     DEVICE_SELECTED,
     DEVICE_UNAVAILABLE,
+    ENGINE_JAVA,
     ENGINE_LAYOUT,
     ENGINE_OCR,
     EXTRACT_DONE,
@@ -57,6 +58,7 @@ from .messages import (
     JAVA_REQUIRED,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
+    OCR_REQUIRED,
     PAGE_TOO_DENSE,
     PAGES_SCOPE,
     PAGE_SCOPE,
@@ -361,14 +363,23 @@ class HybridBackend:
         return False
 
 
+# A page is a scan when a picture covers this much of it and the text
+# layer holds fewer than this many characters: a stamped page number or a
+# running header over a scanned page is not a text layer. Guards, not
+# measurements; a blank page (no picture, no text) also counts as unread.
+SCAN_IMAGE_AREA = 0.6
+SCAN_MAX_CHARS = 200
+
+
 def text_layer_report(pdf_path, page_range=None):
-    """`(pages with no extractable text, pages examined)`, numbered from 1.
+    """`(pages the text layer does not spell out, pages examined)`, from 1.
 
     pypdfium2 is the renderer the hybrid stack already carries, and reading
     what the page itself says is the only honest way to know whether the
-    engine's own triage may skip it: a page with no characters has nothing
-    for the Java side to find, so it must be read by the models or not at
-    all.
+    engine's own triage may skip it: a page with no characters, or a page
+    that is one big picture with a few characters stamped on it, has
+    nothing for the Java side to find, so it must be read by the models or
+    not at all.
     """
     try:
         import pypdfium2 as pdfium
@@ -409,9 +420,12 @@ def text_layer_report(pdf_path, page_range=None):
                 text = textpage.get_text_bounded()
             finally:
                 textpage.close()
-                page.close()
-            if not text.strip():
+            chars = len(text.strip())
+            if not chars or (
+                chars < SCAN_MAX_CHARS and _picture_share(page) >= SCAN_IMAGE_AREA
+            ):
                 missing.append(number)
+            page.close()
     except Exception as err:
         raise PipelineError(
             f"{Path(pdf_path).name} could not be read page by page: "
@@ -421,6 +435,24 @@ def text_layer_report(pdf_path, page_range=None):
     finally:
         document.close()
     return missing, examined
+
+
+def _picture_share(page):
+    """How much of the page its page-level pictures cover, 0 to 1."""
+    import pypdfium2.raw as raw
+
+    width, height = page.get_size()
+    if not width or not height:
+        return 0.0
+    covered = 0.0
+    for obj in page.get_objects(max_depth=0):
+        if obj.type != raw.FPDF_PAGEOBJ_IMAGE:
+            continue
+        left, bottom, right, top = obj.get_bounds()
+        covered += max(0.0, min(right, width) - max(left, 0.0)) * max(
+            0.0, min(top, height) - max(bottom, 0.0)
+        )
+    return min(1.0, covered / (width * height))
 
 
 def _read_from(log, offset):
@@ -549,11 +581,18 @@ def extract_pdf(
     pandoc,
     device="auto",
     page_range=None,
+    ocr=False,
     backend_factory=HybridBackend,
     convert=None,
     progress=True,
 ):
-    """Convert one PDF to Markdown in `bundle`, locally, with OCR."""
+    """Convert one PDF to Markdown in `bundle`, locally.
+
+    The Java engine reads it; with `ocr` the model backend is started as
+    well, and reads the pages that have no text layer (every picture on
+    them included) or, when every page has one, only lays them out. Without
+    `ocr` a page with no text layer is refused rather than skipped.
+    """
     pdf = Path(pdf_path)
     if not pdf.is_file():
         raise PipelineError(f"no PDF at {pdf}", stage=STAGE)
@@ -564,8 +603,10 @@ def extract_pdf(
 
     bundle.create()
     _refuse_a_foreign_bundle(bundle)
-    resolved, message = resolve_device(device)
-    print(message)
+    resolved = None
+    if ocr:
+        resolved, message = resolve_device(device)
+        print(message)
 
     bundle.set_stage(STAGE, "running", parser=PARSER, device=resolved)
     staging = bundle.work_file("extraction")
@@ -573,25 +614,43 @@ def extract_pdf(
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    # Text the PDF hides is taken out before either engine reads it: a
-    # figure that clips most of its own text away is put back as a picture,
-    # in a copy the engines are handed instead of the original.
-    sanitized, hidden = sanitize_pdf(pdf, staging, page_range)
-    for line in _rasterized_lines(hidden):
-        print(line)
-    source = sanitized if sanitized is not None else pdf
+    try:
+        # Figures are taken out of the text layer before either engine
+        # reads it: one that clips most of its own text away, or that
+        # draws a chart, is put back as a picture, in a copy the engines
+        # are handed instead of the original.
+        sanitized, hidden = sanitize_pdf(pdf, staging, page_range)
+        for line in _rasterized_lines(hidden):
+            print(line)
+        source = sanitized if sanitized is not None else pdf
 
-    # Asked before the models are started, because it decides how they are
-    # used: pages the engine cannot read itself have to be sent to them.
-    missing, examined = text_layer_report(source, page_range)
+        # Asked before the models are started, because it decides how they
+        # are used: pages the engine cannot read itself have to be sent to
+        # them -- and without them, refused rather than skipped.
+        missing, examined = text_layer_report(source, page_range)
+        if missing and not ocr:
+            raise PipelineError(
+                OCR_REQUIRED.format(
+                    count=len(missing),
+                    total=examined,
+                    pages=", ".join(str(n) for n in missing),
+                ),
+                stage=STAGE,
+            )
+    except (PipelineError, KeyboardInterrupt):
+        bundle.set_stage(STAGE, "failed", parser=PARSER, device=resolved)
+        raise
     triage = TRIAGE_FULL if missing else TRIAGE_AUTO
     if missing:
         print(SCANNED_PAGES.format(count=len(missing), total=examined))
 
     scope = (PAGE_SCOPE if examined == 1 else PAGES_SCOPE).format(count=examined)
-    engine = ENGINE_OCR if missing else ENGINE_LAYOUT
+    if not ocr:
+        engine = ENGINE_JAVA
+    else:
+        engine = (ENGINE_OCR if missing else ENGINE_LAYOUT).format(device=resolved)
     line = ProgressLine(
-        EXTRACT_PROGRESS_LABEL.format(scope=scope, engine=engine, device=resolved),
+        EXTRACT_PROGRESS_LABEL.format(scope=scope, engine=engine),
         enabled=progress,
     )
     # Both engines' last words, for the failure message. `quiet=False` below
@@ -606,7 +665,9 @@ def extract_pdf(
                 transcript.append(entry)
                 line.note(entry)
 
-    backend = backend_factory(resolved, ocr=bool(missing))
+    # No backend at all without `ocr`: the Java engine needs nothing
+    # started, downloaded or stopped.
+    backend = backend_factory(resolved, ocr=bool(missing)) if ocr else _NoBackend()
     reader = getattr(backend, "new_output", None)
     finished = False
     # Started before the backend is: loading the models is part of the wait
@@ -630,18 +691,12 @@ def extract_pdf(
                             image_dir=str(staging / "images"),
                             markdown_page_separator=PAGE_SEPARATOR,
                             pages=pages,
-                            hybrid=HYBRID_MODE,
-                            hybrid_mode=triage,
-                            hybrid_url=backend.url,
-                            # Never on: the Java-only fallback drops the OCR
-                            # this run exists to get, and would do it
-                            # silently.
-                            hybrid_fallback=False,
                             # Not quiet, and not printed either: quiet drops
                             # the engine's log stream, which is the only
                             # place this conversion says anything at all
                             # while it runs.
                             quiet=False,
+                            **_backend_options(backend, triage),
                         )
                     finished = True
                 except PipelineError:
@@ -659,7 +714,6 @@ def extract_pdf(
             EXTRACT_DONE.format(
                 scope=scope,
                 engine=engine,
-                device=resolved,
                 elapsed=int(line.elapsed()),
             )
             if finished
@@ -690,6 +744,7 @@ def extract_pdf(
         scanned=missing,
         examined=examined,
         hidden=hidden,
+        ocr=ocr,
     )
     limitations = [
         "Extraction reading order, headings and diacritics are not verified "
@@ -704,6 +759,32 @@ def extract_pdf(
         limitations.append(PAGE_TOO_DENSE.format(page=number, chars=chars))
     bundle.add_limitations(limitations)
     return report
+
+
+class _NoBackend:
+    """Stands in for the model backend on a Java-only run."""
+
+    url = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception):
+        return False
+
+
+def _backend_options(backend, triage):
+    """The converter's hybrid options: none at all on a Java-only run."""
+    if backend.url is None:
+        return {}
+    return {
+        "hybrid": HYBRID_MODE,
+        "hybrid_mode": triage,
+        "hybrid_url": backend.url,
+        # Never on: the Java-only fallback drops the OCR this run exists
+        # to get, and would do it silently.
+        "hybrid_fallback": False,
+    }
 
 
 def _rasterized_lines(report):
@@ -801,6 +882,7 @@ def _write_provenance(
     scanned=(),
     examined=0,
     hidden=(),
+    ocr=False,
 ):
     version = _installed_version()
     bundle.work.mkdir(parents=True, exist_ok=True)
@@ -813,7 +895,8 @@ def _write_provenance(
                 "device": resolved,
                 "device_requested": requested,
                 "pages": pages,
-                "hybrid_mode": triage,
+                "hybrid_mode": triage if ocr else None,
+                "ocr": ocr,
                 "version": version,
                 "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             },
@@ -826,19 +909,23 @@ def _write_provenance(
         extraction={
             "provider": PARSER,
             "version": version,
-            "hybrid": HYBRID_MODE,
-            "hybrid_mode": triage,
+            # The model backend runs only when asked (`--with-ocr`); the
+            # Java engine alone reads a typed document.
+            "hybrid": HYBRID_MODE if ocr else "off",
+            "hybrid_mode": triage if ocr else None,
             "hybrid_fallback": False,
             "device": resolved,
-            "device_requested": requested or "auto",
+            "device_requested": (requested or "auto") if ocr else None,
             "picture_description": False,
             # Pages the PDF itself could not spell out, and which therefore
             # had to be read by the OCR models.
             "pages_without_text_layer": list(scanned),
             "pages_examined": examined,
-            # Whether the backend read pictures at all: only when a page
-            # had no text layer, so a typed document's charts stay pictures.
-            "ocr": bool(scanned),
+            # Whether the backend was started at all (`--with-ocr`); it
+            # reads pictures only on pages with no text layer, so a typed
+            # document's charts stay pictures.
+            "ocr": ocr,
+            "pages_read_by_ocr": list(scanned) if ocr else [],
             # Figures whose clipped-away text was taken out and which the
             # engines therefore saw as pictures: page, object, characters.
             "hidden_text_figures": list(hidden),

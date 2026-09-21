@@ -463,17 +463,24 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 - `--to-epub`（仅限 PDF）：
 
-  用 OCR 读取 PDF，翻译得到的 Markdown，并在 PDF 旁生成带导航的双语 EPUB
-  `<name>_bilingual.epub`。工作目录保留在 `<name>_book/`：可以先编辑其中的
-  `source.md` 再翻译，重复执行同一条命令会从已完成的部分继续，而不会重新提取或
-  重新翻译。需要 Java、PATH 中的 Pandoc，以及 `opendataloader-pdf[hybrid]` 依赖。
-  不加该参数时，PDF 仍按原有方式翻译。翻译论文或整本书时建议加上
-  `--use_context session`：PDF 会被提取成大量短块，会话上下文能让术语前后一致；
-  默认是逐块独立翻译。
+  读取 PDF 的文字层，翻译得到的 Markdown，并在 PDF 旁生成带导航的双语 EPUB
+  `<name>_bilingual.epub`。图表保留为图片，图中的标注不会被当作正文翻译。工作目录保留在
+  `<name>_book/`：可以先编辑其中的 `source.md` 再翻译，重复执行同一条命令会从已完成的
+  部分继续，而不会重新提取或重新翻译。需要 Java、PATH 中的 Pandoc，以及
+  `opendataloader-pdf` 包。不加该参数时，PDF 仍按原有方式翻译。翻译论文或整本书时建议
+  加上 `--use_context session`：PDF 会被提取成大量短块，会话上下文能让术语前后一致；
+  默认是逐块独立翻译。`--parallel-workers` 不能与之同用：一个会话只有一条历史。
 
-- `--no-gpu`（仅限 PDF，需配合 `--to-epub`）：
+- `--with-ocr`（仅限 PDF，需配合 `--to-epub`）：
 
-  即使有可用的加速器，也在 CPU 上运行 OCR。默认会自动检测加速器，没有时回退到 CPU。
+  启动 OCR 后端，即 `opendataloader-pdf[hybrid]` 依赖中的 docling 模型（首次运行时下载）。
+  扫描版 PDF 必须加上：没有文字层的页面在不加该参数时会被拒绝，绝不会被悄悄跳过。对于
+  文字版 PDF，它额外提供表格和版面识别，不会读取图片。不加该参数时只运行 Java 引擎：
+  没有模型，没有下载，也没有需要加速的东西。
+
+- `--no-gpu`（仅限 PDF，需配合 `--to-epub --with-ocr`）：
+
+  即使有可用的加速器，也在 CPU 上运行模型。默认会自动检测加速器，没有时回退到 CPU。
 
 - `--sentence_mode`:
 

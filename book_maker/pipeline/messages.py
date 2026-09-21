@@ -27,7 +27,7 @@ PANDOC_REQUIRED = (
     "Pandoc is required for EPUB export. Install it or provide --pandoc PATH."
 )
 NAV_INVALID = "EPUB navigation is invalid: "
-PDF_OPTIONS_INERT = "--no-gpu and --pages apply only to PDF input."
+PDF_OPTIONS_INERT = "--with-ocr, --no-gpu and --pages apply only to PDF input."
 DEVICE_SELECTED = "OpenDataLoader device: {device}."
 DEVICE_CPU_FALLBACK = "OpenDataLoader device: cpu (no supported accelerator detected)."
 DEVICE_UNAVAILABLE = "Requested OpenDataLoader device is unavailable: {device}."
@@ -38,6 +38,10 @@ BACKEND_FAILED = "OpenDataLoader backend failed: {detail}"
 SCANNED_PAGES = (
     "{count} of {total} selected pages have no text layer; every page is sent "
     "to the OCR backend."
+)
+OCR_REQUIRED = (
+    "{count} of {total} selected pages have no text layer (page(s) {pages}); "
+    "rerun with --with-ocr to read them with the OCR models."
 )
 OCR_EMPTY = (
     "OpenDataLoader produced no text for a document whose pages have no text "
@@ -66,12 +70,14 @@ PAGE_TOO_DENSE = (
 # the OCR backend said for itself.
 PROGRESS_LINE = "{label}, {elapsed}s"
 PROGRESS_LINE_DETAIL = "{label}, {elapsed}s - {detail}"
-EXTRACT_PROGRESS_LABEL = "Extracting PDF: {scope}, {engine} on {device}"
-EXTRACT_DONE = "PDF extracted: {scope}, {engine} on {device}, {elapsed}s."
-# What the backend is doing on that device: reading pages nobody typed, or
-# only laying out pages that spell themselves out.
-ENGINE_OCR = "OCR"
-ENGINE_LAYOUT = "layout models"
+EXTRACT_PROGRESS_LABEL = "Extracting PDF: {scope}, {engine}"
+EXTRACT_DONE = "PDF extracted: {scope}, {engine}, {elapsed}s."
+# Which engines are reading: the Java engine alone, or the model backend
+# with it -- reading pages nobody typed, or only laying out pages that
+# spell themselves out.
+ENGINE_JAVA = "Java engine"
+ENGINE_OCR = "OCR on {device}"
+ENGINE_LAYOUT = "layout models on {device}"
 PAGE_SCOPE = "{count} page"
 PAGES_SCOPE = "{count} pages"
 
@@ -92,9 +98,15 @@ TRANSLATION_REUSED = (
 DESCRIPTION = "Create bilingual Markdown and a reflowable EPUB from PDF or Markdown."
 HELP_IMPORT = "Import Markdown and its local images."
 HELP_EXTRACT = "Extract Markdown and images from a PDF with OpenDataLoader."
+HELP_WITH_OCR = (
+    "Start the OCR backend (docling models): required for pages with no text "
+    "layer, which are refused without it; on typed pages it adds table and "
+    "layout detection, and reads no pictures. The default is the Java engine "
+    "alone: no models, no download."
+)
 HELP_NO_GPU = (
-    "Run OCR on the CPU even when an accelerator is available; the default "
-    "detects one and falls back to CPU."
+    "With --with-ocr: run the models on the CPU even when an accelerator is "
+    "available; the default detects one and falls back to CPU."
 )
 HELP_PAGES = "PDF pages, numbered from 1; for example 1-20."
 HELP_TRANSLATE = "Translate a prepared bundle with BBM."

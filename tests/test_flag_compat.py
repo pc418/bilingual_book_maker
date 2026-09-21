@@ -189,8 +189,19 @@ class TestStops:
         f = facts(["--book_name", "b.pdf", "--to-epub"], book_type="pdf")
         assert tripped(f) == []
 
-    def test_no_gpu_beside_to_epub_is_not_warned_about(self):
+    def test_with_ocr_beside_to_epub_is_not_warned_about(self):
+        f = facts(["--book_name", "b.pdf", "--to-epub", "--with-ocr"], book_type="pdf")
+        assert "C27" not in tripped(f)
+
+    def test_no_gpu_without_with_ocr_is_inert_even_on_the_route(self):
         f = facts(["--book_name", "b.pdf", "--to-epub", "--no-gpu"], book_type="pdf")
+        assert "C26" in tripped(f)
+
+    def test_no_gpu_beside_to_epub_is_not_warned_about(self):
+        f = facts(
+            ["--book_name", "b.pdf", "--to-epub", "--with-ocr", "--no-gpu"],
+            book_type="pdf",
+        )
         assert tripped(f) == []
 
     def test_two_of_the_three_are_fine(self, tmp_path):
@@ -586,12 +597,21 @@ WARN_FIXTURES = [
         "never asks its report",
     ),
     (
-        # C26: OCR only happens on the --to-epub route, so on any other run
-        # there is no device for the flag to choose
+        # C26: the OCR models only run on the --to-epub route with
+        # --with-ocr, so on any other run there is no device for the flag
+        # to choose
         "C26",
         ["--no-gpu"],
         {},
-        "only happens on the --to-epub route",
+        "only run on the --to-epub route with --with-ocr",
+    ),
+    (
+        # C27: --with-ocr starts the PDF route's models, and the route only
+        # runs with --to-epub
+        "C27",
+        ["--with-ocr"],
+        {},
+        "only runs with --to-epub",
     ),
 ]
 

@@ -41,6 +41,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     JAVA_REQUIRED,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
+    OCR_REQUIRED,
     PAGE_TOO_DENSE,
     PDF_OPTIONS_INERT,
     SCANNED_PAGES,
@@ -355,11 +356,21 @@ def test_the_models_read_pictures_only_when_a_page_has_no_text_layer(
         return backend(device, **kw)
 
     opendataloader.extract_pdf(
-        bundle, pdf, pandoc=pandoc, backend_factory=factory, convert=fake_convert()
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        backend_factory=factory,
+        convert=fake_convert(),
     )
     text_layer["missing"] = [2]
     opendataloader.extract_pdf(
-        bundle, pdf, pandoc=pandoc, backend_factory=factory, convert=fake_convert()
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        backend_factory=factory,
+        convert=fake_convert(),
     )
     assert [kw["ocr"] for kw in factories] == [False, True]
 
@@ -496,6 +507,7 @@ def test_a_conversion_produces_the_same_bundle_contract(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         device="auto",
         page_range="1-2",
         backend_factory=lambda device, **kw: backend(device, **kw),
@@ -527,7 +539,7 @@ def test_a_conversion_produces_the_same_bundle_contract(
     assert extraction["device_requested"] == "auto"
     assert extraction["hybrid_fallback"] is False
     assert extraction["picture_description"] is False
-    assert extraction["ocr"] is False
+    assert extraction["ocr"] is True
     assert extraction["page_numbering"] == "1-based input, 1-based request"
     assert extraction["cost_cents"] is None
 
@@ -553,6 +565,7 @@ def test_the_conversion_says_it_is_running_and_what_it_said_last(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
     )
@@ -620,6 +633,7 @@ def test_a_quiet_extraction_prints_no_progress_at_all(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(),
         progress=False,
@@ -648,6 +662,7 @@ def test_a_failed_conversion_quotes_what_the_engines_said_last(
             bundle,
             pdf,
             pandoc=pandoc,
+            ocr=True,
             backend_factory=lambda device, **kw: backend(device, **kw),
             convert=convert,
         )
@@ -677,6 +692,7 @@ def test_the_bundle_it_produces_translates_and_exports_like_any_other(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(),
     )
@@ -717,6 +733,7 @@ def test_a_document_that_spells_itself_out_keeps_the_engines_own_triage(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         page_range="1-2",
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
@@ -743,6 +760,7 @@ def test_a_page_with_no_text_layer_sends_every_page_to_the_backend(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
     )
@@ -767,6 +785,7 @@ def test_ocr_that_returned_nothing_is_a_failure_not_an_empty_book(
             bundle,
             pdf,
             pandoc=pandoc,
+            ocr=True,
             backend_factory=lambda device, **kw: backend(device, **kw),
             convert=fake_convert(
                 staging_markdown="<!-- page 1 -->\n\n![](<images/imageFile1.png>)\n"
@@ -787,6 +806,7 @@ def test_one_page_the_models_could_not_read_is_reported_not_hidden(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(
             staging_markdown=(
@@ -816,6 +836,7 @@ def test_a_conversion_failure_stops_the_backend_and_fails_the_stage(
             bundle,
             pdf,
             pandoc=pandoc,
+            ocr=True,
             backend_factory=factory,
             convert=fake_convert(fail=RuntimeError("java exited 1")),
         )
@@ -840,6 +861,7 @@ def test_an_interruption_stops_the_backend_it_owns(bundle, pdf, pandoc, accelera
             bundle,
             pdf,
             pandoc=pandoc,
+            ocr=True,
             backend_factory=factory,
             convert=fake_convert(fail=KeyboardInterrupt()),
         )
@@ -852,6 +874,7 @@ def test_an_empty_conversion_is_an_error(bundle, pdf, pandoc, accelerators):
             bundle,
             pdf,
             pandoc=pandoc,
+            ocr=True,
             backend_factory=lambda device, **kw: backend(device, **kw),
             convert=fake_convert(staging_markdown="   \n"),
         )
@@ -871,6 +894,7 @@ def test_a_missing_java_runtime_fails_before_the_backend_starts(
             bundle,
             pdf,
             pandoc=pandoc,
+            ocr=True,
             backend_factory=lambda device: started.append(device),
             convert=fake_convert(),
         )
@@ -890,6 +914,7 @@ def test_a_bundle_holding_a_datalab_job_is_not_converted_locally(
             bundle,
             pdf,
             pandoc=pandoc,
+            ocr=True,
             backend_factory=lambda device, **kw: backend(device, **kw),
             convert=fake_convert(),
         )
@@ -1084,6 +1109,7 @@ def test_a_finished_run_does_not_extract_again_or_clobber_an_edited_source(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(),
     )
@@ -1128,6 +1154,7 @@ def test_a_rerun_with_a_different_page_selection_extracts_again(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         page_range="1-2",
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=fake_convert(),
@@ -1186,6 +1213,7 @@ def test_a_figure_hiding_text_is_rasterized_before_the_engines_read_it(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         page_range="1-2",
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
@@ -1209,6 +1237,60 @@ def test_a_figure_hiding_text_is_rasterized_before_the_engines_read_it(
     assert manifest["extraction"]["pdf"] == pdf.name
 
 
+def test_a_plain_run_starts_no_backend_at_all(
+    bundle, pdf, pandoc, accelerators, capsys
+):
+    convert = fake_convert()
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        backend_factory=lambda device, **kw: pytest.fail("a backend was started"),
+        convert=convert,
+    )
+    kwargs = convert.calls[0]
+    assert not any(key.startswith("hybrid") for key in kwargs)
+    out = capsys.readouterr().out
+    assert "Extracting PDF: 2 pages, Java engine, 0s" in out
+    assert "OpenDataLoader device" not in out
+    extraction = bundle.read_manifest()["extraction"]
+    assert extraction["ocr"] is False
+    assert extraction["hybrid"] == "off"
+    assert extraction["hybrid_mode"] is None
+    assert extraction["device"] is None
+    assert extraction["pages_read_by_ocr"] == []
+
+
+def test_a_page_with_no_text_layer_is_refused_without_the_models(
+    bundle, pdf, pandoc, accelerators, text_layer
+):
+    text_layer["missing"] = [2]
+    convert = fake_convert()
+    with pytest.raises(PipelineError) as refused:
+        opendataloader.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            backend_factory=lambda device, **kw: pytest.fail("a backend was started"),
+            convert=convert,
+        )
+    assert refused.value.detail == OCR_REQUIRED.format(count=1, total=2, pages="2")
+    assert convert.calls == []
+    assert bundle.read_manifest()["stages"]["extract"]["status"] == "failed"
+
+
+def test_a_sanitizer_failure_fails_the_stage(
+    bundle, pdf, pandoc, accelerators, monkeypatch
+):
+    def broken(pdf_path, output_dir, page_range=None):
+        raise PipelineError("page 1 could not be read: boom", stage="extract")
+
+    monkeypatch.setattr(opendataloader, "sanitize_pdf", broken)
+    with pytest.raises(PipelineError):
+        opendataloader.extract_pdf(bundle, pdf, pandoc=pandoc, convert=fake_convert())
+    assert bundle.read_manifest()["stages"]["extract"]["status"] == "failed"
+
+
 def test_a_document_hiding_nothing_is_read_as_it_is(
     bundle, pdf, pandoc, accelerators, sanitizer
 ):
@@ -1217,6 +1299,7 @@ def test_a_document_hiding_nothing_is_read_as_it_is(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
     )
@@ -1236,6 +1319,7 @@ def test_a_page_with_more_prose_than_a_page_holds_is_called_out(
         bundle,
         pdf,
         pandoc=pandoc,
+        ocr=True,
         backend_factory=lambda device, **kw: backend(device, **kw),
         convert=convert,
     )
@@ -1393,6 +1477,21 @@ def test_the_real_text_layer_is_read_page_by_page(tmp_path):
         tmp_path / "mixed.pdf", ["Page one is typed.", None, "Page three is typed."]
     )
     assert real_text_layer_report(path) == ([2], 3)
+
+
+def test_a_scan_with_a_stamped_page_number_is_seen_as_scanned(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "stamped.pdf", ["17", "Page two is typed and says so."], scan=(1,)
+    )
+    assert real_text_layer_report(path) == ([1], 2)
+
+
+def test_a_typed_page_with_a_picture_on_it_is_not_a_scan(tmp_path):
+    pdfium_or_skip()
+    typed = "\n".join(["A typed page that also carries a full-page picture."] * 5)
+    path = write_pdf(tmp_path / "typed.pdf", [typed], scan=(1,))
+    assert real_text_layer_report(path) == ([], 1)
 
 
 def test_a_document_with_no_text_layer_at_all_is_seen_as_scanned(tmp_path):

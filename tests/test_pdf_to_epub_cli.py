@@ -31,8 +31,8 @@ def pdf(tmp_path):
 def stages(recorder, *, export=True, fail=None):
     """Fake extract/translate/export that only record being called."""
 
-    def prepare_stage(bundle, source, *, pandoc, device=None, progress=True):
-        recorder.append(("extract", device, progress))
+    def prepare_stage(bundle, source, *, pandoc, device=None, ocr=False, progress=True):
+        recorder.append(("extract", device, ocr, progress))
         bundle.source.write_text("# Title\n\nProse.\n", encoding="utf-8")
 
     def translate_stage(bundle, options, *, pandoc):
@@ -68,8 +68,14 @@ class TestRouting:
     ):
         seen = {}
 
-        def fake(path, argv, *, no_gpu, quiet):
-            seen.update(path=Path(path), argv=list(argv), no_gpu=no_gpu, quiet=quiet)
+        def fake(path, argv, *, no_gpu, with_ocr, quiet):
+            seen.update(
+                path=Path(path),
+                argv=list(argv),
+                no_gpu=no_gpu,
+                with_ocr=with_ocr,
+                quiet=quiet,
+            )
 
         monkeypatch.setattr(to_epub, "pdf_to_epub", fake)
         monkeypatch.setitem(
@@ -82,6 +88,8 @@ class TestRouting:
 
         assert seen["path"] == pdf
         assert seen["no_gpu"] is False
+        # The models are opt-in: a plain run starts nothing but the Java engine.
+        assert seen["with_ocr"] is False
         assert seen["quiet"] is False
         # every other option is the translation's, and is handed on as typed
         assert seen["argv"] == ["--book_name", str(pdf), "--to-epub", *TRANSLATION]
@@ -117,7 +125,15 @@ class TestRouting:
         cli.main(
             ["--book_name", str(pdf), "--to-epub", "--no-gpu", "--quiet", *TRANSLATION]
         )
-        assert seen == {"no_gpu": True, "quiet": True}
+        assert seen == {"no_gpu": True, "with_ocr": False, "quiet": True}
+
+    def test_with_ocr_reaches_the_pipeline(self, pdf, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            to_epub, "pdf_to_epub", lambda path, argv, **kwargs: seen.update(kwargs)
+        )
+        cli.main(["--book_name", str(pdf), "--to-epub", "--with-ocr", *TRANSLATION])
+        assert seen == {"no_gpu": False, "with_ocr": True, "quiet": False}
 
     def test_a_pdf_without_the_flag_still_takes_the_legacy_route(
         self, pdf, monkeypatch
@@ -203,11 +219,16 @@ class TestTheStages:
     def test_no_gpu_forces_cpu_and_the_default_detects(self, pdf, no_pandoc_lookup):
         order = []
         to_epub.pdf_to_epub(pdf, TRANSLATION, **stages(order))
-        assert order[0] == ("extract", "auto", True)
+        assert order[0] == ("extract", "auto", False, True)
 
         order = []
         to_epub.pdf_to_epub(pdf, TRANSLATION, no_gpu=True, quiet=True, **stages(order))
-        assert order[0] == ("extract", "cpu", False)
+        assert order[0] == ("extract", "cpu", False, False)
+
+    def test_with_ocr_reaches_the_extract_stage(self, pdf, no_pandoc_lookup):
+        order = []
+        to_epub.pdf_to_epub(pdf, TRANSLATION, with_ocr=True, **stages(order))
+        assert order[0] == ("extract", "auto", True, True)
 
     def test_a_failed_export_copies_nothing(self, pdf, no_pandoc_lookup):
         order = []
@@ -257,6 +278,7 @@ class TestTheStages:
     [
         (["--to-epub", "--model", "m"], ["--model", "m"]),
         (["--no-gpu", "--key", "k"], ["--key", "k"]),
+        (["--with-ocr", "--key", "k"], ["--key", "k"]),
         (["--book_name", "b.pdf", "--test"], ["--test"]),
         (["--book_name=b.pdf", "--test"], ["--test"]),
         # a value that happens to look like a flag this route owns is still

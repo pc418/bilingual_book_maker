@@ -34,7 +34,7 @@ EPUB_SUFFIX = "_bilingual.epub"
 # typed is a translation option and is handed to the translate stage
 # untouched -- the model, the key, the language, --test, --use_context, the
 # prompt, all of it.
-OWNED_OPTIONS = ("--to-epub", "--no-gpu")
+OWNED_OPTIONS = ("--to-epub", "--with-ocr", "--no-gpu")
 OWNED_VALUE_OPTIONS = ("--book_name",)
 
 
@@ -42,7 +42,7 @@ def translation_argv(argv):
     """`argv` without the options this route owns.
 
     `--book_name` goes because the bundle names its own source file (the
-    extracted Markdown, not the PDF); the other two because they are this
+    extracted Markdown, not the PDF); the others because they are this
     route's own switches and the translation CLI has never heard of them.
     """
     kept = []
@@ -77,6 +77,7 @@ def pdf_to_epub(
     argv,
     *,
     no_gpu=False,
+    with_ocr=False,
     quiet=False,
     pandoc=None,
     prepare_stage=prepare,
@@ -105,6 +106,7 @@ def pdf_to_epub(
         pdf,
         pandoc=executable,
         device=device_for(no_gpu),
+        ocr=with_ocr,
         progress=not quiet,
     )
     translate_stage(bundle, options, pandoc=executable)

@@ -37,15 +37,16 @@ def source_kind(path):
 def check_pdf_options(kind, options):
     """The device for a PDF run, and a refusal when it cannot apply.
 
-    A Markdown import reads no PDF, so `--no-gpu` and `--pages` have nothing
-    to act on there. Accepting them silently would let an operator believe a
+    A Markdown import reads no PDF, so `--with-ocr`, `--no-gpu` and
+    `--pages` have nothing to act on there. Accepting them silently would let an operator believe a
     page selection or a device was honoured when the file they handed in
     never went near the parser, so typing either with Markdown is an error
     rather than a no-op.
     """
     no_gpu = getattr(options, "no_gpu", False)
+    with_ocr = getattr(options, "with_ocr", False)
     pages = getattr(options, "pages", None)
-    if kind != "pdf" and (no_gpu or pages):
+    if kind != "pdf" and (no_gpu or with_ocr or pages):
         raise PipelineError(PDF_OPTIONS_INERT)
     return device_for(no_gpu)
 
@@ -85,7 +86,9 @@ def already_prepared(bundle, input_path, parser, pages):
     return done[0]
 
 
-def prepare(bundle, input_path, *, pandoc, device=None, pages=None, progress=True):
+def prepare(
+    bundle, input_path, *, pandoc, device=None, pages=None, ocr=False, progress=True
+):
     """Import or extract, chosen by the input's suffix alone.
 
     The adapter is imported here rather than at the top of the file so a
@@ -109,5 +112,6 @@ def prepare(bundle, input_path, *, pandoc, device=None, pages=None, progress=Tru
         pandoc=pandoc,
         device=device or "auto",
         page_range=pages,
+        ocr=ocr,
         progress=progress,
     )

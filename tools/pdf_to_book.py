@@ -106,11 +106,12 @@ def build_parser():
 def _add_pdf_options(parser):
     """The options that only mean something when the input is a PDF.
 
-    Neither has a value on a Markdown input -- there is nothing to run OCR
+    None has a value on a Markdown input -- there is nothing to run OCR
     on and nothing to page through -- so typing one there is refused rather
     than ignored. There is no accelerator to name: docling's own detection
     picks one, and `--no-gpu` is the only choice left to make.
     """
+    parser.add_argument("--with-ocr", action="store_true", help=messages.HELP_WITH_OCR)
     parser.add_argument("--no-gpu", action="store_true", help=messages.HELP_NO_GPU)
     parser.add_argument("--pages", default=None, help=messages.HELP_PAGES)
 
@@ -156,6 +157,7 @@ def main(argv=None):
                 pandoc=pandoc,
                 device=device,
                 pages=options.pages,
+                ocr=options.with_ocr,
             )
         elif command == "translate":
             bundle = Bundle(options.bundle)
@@ -182,6 +184,7 @@ def main(argv=None):
                 pandoc=pandoc,
                 device=device,
                 pages=options.pages,
+                ocr=options.with_ocr,
             )
             translate_bundle(bundle, bbm_options, pandoc=pandoc)
             export_epub(

@@ -67,6 +67,14 @@ TRANSLATION_ONLY_DROP = re.compile(
 )
 
 
+# What Pandoc takes for a list item at the start of a block: a bullet, or an
+# enumerator (`1.`, `1)`, `(a)`, `iv.`) followed by a space. The escape goes
+# on the last character of the marker, which is always punctuation.
+LIST_MARKER = re.compile(
+    r"^(?P<mark>[-*+]|\(?[0-9]+[.)]|\(?[a-zA-Z]{1,4}[.)]|#{1,6})(?=\s|$)"
+)
+
+
 class ReadingEditionMarkdownLoader(MarkdownBookLoader):
     """Bilingual Markdown written for a reading edition rather than a diff."""
 
@@ -206,12 +214,13 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
                 result.append(self._heading_line(match, translation))
                 return
             result.append(self._heading_line(match, None))
-            result.append(self._translation_block(translation))
+            result.append(self._translation_block(self._shield_marker("", translation)))
             return
         translation = self._translation_text(translated_text)
         if not self.single_translate:
             result.append(source_text)
         if translation:
+            translation = self._shield_marker(source_text, translation)
             result.append(self._translation_block(translation))
         elif self.single_translate:
             # Nothing but an image or a note marker: the source copy of the
@@ -232,6 +241,24 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
         cleaned = re.sub(r"[ \t]+([,.;:!?)\u3001\u3002\uff0c\uff0e])", r"\1", cleaned)
         return cleaned.strip()
+
+    @staticmethod
+    def _shield_marker(source_text, translation):
+        """A translation that starts like a list item, kept as prose.
+
+        `2.1. 方法` or `(a) 动作融合` begins with what Pandoc reads as a list
+        marker, so a numbered heading's translation came back as an ordered
+        list inside its div (found 260920). The marker's punctuation is
+        escaped, unless the source block began with a marker too -- then it
+        is a list, and stays one.
+        """
+        if LIST_MARKER.match(source_text.lstrip()):
+            return translation
+        match = LIST_MARKER.match(translation)
+        if not match:
+            return translation
+        punctuation = match.end("mark") - 1
+        return translation[:punctuation] + "\\" + translation[punctuation:]
 
     # -- headings -------------------------------------------------------
     def _heading_line(self, match, replacement):

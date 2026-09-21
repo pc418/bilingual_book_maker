@@ -544,19 +544,29 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
 - `--to-epub` (PDF only):
 
-  Read the PDF with OCR, translate the Markdown it recovers, and write a bilingual EPUB
-  with navigation next to the PDF as `<name>_bilingual.epub`. The working bundle stays in
+  Read the PDF's text layer, translate the Markdown it recovers, and write a bilingual
+  EPUB with navigation next to the PDF as `<name>_bilingual.epub`. Figures are kept as
+  pictures, their labels are not translated as text. The working bundle stays in
   `<name>_book/`: its `source.md` can be edited before translating, and rerunning the same
   command resumes from what is already there instead of extracting or translating it
-  again. Needs Java, Pandoc on PATH, and the `opendataloader-pdf[hybrid]` extras.
-  Without this flag a PDF is translated the way it always has been. For a paper or a
-  book, add `--use_context session` so terms stay consistent across the many short
-  blocks a PDF extracts into; the default translates each block on its own.
+  again. Needs Java and Pandoc on PATH, plus the `opendataloader-pdf` package. Without
+  this flag a PDF is translated the way it always has been. For a paper or a book, add
+  `--use_context session` so terms stay consistent across the many short blocks a PDF
+  extracts into; the default translates each block on its own. `--parallel-workers`
+  cannot be combined with that: one session is one history.
 
-- `--no-gpu` (PDF only, with `--to-epub`):
+- `--with-ocr` (PDF only, with `--to-epub`):
 
-  Run OCR on the CPU even when an accelerator is available. The default detects one and
-  falls back to CPU by itself.
+  Start the OCR backend, the docling models of the `opendataloader-pdf[hybrid]` extras
+  (downloaded on the first run). Required for a scanned PDF: a page with no text layer is
+  refused without it, never silently skipped. On a typed PDF it adds table and layout
+  detection and reads no pictures. Without it only the Java engine runs: no models, no
+  download, nothing to accelerate.
+
+- `--no-gpu` (PDF only, with `--to-epub --with-ocr`):
+
+  Run the models on the CPU even when an accelerator is available. The default detects
+  one and falls back to CPU by itself.
 
 - `--sentence_mode`:
 

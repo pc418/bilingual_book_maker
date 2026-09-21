@@ -129,6 +129,7 @@ def write_pdf(
     figure_clip=True,
     figure_draws=True,
     figure_scale=1.0,
+    scan=None,
 ):
     """A real PDF, one page per entry; `None` writes a page with no text.
 
@@ -142,9 +143,15 @@ def write_pdf(
     first line shows (`figure_clip`) -- the shape of the arXiv teaser
     figure whose clipped-away copies flooded the extraction (260920).
     `figure_scale` enlarges it; 2.5 makes it a whole-page wrapper.
+
+    `scan=(page numbers)` covers those pages with one picture, the way a
+    scanner's PDF does; whatever text the page entry carries sits on top of
+    it, as a stamped page number would.
     """
     objects = []
     figure_page, figure_lines = figure if figure else (None, ())
+    scan = set(scan or ())
+    picture = None
 
     def add(body):
         objects.append(body)
@@ -171,11 +178,32 @@ def write_pdf(
         if text is None:
             stream = b""
         else:
-            stream = b"BT /F1 18 Tf 72 700 Td (" + escape(text) + b") Tj ET"
+            # One line per newline, so a test can put more on a page than
+            # one line holds; text past the right edge is not "on" the page.
+            stream = b" ".join(
+                b"BT /F1 18 Tf 72 %d Td (%s) Tj ET" % (700 - 24 * i, escape(line))
+                for i, line in enumerate(str(text).split("\n"))
+            )
         resources = b"/Font << /F1 %d 0 R >>" % font
+        if number in scan:
+            if picture is None:
+                picture = add(
+                    b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 "
+                    b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\n"
+                    b"stream\n\xc0\nendstream"
+                )
+            stream = b"q 612 0 0 792 0 0 cm /Im1 Do Q " + stream
+            resources += b" /XObject << /Im1 %d 0 R >>" % picture
         if number == figure_page:
+            # Eight bars, the way a chart draws: enough paths to be a figure
+            # by drawing alone (FIGURE_MIN_DRAWINGS), where a callout box's
+            # single rectangle is not.
             drawing = (
-                b"0 0 1 rg 0 0 300 300 re f " if figure_draws else b""
+                b"0 0 1 rg "
+                + b" ".join(b"%d 0 30 300 re f" % (i * 37) for i in range(8))
+                + b" "
+                if figure_draws
+                else b""
             ) + b" ".join(
                 b"BT /F1 12 Tf 10 %d Td (%s) Tj ET" % (280 - 14 * i, escape(line))
                 for i, line in enumerate(figure_lines)
@@ -192,7 +220,13 @@ def write_pdf(
                 figure_scale,
                 window,
             )
-            resources += b" /XObject << /Fx %d 0 R >>" % form
+            if picture is not None and number in scan:
+                resources = resources.replace(
+                    b"/XObject << /Im1 %d 0 R >>" % picture,
+                    b"/XObject << /Im1 %d 0 R /Fx %d 0 R >>" % (picture, form),
+                )
+            else:
+                resources += b" /XObject << /Fx %d 0 R >>" % form
         content = add(
             b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream)
         )

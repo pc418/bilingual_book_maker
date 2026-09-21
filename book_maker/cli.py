@@ -1109,7 +1109,7 @@ COMPAT_RULES = (
         "stop",
         lambda f: f.options.to_epub and f.book_type != "pdf",
         lambda f: (
-            f"--to-epub is the PDF route: it reads a PDF with OCR, translates "
+            f"--to-epub is the PDF route: it reads a PDF's text layer, translates "
             f"the Markdown it recovers and builds the EPUB from that. A "
             f"{f.book_type} book has no PDF to read, and the flag changes "
             f"which route the run takes rather than being ignored. Drop "
@@ -1460,11 +1460,20 @@ COMPAT_RULES = (
     CompatRule(
         "C26",
         "warn",
-        lambda f: f.options.no_gpu and not f.options.to_epub,
+        lambda f: f.options.no_gpu and not (f.options.to_epub and f.options.with_ocr),
         lambda f: (
-            "--no-gpu chooses where the PDF's OCR runs, and OCR only happens "
-            "on the --to-epub route; this run reads it and does nothing with "
-            "it."
+            "--no-gpu chooses where the PDF's OCR models run, and they only run "
+            "on the --to-epub route with --with-ocr; this run reads it and does "
+            "nothing with it."
+        ),
+    ),
+    CompatRule(
+        "C27",
+        "warn",
+        lambda f: f.options.with_ocr and not f.options.to_epub,
+        lambda f: (
+            "--with-ocr starts the PDF route's OCR models, and that route only "
+            "runs with --to-epub; this run reads it and does nothing with it."
         ),
     ),
 )
@@ -2005,17 +2014,25 @@ off. Minimum 1.
         "--to-epub",
         dest="to_epub",
         action="store_true",
-        help="PDF only: extract the PDF to Markdown with OCR, translate it, "
-        "and write an EPUB with navigation next to the PDF "
-        "(<name>_bilingual.epub); the working bundle stays in <name>_book/ "
-        "for editing and resume.",
+        help="PDF only: extract the PDF's text layer to Markdown, translate "
+        "it, and write an EPUB with navigation next to the PDF "
+        "(<name>_bilingual.epub); figures stay pictures; the working bundle "
+        "stays in <name>_book/ for editing and resume.",
+    )
+    parser.add_argument(
+        "--with-ocr",
+        dest="with_ocr",
+        action="store_true",
+        help="PDF only, with --to-epub: start the OCR models. Required for "
+        "scanned pages (refused without it); adds table detection on typed "
+        "pages. Without it only the Java engine runs: no models, no download.",
     )
     parser.add_argument(
         "--no-gpu",
         dest="no_gpu",
         action="store_true",
-        help="PDF only, with --to-epub: run OCR on the CPU even when an "
-        "accelerator is available.",
+        help="PDF only, with --to-epub --with-ocr: run the models on the CPU "
+        "even when an accelerator is available.",
     )
     parser.add_argument(
         "--retranslate",
@@ -2256,6 +2273,7 @@ def run_to_epub(options, argv):
             options.book_name,
             argv,
             no_gpu=options.no_gpu,
+            with_ocr=options.with_ocr,
             quiet=options.quiet,
         )
     except PipelineError as err:
