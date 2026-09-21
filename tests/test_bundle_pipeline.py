@@ -331,7 +331,8 @@ def test_front_matter_above_the_first_heading_does_not_break_the_nav(
             for name in archive.namelist()
             if name.endswith(".xhtml") and "nav" not in name
         )
-    assert nav.count("<a href=") == 1
+    toc = re.search(r'<nav[^>]*epub:type="toc".*?</nav>', nav, re.S).group(0)
+    assert toc.count("<a href=") == 1
     assert "NVIDIA" in body and "译:NVIDIA" in body
 
 

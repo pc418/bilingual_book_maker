@@ -262,9 +262,15 @@ FIRST_HEADING = re.compile(r"^#{1,6}\s+\S")
 # real paper: OpenDataLoader put the logo and "NVIDIA" above the title.
 FRONT_MATTER_LINE = re.compile(r"^(?:!\[[^\]]*\]\([^)]*\)|:::.*)$")
 FRONT_MATTER_MAX_CHARS = 80
+# A Setext underline: the short line above it is a heading, not a banner,
+# and a heading is never moved. (A horizontal rule looks the same and is
+# treated the same: conservatively, nothing above it moves.)
+SETEXT_UNDERLINE = re.compile(r"^(?:=+|-+)$")
 
 
 def _is_front_matter(line):
+    if SETEXT_UNDERLINE.match(line):
+        return False
     return bool(
         LEADING_COMMENT.match(line)
         or FRONT_MATTER_LINE.match(line)
