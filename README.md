@@ -424,7 +424,7 @@ python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
 - Ctrl+C leaves the usual checkpoint; `--resume` continues the run and reads
   `<book>_handoff.md` back, so the next window still inherits the summary.
 
-### PDF to EPUB
+### PDF to EPUB (experimental)
 
 **What it does.** `--to-epub` reads the PDF's text layer with OpenDataLoader
 into Markdown, translates that Markdown with the Markdown loader, and has
@@ -460,8 +460,12 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
   engine runs: no models, no download, nothing to accelerate.
 - `--no-gpu` keeps the models on the CPU; the default detects an accelerator
   and falls back to the CPU on its own.
-- Requirements: Java and Pandoc on PATH, plus the `opendataloader-pdf`
-  package.
+- Requirements: **Java 11 or newer** on PATH (check with `java -version`; if it
+  is missing, install a JDK from [Adoptium](https://adoptium.net/)),
+  [Pandoc](https://pandoc.org/installing.html) on PATH, and the
+  `opendataloader-pdf` package (`pip install opendataloader-pdf`, or
+  `"opendataloader-pdf[hybrid]"` for `--with-ocr`). A missing one is refused
+  before the PDF is opened, with a message naming it.
 
 **Caveats.**
 
@@ -496,6 +500,10 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
   nothing.
 - Every PDF flag other than `--to-epub` is reported as ignored when the route
   is not taken, and `--to-epub` on a non-PDF book stops the run.
+
+This route is experimental: it has been checked on arXiv papers and a handful
+of other producers, not on every PDF shape. Issues and PRs are welcome; attach
+the PDF if it can be shared, or the page of `source.md` that came out wrong.
 
 ## Params
 
@@ -714,7 +722,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 
 - `--to-epub`, `--with-ocr`, `--no-gpu` (PDF only):
 
-  The PDF reading edition: the text layer becomes Markdown, the Markdown becomes a bilingual EPUB with navigation. See [PDF to EPUB](#pdf-to-epub) for the bundle, OCR and what to check in `source.md`.
+  The PDF reading edition: the text layer becomes Markdown, the Markdown becomes a bilingual EPUB with navigation. See [PDF to EPUB](#pdf-to-epub-experimental) for the bundle, OCR and what to check in `source.md`.
 
 - `--sentence_mode`:
 

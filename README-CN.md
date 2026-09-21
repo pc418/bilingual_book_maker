@@ -317,7 +317,7 @@ python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
 - 交接报告由模型来写。小模型写出的报告可能很差；压缩之后译文漂移，就用 `--glossary` 钉住术语，或者加 `--no-context-compact` 接受一个空白的接缝。
 - Ctrl+C 留下常规断点；`--resume` 续跑并读回 `<book>_handoff.md`，下一个窗口仍然继承摘要。
 
-### PDF 转 EPUB
+### PDF 转 EPUB (实验性)
 
 **做什么。** `--to-epub` 用 OpenDataLoader 把 PDF 的文字层读成 Markdown，用 Markdown 加载器翻译它，再由 Pandoc 生成一本可重排的双语 EPUB，导航跟随标题。工作目录 `<name>_book/` 在 PDF 旁边：`source.md`、提取出的图片、`book_bilingual.md` 和一份清单；成书复制为 `<name>_bilingual.epub`。重跑同一条命令会复用提取结果和已完成的翻译；想重新翻译删掉 `book_bilingual.md`，想改原文就在翻译之前编辑 `source.md`。不加该参数时 PDF 走旧路由，输出双语 `.txt` 和 `--pdf_layout` 的版式。
 
@@ -334,7 +334,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 
 - `--with-ocr` 启动 OCR 后端（`opendataloader-pdf[hybrid]` 依赖中的 docling 模型，首次运行时下载）。没有文字层的页面在不加它时会被拒绝，绝不会被悄悄跳过。文字版 PDF 上它额外提供表格和版面识别，不会读取图片。不加它时只运行 Java 引擎：没有模型，没有下载，也没有需要加速的东西。
 - `--no-gpu` 让模型留在 CPU 上；默认自动检测加速器，没有时自行回退到 CPU。
-- 需要：PATH 中的 Java 和 Pandoc，以及 `opendataloader-pdf` 包。
+- 需要：PATH 中有 **Java 11 或更新版本**（用 `java -version` 检查；没有的话从 [Adoptium](https://adoptium.net/) 装一个 JDK）、PATH 中有 [Pandoc](https://pandoc.org/installing.html)，以及 `opendataloader-pdf` 包（`pip install opendataloader-pdf`，要用 `--with-ocr` 则装 `"opendataloader-pdf[hybrid]"`）。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
 
 **注意事项。**
 
@@ -345,6 +345,8 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 - 旧的 dvips 或 Ghostscript PDF 里的行间公式会被拆碎、乱序；没有 Unicode 映射的字体会让引擎停下，没有成书。这两项我们这边没有解法。
 - EPUB 不带 `bbm_translation_metadata.json`，也不内嵌术语表（书由 Pandoc 生成），`--no_disclosure` 在该路由上暂未生效：署名行总会加上。`--glossary-auto` 只在压缩发生时学习，短论文在默认预算下学不到任何东西。
 - 除 `--to-epub` 外的每个 PDF 参数在没走该路由时都会被报告为忽略；在非 PDF 书上加 `--to-epub` 会停止运行。
+
+该路由仍是实验性的：只在 arXiv 论文和少数几种其他生成器的 PDF 上核过，并未覆盖所有 PDF 形态。欢迎提 issue 和 PR；能分享的话请附上 PDF，或者 `source.md` 里出错的那一页。
 
 ## 参数说明
 
@@ -520,7 +522,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 
 - `--to-epub`、`--with-ocr`、`--no-gpu`（仅限 PDF）：
 
-  PDF 阅读版：文字层变成 Markdown，Markdown 变成带导航的双语 EPUB。工作目录、OCR 以及 `source.md` 里该核对什么，见 [PDF 转 EPUB](#pdf-转-epub)。
+  PDF 阅读版：文字层变成 Markdown，Markdown 变成带导航的双语 EPUB。工作目录、OCR 以及 `source.md` 里该核对什么，见 [PDF 转 EPUB](#pdf-转-epub-实验性)。
 
 - `--sentence_mode`:
 
