@@ -289,9 +289,11 @@ def _examine(raw, page, textpage, page_box, index, top):
     if not FIGURE_MIN_AREA <= area < WHOLE_PAGE_AREA:
         return None
     # A form that shows more text than it hides is a page body with an
-    # overflow, not a figure; its hidden part is a bounded leak where its
-    # shown part would be a loss.
-    if hidden >= HIDDEN_TEXT_THRESHOLD and hidden >= visible:
+    # overflow, not a figure, however much it draws; its hidden part is a
+    # bounded leak where its shown part would be a loss.
+    if hidden >= HIDDEN_TEXT_THRESHOLD and visible > hidden:
+        return None
+    if hidden >= HIDDEN_TEXT_THRESHOLD:
         return _entry(index, REASON_HIDDEN, hidden, visible, bounds)
     if drawings >= FIGURE_MIN_DRAWINGS and visible < FIGURE_MAX_LABEL_CHARS:
         return _entry(index, REASON_FIGURE, hidden, visible, bounds)

@@ -1625,6 +1625,15 @@ def test_a_form_showing_more_text_than_it_hides_is_left_as_text(tmp_path):
         figure_draws=False,
     )
     assert report_of(path) == []
+    # Codex re-verify 260920, round two: the same form drawing eight rules
+    # was let through by the hidden-text rule and taken by the drawing rule.
+    drawn = write_pdf(
+        tmp_path / "overflow-drawn.pdf",
+        ["Body."],
+        figure=(1, WRAPPED_BODY),
+        figure_shown=12,
+    )
+    assert report_of(drawn) == []
     hidden_mostly = write_pdf(
         tmp_path / "hidden.pdf",
         ["Body."],
