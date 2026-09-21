@@ -465,7 +465,9 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 - Requirements: **a Java runtime, 11 or newer**, on PATH. A JRE is enough,
   the engine is a jar; check with `java -version`, and if it is missing
   install Temurin from [Adoptium](https://adoptium.net/).
-  [Pandoc](https://pandoc.org/installing.html) on PATH. The route's Python
+  [Pandoc](https://pandoc.org/installing.html) **3.1.12 or newer** on PATH
+  (`pandoc -v`; Ubuntu 24.04 and Debian 13 apt ship older releases, so take
+  the release from pandoc.org). The route's Python
   packages (the engine's wrapper with its jar, pdfium, Pillow; about 31 MB)
   come with the base install. Only `--with-ocr` needs more: the `ocr` extra
   (`pip install "bbook_maker[ocr]"`, from a checkout `pip install -r

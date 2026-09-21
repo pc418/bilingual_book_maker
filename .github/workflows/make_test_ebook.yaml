@@ -50,8 +50,13 @@ jobs:
           distribution: temurin
           java-version: '21'
           java-package: jre
+      # A pinned release, not apt: the route needs Pandoc 3.1.12 or newer
+      # (its EPUB contents point at headings), and Ubuntu 24.04 ships 3.1.3.
       - name: install Pandoc (the PDF route's EPUB builder)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq pandoc
+        run: |
+          curl -sSL -o /tmp/pandoc.deb https://github.com/jgm/pandoc/releases/download/3.11/pandoc-3.11-1-amd64.deb
+          sudo apt-get install -y -qq /tmp/pandoc.deb
+          pandoc --version | head -1
 
       - name: Test install
         run: |

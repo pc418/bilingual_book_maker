@@ -26,6 +26,18 @@ SUBMISSION_UNKNOWN = (
 PANDOC_REQUIRED = (
     "Pandoc is required for EPUB export. Install it or provide --pandoc PATH."
 )
+# Pandoc 3.1.12 (February 2024) is the first release whose EPUB contents
+# point at the headings (text/ch001.xhtml#chapter-one); earlier ones point
+# at the files, which the navigation check refuses after the translation
+# was paid for. Ubuntu 24.04 and Debian 13 apt ship older releases, so the
+# message names the download page rather than the package manager.
+PANDOC_MIN_VERSION = (3, 1, 12)
+PANDOC_TOO_OLD = (
+    "{found} is too old for EPUB export; Pandoc 3.1.12 or newer is required "
+    "(its table of contents points at headings, older releases point at "
+    "files). Install a current release from https://pandoc.org/installing.html "
+    "or provide --pandoc PATH."
+)
 NAV_INVALID = "EPUB navigation is invalid: "
 PDF_OPTIONS_INERT = "--with-ocr, --no-gpu and --pages apply only to PDF input."
 DEVICE_SELECTED = "OpenDataLoader device: {device}."

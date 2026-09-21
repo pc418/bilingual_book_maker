@@ -49,9 +49,16 @@ CMD ["--help"]
 # The docling models download on the first --with-ocr run into
 # /root/.cache; mount a volume there to keep them between runs.
 FROM core AS ocr
+# Pandoc comes from its GitHub release, not apt: the route needs 3.1.12 or
+# newer (its EPUB contents point at headings) and Debian 13 ships 3.1.11.
+# TARGETARCH is amd64 or arm64 under buildx, matching the release's .deb names.
+ARG TARGETARCH
+ARG PANDOC_VERSION=3.11
+ADD https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-${TARGETARCH}.deb /tmp/pandoc.deb
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends default-jre-headless pandoc \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends default-jre-headless /tmp/pandoc.deb \
+    && rm -rf /var/lib/apt/lists/* /tmp/pandoc.deb \
+    && pandoc --version | head -1
 COPY requirements-ocr.txt ./
 RUN pip install --no-cache-dir -r requirements-ocr.txt
 

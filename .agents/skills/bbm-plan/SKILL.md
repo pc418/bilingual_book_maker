@@ -303,7 +303,10 @@ opened, naming the missing one, so nothing is paid):
    install is stale, reinstall the package.
 2. A Java runtime, 11 or newer, on PATH (`java -version`; a JRE is
    enough, the extractor is a jar; Temurin from https://adoptium.net/).
-3. Pandoc on PATH (`pandoc -v`; https://pandoc.org/installing.html).
+3. Pandoc **3.1.12 or newer** on PATH (`pandoc -v`;
+   https://pandoc.org/installing.html). Ubuntu 24.04 and Debian 13 apt
+   ship older releases; an older one is refused by version before the
+   PDF is opened.
 4. Only for a scanned PDF, or a typed one whose tables matter:
    `--with-ocr`, which needs the `ocr` extra
    (`pip install "bbook_maker[ocr]"` / `requirements-ocr.txt`): several
@@ -648,6 +651,7 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `the PDF route's packages are not installed; they are base dependencies …` | a stale install: reinstall the package (`pip install -U bbook_maker`, or `-r requirements.txt` from a checkout); nothing was paid |
 | `the OCR runtime is not installed; --with-ocr needs the ocr extra …` | `pip install "bbook_maker[ocr]"`; several gigabytes, only when a scan or tables demand it |
 | `OpenDataLoader requires Java 11 or newer on PATH …` / `Pandoc is required for --to-epub …` | install them (§1e); both are checked before the PDF is opened |
+| `pandoc 3.x is too old for EPUB export; Pandoc 3.1.12 or newer is required …` | apt's Pandoc (Ubuntu 24.04: 3.1.3, Debian 13: 3.1.11); install the release from pandoc.org (§1e). Nothing was paid |
 | `N of M selected pages have no text layer …; rerun with --with-ocr` | a scanned PDF; the flag and the `ocr` extra, not a different tool |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |

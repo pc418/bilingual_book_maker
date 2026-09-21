@@ -29,7 +29,9 @@ from urllib.parse import unquote, urlparse
 from .bundle import contained_path
 from .errors import PipelineError
 from .messages import (
+    PANDOC_MIN_VERSION,
     PANDOC_REQUIRED,
+    PANDOC_TOO_OLD,
     PRESERVED_WITHOUT_TRANSLATION,
     UNSUPPORTED_STRUCTURE,
 )
@@ -109,7 +111,12 @@ class Report:
 
 
 def find_pandoc(explicit=None):
-    """The Pandoc to run, resolved before any paid work happens."""
+    """The Pandoc to run, resolved before any paid work happens.
+
+    Resolves the executable and checks its release: a Pandoc older than
+    PANDOC_MIN_VERSION writes a table of contents the navigation check
+    refuses, and that refusal would otherwise come after the translation.
+    """
     candidate = explicit or shutil.which("pandoc")
     if not candidate:
         raise PipelineError(PANDOC_REQUIRED)
@@ -117,10 +124,12 @@ def find_pandoc(explicit=None):
     if path.is_absolute() or path.parent != Path("."):
         if not path.is_file():
             raise PipelineError(PANDOC_REQUIRED)
-        return str(path)
-    resolved = shutil.which(candidate)
-    if not resolved:
-        raise PipelineError(PANDOC_REQUIRED)
+        resolved = str(path)
+    else:
+        resolved = shutil.which(candidate)
+        if not resolved:
+            raise PipelineError(PANDOC_REQUIRED)
+    require_pandoc_version(resolved)
     return resolved
 
 
@@ -128,6 +137,17 @@ def pandoc_version(pandoc):
     result = run_tool([pandoc, "--version"])
     first = (result.stdout or "").splitlines()[:1]
     return first[0].strip() if first else "pandoc"
+
+
+def require_pandoc_version(pandoc):
+    """Refuse a Pandoc older than PANDOC_MIN_VERSION, naming what was found."""
+    found = pandoc_version(pandoc)
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?", found)
+    if not match:
+        raise PipelineError(PANDOC_TOO_OLD.format(found=found))
+    release = tuple(int(part or 0) for part in match.groups())
+    if release < PANDOC_MIN_VERSION:
+        raise PipelineError(PANDOC_TOO_OLD.format(found=found))
 
 
 def run_tool(argv, stdin_text=None):

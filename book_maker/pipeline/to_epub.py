@@ -22,7 +22,7 @@ from pathlib import Path
 from .bundle import Bundle
 from .epub_export import export_epub
 from .errors import PipelineError
-from .messages import PANDOC_ON_PATH, TO_EPUB_BUNDLE, TO_EPUB_COPY
+from .messages import PANDOC_ON_PATH, PANDOC_REQUIRED, TO_EPUB_BUNDLE, TO_EPUB_COPY
 from .preflight import find_pandoc
 from .stages import device_for, prepare
 from .translate import check_options, translate_bundle
@@ -95,7 +95,9 @@ def pdf_to_epub(
     # translation option that does not parse must not cost an extraction.
     try:
         executable = find_pandoc(pandoc)
-    except PipelineError:
+    except PipelineError as err:
+        if err.detail != PANDOC_REQUIRED:
+            raise  # too old: the message already names the fix
         raise PipelineError(PANDOC_ON_PATH)
     options = check_options(translation_argv(argv))
 

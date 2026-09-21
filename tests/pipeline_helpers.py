@@ -7,6 +7,7 @@ does instead of reaching past it.
 
 import base64
 
+from book_maker.pipeline.messages import PANDOC_REQUIRED
 from book_maker.pipeline.preflight import find_pandoc
 from book_maker.pipeline.errors import PipelineError
 
@@ -110,6 +111,8 @@ def pandoc_or_skip():
     try:
         return find_pandoc()
     except PipelineError as err:
+        if err.detail != PANDOC_REQUIRED:
+            raise  # a Pandoc too old for the route is a failure, not a skip
         pytest.skip(f"pandoc is not available on PATH: {err}")
 
 
