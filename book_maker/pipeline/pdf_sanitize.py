@@ -39,6 +39,13 @@ VISIBLE_FRACTION = 0.5
 # is small; 200 DPI keeps it legible in a reader without the file bloating.
 RASTER_DPI = 200
 
+# A page-level form that draws is a figure when it covers this much of the
+# page or more -- below it, a bullet or a logo glyph -- and less than the
+# whole-page share, above which it is a wrapper some producers put every
+# page in (pdfpages, print-to-PDF), whose text must stay text.
+FIGURE_MIN_AREA = 0.02
+WHOLE_PAGE_AREA = 0.7
+
 SANITIZED_DIR = "sanitized"
 
 
@@ -117,8 +124,8 @@ def _text_length(raw, pageobj, textpage):
     return len(bytes(buffer).decode("utf-16-le", errors="replace").rstrip("\x00"))
 
 
-def _page_space(raw, obj):
-    """`(box, clip)` of a nested object in page space.
+def _page_space(raw, obj, top):
+    """`(box, clip)` of an object nested under `top`, in page space.
 
     pdfium keeps each object's bounds and clip in its parent's coordinate
     space; walking outward, each ancestor's matrix carries both into the
@@ -126,7 +133,7 @@ def _page_space(raw, obj):
     """
     box = obj.get_bounds()
     clip = None
-    ancestor = obj.container
+    ancestor = obj.container if obj is not top else None
     while ancestor is not None:
         matrix = ancestor.get_matrix().get()
         box = _transform(matrix, box)
@@ -139,12 +146,17 @@ def _page_space(raw, obj):
     return box, clip
 
 
-def hidden_text_report(document, page_numbers):
-    """Page-level objects hiding text, per page, numbered from 1.
+def figure_report(document, page_numbers):
+    """Page-level objects to rasterize, per page, numbered from 1.
 
-    `[{"page": n, "objects": [{"index": i, "hidden": chars, "visible":
-    chars, "bounds": [l, b, r, t]}]}]`, listing only pages with at least
-    one object over the threshold.
+    `[{"page": n, "objects": [{"index": i, "reason": r, "hidden": chars,
+    "visible": chars, "bounds": [l, b, r, t]}]}]`, listing only pages with
+    at least one. Two reasons: `hidden-text`, a form hiding at least
+    `HIDDEN_TEXT_THRESHOLD` characters under its clips; `figure`, a form
+    that draws (paths or pictures) and covers between `FIGURE_MIN_AREA`
+    and `WHOLE_PAGE_AREA` of the page -- an included drawing, whose axis
+    labels the extractor would otherwise return as paragraphs and whose
+    lines it would not return at all.
     """
     pdfium, raw = _pdfium()
     report = []
@@ -153,46 +165,50 @@ def hidden_text_report(document, page_numbers):
         width, height = page.get_size()
         page_box = (0.0, 0.0, float(width), float(height))
         textpage = page.get_textpage()
-        counts = defaultdict(lambda: {"hidden": 0, "visible": 0})
-        tops = {}
+        flagged = []
         try:
-            for obj in page.get_objects(max_depth=16):
-                if obj.type != raw.FPDF_PAGEOBJ_TEXT or obj.container is None:
+            for index, top in enumerate(page.get_objects(max_depth=0)):
+                if top.type != raw.FPDF_PAGEOBJ_FORM:
                     continue
-                top = obj
-                while top.container is not None:
-                    top = top.container
-                length = _text_length(raw, obj.raw, textpage.raw)
-                if not length:
+                hidden = visible = drawings = 0
+                for obj in page.get_objects(max_depth=16, form=top, level=1):
+                    if obj.type in (raw.FPDF_PAGEOBJ_PATH, raw.FPDF_PAGEOBJ_IMAGE):
+                        drawings += 1
+                        continue
+                    if obj.type != raw.FPDF_PAGEOBJ_TEXT:
+                        continue
+                    length = _text_length(raw, obj.raw, textpage.raw)
+                    if not length:
+                        continue
+                    box, clip = _page_space(raw, obj, top)
+                    shown = _intersect(box, page_box)
+                    if clip is not None:
+                        shown = _intersect(shown, clip)
+                    fraction = _area(shown) / _area(box) if _area(box) > 0 else 1.0
+                    if fraction < VISIBLE_FRACTION:
+                        hidden += length
+                    else:
+                        visible += length
+                bounds = top.get_bounds()
+                area = _area(_intersect(bounds, page_box)) / _area(page_box)
+                if hidden >= HIDDEN_TEXT_THRESHOLD:
+                    reason = "hidden-text"
+                elif drawings and FIGURE_MIN_AREA <= area < WHOLE_PAGE_AREA:
+                    reason = "figure"
+                else:
                     continue
-                box, clip = _page_space(raw, obj)
-                shown = _intersect(box, page_box)
-                if clip is not None:
-                    shown = _intersect(shown, clip)
-                fraction = _area(shown) / _area(box) if _area(box) > 0 else 1.0
-                key = id(top)
-                tops[key] = top
-                counts[key][
-                    "hidden" if fraction < VISIBLE_FRACTION else "visible"
-                ] += length
+                flagged.append(
+                    {
+                        "index": index,
+                        "reason": reason,
+                        "hidden": hidden,
+                        "visible": visible,
+                        "bounds": [round(v, 2) for v in bounds],
+                    }
+                )
         finally:
             textpage.close()
-        flagged = []
-        for key, count in counts.items():
-            if count["hidden"] < HIDDEN_TEXT_THRESHOLD:
-                continue
-            top = tops[key]
-            index = _index_of(page, top)
-            flagged.append(
-                {
-                    "index": index,
-                    "hidden": count["hidden"],
-                    "visible": count["visible"],
-                    "bounds": [round(v, 2) for v in top.get_bounds()],
-                }
-            )
         if flagged:
-            flagged.sort(key=lambda entry: entry["index"])
             report.append({"page": number, "objects": flagged})
     return report
 
@@ -256,11 +272,11 @@ def _render_alone(pdfium, document, page_number, index, bounds, dpi):
 
 
 def sanitize_pdf(pdf_path, output_dir, page_range=None, *, dpi=RASTER_DPI):
-    """A copy of the PDF with its hidden-text figures rasterized, or None.
+    """A copy of the PDF with its figures rasterized, or None.
 
     Returns `(path or None, report)`: the path of the sanitized copy under
-    `output_dir` when any page changed, and the `hidden_text_report` of
-    what was found. The original is never written to.
+    `output_dir` when any page changed, and the `figure_report` of what
+    was found. The original is never written to.
     """
     pdfium, raw = _pdfium()
     pdf = Path(pdf_path)
@@ -278,7 +294,7 @@ def sanitize_pdf(pdf_path, output_dir, page_range=None, *, dpi=RASTER_DPI):
             for number in range(1, len(document) + 1)
             if not ranges or any(start <= number <= end for start, end in ranges)
         ]
-        report = hidden_text_report(document, numbers)
+        report = figure_report(document, numbers)
         if not report:
             return None, report
         for entry in report:

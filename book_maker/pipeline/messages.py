@@ -51,6 +51,10 @@ HIDDEN_TEXT_RASTERIZED = (
     "Page {page}: a figure carrying {hidden} characters of clipped-away text "
     "was rasterized; the reading edition shows it as a picture."
 )
+FIGURES_RASTERIZED = (
+    "Page(s) {pages}: {count} vector figure(s) rasterized; the reading edition "
+    "shows them as pictures instead of their labels."
+)
 PAGE_TOO_DENSE = (
     "Warning: page {page} extracted {chars} characters, several times what a "
     "printed page holds; inspect source.md before translating."

@@ -122,7 +122,14 @@ def write_fixture(directory, text=FIXTURE):
     return book
 
 
-def write_pdf(path, pages=("Hello from an embedded text layer.",), figure=None):
+def write_pdf(
+    path,
+    pages=("Hello from an embedded text layer.",),
+    figure=None,
+    figure_clip=True,
+    figure_draws=True,
+    figure_scale=1.0,
+):
     """A real PDF, one page per entry; `None` writes a page with no text.
 
     Built by hand rather than by a library: the tests need a file pdfium
@@ -130,9 +137,11 @@ def write_pdf(path, pages=("Hello from an embedded text layer.",), figure=None):
     page carries a text layer at all.
 
     `figure=(page number, lines)` also draws a vector figure on that page:
-    a Form XObject writing `lines` of text, placed under a clip window so
-    small that only its first line shows -- the shape of the arXiv teaser
+    a Form XObject writing `lines` of text over a filled rectangle
+    (`figure_draws`), placed under a clip window so small that only its
+    first line shows (`figure_clip`) -- the shape of the arXiv teaser
     figure whose clipped-away copies flooded the extraction (260920).
+    `figure_scale` enlarges it; 2.5 makes it a whole-page wrapper.
     """
     objects = []
     figure_page, figure_lines = figure if figure else (None, ())
@@ -165,7 +174,9 @@ def write_pdf(path, pages=("Hello from an embedded text layer.",), figure=None):
             stream = b"BT /F1 18 Tf 72 700 Td (" + escape(text) + b") Tj ET"
         resources = b"/Font << /F1 %d 0 R >>" % font
         if number == figure_page:
-            drawing = b"0 0 1 rg 0 0 300 300 re f " + b" ".join(
+            drawing = (
+                b"0 0 1 rg 0 0 300 300 re f " if figure_draws else b""
+            ) + b" ".join(
                 b"BT /F1 12 Tf 10 %d Td (%s) Tj ET" % (280 - 14 * i, escape(line))
                 for i, line in enumerate(figure_lines)
             )
@@ -174,9 +185,13 @@ def write_pdf(path, pages=("Hello from an embedded text layer.",), figure=None):
                 b"/Resources << /Font << /F1 %d 0 R >> >> /Length %d >>\n"
                 b"stream\n%s\nendstream" % (font, len(drawing), drawing)
             )
-            # A 300x20 window at (72, 372): the form's first line and
-            # nothing below it.
-            stream += b" q 1 0 0 1 72 100 cm 0 272 300 28 re W n /Fx Do Q"
+            # A window over the form's first line and nothing below it.
+            window = b"0 272 300 28 re W n " if figure_clip else b""
+            stream += b" q %.2f 0 0 %.2f 10 10 cm %s/Fx Do Q" % (
+                figure_scale,
+                figure_scale,
+                window,
+            )
             resources += b" /XObject << /Fx %d 0 R >>" % form
         content = add(
             b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream)

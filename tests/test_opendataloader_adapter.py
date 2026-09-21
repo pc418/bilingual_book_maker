@@ -36,6 +36,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     DEVICE_CPU_FALLBACK,
     DEVICE_SELECTED,
     DEVICE_UNAVAILABLE,
+    FIGURES_RASTERIZED,
     HIDDEN_TEXT_RASTERIZED,
     JAVA_REQUIRED,
     OCR_EMPTY,
@@ -1144,9 +1145,34 @@ FIGURE_REPORT = [
     {
         "page": 1,
         "objects": [
-            {"index": 3, "hidden": 85525, "visible": 896, "bounds": [0, 0, 1, 1]}
+            {
+                "index": 3,
+                "reason": "hidden-text",
+                "hidden": 85525,
+                "visible": 896,
+                "bounds": [0, 0, 1, 1],
+            }
         ],
-    }
+    },
+    {
+        "page": 3,
+        "objects": [
+            {
+                "index": 2,
+                "reason": "figure",
+                "hidden": 0,
+                "visible": 209,
+                "bounds": [0, 0, 1, 1],
+            },
+            {
+                "index": 5,
+                "reason": "figure",
+                "hidden": 0,
+                "visible": 40,
+                "bounds": [0, 0, 1, 1],
+            },
+        ],
+    },
 ]
 
 
@@ -1173,10 +1199,12 @@ def test_a_figure_hiding_text_is_rasterized_before_the_engines_read_it(
     # The text-layer triage looks at what the engines will read.
     assert text_layer["asked"][0] == handed
     line = HIDDEN_TEXT_RASTERIZED.format(page=1, hidden=85525)
-    assert line in capsys.readouterr().out
+    figures = FIGURES_RASTERIZED.format(pages="3", count=2)
+    out = capsys.readouterr().out
+    assert line in out and figures in out
     manifest = bundle.read_manifest()
     assert manifest["extraction"]["hidden_text_figures"] == FIGURE_REPORT
-    assert line in manifest["limitations"]
+    assert line in manifest["limitations"] and figures in manifest["limitations"]
     # Provenance still names the operator's file, not the working copy.
     assert manifest["extraction"]["pdf"] == pdf.name
 
@@ -1243,13 +1271,62 @@ def test_the_clipped_away_text_of_a_figure_is_found_and_the_rest_is_not(tmp_path
         figure=(1, FIGURE_LINES),
     )
     document = pdfium.PdfDocument(str(path))
-    report = pdf_sanitize.hidden_text_report(document, [1, 2])
+    report = pdf_sanitize.figure_report(document, [1, 2])
     document.close()
     assert [entry["page"] for entry in report] == [1]
     (figure,) = report[0]["objects"]
+    assert figure["reason"] == "hidden-text"
     # Everything but the first line is under the clip.
     assert figure["hidden"] == sum(len(line) for line in FIGURE_LINES[1:])
     assert figure["visible"] == len(FIGURE_LINES[0])
+
+
+def report_of(path, pages=(1,)):
+    import pypdfium2 as pdfium
+
+    document = pdfium.PdfDocument(str(path))
+    try:
+        return pdf_sanitize.figure_report(document, list(pages))
+    finally:
+        document.close()
+
+
+def test_a_drawn_figure_is_a_picture_even_when_it_hides_nothing(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "chart.pdf",
+        ["Body."],
+        figure=(1, FIGURE_LINES[:3]),
+        figure_clip=False,
+    )
+    ((figure,),) = [entry["objects"] for entry in report_of(path)]
+    assert figure["reason"] == "figure"
+    assert figure["hidden"] == 0
+    assert figure["visible"] == sum(len(line) for line in FIGURE_LINES[:3])
+
+
+def test_a_form_that_only_writes_is_left_as_text(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "words.pdf",
+        ["Body."],
+        figure=(1, FIGURE_LINES[:3]),
+        figure_clip=False,
+        figure_draws=False,
+    )
+    assert report_of(path) == []
+
+
+def test_a_whole_page_wrapper_is_left_as_text(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "wrapped.pdf",
+        ["Body."],
+        figure=(1, FIGURE_LINES[:3]),
+        figure_clip=False,
+        figure_scale=2.5,
+    )
+    assert report_of(path) == []
 
 
 def test_a_figure_hiding_text_becomes_a_picture_in_a_copy(tmp_path):

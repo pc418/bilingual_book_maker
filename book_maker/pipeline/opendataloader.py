@@ -51,6 +51,7 @@ from .messages import (
     ENGINE_LAYOUT,
     ENGINE_OCR,
     EXTRACT_DONE,
+    FIGURES_RASTERIZED,
     EXTRACT_PROGRESS_LABEL,
     HIDDEN_TEXT_RASTERIZED,
     JAVA_REQUIRED,
@@ -576,13 +577,8 @@ def extract_pdf(
     # figure that clips most of its own text away is put back as a picture,
     # in a copy the engines are handed instead of the original.
     sanitized, hidden = sanitize_pdf(pdf, staging, page_range)
-    for entry in hidden:
-        print(
-            HIDDEN_TEXT_RASTERIZED.format(
-                page=entry["page"],
-                hidden=sum(item["hidden"] for item in entry["objects"]),
-            )
-        )
+    for line in _rasterized_lines(hidden):
+        print(line)
     source = sanitized if sanitized is not None else pdf
 
     # Asked before the models are started, because it decides how they are
@@ -703,17 +699,39 @@ def extract_pdf(
         limitations.append(
             OCR_EMPTY_PAGES.format(pages=", ".join(str(n) for n in silent))
         )
-    for entry in hidden:
-        limitations.append(
-            HIDDEN_TEXT_RASTERIZED.format(
-                page=entry["page"],
-                hidden=sum(item["hidden"] for item in entry["objects"]),
-            )
-        )
+    limitations.extend(_rasterized_lines(hidden))
     for number, chars in dense:
         limitations.append(PAGE_TOO_DENSE.format(page=number, chars=chars))
     bundle.add_limitations(limitations)
     return report
+
+
+def _rasterized_lines(report):
+    """What the operator is told about rasterized figures: one line per
+    page hiding text, one line for every drawn figure together."""
+    lines = []
+    figures = {}
+    for entry in report:
+        hidden = sum(
+            item["hidden"]
+            for item in entry["objects"]
+            if item["reason"] == "hidden-text"
+        )
+        if hidden:
+            lines.append(
+                HIDDEN_TEXT_RASTERIZED.format(page=entry["page"], hidden=hidden)
+            )
+        drawn = sum(1 for item in entry["objects"] if item["reason"] == "figure")
+        if drawn:
+            figures[entry["page"]] = drawn
+    if figures:
+        lines.append(
+            FIGURES_RASTERIZED.format(
+                pages=", ".join(str(page) for page in sorted(figures)),
+                count=sum(figures.values()),
+            )
+        )
+    return lines
 
 
 def _failure_detail(err, transcript):
