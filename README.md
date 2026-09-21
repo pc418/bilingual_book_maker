@@ -461,7 +461,8 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
   Without it only the Java
   engine runs: no models, no download, nothing to accelerate.
 - `--no-gpu` keeps the models on the CPU; the default detects an accelerator
-  and falls back to the CPU on its own.
+  (NVIDIA CUDA, or Apple silicon's MPS from a native install, no flag
+  needed) and falls back to the CPU on its own.
 - Requirements: **a Java runtime, 11 or newer**, on PATH. A JRE is enough,
   the engine is a jar; check with `java -version`, and if it is missing
   install Temurin from [Adoptium](https://adoptium.net/).

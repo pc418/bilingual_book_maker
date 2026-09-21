@@ -313,7 +313,9 @@ opened, naming the missing one, so nothing is paid):
    gigabytes with torch, and the docling models download on the first run.
    Do not install it speculatively; a page with no text layer is refused
    without the flag, never silently skipped, so the run tells you when it
-   is needed. `--no-gpu` keeps those models on the CPU.
+   is needed. The device is detected: CUDA on NVIDIA, MPS on Apple
+   silicon from a native install (Docker on a Mac is CPU-only), no flag
+   to pass. `--no-gpu` keeps those models on the CPU.
 
 **Two-page first look, always.** Run once with `--test` (the Markdown
 loader's slice) so the extraction happens and only a few blocks are paid

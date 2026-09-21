@@ -333,7 +333,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 ```
 
 - `--with-ocr` 启动 OCR 后端：docling 模型，用 `pip install "bbook_maker[ocr]"` 安装（从源码目录则 `pip install -r requirements-ocr.txt`），首次运行时下载。没有文字层的页面在不加它时会被拒绝，绝不会被悄悄跳过。文字版 PDF 上它额外提供表格和版面识别，不会读取图片。不加它时只运行 Java 引擎：没有模型，没有下载，也没有需要加速的东西。
-- `--no-gpu` 让模型留在 CPU 上；默认自动检测加速器，没有时自行回退到 CPU。
+- `--no-gpu` 让模型留在 CPU 上；默认自动检测加速器（NVIDIA CUDA，或本机安装下 Apple 芯片的 MPS，不用加任何参数），没有时自行回退到 CPU。
 - 需要：PATH 中有 **Java 运行时，11 或更新版本**。JRE 就够了，引擎是一个 jar；用 `java -version` 检查，没有的话从 [Adoptium](https://adoptium.net/) 装 Temurin。PATH 中有 [Pandoc](https://pandoc.org/installing.html) **3.1.12 或更新版本**（`pandoc -v` 检查；Ubuntu 24.04 和 Debian 13 的 apt 版本太旧，请从 pandoc.org 下载发行版）。这条路由的 Python 包（引擎的封装连同 jar、pdfium、Pillow，共约 31 MB）随基础安装一起装好。只有 `--with-ocr` 需要额外的东西：`ocr` extra（`pip install "bbook_maker[ocr]"`，从源码目录则 `pip install -r requirements-ocr.txt`），即 OCR 运行时，带着 torch 有好几个 GB。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
 
 **注意事项。**
