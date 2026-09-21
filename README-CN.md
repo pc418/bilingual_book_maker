@@ -467,7 +467,9 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
   `<name>_bilingual.epub`。工作目录保留在 `<name>_book/`：可以先编辑其中的
   `source.md` 再翻译，重复执行同一条命令会从已完成的部分继续，而不会重新提取或
   重新翻译。需要 Java、PATH 中的 Pandoc，以及 `opendataloader-pdf[hybrid]` 依赖。
-  不加该参数时，PDF 仍按原有方式翻译。
+  不加该参数时，PDF 仍按原有方式翻译。翻译论文或整本书时建议加上
+  `--use_context session`：PDF 会被提取成大量短块，会话上下文能让术语前后一致；
+  默认是逐块独立翻译。
 
 - `--no-gpu`（仅限 PDF，需配合 `--to-epub`）：
 
