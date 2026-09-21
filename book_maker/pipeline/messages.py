@@ -36,9 +36,9 @@ JAVA_REQUIRED = (
     "install one, for example Temurin from https://adoptium.net/, and retry."
 )
 PDF_ROUTE_NOT_INSTALLED = (
-    "the PDF route's packages are not installed; --to-epub needs the pdf "
-    'extra: pip install "bbook_maker[pdf]" (from a checkout: pip install -r '
-    "requirements-pdf.txt). Detail: {err}"
+    "the PDF route's packages are not installed; they are base dependencies "
+    "of this package (pip install opendataloader-pdf pypdfium2 pillow, or "
+    "reinstall it). Detail: {err}"
 )
 PDFIUM_UNUSABLE = (
     "pypdfium2 is installed but unusable (no PdfDocument); reinstall it with "

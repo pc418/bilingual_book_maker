@@ -334,7 +334,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
 
 - `--with-ocr` 启动 OCR 后端：docling 模型，用 `pip install "bbook_maker[ocr]"` 安装（从源码目录则 `pip install -r requirements-ocr.txt`），首次运行时下载。没有文字层的页面在不加它时会被拒绝，绝不会被悄悄跳过。文字版 PDF 上它额外提供表格和版面识别，不会读取图片。不加它时只运行 Java 引擎：没有模型，没有下载，也没有需要加速的东西。
 - `--no-gpu` 让模型留在 CPU 上；默认自动检测加速器，没有时自行回退到 CPU。
-- 需要：PATH 中有 **Java 运行时，11 或更新版本**。JRE 就够了，引擎是一个 jar；用 `java -version` 检查，没有的话从 [Adoptium](https://adoptium.net/) 装 Temurin。PATH 中有 [Pandoc](https://pandoc.org/installing.html)。这条路由的 Python 包是一个 extra，普通安装一个都不带：`pip install "bbook_maker[pdf]"`（从源码目录则 `pip install -r requirements-pdf.txt`），连引擎的 jar 约 25 MB。`--with-ocr` 则要装 `[ocr]`（`requirements-ocr.txt`）：同样的包再加上 OCR 运行时，带着 torch 有好几个 GB。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
+- 需要：PATH 中有 **Java 运行时，11 或更新版本**。JRE 就够了，引擎是一个 jar；用 `java -version` 检查，没有的话从 [Adoptium](https://adoptium.net/) 装 Temurin。PATH 中有 [Pandoc](https://pandoc.org/installing.html)。这条路由的 Python 包（引擎的封装连同 jar、pdfium、Pillow，共约 31 MB）随基础安装一起装好。只有 `--with-ocr` 需要额外的东西：`ocr` extra（`pip install "bbook_maker[ocr]"`，从源码目录则 `pip install -r requirements-ocr.txt`），即 OCR 运行时，带着 torch 有好几个 GB。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
 
 **注意事项。**
 
@@ -720,7 +720,7 @@ docker run --rm -v /home/user/my_books:/book ghcr.io/yihong0618/bilingual_book_m
 
 容器以 root 运行，所以往挂载的文件夹里写东西总是可以的；在 Linux 上写出的文件归 root 所有（事后 `chown` 一下，或者加 `--user $(id -u)`）。API key 也可以用环境变量传入（`-e OPENAI_API_KEY=sk-XXX`）来代替 `--key`。
 
-**Docker 里的 PDF 路由是 `ocr` 标签。** 默认镜像不带这条路由的任何东西（没有 Java、Pandoc，也没有这条路由的 Python 包），所以只有几百 MB，对其他人来说没有任何变化。`ghcr.io/yihong0618/bilingual_book_maker:ocr` 把这些全部加上，带着 torch 有好几个 GB，`--to-epub` 加不加 `--with-ocr` 都能跑：
+**Docker 里的 PDF 路由是 `ocr` 标签。** 默认镜像没有 Java 和 Pandoc，跑不了这条路由，所以只有几百 MB。`ghcr.io/yihong0618/bilingual_book_maker:ocr` 把两者和 OCR 运行时都加上，带着 torch 有好几个 GB，`--to-epub` 加不加 `--with-ocr` 都能跑：
 
 ```shell
 docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yihong0618/bilingual_book_maker:ocr --book_name /book/paper.pdf --to-epub --with-ocr --key "${openai_key}" --use_context session

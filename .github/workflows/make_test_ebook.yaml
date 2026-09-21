@@ -38,14 +38,12 @@ jobs:
       - name: install python requirements
         run: pip install -r requirements.txt
 
-      # The PDF route (--to-epub) is opt-in for users (the `pdf` extra); CI
-      # opts in so its pipeline tests and the smoke at the end run rather
-      # than skip. The route reads the PDF with a Java engine (a jar inside
-      # the opendataloader-pdf wheel; a JRE is enough) and builds the EPUB
-      # with Pandoc. The OCR backend (requirements-ocr.txt: docling, torch)
-      # is deliberately not installed here; nothing in CI passes --with-ocr.
-      - name: install the PDF route's packages (the pdf extra)
-        run: pip install -r requirements-pdf.txt
+      # The PDF route (--to-epub) reads the PDF with a Java engine (a jar
+      # inside the opendataloader-pdf wheel; a JRE is enough) and builds the
+      # EPUB with Pandoc. The suite's pipeline tests skip without them, and
+      # the smoke at the end needs both. The OCR backend
+      # (requirements-ocr.txt: docling, torch) is deliberately not installed
+      # here; nothing in CI passes --with-ocr.
       - name: install a Java runtime (the PDF route's engine)
         uses: actions/setup-java@v6
         with:

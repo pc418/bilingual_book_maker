@@ -4,7 +4,7 @@
 !book_maker
 !make_book.py
 !requirements.txt
-# the ocr stage's pins; the pdf file is a subset of it and not needed
+# the ocr stage's pins
 !requirements-ocr.txt
 
 # ...minus anything that should never travel inside the allowed paths.

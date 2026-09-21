@@ -466,12 +466,12 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --us
   the engine is a jar; check with `java -version`, and if it is missing
   install Temurin from [Adoptium](https://adoptium.net/).
   [Pandoc](https://pandoc.org/installing.html) on PATH. The route's Python
-  packages are an extra, so a plain install carries none of them:
-  `pip install "bbook_maker[pdf]"` (from a checkout, `pip install -r
-  requirements-pdf.txt`), about 25 MB with the engine's jar. `--with-ocr`
-  needs `[ocr]` instead (`requirements-ocr.txt`): the same packages plus the
-  OCR runtime, several gigabytes with torch. A missing one is refused before
-  the PDF is opened, with a message naming it.
+  packages (the engine's wrapper with its jar, pdfium, Pillow; about 31 MB)
+  come with the base install. Only `--with-ocr` needs more: the `ocr` extra
+  (`pip install "bbook_maker[ocr]"`, from a checkout `pip install -r
+  requirements-ocr.txt`), the OCR runtime, several gigabytes with torch. A
+  missing one is refused before the PDF is opened, with a message naming
+  it.
 
 **Caveats.**
 
@@ -949,7 +949,7 @@ docker run --rm -v /home/user/my_books:/book ghcr.io/yihong0618/bilingual_book_m
 
 The container runs as root, so writing into the mounted folder always works; on Linux the files it writes there belong to root (`chown` them afterwards, or add `--user $(id -u)`). API keys can also be passed as environment variables (`-e OPENAI_API_KEY=sk-XXX`) instead of `--key`.
 
-**The PDF route in Docker is the `ocr` tag.** The default image carries none of it (no Java, no Pandoc, none of the route's packages), so it stays a few hundred megabytes and is unchanged for everyone else. `ghcr.io/yihong0618/bilingual_book_maker:ocr` adds all of it, several gigabytes with torch, and runs `--to-epub` with or without `--with-ocr`:
+**The PDF route in Docker is the `ocr` tag.** The default image has no Java and no Pandoc, so it cannot run the route, and it stays a few hundred megabytes. `ghcr.io/yihong0618/bilingual_book_maker:ocr` adds both and the OCR runtime, several gigabytes with torch, and runs `--to-epub` with or without `--with-ocr`:
 
 ```shell
 docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yihong0618/bilingual_book_maker:ocr --book_name /book/paper.pdf --to-epub --with-ocr --key "${openai_key}" --use_context session

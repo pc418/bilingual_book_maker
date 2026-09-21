@@ -297,15 +297,15 @@ except with a session, `--test`).
 with the install line if one is missing (the run refuses before the PDF is
 opened, naming the missing one, so nothing is paid):
 
-1. The route's packages are an extra, not part of a plain install:
-   `pip install "bbook_maker[pdf]"`, or from a checkout
-   `pip install -r requirements-pdf.txt` (about 25 MB, the engine's jar
-   included). Check: `python -c "import opendataloader_pdf, pypdfium2, PIL"`.
+1. The route's packages come with the base install (the engine's wrapper
+   with its jar, pdfium, Pillow). Check:
+   `python -c "import opendataloader_pdf, pypdfium2, PIL"`; if it fails the
+   install is stale, reinstall the package.
 2. A Java runtime, 11 or newer, on PATH (`java -version`; a JRE is
    enough, the extractor is a jar; Temurin from https://adoptium.net/).
 3. Pandoc on PATH (`pandoc -v`; https://pandoc.org/installing.html).
 4. Only for a scanned PDF, or a typed one whose tables matter:
-   `--with-ocr`, which needs the `ocr` extra instead
+   `--with-ocr`, which needs the `ocr` extra
    (`pip install "bbook_maker[ocr]"` / `requirements-ocr.txt`): several
    gigabytes with torch, and the docling models download on the first run.
    Do not install it speculatively; a page with no text layer is refused
@@ -645,7 +645,7 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `--use_context session is not implemented for the … route` | that route keeps no history; use bare `--use_context`, or a route that does (§1d) |
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
 | `--use_context session` not supported for *txt/srt*, or a *pdf* without `--to-epub` | those loaders never hand context to the model; a PDF gets it through `--to-epub` (§1e) |
-| `the PDF route's packages are not installed; --to-epub needs the pdf extra …` | `pip install "bbook_maker[pdf]"` (checkout: `-r requirements-pdf.txt`); nothing was paid |
+| `the PDF route's packages are not installed; they are base dependencies …` | a stale install: reinstall the package (`pip install -U bbook_maker`, or `-r requirements.txt` from a checkout); nothing was paid |
 | `the OCR runtime is not installed; --with-ocr needs the ocr extra …` | `pip install "bbook_maker[ocr]"`; several gigabytes, only when a scan or tables demand it |
 | `OpenDataLoader requires Java 11 or newer on PATH …` / `Pandoc is required for --to-epub …` | install them (§1e); both are checked before the PDF is opened |
 | `N of M selected pages have no text layer …; rerun with --with-ocr` | a scanned PDF; the flag and the `ocr` extra, not a different tool |

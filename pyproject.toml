@@ -22,6 +22,19 @@ dependencies = [
     "google-genai",
     # chat.completions.parse (Structured Outputs) is unavailable before 1.92.
     "openai>=1.92.0",
+    # The PDF route (--to-epub), about 31 MB together (owner, 260921: "put
+    # it in requirements.txt"): the local PDF parser, a Java engine behind a
+    # thin wrapper that declares no Python dependencies of its own (the jar
+    # is inside; 2.5.10 is the version this was built and verified against,
+    # the one whose `convert(hybrid=..., hybrid_url=..., hybrid_fallback=...)`
+    # signature and `opendataloader-pdf-hybrid --device` flag were checked);
+    # pdfium, which measures what a page shows before the engines read it
+    # and tells a scanned page from a typed one; Pillow, on which the
+    # sanitizer composes a figure's rendering. The parser's OCR backend is
+    # the `ocr` extra below, never a base dependency.
+    "opendataloader-pdf>=2.5.10",
+    "pypdfium2>=5",
+    "pillow>=10",
     "pydantic>=2.0",
     "requests",
     "rich",
@@ -38,19 +51,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The PDF route (--to-epub) is opt-in end to end: nothing of it is a base
-# dependency, so an existing install is untouched (owner, 260921).
-# `pdf`: the local PDF parser, a Java engine behind a thin wrapper that
-# declares no Python dependencies of its own (the jar is inside; 2.5.10 is
-# the version this was built and verified against, the one whose
-# `convert(hybrid=..., hybrid_url=..., hybrid_fallback=...)` signature and
-# `opendataloader-pdf-hybrid --device` flag were checked); pdfium, which
-# measures what a page shows before the engines read it and tells a scanned
-# page from a typed one; Pillow, on which the sanitizer composes a figure's
-# rendering. `ocr`: the same plus the parser's OCR backend (docling, torch:
-# several gigabytes), for --with-ocr.
-pdf = ["opendataloader-pdf>=2.5.10", "pypdfium2>=5", "pillow>=10"]
-ocr = ["opendataloader-pdf[hybrid]>=2.5.10", "pypdfium2>=5", "pillow>=10"]
+# The PDF parser's OCR backend, for --with-ocr: docling, torch, the CUDA
+# wheels, several gigabytes. Deliberately not a base dependency; the run
+# refuses --with-ocr without it and names this extra.
+ocr = ["opendataloader-pdf[hybrid]>=2.5.10"]
 
 [project.scripts]
 bbook_maker = "book_maker.cli:main"
@@ -58,9 +62,9 @@ bbook_maker = "book_maker.cli:main"
 [project.urls]
 Homepage = "https://github.com/yihong0618/bilingual_book_maker"
 
-# The three requirement files are regenerated together by
-# tools/export_requirements.sh: hash-pinned exports of the default, pdf and
-# ocr groups from one lock. The pdm-autoexport entry that used to sit here
+# The two requirement files are regenerated together by
+# tools/export_requirements.sh: hash-pinned exports of the default and ocr
+# groups from one lock. The pdm-autoexport entry that used to sit here
 # wrote the base file alone, without hashes, on every lock update, which is
 # not what the committed file is; it is gone so a lock update cannot undo
 # the split.

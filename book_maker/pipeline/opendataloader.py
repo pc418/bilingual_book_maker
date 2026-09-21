@@ -374,7 +374,7 @@ SCAN_MAX_CHARS = 200
 def text_layer_report(pdf_path, page_range=None):
     """`(pages the text layer does not spell out, pages examined)`, from 1.
 
-    pypdfium2 is in the pdf extra for exactly this, and reading
+    pypdfium2 is a base dependency for exactly this, and reading
     what the page itself says is the only honest way to know whether the
     engine's own triage may skip it: a page with no characters, or a page
     that is one big picture with a few characters stamped on it, has

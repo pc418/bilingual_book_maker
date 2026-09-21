@@ -1465,7 +1465,7 @@ def test_only_the_selected_pages_are_sanitized(tmp_path):
 # --------------------------------------------------------------------------
 # The text layer, read from real PDFs
 # --------------------------------------------------------------------------
-MISSING_PDFIUM = 'pypdfium2 is not installed (pip install "bbook_maker[pdf]")'
+MISSING_PDFIUM = "pypdfium2 is not installed (pip install pypdfium2)"
 
 
 def pdfium_or_skip():

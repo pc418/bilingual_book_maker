@@ -139,7 +139,6 @@ log/
 *.txt
 # the exported dependency pins are tracked; the rule above is for run output
 !requirements.txt
-!requirements-pdf.txt
 !requirements-ocr.txt
 *.bin
 *.epub

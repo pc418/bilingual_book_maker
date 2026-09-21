@@ -2,10 +2,10 @@
 # It is not intended for manual editing.
 
 [metadata]
-groups = ["default", "ocr", "pdf"]
+groups = ["default", "ocr"]
 strategy = ["cross_platform", "inherit_metadata"]
 lock_version = "4.5.1"
-content_hash = "sha256:f97a4d218dadcfbe4a0196295344030ca67bc8934641e2d61ea41dbdb9c7fc59"
+content_hash = "sha256:5438f1ea847afb8537b7bd9309eae4881570459ead7ce0dc5ba72e19ac5438fc"
 
 [[metadata.targets]]
 requires_python = ">=3.10"
@@ -1942,7 +1942,7 @@ name = "opendataloader-pdf"
 version = "2.5.10"
 requires_python = ">=3.10"
 summary = "A Python wrapper for the opendataloader-pdf Java CLI."
-groups = ["ocr", "pdf"]
+groups = ["default", "ocr"]
 files = [
     {file = "opendataloader_pdf-2.5.10-py3-none-any.whl", hash = "sha256:b8e297995953b7b9b11aae6e345445d23af954da63a527b7903c7f8be4c7379d"},
     {file = "opendataloader_pdf-2.5.10.tar.gz", hash = "sha256:95079a560ed7a9e60875693171006a3800c41459b547d216a3ac56d5e35a64c0"},
@@ -2062,7 +2062,7 @@ name = "pillow"
 version = "12.3.0"
 requires_python = ">=3.10"
 summary = "Python Imaging Library (fork)"
-groups = ["ocr", "pdf"]
+groups = ["default", "ocr"]
 files = [
     {file = "pillow-12.3.0-cp310-cp310-macosx_10_10_x86_64.whl", hash = "sha256:6c0016e7b354317c4e9e525b937ac8596c38d2d232b419529b9cd7a1cd46e39a"},
     {file = "pillow-12.3.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:bcc33feacfaefce60c12fd500a277533bdc02b10a19f7f6d348763d8140bbba7"},
@@ -2480,7 +2480,7 @@ name = "pypdfium2"
 version = "5.13.0"
 requires_python = ">=3.6"
 summary = "Python bindings to PDFium"
-groups = ["ocr", "pdf"]
+groups = ["default", "ocr"]
 files = [
     {file = "pypdfium2-5.13.0-py3-none-android_23_arm64_v8a.whl", hash = "sha256:882f4bbd4b17a335b43603169a14cde9341de12b238acd5c39e690cbca7c4293"},
     {file = "pypdfium2-5.13.0-py3-none-android_23_armeabi_v7a.whl", hash = "sha256:d96929bde3bd64c771ab3558ca1ffd7704cc4d872ab92cd9f8f8b8a20f7f36b8"},
