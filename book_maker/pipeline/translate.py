@@ -113,11 +113,22 @@ def check_options(bbm_options):
     reaches the namespace as `batch_flag` however it was spelled, and a
     legacy alias that sets the book name is the same refusal as
     `--book_name`.
+
+    The pairs the inner run would refuse are refused here too, in the CLI's
+    own words. The inner run only reaches its own check after the PDF has
+    been extracted, and it leaves behind an exit status the harness can only
+    report as "stopped before finishing" -- so the operator would pay a
+    minute of Java and OCR to be told something that was true of the command
+    line they typed.
     """
+    from book_maker.cli import PARALLEL_SESSION_REFUSAL, parallel_session_conflict
+
     options = parse_bbm_options(bbm_options)
     for field, (flag, why) in FORBIDDEN_OPTIONS.items():
         if getattr(options, field, None):
             raise PipelineError(f"{flag} cannot be passed through: {why}", stage=STAGE)
+    if parallel_session_conflict(options):
+        raise PipelineError(PARALLEL_SESSION_REFUSAL, stage=STAGE)
     if getattr(options, "plan_classify", None) == "agent":
         raise PipelineError(
             "--plan-classify agent cannot be passed through: it stops before "
