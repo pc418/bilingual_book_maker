@@ -306,6 +306,49 @@ def test_repeated_headings_get_distinct_identifiers(tmp_path, pandoc, fake_forma
     assert "#notes" in nav and "#notes-1" in nav
 
 
+def test_front_matter_above_the_first_heading_does_not_break_the_nav(
+    tmp_path, pandoc, fake_format
+):
+    # PIN (lead, 260920, arXiv 2609.20519 run): OpenDataLoader put the logo
+    # and the affiliation line above the paper's title. Pandoc turned that
+    # into an untitled chapter labelled with the book title in the nav and
+    # linked to the wrong file (27 entries for 26 headings); the export was
+    # refused. Front matter is moved below the first heading for the
+    # conversion; the bilingual file keeps the extractor's order.
+    text = "<!-- page 1 -->\n\nNVIDIA\n\n# Title\n\nProse.\n"
+    bundle = prepared(tmp_path, pandoc, text)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    before = bundle.bilingual_markdown.read_text(encoding="utf-8")
+    assert before.index("NVIDIA") < before.index("# Title")
+
+    export_epub(bundle, pandoc=pandoc)
+
+    assert bundle.bilingual_markdown.read_text(encoding="utf-8") == before
+    with zipfile.ZipFile(bundle.epub) as archive:
+        nav = archive.read("EPUB/nav.xhtml").decode("utf-8")
+        body = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith(".xhtml") and "nav" not in name
+        )
+    assert nav.count("<a href=") == 1
+    assert "NVIDIA" in body and "译:NVIDIA" in body
+
+
+def test_prose_above_the_first_heading_is_not_front_matter(
+    tmp_path, pandoc, fake_format
+):
+    # An untitled preface is left where it is, and the export says why it
+    # cannot build a navigation for it, rather than silently reordering it.
+    preface = "This is an untitled preface that runs well past eighty characters, so it is prose."
+    text = f"{preface}\n\n# Title\n\nProse.\n"
+    bundle = prepared(tmp_path, pandoc, text)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    with pytest.raises(PipelineError) as refused:
+        export_epub(bundle, pandoc=pandoc)
+    assert "navigation is invalid" in refused.value.detail
+
+
 def test_failed_export_leaves_the_previous_epub_in_place(tmp_path, pandoc, fake_format):
     bundle = prepared(tmp_path, pandoc)
     translate_bundle(bundle, OPTIONS, pandoc=pandoc)

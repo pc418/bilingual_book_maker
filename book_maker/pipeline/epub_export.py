@@ -256,20 +256,40 @@ def _check_images(archive, documents, expected_images):
 
 LEADING_COMMENT = re.compile(r"^<!--.*-->$")
 FIRST_HEADING = re.compile(r"^#{1,6}\s+\S")
+# A line that is front matter rather than prose: an image on its own, a
+# fenced-div control line (the translation blocks), or a short banner --
+# a publisher's name, an affiliation, a series line. Measured on the first
+# real paper: OpenDataLoader put the logo and "NVIDIA" above the title.
+FRONT_MATTER_LINE = re.compile(r"^(?:!\[[^\]]*\]\([^)]*\)|:::.*)$")
+FRONT_MATTER_MAX_CHARS = 80
+
+
+def _is_front_matter(line):
+    return bool(
+        LEADING_COMMENT.match(line)
+        or FRONT_MATTER_LINE.match(line)
+        or len(line) <= FRONT_MATTER_MAX_CHARS
+    )
 
 
 def _pandoc_input(bundle, text):
     """The file handed to Pandoc, and why it is sometimes not the deliverable.
 
     Both extractors put a page marker at the top of the document, before the
-    first heading. Pandoc answers any content before the first heading with
-    a chapter of its own -- and an HTML comment renders to nothing, so that
-    chapter is a blank page with a table-of-contents entry pointing at it.
+    first heading, and a paper's first page puts a logo and an affiliation
+    there too. Pandoc answers any content before the first heading with a
+    chapter of its own, labelled in the table of contents with the book's
+    title and linked to the wrong file -- a comment alone makes it a blank
+    page, front matter makes it a duplicate entry the validator refuses.
 
-    When the only thing above the first heading is comments, they are moved
-    to just below it for the conversion. Nothing is dropped, the marker is
-    still in the EPUB, and `book_bilingual.md` on disk is not touched: the
-    deliverable keeps the order the extractor produced.
+    When everything above the first heading is front matter -- comments,
+    images, translation blocks, short lines -- it is moved to just below the
+    heading for the conversion. Nothing is dropped, `book_bilingual.md` on
+    disk is not touched, and the deliverable keeps the order the extractor
+    produced. Prose above the first heading (an untitled preface, an
+    abstract with no heading) is not front matter and is left where it is;
+    the export then fails on the navigation check, which is the honest
+    outcome until such a document gets a heading of its own.
     """
     lines = text.splitlines()
     heading = next(
@@ -278,7 +298,7 @@ def _pandoc_input(bundle, text):
     if not heading:
         return bundle.bilingual_markdown
     prefix = [line for line in lines[:heading] if line.strip()]
-    if not prefix or not all(LEADING_COMMENT.match(line.strip()) for line in prefix):
+    if not prefix or not all(_is_front_matter(line.strip()) for line in prefix):
         return bundle.bilingual_markdown
     moved = (
         [lines[heading], ""]
