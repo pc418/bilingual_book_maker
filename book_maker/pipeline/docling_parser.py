@@ -349,9 +349,7 @@ def extract_pdf(
         raise
     finally:
         line.finish(
-            EXTRACT_DONE.format(
-                scope=scope, engine=engine, elapsed=int(line.elapsed())
-            )
+            EXTRACT_DONE.format(scope=scope, engine=engine, elapsed=int(line.elapsed()))
             if finished
             else None
         )

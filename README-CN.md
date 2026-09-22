@@ -319,7 +319,7 @@ python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
 
 ### PDF 转 **双语** EPUB (实验性)
 
-**做什么。** `--to-epub` 用 OpenDataLoader 把 PDF 的文字层读成 Markdown，用 Markdown 加载器翻译它，再由 Pandoc 生成一本可重排的**双语** EPUB，导航跟随标题：论文的每一段后面紧跟它的译文，成书可以重排、带目录。工作目录 `<name>_book/` 在 PDF 旁边：`source.md`、提取出的图片、`book_bilingual.md` 和一份清单；成书复制为 `<name>_bilingual.epub`。重跑同一条命令会复用提取结果和已完成的翻译；想重新翻译删掉 `book_bilingual.md`，想改原文就在翻译之前编辑 `source.md`。不加该参数时 PDF 走旧路由，输出双语 `.txt` 和 `--pdf_layout` 的版式。
+**做什么。** `--to-epub` 用 [docling](https://github.com/docling-project/docling) 的版面和表格模型把 PDF 读成 Markdown，用 Markdown 加载器翻译它，再由 Pandoc 生成一本可重排的**双语** EPUB，导航跟随标题：论文的每一段后面紧跟它的译文，成书可以重排、带目录。工作目录 `<name>_book/` 在 PDF 旁边：`source.md`、提取出的图片、`book_bilingual.md` 和一份清单；成书复制为 `<name>_bilingual.epub`。重跑同一条命令会复用提取结果和已完成的翻译；想重新翻译删掉 `book_bilingual.md`，想改原文就在翻译之前编辑 `source.md`。不加该参数时 PDF 走旧路由，输出双语 `.txt` 和 `--pdf_layout` 的版式。
 
 **什么时候用。** 想在电子书阅读器上读、带目录的论文或文字版书籍。该路由原样接受 Markdown 加载器的全部参数：`--use_context session`（推荐，PDF 会被提取成大量短块）、`--glossary`、`--parallel-workers`（不能与会话同用）、`--test` 用来便宜地看一眼。
 
@@ -329,28 +329,28 @@ python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --test
 # 完整运行
 python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context session
 # 扫描版 PDF，或者表格要紧的文字版 PDF
-python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
+python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --key ${key} --use_context session
 # 只要一章：第 12 到 30 页，成书是 paper_pages-12-30_bilingual.epub
 python3 make_book.py --book_name paper.pdf --to-epub --pages 12-30 --key ${key} --use_context session
 # 中文扫描件：告诉 OCR 模型要认的文字
-python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --ocr-lang ch_sim,en --key ${key} --use_context session
+python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,en --key ${key} --use_context session
 ```
 
-- `--with-ocr` 启动 OCR 后端：docling 模型，用 `pip install "bbook_maker[ocr]"` 安装（从源码目录则 `pip install -r requirements-ocr.txt`），首次运行时下载。没有文字层的页面在不加它时会被拒绝，绝不会被悄悄跳过。文字版 PDF 上它额外提供表格和版面识别，不会读取图片。不加它时只运行 Java 引擎：没有模型，没有下载，也没有需要加速的东西。
-- `--no-gpu` 让模型留在 CPU 上；默认自动检测加速器（NVIDIA CUDA，或本机安装下 Apple 芯片的 MPS，不用加任何参数），没有时自行回退到 CPU。
+- `--pdf-ocr` 读取**没有文字层**的页面，也就是扫描件。不加它时这样的页面会被拒绝，绝不会被悄悄跳过。默认关闭：原生数字版 PDF 本来就能读，OCR 会让耗时翻上几倍，读到的东西却没有变化。版面、标题和表格识别无论加不加它都会运行——OCR 并不是提取质量的来源。
+- `--device` 决定模型在哪里运行：`auto`（默认）自动检测加速器——NVIDIA CUDA，或本机安装下 Apple 芯片的 MPS——没有时自行回退到 CPU。`--device cpu` 强制用处理器。**CPU 是完整支持的，产出的文字完全一样**，只是更慢，区别仅此而已。在无法提供 CUDA 的机器或 PyTorch 构建上使用 `--device cuda` 会被明确拒绝，并区分这两种情况。
 - `--ocr-lang` 指定 OCR 模型在没有文字层的页面上识别的语言，用 [EasyOCR 的代码](https://www.jaided.ai/easyocr/)，逗号分隔：`ch_sim,en` 是简体中文加英文，`ch_tra` 繁体，`ja`、`ko`。不加它时模型只认英语、西班牙语、法语和德语，其他文字的扫描件会识别成空白或错字；遇到扫描页而没有这个参数时，运行会提醒。某种语言第一次使用时下载它的模型（几十 MB）。引擎没有模型的代码在读任何页面之前就被拒绝，消息里附引擎自己的列表。文字版 PDF 上它不起作用；换语言重跑扫描件会重新提取。
 - `--pages` 只读指定的页，从 1 数起（`12-30`，或 `1,3,5-7`）；PDF 其余部分不进书，也不会被提取或付费。页码选择会写进文件名，所以单章运行和整本运行并排放着，不会互相覆盖：`<name>_pages-12-30_book/` 和 `<name>_pages-12-30_bilingual.epub`。用同一选择重跑会续用那个工作目录。目录只剩这些页里的标题；选择从某一节中间开始时，第一个标题之前的正文会得到一个以页码命名的标题（`Page 12`），在翻译前就写进 `source.md`，想改名就在那里改。
-- 需要：PATH 中有 **Java 运行时，11 或更新版本**。JRE 就够了，引擎是一个 jar；用 `java -version` 检查，没有的话从 [Adoptium](https://adoptium.net/) 装 Temurin。PATH 中有 [Pandoc](https://pandoc.org/installing.html) **3.1.12 或更新版本**（`pandoc -v` 检查；Ubuntu 24.04 和 Debian 13 的 apt 版本太旧，请从 pandoc.org 下载发行版）。这条路由的 Python 包（引擎的封装连同 jar、pdfium、Pillow，共约 31 MB）随基础安装一起装好。只有 `--with-ocr` 需要额外的东西：`ocr` extra（`pip install "bbook_maker[ocr]"`，从源码目录则 `pip install -r requirements-ocr.txt`），即 OCR 运行时，带着 torch 有好几个 GB。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
+- 需要：**`pdf` extra**，它不在基础安装里——`pip install "bbook_maker[pdf]"`。它会带来 docling 和 PyTorch，所以在没有 NVIDIA 显卡的 Linux 上请从 PyTorch 的 CPU 源安装（约 200 MB，而不是约 1.8 GB）；macOS 和 Windows 上没得选，装的就是 CPU 版。模型本身（约 500 MB）在首次运行时下载。**[docs/installation-pdf.md](docs/installation-pdf.md) 给出了每种情况的准确命令。** 另外 PATH 中要有 [Pandoc](https://pandoc.org/installing.html) **3.1.12 或更新版本**（`pandoc -v` 检查；Ubuntu 24.04 和 Debian 13 的 apt 版本太旧，请从 pandoc.org 下载发行版）。**不需要 Java**——这条路由曾经用过的 Java 引擎已于 2026 年 9 月退役。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
 
 **注意事项。**
 
-- **付费翻译整本之前先读 `source.md`**，至少读标题：它们会变成目录。提取器的标题识别不可靠：arXiv 印章、作者行、首字下沉都可能变成标题，Word 生成的 PDF 可能几乎没有标题，`--with-ocr` 会把所有标题压成同一级。在工作目录里改好 Markdown 再重跑，提取不会重做。
-- 图表保留为图片，图中标注不翻译。把文字藏在裁剪窗口下的图（一种让一页读出几千行的 PDF 手法）会在提取前被栅格化，终端上每页一行；直接画在页面上的图表不会被捕获，坐标轴标签可能以短段落的形式漏进正文。一页提取出的文字远超印刷页容量时会警告，检查那一页。
-- 表格：Java 引擎会丢掉表格（变成连成一片的段落）；`--with-ocr` 保留表格，但见过它改动单元格文字，在 Word 生成的 PDF 上还见过它不加警告地丢掉一整段正文。`--with-ocr` 的 `source.md` 要对照 PDF 核过再信。
+- **付费翻译整本之前先读 `source.md`**，至少读标题：它们会变成目录。标题识别在论文上不错，在其他生成器上要弱得多；Word 导出的 PDF 可能几乎没有标题。在工作目录里改好 Markdown 再重跑，提取不会重做。
+- **行间公式不会被解码。** 它们在 `source.md` 里标为 `<!-- formula-not-decoded -->`，数学内容不会进入成书。公式周围的结构会保留，阅读顺序也正确，但一篇数学密集的论文会丢掉它的数学。这是该路由目前最大的缺口。
+- 图表保留为图片，图中标注不翻译。一页提取出的文字远超印刷页容量时会警告，检查那一页。
 - 提取器不转义正文里的 Markdown 语法。含 `\s`、`[u](y)` 或 `<k>` 的句子可能在翻译前被当作原始 TeX、缺失的链接目标或原始 HTML 而拒绝；消息会指出是哪一块。在 `source.md` 里转义后重跑。
-- 旧的 dvips 或 Ghostscript PDF 里的行间公式会被拆碎、乱序；没有 Unicode 映射的字体会让引擎停下，没有成书。这两项我们这边没有解法。
 - EPUB 不带 `bbm_translation_metadata.json`，也不内嵌术语表（书由 Pandoc 生成），`--no_disclosure` 在该路由上暂未生效：署名行总会加上。`--glossary-auto` 只在压缩发生时学习，短论文在默认预算下学不到任何东西。
 - 除 `--to-epub` 外的每个 PDF 参数在没走该路由时都会被报告为忽略；在非 PDF 书上加 `--to-epub` 会停止运行。
+- `--with-ocr` 和 `--no-gpu` 仍然可用，等同于 `--pdf-ocr` 和 `--device cpu`，会提示一次，保留一个版本。
 
 该路由仍是实验性的：只在 arXiv 论文和少数几种其他生成器的 PDF 上核过，并未覆盖所有 PDF 形态。欢迎提 issue 和 PR；能分享的话请附上 PDF，或者 `source.md` 里出错的那一页。
 
@@ -530,7 +530,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --ocr-lang ch_sim
   为 PDF 输入选择额外生成的双语 PDF 版式。默认 `none` 不额外生成 PDF；
   `all` 会同时尝试上下对照和左右对照。双语 TXT 和 EPUB 输出不受该参数影响。
 
-- `--to-epub`、`--with-ocr`、`--no-gpu`（仅限 PDF）：
+- `--to-epub`、`--pdf-ocr`、`--device`（仅限 PDF）：
 
   PDF 阅读版：文字层变成 Markdown，Markdown 变成带导航的双语 EPUB。工作目录、OCR 以及 `source.md` 里该核对什么，见 [PDF 转双语 EPUB](#pdf-转-双语-epub-实验性)。
 
@@ -726,13 +726,13 @@ docker run --rm -v /home/user/my_books:/book ghcr.io/yihong0618/bilingual_book_m
 
 容器以 root 运行，所以往挂载的文件夹里写东西总是可以的；在 Linux 上写出的文件归 root 所有（事后 `chown` 一下，或者加 `--user $(id -u)`）。API key 也可以用环境变量传入（`-e OPENAI_API_KEY=sk-XXX`）来代替 `--key`。
 
-**Docker 里的 PDF 路由是 `ocr` 标签。** 默认镜像没有 Java 和 Pandoc，跑不了这条路由，所以只有几百 MB。`ghcr.io/yihong0618/bilingual_book_maker:ocr` 把两者和 OCR 运行时都加上，带着 torch 有好几个 GB，`--to-epub` 加不加 `--with-ocr` 都能跑：
+**Docker 里的 PDF 路由是 `pdf` 标签。** 默认镜像（`latest`，也发布为 `basic`）没有 Pandoc 和 PDF 相关的包，跑不了这条路由，所以只有几百 MB。`ghcr.io/yihong0618/bilingual_book_maker:pdf` 把 Pandoc 和 PDF 运行时都加上——docling 和 PyTorch，在 amd64 上是 CUDA 版，有好几个 GB，`--to-epub` 加不加 `--pdf-ocr` 都能跑：
 
 ```shell
-docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yihong0618/bilingual_book_maker:ocr --book_name /book/paper.pdf --to-epub --with-ocr --key "${openai_key}" --use_context session
+docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yihong0618/bilingual_book_maker:pdf --book_name /book/paper.pdf --to-epub --key "${openai_key}" --use_context session
 ```
 
-具名卷 `bbm-models` 让 docling 模型在多次运行之间保留下来；模型在第一次 `--with-ocr` 运行时下载。用之前要知道两个限制：
+具名卷 `bbm-models` 让 docling 模型在多次运行之间保留下来；模型在第一次 `--to-epub` 运行时下载。用之前要知道两个限制：
 
 - **GPU** 只有 Linux 加 NVIDIA 这一条路：宿主机装好 NVIDIA Container Toolkit，再加 `--gpus all`；torch 的 wheel 自带 CUDA 运行时，别的不用装。macOS 上容器不管传什么都只用 CPU，因为 Docker 跑在一个看不见 Metal 加速器的 Linux 虚拟机里。想用 Apple 芯片加速，请在本机直接运行。
 - **codex 路由**两个镜像里都没有：它驱动的是宿主机上已登录的 `codex` 程序，程序和登录状态都不在容器里。Docker 里请用 API 路由。

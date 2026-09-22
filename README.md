@@ -426,7 +426,8 @@ python3 make_book.py --book_name my_book.epub --key ${key} --use_context session
 
 ### PDF to **bilingual** EPUB (experimental)
 
-**What it does.** `--to-epub` reads the PDF's text layer with OpenDataLoader
+**What it does.** `--to-epub` reads the PDF with
+[docling](https://github.com/docling-project/docling)'s layout and table models
 into Markdown, translates that Markdown with the Markdown loader, and has
 Pandoc build a reflowable **bilingual** EPUB whose navigation follows the
 headings: every paragraph of the paper followed by its translation, in a
@@ -449,24 +450,25 @@ short blocks), `--glossary`, `--parallel-workers` (not with a session),
 python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --test
 # the full run
 python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context session
-# a scanned PDF, or a typed one whose tables matter
-python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
+# a scanned PDF
+python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --key ${key} --use_context session
 # one chapter: pages 12 to 30 only, into paper_pages-12-30_bilingual.epub
 python3 make_book.py --book_name paper.pdf --to-epub --pages 12-30 --key ${key} --use_context session
 # a scanned Chinese book: name the script the OCR models read
-python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --ocr-lang ch_sim,en --key ${key} --use_context session
+python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,en --key ${key} --use_context session
 ```
 
-- `--with-ocr` starts the OCR backend: the docling models, installed with
-  `pip install "bbook_maker[ocr]"` (from a checkout, `pip install -r
-  requirements-ocr.txt`) and downloaded on the first run. A page
-  with no text layer is refused without it, never silently skipped. On a
-  typed PDF it adds table and layout detection, and reads no pictures.
-  Without it only the Java
-  engine runs: no models, no download, nothing to accelerate.
-- `--no-gpu` keeps the models on the CPU; the default detects an accelerator
-  (NVIDIA CUDA, or Apple silicon's MPS from a native install, no flag
-  needed) and falls back to the CPU on its own.
+- `--pdf-ocr` reads pages that carry **no text layer** — a scan. Such a page
+  is refused without it, never silently skipped. It is off by default because
+  a born-digital PDF is already readable and OCR costs several times the time
+  without changing what is read. Layout, headings and table detection run
+  either way; OCR is not what makes the extraction good.
+- `--device` chooses where the models run: `auto` (the default) detects an
+  accelerator — NVIDIA CUDA, or Apple silicon's MPS from a native install —
+  and falls back to the CPU on its own. `--device cpu` forces the processor.
+  **CPU is fully supported and produces the same text**; it is slower, and
+  that is the only difference. `--device cuda` on a machine or a PyTorch build
+  that cannot provide it is refused by name, with the two cases distinguished.
 - `--ocr-lang` names the languages the OCR models read on pages with no
   text layer, as [EasyOCR codes](https://www.jaided.ai/easyocr/), comma
   separated: `ch_sim,en` for simplified Chinese with English, `ch_tra` for
@@ -474,10 +476,8 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --ocr-lang ch_sim
   French and German, and a scan in another script comes back empty or as
   the wrong characters; the run says so when it meets a scanned page
   without the flag. The first use of a language downloads its model (tens
-  of megabytes). A code the engine has no model for is refused before any
-  page is read, with the engine's own list in the message. On a typed PDF
-  the flag changes nothing; rerunning a scan with other languages reads it
-  again.
+  of megabytes). On a typed PDF the flag changes nothing; rerunning a scan
+  with other languages reads it again.
 - `--pages` reads only the pages named, numbered from 1 (`12-30`, or
   `1,3,5-7`); the rest of the PDF is left out of the book, and nothing else
   is extracted or paid for. The selection goes into the names, so a chapter
@@ -487,46 +487,39 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --ocr-lang ch_sim
   the headings inside the selection; when it starts inside a section, the
   prose before the first heading gets a heading naming the page (`Page 12`),
   written into `source.md` before translation, so rename it there if you
-  like.
-- Requirements: **a Java runtime, 11 or newer**, on PATH. A JRE is enough,
-  the engine is a jar; check with `java -version`, and if it is missing
-  install Temurin from [Adoptium](https://adoptium.net/).
-  [Pandoc](https://pandoc.org/installing.html) **3.1.12 or newer** on PATH
-  (`pandoc -v`; Ubuntu 24.04 and Debian 13 apt ship older releases, so take
-  the release from pandoc.org). The route's Python
-  packages (the engine's wrapper with its jar, pdfium, Pillow; about 31 MB)
-  come with the base install. Only `--with-ocr` needs more: the `ocr` extra
-  (`pip install "bbook_maker[ocr]"`, from a checkout `pip install -r
-  requirements-ocr.txt`), the OCR runtime, several gigabytes with torch. A
-  missing one is refused before the PDF is opened, with a message naming
-  it.
+  like. A selection with a gap in it (`1,5-7`) reads the whole run it spans
+  and drops the rest afterwards; the run says so.
+- Requirements: the **`pdf` extra**, which is not part of the base install —
+  `pip install "bbook_maker[pdf]"`. It brings docling and PyTorch, so on Linux
+  without an NVIDIA GPU install it from PyTorch's CPU index (~200 MB instead
+  of ~1.8 GB); on macOS and Windows there is nothing to choose. The models
+  themselves (~500 MB) download on the first run.
+  **[docs/installation-pdf.md](docs/installation-pdf.md) has the exact command
+  for every case.** Also [Pandoc](https://pandoc.org/installing.html)
+  **3.1.12 or newer** on PATH (`pandoc -v`; Ubuntu 24.04 and Debian 13 apt
+  ship older releases, so take the release from pandoc.org). **No Java** — the
+  Java engine this route once used was retired in 2026-09. A missing
+  requirement is refused before the PDF is opened, with a message naming it.
 
 **Caveats.**
 
 - **Read `source.md` before paying for the full translation**, the headings
-  at least: they become the table of contents. The extractor's heading
-  detection is unreliable: an arXiv stamp, an author line or a drop cap can
-  arrive as a heading, a Word-produced PDF can arrive with almost none, and
-  `--with-ocr` flattens every heading to one level. Fix the Markdown in the
-  bundle and rerun; the extraction is not repeated.
-- Figures stay pictures and their labels are not translated. A figure that
-  hides text under clip windows (a PDF trick that makes a page read as
-  thousands of lines) is rasterized before extraction, one line per page on
-  the terminal; a chart drawn straight onto the page is not caught, and its
-  axis labels can leak into the text as short paragraphs. A page that
+  at least: they become the table of contents. Heading detection is good on
+  papers and much weaker on other producers; a Word-exported PDF can arrive
+  with almost none. Fix the Markdown in the bundle and rerun; the extraction
+  is not repeated.
+- **Display equations are not decoded.** Their regions are marked
+  `<!-- formula-not-decoded -->` in `source.md` and the mathematics does not
+  reach the book. The structure around them is kept and the reading order is
+  right, but a maths-heavy paper loses its maths. This is the route's
+  biggest gap.
+- Figures stay pictures and their labels are not translated. A page that
   extracts far more text than a printed page holds is warned about; inspect
   that page.
-- Tables: the Java engine loses them (they arrive as run-on paragraphs);
-  `--with-ocr` keeps them as tables but has been seen altering cell text and,
-  on Word-produced PDFs, dropping a paragraph of prose without a warning.
-  Compare a `--with-ocr` `source.md` against the PDF before trusting it.
 - The extractor does not escape Markdown syntax in prose. A sentence with
   `\s`, `[u](y)` or `<k>` can be refused before translation as raw TeX, a
   missing link target or raw HTML; the message names the block. Escape it in
   `source.md` and rerun.
-- Display equations from older dvips or Ghostscript PDFs come out shredded
-  and out of order; a font without a Unicode mapping stops the engine with
-  no reading edition. Neither has a fix on our side.
 - The EPUB carries no `bbm_translation_metadata.json` and no embedded
   glossary (Pandoc builds it), and `--no_disclosure` is not honoured on this
   route yet: the credit line is always added. `--glossary-auto` learns only
@@ -534,6 +527,8 @@ python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --ocr-lang ch_sim
   nothing.
 - Every PDF flag other than `--to-epub` is reported as ignored when the route
   is not taken, and `--to-epub` on a non-PDF book stops the run.
+- `--with-ocr` and `--no-gpu` still work as `--pdf-ocr` and `--device cpu`,
+  with a notice, for one release.
 
 This route is experimental: it has been checked on arXiv papers and a handful
 of other producers, not on every PDF shape. Issues and PRs are welcome; attach
@@ -764,7 +759,7 @@ are a minute's edit in `source.md`.
   extra PDF; `all` attempts both top-bottom and side-by-side layouts. The bilingual TXT and
   EPUB outputs are unaffected.
 
-- `--to-epub`, `--with-ocr`, `--no-gpu` (PDF only):
+- `--to-epub`, `--pdf-ocr`, `--device` (PDF only):
 
   The PDF reading edition: the text layer becomes Markdown, the Markdown becomes a bilingual EPUB with navigation. See [PDF to bilingual EPUB](#pdf-to-bilingual-epub-experimental) for the bundle, OCR and what to check in `source.md`.
 
@@ -977,15 +972,17 @@ docker run --rm -v /home/user/my_books:/book ghcr.io/yihong0618/bilingual_book_m
 
 The container runs as root, so writing into the mounted folder always works; on Linux the files it writes there belong to root (`chown` them afterwards, or add `--user $(id -u)`). API keys can also be passed as environment variables (`-e OPENAI_API_KEY=sk-XXX`) instead of `--key`.
 
-**The PDF route in Docker is the `ocr` tag.** The default image has no Java and no Pandoc, so it cannot run the route, and it stays a few hundred megabytes. `ghcr.io/yihong0618/bilingual_book_maker:ocr` adds both and the OCR runtime, several gigabytes with torch, and runs `--to-epub` with or without `--with-ocr`:
+**The PDF route in Docker is the `pdf` tag.** The default image (`latest`, also
+published as `basic`) has no Pandoc and no PDF packages, so it cannot run the
+route, and it stays a few hundred megabytes. `ghcr.io/yihong0618/bilingual_book_maker:pdf` adds Pandoc and the PDF runtime — docling and PyTorch, which on amd64 means the CUDA build and several gigabytes — and runs `--to-epub` with or without `--pdf-ocr`:
 
 ```shell
-docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yihong0618/bilingual_book_maker:ocr --book_name /book/paper.pdf --to-epub --with-ocr --key "${openai_key}" --use_context session
+docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yihong0618/bilingual_book_maker:pdf --book_name /book/paper.pdf --to-epub --key "${openai_key}" --use_context session
 ```
 
-The named volume keeps the docling models between runs; they download on the first `--with-ocr` run. Two limits to know before reaching for it:
+The named volume keeps the docling models between runs; they download on the first `--to-epub` run. Two limits to know before reaching for it:
 
-- **GPU** is Linux plus NVIDIA only: install the NVIDIA Container Toolkit on the host and add `--gpus all`; torch's wheels carry the CUDA runtime, so nothing else is needed. On macOS the container is CPU-only whatever you pass, because Docker runs a Linux VM that cannot see the Metal accelerator. For Apple silicon acceleration run the tool natively.
+- **GPU** is Linux plus NVIDIA only: install the NVIDIA Container Toolkit on the host and add `--gpus all`; torch's wheels carry the CUDA runtime, so nothing else is needed. Without a GPU the same image runs on the processor — pass `--device cpu` to skip the detection. On macOS the container is CPU-only whatever you pass, because Docker runs a Linux VM that cannot see the Metal accelerator. For Apple silicon acceleration run the tool natively; it is also the smaller install, since the image ships the CUDA build of PyTorch either way.
 - **The codex route** is not available in either image: it drives a `codex` binary that is signed in on the host, and neither the binary nor the login lives in the container. Use an API route in Docker.
 
 To build the image yourself instead of pulling:

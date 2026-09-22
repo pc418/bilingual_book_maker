@@ -110,7 +110,6 @@ def _clip_box(raw, pageobj):
     return box
 
 
-
 def _page_space(raw, obj):
     """`(box, clip)` of an object in page space.
 
@@ -132,7 +131,6 @@ def _page_space(raw, obj):
             clip = own if clip is None else _intersect(clip, own)
         ancestor = ancestor.container
     return box, clip
-
 
 
 def _page_box(page):
@@ -165,6 +163,7 @@ def picture_share(page):
             shown = _intersect(shown, clip)
         covered += _area(shown)
     return min(1.0, covered / total)
+
 
 def text_layer_report(pdf_path, page_range=None):
     """`(pages the text layer does not spell out, pages examined)`, from 1.
@@ -220,6 +219,7 @@ def text_layer_report(pdf_path, page_range=None):
         )
     finally:
         document.close()
+
 
 def _prose(chunk):
     """What is left of a chunk once markers and pictures are removed."""
@@ -311,5 +311,3 @@ def check_recognised_text(markdown_path, missing):
     if silent:
         print(OCR_EMPTY_PAGES.format(pages=", ".join(str(n) for n in silent)))
     return silent
-
-

@@ -187,7 +187,7 @@ def test_the_translate_stage_is_handed_both_flags(tmp_path, monkeypatch):
             "--use_context",
             "session",
         ],
-        no_gpu=True,
+        device="cpu",
         prepare_stage=prepare_stage,
         translate_stage=translate_stage,
         export_stage=export_stage,

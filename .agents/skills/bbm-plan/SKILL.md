@@ -297,30 +297,33 @@ except with a session, `--test`).
 with the install line if one is missing (the run refuses before the PDF is
 opened, naming the missing one, so nothing is paid):
 
-1. The route's packages come with the base install (the engine's wrapper
-   with its jar, pdfium, Pillow). Check:
-   `python -c "import opendataloader_pdf, pypdfium2, PIL"`; if it fails the
-   install is stale, reinstall the package.
-2. A Java runtime, 11 or newer, on PATH (`java -version`; a JRE is
-   enough, the extractor is a jar; Temurin from https://adoptium.net/).
-3. Pandoc **3.1.12 or newer** on PATH (`pandoc -v`;
+1. The route is an **optional install**, not part of the base package:
+   `python -c "import docling, pypdfium2"`. If it fails, the user needs
+   `pip install "bbook_maker[pdf]"` — and on Linux without an NVIDIA GPU,
+   PyTorch's CPU index with it, or they download ~1.8 GB of CUDA they
+   cannot use. Send them to `docs/installation-pdf.md` rather than
+   improvising a command; it covers CPU, CUDA and MPS and the uv forms.
+   The models (~500 MB) download on the first run, so the first extraction
+   is slower than the second. **No Java** — the Java engine was retired
+   2026-09; if the user has instructions mentioning a JRE or Adoptium,
+   they are out of date.
+2. Pandoc **3.1.12 or newer** on PATH (`pandoc -v`;
    https://pandoc.org/installing.html). Ubuntu 24.04 and Debian 13 apt
    ship older releases; an older one is refused by version before the
    PDF is opened.
-4. Only for a scanned PDF, or a typed one whose tables matter:
-   `--with-ocr`, which needs the `ocr` extra
-   (`pip install "bbook_maker[ocr]"` / `requirements-ocr.txt`): several
-   gigabytes with torch, and the docling models download on the first run.
-   Do not install it speculatively; a page with no text layer is refused
-   without the flag, never silently skipped, so the run tells you when it
-   is needed. The device is detected: CUDA on NVIDIA, MPS on Apple
-   silicon from a native install (Docker on a Mac is CPU-only), no flag
-   to pass. `--no-gpu` keeps those models on the CPU. A scan in a script
-   other than Latin also needs `--ocr-lang` (EasyOCR codes: `ch_sim,en`,
-   `ch_tra`, `ja`, `ko`): the models' default is en, es, fr, de, and a
-   Chinese scan without it comes back empty (`OpenDataLoader produced no
-   text …`) or as wrong characters. Ask what language the book is in; a
+3. Only for a **scanned** PDF: `--pdf-ocr`. Do not pass it speculatively —
+   it costs several times the time and changes nothing on a born-digital
+   PDF, and a page with no text layer is refused without it, never
+   silently skipped, so the run tells you when it is needed. Layout,
+   headings and tables are detected either way; OCR is not what makes the
+   extraction good. A scan in a script other than Latin also needs
+   `--ocr-lang` (EasyOCR codes: `ch_sim,en`, `ch_tra`, `ja`, `ko`): the
+   models' default is en, es, fr, de, and a Chinese scan without it comes
+   back empty or as wrong characters. Ask what language the book is in; a
    mixed book lists both. The first use of a language downloads its model.
+4. `--device` only if the default misbehaves: `auto` detects CUDA or MPS
+   and falls back to the CPU. `--device cpu` is fully supported and gives
+   the same text, only slower — it is never a downgrade in quality.
 
 **Two-page first look, always.** Run once with `--test` (the Markdown
 loader's slice) so the extraction happens and only a few blocks are paid
@@ -329,12 +332,10 @@ the full run. On a long PDF make the first look `--pages 1-2 --test` (its
 bundle is `<name>_pages-1-2_book/`): extraction reads only those pages,
 and the whole-book bundle is created only by the full run. Read the
 headings before the full run: they become the EPUB's table of contents, and the extractor's
-heading detection is imperfect (an arXiv stamp, an author line or a drop
-cap can arrive as a heading; a Word-produced PDF can arrive with almost
-none; `--with-ocr` flattens headings to one level). A page whose Markdown
+heading detection is good on papers and much weaker elsewhere (a
+Word-exported PDF can arrive with almost none). A page whose Markdown
 is thousands of lines is trash, not a long page: the run warns about a page
-that extracted far more text than a printed page holds, and about figures
-it rasterized because they hid text under clip windows. Fix the Markdown in
+that extracted far more text than a printed page holds. Fix the Markdown in
 the bundle and rerun; the extraction is reused, a finished translation too
 (delete `book_bilingual.md` to translate again).
 
@@ -349,16 +350,17 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-ep
 |---|---|
 | `--to-epub` | every PDF, unless the user asked for txt |
 | `--use_context session` | the default on the openai/anthropic routes here too (§1d); `--parallel-workers` is refused with it |
-| `--with-ocr` | a scanned PDF (the run refuses without it and says so), or tables the user needs kept; costs the `ocr` extra |
-| `--no-gpu` | with `--with-ocr`, when the accelerator misbehaves |
-| `--ocr-lang ch_sim,en` | with `--with-ocr`, a scan in Chinese, Japanese, Korean or any other non-Latin script; EasyOCR codes (`ch_sim`/`ch_tra`, not `zh`); a typed PDF ignores it |
+| `--pdf-ocr` | a **scanned** PDF only (the run refuses without it and says so). Not for tables — those are detected either way |
+| `--device cpu` | when the detected accelerator misbehaves; same output, slower |
+| `--ocr-lang ch_sim,en` | with `--pdf-ocr`, a scan in Chinese, Japanese, Korean or any other non-Latin script; EasyOCR codes (`ch_sim`/`ch_tra`, not `zh`); a typed PDF ignores it |
 | `--pages 12-30` | the user wants one chapter or a range, or the paper's bibliography and appendix are not worth paying for; numbered from 1. The book is `<name>_pages-12-30_bilingual.epub` beside the whole-book one, never over it. A selection starting mid-section gets a `Page 12` heading in `source.md`; rename it there before the full run if the user wants a real title |
 | `--glossary` | the same file contract as on an EPUB; worth it on a paper with recurring terms |
 
 What to tell the user up front, in one line each, because they are
 limits of the format rather than of the run: figures stay pictures and
-their labels are not translated; the Java engine loses tables (they arrive
-as prose) and `--with-ocr` keeps them but can alter cell text; a sentence
+their labels are not translated; **display equations are not decoded** and
+arrive as `<!-- formula-not-decoded -->`, so a maths-heavy paper loses its
+maths; a sentence
 containing `\s`, `[u](y)` or `<k>` can be refused before translation as raw
 TeX, a missing link or raw HTML (the message names the block; escape it in
 `source.md` and rerun); the EPUB carries no translation-metadata file and
@@ -661,11 +663,11 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
 | `--use_context session` not supported for *txt/srt*, or a *pdf* without `--to-epub` | those loaders never hand context to the model; a PDF gets it through `--to-epub` (§1e) |
 | `the PDF route's packages are not installed; they are base dependencies …` | a stale install: reinstall the package (`pip install -U bbook_maker`, or `-r requirements.txt` from a checkout); nothing was paid |
-| `the OCR runtime is not installed; --with-ocr needs the ocr extra …` | `pip install "bbook_maker[ocr]"`; several gigabytes, only when a scan or tables demand it |
-| `OpenDataLoader requires Java 11 or newer on PATH …` / `Pandoc is required for --to-epub …` | install them (§1e); both are checked before the PDF is opened |
+| `reading a PDF needs the pdf extra, which is not installed …` | `pip install "bbook_maker[pdf]"` — on Linux without an NVIDIA GPU, with PyTorch's CPU index. The message carries the line; `docs/installation-pdf.md` has every case |
+| `Pandoc is required for --to-epub …` | install it (§1e); it is checked before the PDF is opened. There is no Java check any more |
 | `pandoc 3.x is too old for EPUB export; Pandoc 3.1.12 or newer is required …` | apt's Pandoc (Ubuntu 24.04: 3.1.3, Debian 13: 3.1.11); install the release from pandoc.org (§1e). Nothing was paid |
-| `N of M selected pages have no text layer …; rerun with --with-ocr` | a scanned PDF; the flag and the `ocr` extra, not a different tool |
-| `OpenDataLoader produced no text for a document whose pages have no text layer …`, or `no text was recognised on page(s) …`, on a non-Latin scan | the models read en, es, fr, de by default: rerun with `--ocr-lang` (`ch_sim,en`, `ja`, `ko`); the bundle is read again |
+| `N of M selected pages have no text layer …; rerun with --pdf-ocr` | a scanned PDF; the flag, not a different tool |
+| `The parser produced no text for a document whose pages have no text layer …`, or `no text was recognised on page(s) …`, on a non-Latin scan | the models read en, es, fr, de by default: rerun with `--ocr-lang` (`ch_sim,en`, `ja`, `ko`); the bundle is read again |
 | `… EasyOcr has no model for the OCR language 'xx'. Supported: …` | a code the engine does not know (Chinese is `ch_sim`/`ch_tra`); the message carries the engine's list; nothing was read or paid |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |

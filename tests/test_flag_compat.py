@@ -189,8 +189,8 @@ class TestStops:
         f = facts(["--book_name", "b.pdf", "--to-epub"], book_type="pdf")
         assert tripped(f) == []
 
-    def test_with_ocr_beside_to_epub_is_not_warned_about(self):
-        f = facts(["--book_name", "b.pdf", "--to-epub", "--with-ocr"], book_type="pdf")
+    def test_pdf_ocr_beside_to_epub_is_not_warned_about(self):
+        f = facts(["--book_name", "b.pdf", "--to-epub", "--pdf-ocr"], book_type="pdf")
         assert "C27" not in tripped(f)
 
     def test_pages_beside_to_epub_is_not_warned_about(self):
@@ -203,26 +203,31 @@ class TestStops:
         f = facts(["--book_name", "b.pdf", "--pages", "6-7"], book_type="pdf")
         assert "C28" in tripped(f)
 
-    def test_ocr_lang_beside_with_ocr_is_not_warned_about(self):
+    def test_ocr_lang_beside_pdf_ocr_is_not_warned_about(self):
         f = facts(
-            ["--book_name", "b.pdf", "--to-epub", "--with-ocr", "--ocr-lang", "ja"],
+            ["--book_name", "b.pdf", "--to-epub", "--pdf-ocr", "--ocr-lang", "ja"],
             book_type="pdf",
         )
         assert tripped(f) == []
 
-    def test_ocr_lang_without_with_ocr_is_inert_even_on_the_route(self):
+    def test_ocr_lang_without_pdf_ocr_is_inert_even_on_the_route(self):
         f = facts(
             ["--book_name", "b.pdf", "--to-epub", "--ocr-lang", "ja"], book_type="pdf"
         )
         assert "C29" in tripped(f)
 
-    def test_no_gpu_without_with_ocr_is_inert_even_on_the_route(self):
-        f = facts(["--book_name", "b.pdf", "--to-epub", "--no-gpu"], book_type="pdf")
+    def test_device_without_the_route_is_inert(self):
+        # --device chooses where the extraction models run, and they only
+        # run on the --to-epub route
+        f = facts(["--book_name", "b.pdf", "--device", "cpu"], book_type="pdf")
         assert "C26" in tripped(f)
 
-    def test_no_gpu_beside_to_epub_is_not_warned_about(self):
+    def test_device_beside_to_epub_is_not_warned_about(self):
+        # the quality tier on the CPU is a supported configuration, not a
+        # degraded one, so naming the device on the route warns about
+        # nothing (design 260921: --device never selects a parser)
         f = facts(
-            ["--book_name", "b.pdf", "--to-epub", "--with-ocr", "--no-gpu"],
+            ["--book_name", "b.pdf", "--to-epub", "--device", "cpu"],
             book_type="pdf",
         )
         assert tripped(f) == []
@@ -620,19 +625,18 @@ WARN_FIXTURES = [
         "never asks its report",
     ),
     (
-        # C26: the OCR models only run on the --to-epub route with
-        # --with-ocr, so on any other run there is no device for the flag
-        # to choose
+        # C26: the extraction models only run on the --to-epub route, so on
+        # any other run there is no device for the flag to choose
         "C26",
-        ["--no-gpu"],
+        ["--device", "cpu"],
         {},
-        "only run on the --to-epub route with --with-ocr",
+        "only run on the --to-epub route",
     ),
     (
-        # C27: --with-ocr starts the PDF route's models, and the route only
-        # runs with --to-epub
+        # C27: --pdf-ocr reads the pages with no text layer, and the route
+        # only runs with --to-epub
         "C27",
-        ["--with-ocr"],
+        ["--pdf-ocr"],
         {},
         "only runs with --to-epub",
     ),
@@ -646,11 +650,11 @@ WARN_FIXTURES = [
     ),
     (
         # C29: --ocr-lang names what the OCR models read, and they only run
-        # on the --to-epub route with --with-ocr
+        # on the --to-epub route with --pdf-ocr
         "C29",
         ["--ocr-lang", "ch_sim,en"],
         {},
-        "only run on the --to-epub route with --with-ocr",
+        "only run on the --to-epub route with --pdf-ocr",
     ),
 ]
 
