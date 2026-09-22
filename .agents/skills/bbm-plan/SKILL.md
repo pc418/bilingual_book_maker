@@ -298,8 +298,12 @@ with the install line if one is missing (the run refuses before the PDF is
 opened, naming the missing one, so nothing is paid):
 
 1. The route is an **optional install**, not part of the base package:
-   `python -c "import docling, pypdfium2"`. If it fails, the user needs
-   `pip install "bbook_maker[pdf]"`. The two platforms are opposites and
+   `python -c "import docling, pypdfium2"`. If it fails, the user installs
+   it from a checkout: `pip install -r requirements-pdf-gpu.txt`. Do **not**
+   tell them `pip install "bbook_maker[pdf]"` — the published package has no
+   such extra yet, and pip answers an unknown extra with a warning and a
+   successful install of the release without the route, so they arrive back
+   at the same refusal. The two platforms are opposites and
    this is where a wrong command costs the user gigabytes or an hour:
    **Linux** defaults to the CUDA wheel, so without an NVIDIA GPU they need
    PyTorch's CPU index or they download ~3.2 GB, most of it CUDA they cannot use; **Windows**
@@ -668,7 +672,7 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | legacy-cache refusal | the cache came from an old tag-mode run — delete it |
 | `--use_context session` not supported for *txt/srt*, or a *pdf* without `--to-epub` | those loaders never hand context to the model; a PDF gets it through `--to-epub` (§1e) |
 | `the PDF route's packages are not installed; they are base dependencies …` | a stale install: reinstall the package (`pip install -U bbook_maker`, or `-r requirements.txt` from a checkout); nothing was paid |
-| `reading a PDF needs the pdf extra, which is not installed …` | `pip install "bbook_maker[pdf]"` — on Linux without an NVIDIA GPU, with PyTorch's CPU index. The message carries the line; `docs/installation-pdf.md` has every case |
+| `reading a PDF needs the pdf extra, which is not installed …` | from a checkout, `pip install -r requirements-pdf-gpu.txt` (`-cpu` on Linux without an NVIDIA GPU). Not `pip install "bbook_maker[pdf]"`: the extra is unreleased, and pip warns and installs without it, landing back here. The message carries the line; `docs/installation-pdf.md` has every case |
 | `Pandoc is required for --to-epub …` | install it (§1e); it is checked before the PDF is opened. There is no Java check any more |
 | `pandoc 3.x is too old for EPUB export; Pandoc 3.1.12 or newer is required …` | apt's Pandoc (Ubuntu 24.04: 3.1.3, Debian 13: 3.1.11); install the release from pandoc.org (§1e). Nothing was paid |
 | `N of M selected pages have no text layer …; rerun with --pdf-ocr` | a scanned PDF; the flag, not a different tool |

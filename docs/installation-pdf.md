@@ -67,7 +67,7 @@ pip install -r requirements-pdf-gpu.txt ^
 
 (`cu126` suits the pinned PyTorch 2.7.1; `cu128` is there for newer cards and
 drivers. The CUDA wheel is about 2.7 GB.) Use `--extra-index-url`, not
-`--index-url` — see the note in the appendix.
+`--index-url` — see [Which index, and the flag to use](#which-index-and-the-flag-to-use).
 
 **You also need the NVIDIA driver**, and this is the part people miss. PyTorch
 bundles the CUDA *runtime* inside its wheel, so you do **not** need the CUDA
@@ -131,21 +131,28 @@ python -c "import torch; print(torch.__version__, torch.version.cuda)"
 `--device cuda` distinguishes these two failures, because they have different
 fixes: a CPU-only build is a reinstall, a machine without a card is not.
 
-## Installing the published package instead
+## Installing without a clone — not yet
 
-If you would rather not clone:
+The route is not in the published package. `pip install "bbook_maker[pdf]"`
+therefore does **not** install it, and does not fail either: pip treats an
+unknown extra as a warning, installs the last release without docling, and
+exits 0.
 
-```sh
-pip install "bbook_maker[pdf]"
-
-# Linux without an NVIDIA GPU — the index has to be named on the command line,
-# since there is no requirements file to carry it:
-pip install "bbook_maker[pdf]" --extra-index-url https://download.pytorch.org/whl/cpu
-
-# Windows with an NVIDIA GPU — PyPI's Windows wheel is CPU-only, so CUDA has
-# to be asked for (and the NVIDIA driver installed; see step 3):
-pip install "bbook_maker[pdf]" --extra-index-url https://download.pytorch.org/whl/cu126
 ```
+WARNING: bbook-maker 1.2.1 does not provide the extra 'pdf'
+Successfully installed bbook-maker-1.2.1
+```
+
+The next PDF run then refuses with the same missing-extra message, which is
+why that message names this command as the one that will not work. Until the
+route is released, clone the repository (step 1). From a clone, `pip install
+".[pdf]"` is equivalent to the requirements files but takes whatever versions
+resolve today; the files are the pinned, tested set.
+
+### Which index, and the flag to use
+
+Which PyTorch build you get is decided by the index, so these are the two
+rules behind every command above.
 
 Use `--extra-index-url`, not `--index-url`: `--index-url` *replaces* PyPI, and
 everything else this tool needs would stop resolving.
@@ -154,12 +161,10 @@ With **uv**, the flag alone is not enough — uv takes the first index that has 
 package, so it must be told to compare them:
 
 ```sh
-uv pip install "bbook_maker[pdf]" \
-    --extra-index-url https://download.pytorch.org/whl/cpu \
-    --index-strategy unsafe-best-match
+uv pip install -r requirements-pdf-cpu.txt --index-strategy unsafe-best-match
 
 # or, simpler, uv's own PyTorch switch:
-uv pip install "bbook_maker[pdf]" --torch-backend=cpu
+uv pip install -r requirements-pdf-gpu.txt --torch-backend=cpu
 ```
 
 ### Keeping the CPU build
@@ -222,7 +227,9 @@ CUDA and you opt *out*; on Windows the default is CPU and you opt *in*.
 ## If it does not work
 
 - **`reading a PDF needs the pdf extra`** — step 3 was not done. The message
-  carries the install line.
+  carries the install line. If you ran `pip install "bbook_maker[pdf]"` and it
+  said it succeeded, that is the trap: the published package has no such
+  extra, so pip warned and installed the release without the route. Do step 3.
 - **`--device cuda was asked for, but the installed PyTorch is a CPU-only build`**
   — reinstall with `requirements-pdf-gpu.txt`.
 - **`--device cuda was asked for, but this machine has no cuda accelerator`** —

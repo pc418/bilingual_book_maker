@@ -489,8 +489,10 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   written into `source.md` before translation, so rename it there if you
   like. A selection with a gap in it (`1,5-7`) reads the whole run it spans
   and drops the rest afterwards; the run says so.
-- Requirements: the **`pdf` extra**, which is not part of the base install —
-  `pip install "bbook_maker[pdf]"`. It brings docling and PyTorch, so on Linux
+- Requirements: the **`pdf` extra**, which is not part of the base install.
+  It is not in the published package yet, so install it from a checkout —
+  `pip install -r requirements-pdf-gpu.txt` (`pip install ".[pdf]"` does the
+  same thing without pinning). It brings docling and PyTorch, so on Linux
   without an NVIDIA GPU install it from PyTorch's CPU index (~380 MB instead
   of ~3.2 GB), and on **Windows with an NVIDIA GPU** install it from the CUDA
   index, because PyPI's Windows wheel is CPU-only and the plain install

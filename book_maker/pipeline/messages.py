@@ -57,14 +57,20 @@ DEVICE_UNAVAILABLE = (
     "accelerator available. Use --device cpu to run on the processor, or "
     "--device auto to take whatever is here."
 )
+# The install line names the checkout route FIRST and on purpose. The
+# published bbook_maker carries no `pdf` extra yet, and pip answers a
+# missing extra with a warning and a successful install of the release
+# without it -- so an operator told to run that command would land back
+# on this very message, having changed nothing. Naming it as the thing
+# that does not work is what breaks the loop.
 PDF_ROUTE_NOT_INSTALLED = (
-    "reading a PDF needs the pdf extra, which is not installed: "
-    'pip install "bbook_maker[pdf]" -- or, from a checkout, pip install -r '
-    "requirements-pdf-cpu.txt (requirements-pdf-gpu.txt for CUDA). On Linux "
-    "the CPU route also needs --extra-index-url "
-    "https://download.pytorch.org/whl/cpu, or it downloads the CUDA build; "
-    "on macOS and Windows that flag does nothing. Full instructions in "
-    "docs/installation-pdf.md. Detail: {err}"
+    "reading a PDF needs the pdf extra, which is not installed. From a "
+    "checkout: pip install -r requirements-pdf-gpu.txt, or "
+    "requirements-pdf-cpu.txt on Linux without an NVIDIA GPU (the other "
+    "file downloads about 3 GB of CUDA there). The published package does "
+    'not carry this route yet, so pip install "bbook_maker[pdf]" will only '
+    "warn about the unknown extra and install the release without it. Every "
+    "case, per platform, in docs/installation-pdf.md. Detail: {err}"
 )
 PDFIUM_UNUSABLE = (
     "pypdfium2 is installed but unusable (no PdfDocument); reinstall it with "

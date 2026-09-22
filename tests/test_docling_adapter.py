@@ -266,9 +266,18 @@ def test_a_missing_pdf_install_is_an_error_not_a_cpu_fallback(monkeypatch):
     # PIN (owner 260921, docs/260921-plan-PDF_DOCLING_ONLY_AND_INSTALL_ROUTES.md):
     # PDF input without the PDF install refuses with the install line and a
     # pointer to the guide. It never degrades silently.
-    assert 'pip install "bbook_maker[pdf]"' in refused.value.detail
-    assert "requirements-pdf-cpu.txt" in refused.value.detail
-    assert "docs/installation-pdf.md" in refused.value.detail
+    detail = refused.value.detail
+    assert "requirements-pdf-cpu.txt" in detail
+    assert "requirements-pdf-gpu.txt" in detail
+    assert "docs/installation-pdf.md" in detail
+    # PIN (260921): the published package has no `pdf` extra, and pip meets a
+    # missing extra with a warning and a successful install of the release
+    # without it -- an operator who followed that line would arrive back here
+    # unchanged. The message may name the command only to say it does not
+    # work, and the checkout route has to come first.
+    assert 'pip install "bbook_maker[pdf]"' in detail
+    assert detail.index("requirements-pdf-gpu.txt") < detail.index("bbook_maker[pdf]")
+    assert "does not carry this route yet" in detail
 
 
 def test_the_real_docling_decision_is_reused():
