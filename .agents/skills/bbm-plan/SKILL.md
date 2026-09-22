@@ -299,10 +299,15 @@ opened, naming the missing one, so nothing is paid):
 
 1. The route is an **optional install**, not part of the base package:
    `python -c "import docling, pypdfium2"`. If it fails, the user needs
-   `pip install "bbook_maker[pdf]"` — and on Linux without an NVIDIA GPU,
-   PyTorch's CPU index with it, or they download ~3 GB of CUDA they
-   cannot use. Send them to `docs/installation-pdf.md` rather than
-   improvising a command; it covers CPU, CUDA and MPS and the uv forms.
+   `pip install "bbook_maker[pdf]"`. The two platforms are opposites and
+   this is where a wrong command costs the user gigabytes or an hour:
+   **Linux** defaults to the CUDA wheel, so without an NVIDIA GPU they need
+   PyTorch's CPU index or they download ~3 GB they cannot use; **Windows**
+   defaults to a CPU-only wheel, so *with* an NVIDIA GPU they need PyTorch's
+   CUDA index (the `cu126` channel) plus the NVIDIA driver, or they silently
+   run on the processor. macOS has
+   nothing to choose. Send them to `docs/installation-pdf.md` rather than
+   improvising a command; it covers every case and the uv forms.
    The models (~500 MB) download on the first run, so the first extraction
    is slower than the second. **No Java** — the Java engine was retired
    2026-09; if the user has instructions mentioning a JRE or Adoptium,

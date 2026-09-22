@@ -31,25 +31,18 @@ refused after the translation has been paid for. The apt packages on Ubuntu
 pandoc --version        # 3.1.12 or newer
 ```
 
-## 3. The PDF packages — pick one
-
-There are only two cases, because PyPI's PyTorch **is** the GPU build:
-
-### Apple Silicon, NVIDIA GPU, or Windows
+## 3. The PDF packages
 
 ```sh
 pip install -r requirements-pdf-gpu.txt
 ```
 
-This is the plain install. On Apple Silicon it gives you MPS; on Linux or
-Windows with an NVIDIA card it gives you CUDA; on Windows without one it is
-simply the normal wheel. Every CUDA package in that file is marked
-`platform_system == "Linux" and platform_machine == "x86_64"`, so outside
-Linux nothing CUDA is downloaded and the file is the same install as the CPU
-one below.
+That is the whole step for **Apple Silicon** (you get MPS), for **Linux with
+an NVIDIA GPU** (you get CUDA, because PyPI's Linux wheel *is* the CUDA build)
+and for **Windows without an NVIDIA GPU**.
 
-On Linux you also need an NVIDIA driver new enough for the CUDA runtime in the
-wheel; PyTorch ships the CUDA libraries, not the driver.
+Two cases need something else. Both are on the same principle: which PyTorch
+build you get is decided by the *index* you install from, not by the version.
 
 ### Linux without an NVIDIA GPU
 
@@ -57,10 +50,45 @@ wheel; PyTorch ships the CUDA libraries, not the driver.
 pip install -r requirements-pdf-cpu.txt
 ```
 
-This is the only case where the choice matters. The file above would give you
-~3 GB of CUDA you cannot use; this one is about 180 MB and pulls no
-`nvidia-*` packages at all. It names PyTorch's CPU index inside the file, so
-there is no flag to remember.
+The plain file would give you ~3 GB of CUDA you cannot use; this one is about
+180 MB and pulls no `nvidia-*` packages. It names PyTorch's CPU index inside
+the file, so there is no flag to remember.
+
+### Windows with an NVIDIA GPU
+
+**PyPI's Windows wheel is CPU-only** — unlike Linux, Windows CUDA builds are
+published only on PyTorch's own index. So the plain install above leaves you
+on the processor, silently. Name the CUDA channel:
+
+```sh
+pip install -r requirements-pdf-gpu.txt ^
+    --extra-index-url https://download.pytorch.org/whl/cu126
+```
+
+(`cu126` suits the pinned PyTorch 2.7.1; `cu128` is there for newer cards and
+drivers. The CUDA wheel is about 2.7 GB.) Use `--extra-index-url`, not
+`--index-url` — see the note in the appendix.
+
+**You also need the NVIDIA driver**, and this is the part people miss. PyTorch
+bundles the CUDA *runtime* inside its wheel, so you do **not** need the CUDA
+Toolkit — but the driver is yours to install:
+
+- Driver download: **<https://www.nvidia.com/en-us/drivers/>** (pick your card;
+  either the Game Ready or the Studio driver works)
+- Or install it with GeForce Experience / the NVIDIA App if you already have one
+- PyTorch's own installer matrix, if you want to confirm the channel for your
+  card: **<https://pytorch.org/get-started/locally/>**
+
+Verify the driver is present and new enough before installing PyTorch:
+
+```sh
+nvidia-smi
+```
+
+That prints the driver version and the highest CUDA version it supports. If
+that number is below the channel you chose (12.6 for `cu126`), update the
+driver — an old driver is the usual reason `torch.cuda.is_available()` comes
+back `False` on a machine that plainly has a card.
 
 ## 4. Run it
 
@@ -97,6 +125,8 @@ python -c "import torch; print(torch.__version__, torch.version.cuda)"
   but there is no usable card or the driver is too old.
 - on Apple Silicon, `None` is correct: MPS is not CUDA. Check it with
   `python -c "import torch; print(torch.backends.mps.is_available())"`.
+- on Windows with an NVIDIA card, `None` means you are on the CPU build —
+  which is what PyPI ships there. Go back to step 3.
 
 `--device cuda` distinguishes these two failures, because they have different
 fixes: a CPU-only build is a reinstall, a machine without a card is not.
@@ -111,6 +141,10 @@ pip install "bbook_maker[pdf]"
 # Linux without an NVIDIA GPU — the index has to be named on the command line,
 # since there is no requirements file to carry it:
 pip install "bbook_maker[pdf]" --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Windows with an NVIDIA GPU — PyPI's Windows wheel is CPU-only, so CUDA has
+# to be asked for (and the NVIDIA driver installed; see step 3):
+pip install "bbook_maker[pdf]" --extra-index-url https://download.pytorch.org/whl/cu126
 ```
 
 Use `--extra-index-url`, not `--index-url`: `--index-url` *replaces* PyPI, and
@@ -157,12 +191,17 @@ models are a separate ~500 MB on the first run, whichever route you took.
 | | PyTorch download |
 |---|---|
 | Linux x86_64, CPU build | **176 MB**, and no `nvidia-*` packages |
-| Linux x86_64, CUDA build | **821 MB**, plus ~2.16 GB of `nvidia-*` and `triton` wheels |
+| Linux x86_64, CUDA build (PyPI default) | **821 MB**, plus ~2.16 GB of `nvidia-*` and `triton` wheels |
+| Windows x86_64, PyPI — **this is the CPU build** | **216 MB** |
+| Windows x86_64, `cu126` | **2.7 GB** |
+| Windows x86_64, `cu128` | **3.3 GB** |
 | macOS, Apple Silicon | 69 MB |
-| Windows x86_64 | 216 MB |
 
-So on Linux the choice is roughly 180 MB against 3 GB. On macOS and Windows
-there is no CUDA variant and nothing to choose.
+So on Linux the choice is roughly 180 MB against 3 GB, and on Windows 216 MB
+against 2.7 GB. macOS has no CUDA variant and nothing to choose.
+
+The two platforms are opposites, which is the trap: on Linux the default is
+CUDA and you opt *out*; on Windows the default is CPU and you opt *in*.
 
 ## If it does not work
 
@@ -171,8 +210,14 @@ there is no CUDA variant and nothing to choose.
 - **`--device cuda was asked for, but the installed PyTorch is a CPU-only build`**
   — reinstall with `requirements-pdf-gpu.txt`.
 - **`--device cuda was asked for, but this machine has no cuda accelerator`** —
-  the build has CUDA; the machine or driver cannot provide it. Use
+  the build has CUDA; the machine or driver cannot provide it. Run
+  `nvidia-smi`: no output at all means no driver
+  (<https://www.nvidia.com/en-us/drivers/>), and a CUDA version lower than the
+  channel you installed means the driver is too old. Otherwise use
   `--device cpu`.
+- **On Windows, `torch.version.cuda` is `None` although the machine has a
+  card** — the plain install was used. PyPI's Windows wheel is CPU-only;
+  reinstall naming the `cu126` index (step 3).
 - **pages have no text layer** — the PDF is a scan. Add `--pdf-ocr`, and
   `--ocr-lang` if it is not in English, Spanish, French or German.
 - **Pandoc too old** — see step 2.

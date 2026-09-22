@@ -9,7 +9,7 @@ The PDF route (`--to-epub`) is an extra, because it brings docling and PyTorch. 
 ```sh
 pip install -U "bbook_maker[pdf]"
 ```
-On Linux without an NVIDIA GPU, add PyTorch's CPU index or you will download about 3 GB of CUDA you cannot use — on macOS and Windows there is nothing to choose. **[installation-pdf.md](installation-pdf.md) gives the exact command for CPU, CUDA and MPS**, and the uv equivalents.
+The two platforms are opposites: on Linux the default wheel is the CUDA build, so without an NVIDIA GPU add PyTorch's CPU index or download about 3 GB you cannot use; on Windows the default wheel is CPU-only, so *with* an NVIDIA GPU you must add the CUDA index (and install the NVIDIA driver). macOS has nothing to choose. **[installation-pdf.md](installation-pdf.md) gives the exact command for each case**, and the uv equivalents.
 
 ## git
 You can also install from github if you want to use the latest version.
