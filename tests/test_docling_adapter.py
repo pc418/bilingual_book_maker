@@ -1294,6 +1294,39 @@ def test_a_rerun_with_other_ocr_languages_reads_a_scan_again_but_not_a_typed_doc
     assert stages.already_prepared(typed, pdf, "docling", None, None)
 
 
+def test_a_rerun_that_changes_the_formula_picture_setting_extracts_again(
+    tmp_path, pandoc, pdf, device
+):
+    # PIN (lead 260922, docs/260922-feat-PDF_FORMULA_IMAGES.md; Codex found
+    # the gap): a bundle made with --no-formula-images has no pictures to
+    # reuse, and one made with them is not what a rerun asking for none
+    # wants. The setting is recorded with the extraction and a rerun that
+    # changes it extracts again. A manifest from before the setting existed
+    # counts as the default, so an older bundle is not thrown away.
+    import json
+
+    bundle = Bundle(tmp_path / "bundle").create()
+    docling_parser.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        formula_images=False,
+        convert=fake_convert(),
+    )
+    assert bundle.read_manifest()["extraction"]["formula_images"] is False
+    assert stages.already_prepared(bundle, pdf, "docling", None, formula_images=False)
+    assert not stages.already_prepared(bundle, pdf, "docling", None)
+
+    manifest = bundle.read_manifest()
+    del manifest["extraction"]["formula_images"]
+    bundle.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert stages.already_prepared(bundle, pdf, "docling", None)
+    assert not stages.already_prepared(
+        bundle, pdf, "docling", None, formula_images=False
+    )
+
+
 def test_the_stage_hands_the_extraction_the_languages_it_parsed_once(
     tmp_path, pdf, pandoc, device, text_layer, monkeypatch
 ):

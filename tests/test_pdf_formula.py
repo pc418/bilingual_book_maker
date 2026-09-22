@@ -16,12 +16,17 @@ import pytest
 
 from book_maker.pipeline import pdf_formula
 from book_maker.pipeline.messages import (
-    FORMULA_COUNT_MISMATCH,
+    FORMULA_NO_POSITION,
+    FORMULA_NOT_EXPORTED,
     FORMULA_REGION_OVERSIZE,
 )
 from pipeline_helpers import write_pdf
 
 PLACEHOLDER = pdf_formula.PLACEHOLDER
+
+
+def marker(index):
+    return "$$" + pdf_formula.MARKER.format(index=index) + "$$"
 
 
 class FakeBox:
@@ -67,16 +72,20 @@ def test_every_undecoded_formula_is_marked_in_reading_order():
     assert regions[1].box == (5.0, 5.0, 20.0, 20.0)
 
 
-def test_a_formula_without_orig_is_given_one_so_it_leaves_a_placeholder():
-    """PIN: docling-core exports a FormulaItem with neither text nor `orig`
-    as the empty string -- the equation disappears with no placeholder at
-    all, and the nth placeholder would then be the wrong region. Checked
-    against the real serializer in the last test of this module."""
-    empty = FakeItem(orig=None)
-    kept = FakeItem(orig="E=mc^2")
-    pdf_formula.mark(FakeDoc(empty, kept))
-    assert empty.orig, "an undecoded formula must be forced to a placeholder"
-    assert kept.orig == "E=mc^2", "an existing orig is left alone"
+def test_an_undecoded_formula_is_given_its_region_s_marker_as_text():
+    """Placement is by identity: the marker written into the item's text is
+    what the serializer emits where the equation stands, so the picture
+    for region n can only ever land at item n. (Codex 260922 found that
+    counting placeholders could not tell a reordering from alignment --
+    docling-core walks rich table cells in grid order -- so the ordinal
+    scheme it replaced is not to be brought back.) Checked against the
+    real serializer in the last test of this module."""
+    first = FakeItem(orig=None)
+    second = FakeItem(orig="E=mc^2")
+    pdf_formula.mark(FakeDoc(first, second))
+    assert first.text == pdf_formula.MARKER.format(index=0)
+    assert second.text == pdf_formula.MARKER.format(index=1)
+    assert second.orig == "E=mc^2", "orig is not touched"
 
 
 def test_a_formula_docling_did_read_is_not_touched():
@@ -143,20 +152,29 @@ def test_groups_keep_the_reading_order_of_their_first_member():
 # --------------------------------------------------------------------------
 # replace
 # --------------------------------------------------------------------------
-def test_each_placeholder_becomes_its_group_s_image():
+def test_each_marker_becomes_its_own_group_s_image_wherever_it_appears():
     regions = pdf_formula.mark(
         FakeDoc(
             FakeItem(page=1, box=(0, 0, 10, 10)), FakeItem(page=2, box=(0, 0, 10, 10))
         )
     )
     groups = pdf_formula.merge(regions)
-    markdown = f"a\n\n{PLACEHOLDER}\n\nb\n\n{PLACEHOLDER}\n"
-    out, seen = pdf_formula.replace(
+    # The serializer wrote the second formula first -- a table walked in
+    # grid order, say. Each picture still lands at its own marker.
+    markdown = f"a\n\n{marker(1)}\n\nb\n\n{marker(0)}\n"
+    out, unexported = pdf_formula.replace(
         markdown, regions, groups, {0: "one.png", 1: "two.png"}
     )
-    assert seen == 2
-    assert "![](images/one.png)" in out and "![](images/two.png)" in out
-    assert PLACEHOLDER not in out
+    assert unexported == []
+    assert out == "a\n\n![](images/two.png)\n\nb\n\n![](images/one.png)\n"
+
+
+def test_an_inline_marker_is_replaced_too():
+    regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=(0, 0, 10, 10))))
+    groups = pdf_formula.merge(regions)
+    inline = "$" + pdf_formula.MARKER.format(index=0) + "$"
+    out, _ = pdf_formula.replace(f"| {inline} |\n", regions, groups, {0: "one.png"})
+    assert out == "| ![](images/one.png) |\n"
 
 
 def test_a_merged_group_fills_the_first_placeholder_and_drops_the_rest():
@@ -167,11 +185,12 @@ def test_a_merged_group_fills_the_first_placeholder_and_drops_the_rest():
         )
     )
     groups = pdf_formula.merge(regions)
-    out, _ = pdf_formula.replace(
-        f"{PLACEHOLDER}\n\n{PLACEHOLDER}\n", regions, groups, {0: "one.png"}
+    out, unexported = pdf_formula.replace(
+        f"{marker(0)}\n\n{marker(1)}\n", regions, groups, {0: "one.png"}
     )
+    assert unexported == []
     assert out.count("![](images/one.png)") == 1
-    assert PLACEHOLDER not in out
+    assert PLACEHOLDER not in out and "bbm-formula" not in out
 
 
 def test_a_group_with_no_image_keeps_its_placeholder():
@@ -179,28 +198,38 @@ def test_a_group_with_no_image_keeps_its_placeholder():
     equation was there; it is never silently deleted."""
     regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=(0, 0, 10, 10))))
     groups = pdf_formula.merge(regions)
-    out, _ = pdf_formula.replace(f"{PLACEHOLDER}\n", regions, groups, {})
+    out, _ = pdf_formula.replace(f"{marker(0)}\n", regions, groups, {})
     assert out.strip() == PLACEHOLDER
 
 
 # --------------------------------------------------------------------------
 # apply: the guards
 # --------------------------------------------------------------------------
-def test_a_count_mismatch_leaves_every_equation_alone(tmp_path):
-    """Belt and braces for a docling change: if the export stops lining up
-    with the document, placing images by position would put an equation in
-    the wrong paragraph. Doing nothing is the safe failure."""
+def test_a_marker_the_serializer_never_wrote_is_reported_not_guessed(tmp_path):
+    """A formula the export left out (furniture, a dropped group) has no
+    place to put its picture. It is named, in reading order and by page,
+    rather than placed anywhere else."""
+    pdfium_or_skip()
+    pdf = write_pdf(tmp_path / "book.pdf", ["prose"])
     regions = pdf_formula.mark(
         FakeDoc(
-            FakeItem(page=1, box=(0, 0, 10, 10)), FakeItem(page=1, box=(50, 50, 60, 60))
+            FakeItem(page=1, box=(10, 10, 60, 30)),
+            FakeItem(page=1, box=(10, 50, 60, 70)),
         )
     )
-    markdown = f"only one\n\n{PLACEHOLDER}\n"
-    out, count, warnings = pdf_formula.apply(
-        markdown, regions, tmp_path / "x.pdf", tmp_path
-    )
-    assert out == markdown and count == 0
-    assert warnings == [FORMULA_COUNT_MISMATCH.format(regions=2, found=1)]
+    markdown = f"only the first\n\n{marker(0)}\n"
+    out, count, warnings = pdf_formula.apply(markdown, regions, pdf, tmp_path)
+    assert out.count("![](images/") == 1 and count == 2
+    assert warnings == [FORMULA_NOT_EXPORTED.format(number=2, page=1)]
+
+
+def test_a_formula_with_no_position_keeps_its_placeholder_and_is_reported(tmp_path):
+    pdfium_or_skip()
+    pdf = write_pdf(tmp_path / "book.pdf", ["prose"])
+    regions = pdf_formula.mark(FakeDoc(FakeItem(box=None)))
+    out, count, warnings = pdf_formula.apply(f"{marker(0)}\n", regions, pdf, tmp_path)
+    assert out.strip() == PLACEHOLDER and count == 0
+    assert warnings == [FORMULA_NO_POSITION.format(number=1)]
 
 
 def test_a_document_with_no_formulas_does_nothing(tmp_path):
@@ -244,6 +273,48 @@ def test_a_region_is_cropped_out_of_a_real_pdf(tmp_path):
         )
 
 
+def test_the_crop_is_taken_in_the_frame_docling_reports_in(tmp_path):
+    """PIN (lead 260922, measured on the Griffiths scan with a CropBox set to
+    (40, 60, 452, 600)): docling reports every coordinate relative to the
+    CropBox origin, at the page's rendered size. A crop taken against the
+    MediaBox would be shifted by that origin -- Codex 260922 predicted it,
+    the measurement confirmed it. Asserted on pixels, not dimensions: the
+    crop must equal the same window cut from the full rendered page."""
+    pdfium_or_skip()
+    pytest.importorskip("PIL")
+    import pypdfium2 as pdfium
+    from PIL import ImageChops
+
+    pdf = write_pdf(
+        tmp_path / "book.pdf", ["A typed line of prose."], cropbox=(40, 60, 452, 600)
+    )
+    page = pdfium.PdfDocument(str(pdf))[0]
+    width, height = page.get_size()
+    assert (width, height) == (412.0, 540.0), "the fixture's CropBox took"
+    # docling's frame: relative to the CropBox, bottom-left origin.
+    box = (50.0, 400.0, 250.0, 430.0)
+    regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=box)))
+    images, warnings = pdf_formula.rasterize(
+        pdf, pdf_formula.merge(regions), tmp_path, scale=2.0, pad_x=0.0, pad_y=0.0
+    )
+    assert warnings == []
+    from PIL import Image
+
+    crop = Image.open(tmp_path / pdf_formula.IMAGE_DIR / images[0]).convert("RGB")
+    full = page.render(scale=2.0).to_pil().convert("RGB")
+    # Pixel rows count from the top: top = height - box top.
+    expected = full.crop(
+        (
+            round(box[0] * 2),
+            round((height - box[3]) * 2),
+            round(box[2] * 2),
+            round((height - box[1]) * 2),
+        )
+    )
+    assert crop.size == expected.size
+    assert ImageChops.difference(crop, expected).getbbox() is None
+
+
 def test_a_region_covering_the_page_is_refused_rather_than_cropped(tmp_path):
     """A box over most of the page is a layout mistake. Cropping it would
     replace the page's prose with a picture of itself."""
@@ -284,8 +355,12 @@ def test_the_serializer_still_behaves_the_way_mark_depends_on():
     # The third formula left nothing: exactly the gap `mark` closes.
     assert exported.split("$$E = mc^2$$")[1].strip() == f"{PLACEHOLDER}\n\nafter"
 
-    # And after `mark`, the same document leaves one placeholder per
-    # undecoded formula, in order.
+    # And after `mark`, each undecoded formula exports as its own marker,
+    # verbatim -- the serializer passes a formula's text through
+    # unescaped -- so the picture can only land at its own item.
     regions = pdf_formula.mark(document)
     assert len(regions) == 2
-    assert document.export_to_markdown().count(PLACEHOLDER) == 2
+    marked = document.export_to_markdown()
+    assert PLACEHOLDER not in marked
+    assert marked.index(marker(0)) < marked.index(marker(1))
+    assert "$$E = mc^2$$" in marked

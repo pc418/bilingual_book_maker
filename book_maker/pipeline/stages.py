@@ -60,7 +60,9 @@ def device_for(device):
     return (device or "auto").lower()
 
 
-def already_prepared(bundle, input_path, parser, pages, ocr_lang=None):
+def already_prepared(
+    bundle, input_path, parser, pages, ocr_lang=None, formula_images=True
+):
     """Whether this bundle already holds this input, prepared this way.
 
     A second run over a finished bundle must not buy the extraction again,
@@ -71,7 +73,11 @@ def already_prepared(bundle, input_path, parser, pages, ocr_lang=None):
     them, the same OCR languages -- a rerun with other languages is asking
     for those pages to be read again, and reusing the old text would be
     honouring the flag in name only. On a document the models never read,
-    the languages changed nothing, and the extraction stands.
+    the languages changed nothing, and the extraction stands. And the same
+    choice about display formulas: a bundle made with --no-formula-images
+    has no pictures to reuse, and one made with them is not what a rerun
+    asking for none wants. A manifest from before the setting existed
+    counts as the default.
     """
     if not bundle.manifest_path.is_file():
         return False
@@ -97,6 +103,8 @@ def already_prepared(bundle, input_path, parser, pages, ocr_lang=None):
             extraction.get("ocr_lang") or None
         ) != (ocr_lang or None):
             return False
+        if bool(extraction.get("formula_images", True)) != bool(formula_images):
+            return False
     return done[0]
 
 
@@ -121,7 +129,12 @@ def prepare(
     kind = source_kind(input_path)
     languages = parse_ocr_lang(ocr_lang)
     finished = already_prepared(
-        bundle, input_path, PDF_PARSER if kind == "pdf" else None, pages, languages
+        bundle,
+        input_path,
+        PDF_PARSER if kind == "pdf" else None,
+        pages,
+        languages,
+        formula_images=formula_images,
     )
     if finished:
         print(STAGE_COMPLETE.format(stage=finished))

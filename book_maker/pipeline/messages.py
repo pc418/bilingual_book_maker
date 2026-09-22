@@ -131,11 +131,13 @@ FORMULA_UNPLACEABLE = (
     "Warning: a formula on page {page} has no usable position on the page, "
     "so its placeholder is left where it is."
 )
-FORMULA_COUNT_MISMATCH = (
-    "Warning: the parser found {regions} undecoded formula(s) but the "
-    "Markdown carries {found} placeholder(s). Every equation was left as a "
-    "placeholder rather than risk putting one in the wrong place; please "
-    "report this together with the PDF."
+FORMULA_NO_POSITION = (
+    "Warning: undecoded formula {number} (counting in reading order) carries "
+    "no page position in the parser's output, so it is left as a placeholder."
+)
+FORMULA_NOT_EXPORTED = (
+    "Warning: undecoded formula {number} on page {page} did not appear in the "
+    "parser's Markdown, so its picture was not placed."
 )
 PAGE_TOO_DENSE = (
     "Warning: page {page} extracted {chars} characters, several times what a "

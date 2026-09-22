@@ -175,10 +175,9 @@ def _convert(pdf, *, out_dir, span, device, ocr, languages, formulas=True):
 
     converter = _converter(device, ocr, languages)
     result = converter.convert(str(pdf), page_range=span)
-    # Before the export, and only then: an undecoded formula with no
-    # `orig` exports to nothing at all, so the regions are collected and
-    # the placeholders forced into existence while the document is still
-    # in hand.
+    # Before the export: each undecoded formula is given a marker as its
+    # text, so the serializer writes the marker where the equation stands
+    # and the picture can only land at its own item.
     regions = pdf_formula.mark(result.document) if formulas else []
     images = Path(out_dir) / IMAGE_DIR
     markdown = result.document.export_to_markdown(
@@ -433,6 +432,8 @@ def extract_pdf(
         examined=examined,
         ocr=ocr,
         ocr_lang=languages,
+        formula_images=bool(formula_images),
+        formulas=formulas,
     )
     limitations = [
         "Extraction reading order, headings and diacritics are not verified "
@@ -452,6 +453,9 @@ def extract_pdf(
         )
     for number, chars in dense:
         limitations.append(PAGE_TOO_DENSE.format(page=number, chars=chars))
+    # A formula that could not be placed is a gap in the book, and the
+    # terminal line scrolls away; the manifest keeps it.
+    limitations.extend(formula_warnings)
     bundle.add_limitations(limitations)
     return report
 
@@ -500,6 +504,8 @@ def _write_provenance(
     examined=0,
     ocr=False,
     ocr_lang=None,
+    formula_images=True,
+    formulas=0,
 ):
     version = _installed_version()
     bundle.work.mkdir(parents=True, exist_ok=True)
@@ -514,6 +520,7 @@ def _write_provenance(
                 "pages": pages,
                 "ocr": ocr,
                 "ocr_lang": ocr_lang,
+                "formula_images": formula_images,
                 "version": version,
                 "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             },
@@ -538,6 +545,10 @@ def _write_provenance(
             # The languages the models were told to read, as given
             # (`--ocr-lang`); None means the engine's own default.
             "ocr_lang": ocr_lang,
+            # Whether display formulas were kept as pictures, and how many
+            # were; a rerun that changes the setting extracts again.
+            "formula_images": formula_images,
+            "formula_image_count": formulas,
             "pdf": pdf.name,
             "pdf_sha256": sha256_file(pdf),
             "page_range": page_range,

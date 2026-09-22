@@ -13,6 +13,13 @@ It is pixel-exact because it *is* the page, it costs no model and no
 network, and the translator never sees it -- an image is not prose, so
 nothing can be mistranslated into a wrong formula.
 
+Placement is by identity, not by position. Before the export every
+undecoded formula is given a marker as its text, the serializer writes
+that marker where the equation stands, and the marker is swapped for the
+equation's own picture. Whatever order the serializer walks the document
+in -- tables, groups, captions -- a picture can only ever land where its
+own item was written.
+
 What it does not do: inline mathematics inside a paragraph is not a
 formula region at all, and on a scan it arrives as whatever OCR made of
 it. That text is untouched here.
@@ -21,17 +28,24 @@ it. That text is untouched here.
 import re
 
 from .messages import (
-    FORMULA_COUNT_MISMATCH,
+    FORMULA_NO_POSITION,
+    FORMULA_NOT_EXPORTED,
     FORMULA_REGION_OVERSIZE,
     FORMULA_UNPLACEABLE,
 )
 
-# The serializer's placeholder, verbatim. PIN: docling-core's Markdown
+# The serializer's placeholder, verbatim: what an undecoded formula leaves
+# when it is not turned into a picture. PIN: docling-core's Markdown
 # serializer writes `$$text$$` when a FormulaItem has text, this comment
-# when it has none but has `orig`, and NOTHING AT ALL when it has
-# neither -- which is why `mark` fills `orig` in before the export.
+# when it has none but has `orig`, and NOTHING AT ALL when it has neither.
+# `mark` gives every undecoded formula a text, so the third branch is
+# never reached and every equation leaves a trace.
 PLACEHOLDER = "<!-- formula-not-decoded -->"
-_PLACEHOLDER_RE = re.compile(re.escape(PLACEHOLDER))
+# The marker `mark` writes as an undecoded formula's text. The serializer
+# passes a formula's text through unescaped, wrapped in `$$` as a block or
+# `$` inline; the pattern accepts both.
+MARKER = "bbm-formula-{index:04d}"
+_MARKER_RE = re.compile(r"\${1,2}bbm-formula-(\d{4})\${1,2}")
 
 IMAGE_DIR = "images"
 # 3x the PDF's own 72 dpi. Enough that a subscript stays legible on a
@@ -64,13 +78,12 @@ class Region:
 
 
 def mark(document):
-    """Formula regions in reading order, one per undecoded formula.
+    """Give every undecoded formula a marker as its text; return its regions.
 
-    Also fills in `orig` on any formula that has neither text nor `orig`,
-    because such an item exports to an empty string: the equation would
-    vanish without even a placeholder to replace. After this every
-    undecoded formula is guaranteed to leave exactly one placeholder, so
-    the nth placeholder is the nth region.
+    Region `n` belongs to the formula whose text is now `MARKER` with
+    index `n`. Coordinates are as docling reports them: relative to the
+    page as it is rendered (the CropBox, after any /Rotate), origin at
+    the bottom left -- the same frame pypdfium2 renders in.
     """
     regions = []
     for item, _level in document.iterate_items():
@@ -78,12 +91,9 @@ def mark(document):
             continue
         if getattr(item, "text", ""):
             # docling read this one; leave its $$...$$ alone. Truthiness,
-            # not content: the serializer tests `if text:` and would write
-            # `$$ $$` for a blank, and counting that as a region here would
-            # trip the count guard and drop every image in the document.
+            # not content: the serializer tests `if text:` too.
             continue
-        if not getattr(item, "orig", None):
-            item.orig = " "
+        item.text = MARKER.format(index=len(regions))
         prov = list(getattr(item, "prov", None) or [])
         if not prov:
             regions.append(Region(None, None))
@@ -119,7 +129,7 @@ def merge(regions):
     A scan makes the layout model draw two boxes over one equation --
     seen on the fixture, where neither box contains the other. Two crops
     would show the reader the same equation twice, so they are unioned
-    and the extra placeholders are dropped rather than filled.
+    and the extra markers are dropped rather than filled.
     """
     groups = []  # each: [page, box, [region index, ...]]
     for index, region in enumerate(regions):
@@ -152,27 +162,28 @@ def merge(regions):
 
 
 def _crop(page, box, pad_x, pad_y):
-    """The render `crop` margins for `box`, clamped to the page."""
-    from .pdf_common import _page_box
+    """The render `crop` margins for `box`, clamped to the rendered page.
 
-    left, bottom, right, top = _page_box(page)
-    l = max(left, box[0] - pad_x)
-    b = max(bottom, box[1] - pad_y)
-    r = min(right, box[2] + pad_x)
-    t = min(top, box[3] + pad_y)
+    The frame is the page as rendered -- `get_size()` is the CropBox
+    after /Rotate -- because that is the frame docling reports in
+    (measured: an offset CropBox shifts every docling coordinate by its
+    origin, and a rotated page is reported at its rotated size) and the
+    frame pypdfium2 takes its crop margins in. The MediaBox and the
+    CropBox's own origin play no part.
+    """
+    width, height = (float(value) for value in page.get_size())
+    l = max(0.0, box[0] - pad_x)
+    b = max(0.0, box[1] - pad_y)
+    r = min(width, box[2] + pad_x)
+    t = min(height, box[3] + pad_y)
     if r <= l or t <= b:
         return None, 0.0
-    share = ((r - l) * (t - b)) / max((right - left) * (top - bottom), 1e-9)
-    return (l - left, b - bottom, right - r, top - t), share
+    share = ((r - l) * (t - b)) / max(width * height, 1e-9)
+    return (l, b, width - r, height - t), share
 
 
 def rasterize(pdf_path, groups, out_dir, *, scale=SCALE, pad_x=PAD_X, pad_y=PAD_Y):
-    """Write one PNG per group; return {group index: file name} and warnings.
-
-    The page is rendered unrotated so the crop and the box share one
-    coordinate space -- docling reports the same page box pdfium does,
-    checked on the fixture.
-    """
+    """Write one PNG per group; return {group index: file name} and warnings."""
     from pathlib import Path
 
     from .pdf_common import _pdfium
@@ -206,11 +217,12 @@ def rasterize(pdf_path, groups, out_dir, *, scale=SCALE, pad_x=PAD_X, pad_y=PAD_
 
 
 def replace(markdown, regions, groups, images):
-    """Each placeholder becomes its group's image, or is left alone.
+    """Each marker becomes its own group's image, or the placeholder.
 
-    A placeholder whose group produced no image keeps the comment, so a
-    region that could not be cropped still tells the reader that an
-    equation was there.
+    Returns the Markdown and the indices of regions whose marker never
+    appeared in it. A marker whose group produced no image becomes the
+    placeholder, so a region that could not be cropped still tells the
+    reader that an equation was there.
     """
     target = {}
     for index, (_page, _box, members) in enumerate(groups):
@@ -220,36 +232,34 @@ def replace(markdown, regions, groups, images):
         target[members[0]] = f"![]({IMAGE_DIR}/{name})"
         for extra in members[1:]:
             target[extra] = ""
+    seen = set()
 
-    counter = {"n": 0}
+    def swap(match):
+        index = int(match.group(1))
+        seen.add(index)
+        return target.get(index, PLACEHOLDER)
 
-    def swap(_match):
-        position = counter["n"]
-        counter["n"] += 1
-        return target.get(position, PLACEHOLDER)
-
-    return _PLACEHOLDER_RE.sub(swap, markdown), counter["n"]
+    out = _MARKER_RE.sub(swap, markdown)
+    unexported = [index for index in range(len(regions)) if index not in seen]
+    return out, unexported
 
 
 def apply(
     markdown, regions, pdf_path, out_dir, *, scale=SCALE, pad_x=PAD_X, pad_y=PAD_Y
 ):
-    """Rasterize every marked formula. Returns (markdown, count, warnings).
-
-    The placeholder count is checked against the regions `mark` found. A
-    mismatch means the export did not line up with the document -- a
-    docling change, most likely -- and the Markdown is returned untouched
-    rather than having equations placed where they do not belong.
-    """
-    found = len(_PLACEHOLDER_RE.findall(markdown))
-    if not regions and not found:
+    """Rasterize every marked formula. Returns (markdown, count, warnings)."""
+    if not regions:
         return markdown, 0, []
-    if found != len(regions):
-        mismatch = FORMULA_COUNT_MISMATCH.format(regions=len(regions), found=found)
-        return markdown, 0, [mismatch]
     groups = merge(regions)
     images, warnings = rasterize(
         pdf_path, groups, out_dir, scale=scale, pad_x=pad_x, pad_y=pad_y
     )
-    markdown, _seen = replace(markdown, regions, groups, images)
+    for index, region in enumerate(regions):
+        if region.page is None:
+            warnings.append(FORMULA_NO_POSITION.format(number=index + 1))
+    markdown, unexported = replace(markdown, regions, groups, images)
+    for index in unexported:
+        warnings.append(
+            FORMULA_NOT_EXPORTED.format(number=index + 1, page=regions[index].page)
+        )
     return markdown, len(images), warnings
