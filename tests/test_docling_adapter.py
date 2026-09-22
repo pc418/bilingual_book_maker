@@ -1327,6 +1327,49 @@ def test_a_rerun_that_changes_the_formula_picture_setting_extracts_again(
     )
 
 
+def test_the_stage_hands_the_extraction_the_formula_setting(
+    tmp_path, pdf, pandoc, device, monkeypatch
+):
+    convert = fake_convert()
+    real = docling_parser.extract_pdf
+    monkeypatch.setattr(
+        docling_parser,
+        "extract_pdf",
+        lambda *a, **kw: real(*a, convert=convert, **kw),
+    )
+    bundle = Bundle(tmp_path / "b").create()
+    stages.prepare(
+        bundle, pdf, pandoc=pandoc, ocr=True, formula_images=False, progress=False
+    )
+    assert convert.calls[0]["formulas"] is False
+    assert bundle.read_manifest()["extraction"]["formula_images"] is False
+    # And the rerun that asks for pictures is not answered from the bundle.
+    stages.prepare(bundle, pdf, pandoc=pandoc, ocr=True, progress=False)
+    assert len(convert.calls) == 2 and convert.calls[1]["formulas"] is True
+
+
+def test_what_the_converter_says_about_formulas_reaches_the_terminal_and_the_manifest(
+    tmp_path, pdf, pandoc, device, capsys
+):
+    from book_maker.pipeline.messages import FORMULA_IMAGES, FORMULA_REGION_OVERSIZE
+
+    warning = FORMULA_REGION_OVERSIZE.format(page=2, share=91)
+    inner = fake_convert()  # writes the picture CONVERTED refers to
+
+    def convert(pdf_path, **kwargs):
+        return inner(pdf_path, **kwargs), 3, [warning]
+
+    bundle = Bundle(tmp_path / "b").create()
+    docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, ocr=True, convert=convert)
+    out = capsys.readouterr().out
+    assert warning in out
+    assert FORMULA_IMAGES.format(count=3) in out
+    manifest = bundle.read_manifest()
+    assert warning in manifest["limitations"]
+    assert manifest["extraction"]["formula_images"] is True
+    assert manifest["extraction"]["formula_image_count"] == 3
+
+
 def test_the_stage_hands_the_extraction_the_languages_it_parsed_once(
     tmp_path, pdf, pandoc, device, text_layer, monkeypatch
 ):

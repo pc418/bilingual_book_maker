@@ -42,10 +42,11 @@ from .messages import (
 # never reached and every equation leaves a trace.
 PLACEHOLDER = "<!-- formula-not-decoded -->"
 # The marker `mark` writes as an undecoded formula's text. The serializer
-# passes a formula's text through unescaped, wrapped in `$$` as a block or
-# `$` inline; the pattern accepts both.
+# passes a formula's text through unescaped, wrapped in `$$` as a block,
+# `$` inline, and bare inside a nested table cell; the pattern accepts all
+# three, and any index (four digits is a minimum width, not a cap).
 MARKER = "bbm-formula-{index:04d}"
-_MARKER_RE = re.compile(r"\${1,2}bbm-formula-(\d{4})\${1,2}")
+_MARKER_RE = re.compile(r"\${0,2}bbm-formula-(\d{4,})\${0,2}")
 
 IMAGE_DIR = "images"
 # 3x the PDF's own 72 dpi. Enough that a subscript stays legible on a
@@ -219,35 +220,43 @@ def rasterize(pdf_path, groups, out_dir, *, scale=SCALE, pad_x=PAD_X, pad_y=PAD_
 def replace(markdown, regions, groups, images):
     """Each marker becomes its own group's image, or the placeholder.
 
-    Returns the Markdown and the indices of regions whose marker never
-    appeared in it. A marker whose group produced no image becomes the
-    placeholder, so a region that could not be cropped still tells the
-    reader that an equation was there.
+    Returns the Markdown, how many images were placed, and the indices of
+    groups whose image had nowhere to go because none of the group's
+    markers appeared in the export. The image goes to the group's first
+    member that *was* exported -- a merged extra whose partner the
+    serializer dropped still shows the equation once -- and the group's
+    other markers are removed. A marker whose group produced no image
+    becomes the placeholder, so a region that could not be cropped still
+    tells the reader that an equation was there.
     """
-    target = {}
+    present = {int(index) for index in _MARKER_RE.findall(markdown)}
+    target, placed, unplaced = {}, 0, []
     for index, (_page, _box, members) in enumerate(groups):
         name = images.get(index)
         if name is None:
             continue
-        target[members[0]] = f"![]({IMAGE_DIR}/{name})"
-        for extra in members[1:]:
+        exported = [member for member in members if member in present]
+        if not exported:
+            unplaced.append(members[0])
+            continue
+        target[exported[0]] = f"![]({IMAGE_DIR}/{name})"
+        for extra in exported[1:]:
             target[extra] = ""
-    seen = set()
+        placed += 1
 
     def swap(match):
-        index = int(match.group(1))
-        seen.add(index)
-        return target.get(index, PLACEHOLDER)
+        return target.get(int(match.group(1)), PLACEHOLDER)
 
-    out = _MARKER_RE.sub(swap, markdown)
-    unexported = [index for index in range(len(regions)) if index not in seen]
-    return out, unexported
+    return _MARKER_RE.sub(swap, markdown), placed, unplaced
 
 
 def apply(
     markdown, regions, pdf_path, out_dir, *, scale=SCALE, pad_x=PAD_X, pad_y=PAD_Y
 ):
-    """Rasterize every marked formula. Returns (markdown, count, warnings)."""
+    """Rasterize every marked formula. Returns (markdown, placed, warnings).
+
+    `placed` counts pictures that reached the Markdown, not files written.
+    """
     if not regions:
         return markdown, 0, []
     groups = merge(regions)
@@ -257,9 +266,9 @@ def apply(
     for index, region in enumerate(regions):
         if region.page is None:
             warnings.append(FORMULA_NO_POSITION.format(number=index + 1))
-    markdown, unexported = replace(markdown, regions, groups, images)
-    for index in unexported:
+    markdown, placed, unplaced = replace(markdown, regions, groups, images)
+    for index in unplaced:
         warnings.append(
             FORMULA_NOT_EXPORTED.format(number=index + 1, page=regions[index].page)
         )
-    return markdown, len(images), warnings
+    return markdown, placed, warnings

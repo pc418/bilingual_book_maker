@@ -162,19 +162,31 @@ def test_each_marker_becomes_its_own_group_s_image_wherever_it_appears():
     # The serializer wrote the second formula first -- a table walked in
     # grid order, say. Each picture still lands at its own marker.
     markdown = f"a\n\n{marker(1)}\n\nb\n\n{marker(0)}\n"
-    out, unexported = pdf_formula.replace(
+    out, placed, unplaced = pdf_formula.replace(
         markdown, regions, groups, {0: "one.png", 1: "two.png"}
     )
-    assert unexported == []
+    assert (placed, unplaced) == (2, [])
     assert out == "a\n\n![](images/two.png)\n\nb\n\n![](images/one.png)\n"
+
+
+def test_any_marker_index_is_matched_and_the_wrapping_may_be_absent():
+    """Four digits is the marker's minimum width, not its range; and a
+    nested table cell flattens a formula's text without `$` (Codex 260922
+    probed the installed serializer)."""
+    for index in (0, 9999, 10000, 123456):
+        assert int(pdf_formula._MARKER_RE.fullmatch(marker(index)).group(1)) == index
+        bare = pdf_formula.MARKER.format(index=index)
+        assert int(pdf_formula._MARKER_RE.fullmatch(bare).group(1)) == index
 
 
 def test_an_inline_marker_is_replaced_too():
     regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=(0, 0, 10, 10))))
     groups = pdf_formula.merge(regions)
     inline = "$" + pdf_formula.MARKER.format(index=0) + "$"
-    out, _ = pdf_formula.replace(f"| {inline} |\n", regions, groups, {0: "one.png"})
-    assert out == "| ![](images/one.png) |\n"
+    out, placed, _ = pdf_formula.replace(
+        f"| {inline} |\n", regions, groups, {0: "one.png"}
+    )
+    assert out == "| ![](images/one.png) |\n" and placed == 1
 
 
 def test_a_merged_group_fills_the_first_placeholder_and_drops_the_rest():
@@ -185,12 +197,29 @@ def test_a_merged_group_fills_the_first_placeholder_and_drops_the_rest():
         )
     )
     groups = pdf_formula.merge(regions)
-    out, unexported = pdf_formula.replace(
+    out, placed, unplaced = pdf_formula.replace(
         f"{marker(0)}\n\n{marker(1)}\n", regions, groups, {0: "one.png"}
     )
-    assert unexported == []
+    assert (placed, unplaced) == (1, [])
     assert out.count("![](images/one.png)") == 1
     assert PLACEHOLDER not in out and "bbm-formula" not in out
+
+
+def test_a_merged_group_whose_first_marker_was_not_exported_still_shows_once():
+    """Codex 260922: anchoring the picture on the group's first member
+    deleted the equation when the serializer dropped that member and kept
+    the other. The picture goes to whichever member was exported."""
+    regions = pdf_formula.mark(
+        FakeDoc(
+            FakeItem(page=1, box=(0, 0, 20, 10)),
+            FakeItem(page=1, box=(10, 0, 30, 10)),
+        )
+    )
+    groups = pdf_formula.merge(regions)
+    out, placed, unplaced = pdf_formula.replace(
+        f"x\n\n{marker(1)}\n", regions, groups, {0: "one.png"}
+    )
+    assert out == "x\n\n![](images/one.png)\n" and (placed, unplaced) == (1, [])
 
 
 def test_a_group_with_no_image_keeps_its_placeholder():
@@ -198,8 +227,8 @@ def test_a_group_with_no_image_keeps_its_placeholder():
     equation was there; it is never silently deleted."""
     regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=(0, 0, 10, 10))))
     groups = pdf_formula.merge(regions)
-    out, _ = pdf_formula.replace(f"{marker(0)}\n", regions, groups, {})
-    assert out.strip() == PLACEHOLDER
+    out, placed, _ = pdf_formula.replace(f"{marker(0)}\n", regions, groups, {})
+    assert out.strip() == PLACEHOLDER and placed == 0
 
 
 # --------------------------------------------------------------------------
@@ -218,8 +247,9 @@ def test_a_marker_the_serializer_never_wrote_is_reported_not_guessed(tmp_path):
         )
     )
     markdown = f"only the first\n\n{marker(0)}\n"
-    out, count, warnings = pdf_formula.apply(markdown, regions, pdf, tmp_path)
-    assert out.count("![](images/") == 1 and count == 2
+    out, placed, warnings = pdf_formula.apply(markdown, regions, pdf, tmp_path)
+    assert out.count("![](images/") == 1
+    assert placed == 1, "the count is pictures placed, not files written"
     assert warnings == [FORMULA_NOT_EXPORTED.format(number=2, page=1)]
 
 
@@ -273,46 +303,94 @@ def test_a_region_is_cropped_out_of_a_real_pdf(tmp_path):
         )
 
 
+def _expected_window(full, box, height, scale):
+    # Pixel rows count from the top: top = height - box top.
+    return full.crop(
+        (
+            round(box[0] * scale),
+            round((height - box[3]) * scale),
+            round(box[2] * scale),
+            round((height - box[1]) * scale),
+        )
+    )
+
+
+def _same_pixels(crop, expected):
+    from PIL import ImageChops
+
+    assert crop.size == expected.size
+    assert expected.getextrema() != ((255, 255), (255, 255), (255, 255)), "blank"
+    return ImageChops.difference(crop, expected).getbbox() is None
+
+
 def test_the_crop_is_taken_in_the_frame_docling_reports_in(tmp_path):
     """PIN (lead 260922, measured on the Griffiths scan with a CropBox set to
     (40, 60, 452, 600)): docling reports every coordinate relative to the
     CropBox origin, at the page's rendered size. A crop taken against the
     MediaBox would be shifted by that origin -- Codex 260922 predicted it,
-    the measurement confirmed it. Asserted on pixels, not dimensions: the
-    crop must equal the same window cut from the full rendered page."""
+    the measurement confirmed it. Asserted on pixels, with the fixture's
+    text inside the window: the crop must equal the same window cut from
+    the full rendered page, and that window must not be blank (the first
+    version of this test compared two white images and pinned nothing --
+    Codex again)."""
     pdfium_or_skip()
     pytest.importorskip("PIL")
     import pypdfium2 as pdfium
-    from PIL import ImageChops
+    from PIL import Image
 
+    # The helper writes its text at (72, 700) on a 612x792 MediaBox, 18pt.
     pdf = write_pdf(
-        tmp_path / "book.pdf", ["A typed line of prose."], cropbox=(40, 60, 452, 600)
+        tmp_path / "book.pdf", ["A typed line of prose."], cropbox=(40, 60, 452, 750)
     )
     page = pdfium.PdfDocument(str(pdf))[0]
     width, height = page.get_size()
-    assert (width, height) == (412.0, 540.0), "the fixture's CropBox took"
-    # docling's frame: relative to the CropBox, bottom-left origin.
-    box = (50.0, 400.0, 250.0, 430.0)
+    assert (width, height) == (412.0, 690.0), "the fixture's CropBox took"
+    # docling's frame: relative to the CropBox, bottom-left origin -- so the
+    # text line at MediaBox (72, 700) sits at (32, 640) here.
+    box = (20.0, 630.0, 300.0, 660.0)
     regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=box)))
     images, warnings = pdf_formula.rasterize(
         pdf, pdf_formula.merge(regions), tmp_path, scale=2.0, pad_x=0.0, pad_y=0.0
     )
     assert warnings == []
-    from PIL import Image
-
     crop = Image.open(tmp_path / pdf_formula.IMAGE_DIR / images[0]).convert("RGB")
     full = page.render(scale=2.0).to_pil().convert("RGB")
-    # Pixel rows count from the top: top = height - box top.
-    expected = full.crop(
-        (
-            round(box[0] * 2),
-            round((height - box[3]) * 2),
-            round(box[2] * 2),
-            round((height - box[1]) * 2),
-        )
+    assert _same_pixels(crop, _expected_window(full, box, height, 2.0))
+
+
+def test_the_crop_follows_the_page_s_own_rotation(tmp_path):
+    """On a /Rotate 90 page docling reports the rotated size (measured on
+    the Griffiths scan: 624.8x452 for a 452x624.8 page) and pdfium renders
+    rotated, so the crop frame is the rendered page in both. Whether docling
+    finds a formula on such a page at all is its business -- on the two
+    fixtures it found none -- but if it does, the crop is right."""
+    pdfium_or_skip()
+    pytest.importorskip("PIL")
+    import pypdfium2 as pdfium
+    from PIL import Image
+
+    plain = write_pdf(tmp_path / "plain.pdf", ["A typed line of prose."])
+    document = pdfium.PdfDocument(str(plain))
+    document[0].set_rotation(90)
+    pdf = tmp_path / "rotated.pdf"
+    document.save(str(pdf))
+    document.close()
+    page = pdfium.PdfDocument(str(pdf))[0]
+    width, height = page.get_size()
+    assert (width, height) == (792.0, 612.0), "rendered size is rotated"
+    full = page.render(scale=2.0).to_pil().convert("RGB")
+    # Find the text in the rotated render rather than reason about where
+    # it went: the window is the ink's bounding box, padded.
+    ink = full.convert("L").point(lambda v: 255 if v < 128 else 0).getbbox()
+    left, top, right, bottom = (value / 2.0 for value in ink)
+    box = (left - 5, height - bottom - 5, right + 5, height - top + 5)
+    regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=box)))
+    images, warnings = pdf_formula.rasterize(
+        pdf, pdf_formula.merge(regions), tmp_path, scale=2.0, pad_x=0.0, pad_y=0.0
     )
-    assert crop.size == expected.size
-    assert ImageChops.difference(crop, expected).getbbox() is None
+    assert warnings == []
+    crop = Image.open(tmp_path / pdf_formula.IMAGE_DIR / images[0]).convert("RGB")
+    assert _same_pixels(crop, _expected_window(full, box, height, 2.0))
 
 
 def test_a_region_covering_the_page_is_refused_rather_than_cropped(tmp_path):
