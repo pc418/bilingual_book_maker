@@ -185,20 +185,36 @@ with `UV_EXTRA_INDEX_URL`.
 
 ## Sizes
 
-Wheel downloads for the pinned PyTorch (2.7.1), measured 2026-09-21. The
-models are a separate ~500 MB on the first run, whichever route you took.
+What the PDF step actually downloads, measured 2026-09-21 by resolving the
+route's dependency tree on each platform (102 packages) with PyTorch pinned
+as the lock pins it, 2.7.1:
 
-| | PyTorch download |
+| | download |
 |---|---|
-| Linux x86_64, CPU build | **176 MB**, and no `nvidia-*` packages |
-| Linux x86_64, CUDA build (PyPI default) | **821 MB**, plus ~2.16 GB of `nvidia-*` and `triton` wheels |
-| Windows x86_64, PyPI — **this is the CPU build** | **216 MB** |
-| Windows x86_64, `cu126` | **2.7 GB** |
-| Windows x86_64, `cu128` | **3.3 GB** |
-| macOS, Apple Silicon | 69 MB |
+| macOS, Apple Silicon | **~270 MB** |
+| Linux x86_64, CPU build | **~380 MB** |
+| Linux x86_64, CUDA build | **~3.2 GB** |
+| Windows x86_64, PyPI — the CPU build | **~420 MB** |
+| Windows x86_64, `cu126` | **~2.9 GB** |
 
-So on Linux the choice is roughly 180 MB against 3 GB, and on Windows 216 MB
-against 2.7 GB. macOS has no CUDA variant and nothing to choose.
+Plus **~500 MB of models** on the first run, on every platform.
+
+PyTorch is most of the variation, and the rest of the tree is about 200 MB of
+it everywhere (opencv 48 MB, scipy 29 MB, rapidocr 27 MB, transformers,
+numpy, pandas…). The PyTorch wheel alone:
+
+| | torch 2.7.1 wheel |
+|---|---|
+| macOS arm64 | 68.6 MB |
+| Linux x86_64, `+cpu` | 175.8 MB, and its metadata declares **no** `nvidia-*` requirements |
+| Linux x86_64, PyPI default | 821.0 MB, **plus ~2.16 GB** of `nvidia-*` and `triton` wheels |
+| Windows x86_64, PyPI | 216.0 MB — the CPU build |
+| Windows x86_64, `cu126` | 2.72 GB |
+
+So the Linux choice is roughly 380 MB against 3.2 GB, and the Windows one
+420 MB against 2.9 GB. macOS has no CUDA variant and nothing to choose — and
+its 69 MB PyTorch is small because it carries Metal kernels and no CUDA at
+all, not because anything is missing.
 
 The two platforms are opposites, which is the trap: on Linux the default is
 CUDA and you opt *out*; on Windows the default is CPU and you opt *in*.

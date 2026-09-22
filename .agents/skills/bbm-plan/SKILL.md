@@ -302,7 +302,7 @@ opened, naming the missing one, so nothing is paid):
    `pip install "bbook_maker[pdf]"`. The two platforms are opposites and
    this is where a wrong command costs the user gigabytes or an hour:
    **Linux** defaults to the CUDA wheel, so without an NVIDIA GPU they need
-   PyTorch's CPU index or they download ~3 GB they cannot use; **Windows**
+   PyTorch's CPU index or they download ~3.2 GB, most of it CUDA they cannot use; **Windows**
    defaults to a CPU-only wheel, so *with* an NVIDIA GPU they need PyTorch's
    CUDA index (the `cu126` channel) plus the NVIDIA driver, or they silently
    run on the processor. macOS has

@@ -491,8 +491,8 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   and drops the rest afterwards; the run says so.
 - Requirements: the **`pdf` extra**, which is not part of the base install —
   `pip install "bbook_maker[pdf]"`. It brings docling and PyTorch, so on Linux
-  without an NVIDIA GPU install it from PyTorch's CPU index (~180 MB instead
-  of ~3 GB), and on **Windows with an NVIDIA GPU** install it from the CUDA
+  without an NVIDIA GPU install it from PyTorch's CPU index (~380 MB instead
+  of ~3.2 GB), and on **Windows with an NVIDIA GPU** install it from the CUDA
   index, because PyPI's Windows wheel is CPU-only and the plain install
   silently leaves you on the processor — that case also needs the NVIDIA
   driver (<https://www.nvidia.com/en-us/drivers/>). On macOS there is nothing
