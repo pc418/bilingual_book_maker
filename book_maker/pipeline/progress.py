@@ -1,10 +1,10 @@
 """One line that says a slow stage is still moving.
 
-Extraction is minutes of two other programs' work with nothing of ours in
-between: a Java engine reading the PDF and a Python backend running the OCR
-models. Neither reports a page count as it goes -- measured, see
-`opendataloader.backend_note` -- so what can honestly be shown is the stage,
-how long it has been running, and the last thing either of them said.
+Extraction is minutes of somebody else's work with nothing of ours in
+between: docling's layout, table and OCR models reading the PDF, with the
+models downloaded on the first run. It reports no page count as it goes, so
+what can honestly be shown is the stage, how long it has been running, and
+the last thing it said for itself.
 
 The renderer has no opinion about what it prints: it takes a label, an
 elapsed clock and an optional detail, and decides only *when* and *how* the

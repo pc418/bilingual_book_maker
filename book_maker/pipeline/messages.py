@@ -79,6 +79,10 @@ OCR_REQUIRED = (
     "{count} of {total} selected pages have no text layer (page(s) {pages}); "
     "rerun with --pdf-ocr on to read them with the OCR models."
 )
+EXTRACTION_EMPTY = (
+    "The parser returned no text for this PDF; there is nothing to translate. "
+    "If its pages are scans, rerun with --pdf-ocr."
+)
 OCR_EMPTY = (
     "The parser produced no text for a document whose pages have no text "
     "layer; the OCR pass returned pictures only."

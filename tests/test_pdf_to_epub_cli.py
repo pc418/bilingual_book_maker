@@ -1,10 +1,10 @@
 """`make_book.py --to-epub`: the route, the copy, and the progress line.
 
-Everything here runs in process and none of it starts Java, a model or
-Pandoc: what is under test is which code the CLI hands a PDF to, what it
-leaves beside that PDF afterwards, and what an operator sees while the slow
-stage is running. The stages themselves have their own tests
-(`test_opendataloader_adapter.py`, `test_bundle_pipeline.py`).
+Everything here runs in process and none of it starts a model or Pandoc:
+what is under test is which code the CLI hands a PDF to, what it leaves
+beside that PDF afterwards, and what an operator sees while the slow stage
+is running. The stages themselves have their own tests
+(`test_docling_adapter.py`, `test_bundle_pipeline.py`).
 """
 
 import io
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from book_maker import cli
-from book_maker.pipeline import messages, opendataloader, to_epub
+from book_maker.pipeline import docling_parser, messages, to_epub
 from book_maker.pipeline.errors import PipelineError
 from book_maker.pipeline.progress import ProgressLine
 
@@ -78,12 +78,12 @@ class TestRouting:
     ):
         seen = {}
 
-        def fake(path, argv, *, no_gpu, with_ocr, ocr_lang, pages, quiet):
+        def fake(path, argv, *, device, pdf_ocr, ocr_lang, pages, quiet):
             seen.update(
                 path=Path(path),
                 argv=list(argv),
-                no_gpu=no_gpu,
-                with_ocr=with_ocr,
+                device=device,
+                pdf_ocr=pdf_ocr,
                 ocr_lang=ocr_lang,
                 pages=pages,
                 quiet=quiet,
@@ -99,9 +99,10 @@ class TestRouting:
         cli.main(["--book_name", str(pdf), "--to-epub", *TRANSLATION])
 
         assert seen["path"] == pdf
-        assert seen["no_gpu"] is False
-        # The models are opt-in: a plain run starts nothing but the Java engine.
-        assert seen["with_ocr"] is False
+        # Nothing chosen: the adapter's own detection decides the device.
+        assert seen["device"] is None
+        # OCR is opt-in; a born-digital PDF is read without it.
+        assert seen["pdf_ocr"] is False
         assert seen["ocr_lang"] is None
         assert seen["pages"] is None
         assert seen["quiet"] is False
@@ -131,21 +132,44 @@ class TestRouting:
         cli.main(typed)
         assert seen["argv"] == typed
 
-    def test_no_gpu_and_quiet_reach_the_pipeline(self, pdf, monkeypatch):
+    def test_the_device_and_quiet_reach_the_pipeline(self, pdf, monkeypatch):
         seen = {}
         monkeypatch.setattr(
             to_epub, "pdf_to_epub", lambda path, argv, **kwargs: seen.update(kwargs)
         )
         cli.main(
-            ["--book_name", str(pdf), "--to-epub", "--no-gpu", "--quiet", *TRANSLATION]
+            [
+                "--book_name",
+                str(pdf),
+                "--to-epub",
+                "--device",
+                "cpu",
+                "--quiet",
+                *TRANSLATION,
+            ]
         )
         assert seen == {
-            "no_gpu": True,
-            "with_ocr": False,
+            "device": "cpu",
+            "pdf_ocr": False,
             "ocr_lang": None,
             "pages": None,
             "quiet": True,
         }
+
+    def test_an_unknown_device_is_refused_before_the_pipeline_is_reached(
+        self, pdf, monkeypatch
+    ):
+        """The choices are argparse's, so a typo costs nothing."""
+        monkeypatch.setattr(
+            to_epub,
+            "pdf_to_epub",
+            lambda *a, **k: pytest.fail("an unknown device reached the pipeline"),
+        )
+        with pytest.raises(SystemExit) as exited:
+            cli.main(
+                ["--book_name", str(pdf), "--to-epub", "--device", "tpu", *TRANSLATION]
+            )
+        assert exited.value.code == 2
 
     def test_pages_reaches_the_pipeline(self, pdf, monkeypatch):
         seen = {}
@@ -154,8 +178,8 @@ class TestRouting:
         )
         cli.main(["--book_name", str(pdf), "--to-epub", "--pages", "6-7", *TRANSLATION])
         assert seen == {
-            "no_gpu": False,
-            "with_ocr": False,
+            "device": None,
+            "pdf_ocr": False,
             "ocr_lang": None,
             "pages": "6-7",
             "quiet": False,
@@ -171,33 +195,85 @@ class TestRouting:
                 "--book_name",
                 str(pdf),
                 "--to-epub",
-                "--with-ocr",
+                "--pdf-ocr",
                 "--ocr-lang",
                 "ch_sim,en",
                 *TRANSLATION,
             ]
         )
         assert seen == {
-            "no_gpu": False,
-            "with_ocr": True,
+            "device": None,
+            "pdf_ocr": True,
             "ocr_lang": "ch_sim,en",
             "pages": None,
             "quiet": False,
         }
 
-    def test_with_ocr_reaches_the_pipeline(self, pdf, monkeypatch):
+    def test_pdf_ocr_reaches_the_pipeline(self, pdf, monkeypatch):
         seen = {}
         monkeypatch.setattr(
             to_epub, "pdf_to_epub", lambda path, argv, **kwargs: seen.update(kwargs)
         )
-        cli.main(["--book_name", str(pdf), "--to-epub", "--with-ocr", *TRANSLATION])
+        cli.main(["--book_name", str(pdf), "--to-epub", "--pdf-ocr", *TRANSLATION])
         assert seen == {
-            "no_gpu": False,
-            "with_ocr": True,
+            "device": None,
+            "pdf_ocr": True,
             "ocr_lang": None,
             "pages": None,
             "quiet": False,
         }
+
+    @pytest.mark.parametrize(
+        "retired,expected,names",
+        [
+            ("--with-ocr", {"pdf_ocr": True}, ("--with-ocr", "--pdf-ocr")),
+            ("--no-gpu", {"device": "cpu"}, ("--no-gpu", "--device cpu")),
+        ],
+    )
+    def test_a_retired_spelling_still_runs_and_names_its_replacement(
+        self, pdf, monkeypatch, capsys, retired, expected, names
+    ):
+        """A person with the old flag in a script deserves a sentence.
+
+        Both spellings keep working for one release; what must not happen
+        is an argparse error, or silence about the name that replaced them.
+        """
+        seen = {}
+        monkeypatch.setattr(
+            to_epub, "pdf_to_epub", lambda path, argv, **kwargs: seen.update(kwargs)
+        )
+        cli.main(["--book_name", str(pdf), "--to-epub", retired, *TRANSLATION])
+        assert seen == {
+            "device": None,
+            "pdf_ocr": False,
+            "ocr_lang": None,
+            "pages": None,
+            "quiet": False,
+            **expected,
+        }
+        out = " ".join(capsys.readouterr().out.split())
+        assert "deprecated" in out
+        for name in names:
+            assert name in out
+
+    def test_the_current_device_flag_wins_over_the_retired_one(self, pdf, monkeypatch):
+        """The operator who wrote the current flag meant it."""
+        seen = {}
+        monkeypatch.setattr(
+            to_epub, "pdf_to_epub", lambda path, argv, **kwargs: seen.update(kwargs)
+        )
+        cli.main(
+            [
+                "--book_name",
+                str(pdf),
+                "--to-epub",
+                "--no-gpu",
+                "--device",
+                "cuda",
+                *TRANSLATION,
+            ]
+        )
+        assert seen["device"] == "cuda"
 
     def test_a_pdf_without_the_flag_still_takes_the_legacy_route(
         self, pdf, monkeypatch
@@ -274,24 +350,26 @@ class TestTheStages:
         order = []
         to_epub.pdf_to_epub(
             pdf,
-            ["--book_name", str(pdf), "--to-epub", "--no-gpu", *TRANSLATION],
+            ["--book_name", str(pdf), "--to-epub", "--device", "cpu", *TRANSLATION],
             **stages(order),
         )
         translated = dict(enumerate(order))[1]
         assert list(translated[1]) == TRANSLATION
 
-    def test_no_gpu_forces_cpu_and_the_default_detects(self, pdf, no_pandoc_lookup):
+    def test_the_device_reaches_the_extract_stage_and_the_default_detects(
+        self, pdf, no_pandoc_lookup
+    ):
         order = []
         to_epub.pdf_to_epub(pdf, TRANSLATION, **stages(order))
         assert order[0] == ("extract", "auto", False, True, None, None)
 
         order = []
-        to_epub.pdf_to_epub(pdf, TRANSLATION, no_gpu=True, quiet=True, **stages(order))
+        to_epub.pdf_to_epub(pdf, TRANSLATION, device="cpu", quiet=True, **stages(order))
         assert order[0] == ("extract", "cpu", False, False, None, None)
 
-    def test_with_ocr_reaches_the_extract_stage(self, pdf, no_pandoc_lookup):
+    def test_pdf_ocr_reaches_the_extract_stage(self, pdf, no_pandoc_lookup):
         order = []
-        to_epub.pdf_to_epub(pdf, TRANSLATION, with_ocr=True, **stages(order))
+        to_epub.pdf_to_epub(pdf, TRANSLATION, pdf_ocr=True, **stages(order))
         assert order[0] == ("extract", "auto", True, True, None, None)
 
     def test_ocr_lang_reaches_the_extract_stage_as_typed(self, pdf, no_pandoc_lookup):
@@ -299,7 +377,7 @@ class TestTheStages:
         # typed and the stage splits them.
         order = []
         to_epub.pdf_to_epub(
-            pdf, TRANSLATION, with_ocr=True, ocr_lang="ch_sim,en", **stages(order)
+            pdf, TRANSLATION, pdf_ocr=True, ocr_lang="ch_sim,en", **stages(order)
         )
         assert order[0] == ("extract", "auto", True, True, None, "ch_sim,en")
 
@@ -309,7 +387,7 @@ class TestTheStages:
         order = []
         with pytest.raises(PipelineError) as refused:
             to_epub.pdf_to_epub(
-                pdf, TRANSLATION, with_ocr=True, ocr_lang=" , ", **stages(order)
+                pdf, TRANSLATION, pdf_ocr=True, ocr_lang=" , ", **stages(order)
             )
         assert refused.value.detail == messages.OCR_LANG_EMPTY
         assert order == []
@@ -398,6 +476,12 @@ class TestTheStages:
     "argv,kept",
     [
         (["--to-epub", "--model", "m"], ["--model", "m"]),
+        (["--pdf-ocr", "--key", "k"], ["--key", "k"]),
+        (["--device", "cpu", "--key", "k"], ["--key", "k"]),
+        (["--device=cpu", "--key", "k"], ["--key", "k"]),
+        # The retired spellings are still stripped: they still parse, so
+        # they would still reach the translation CLI, which never heard of
+        # them.
         (["--no-gpu", "--key", "k"], ["--key", "k"]),
         (["--with-ocr", "--key", "k"], ["--key", "k"]),
         (["--pages", "6-7", "--key", "k"], ["--key", "k"]),
@@ -519,44 +603,41 @@ class TestProgressLine:
         assert len(line.detail) == 80
 
 
-class TestWhatCountsAsProgress:
-    """Measured from a real conversion; see `backend_note`'s docstring."""
+class TestWhatTheParserSaysReachesTheLine:
+    """The parser writes to stdout; the adapter turns that into progress.
 
-    @pytest.mark.parametrize(
-        "raw,expected",
-        [
-            (
-                "2026-09-20 16:18:33,287 - INFO - Processing document book.pdf",
-                "Processing document book.pdf",
-            ),
-            ("INFO: Number of pages: 3", "Number of pages: 3"),
-            (
-                "INFO: Processing 3 pages via docling-fast backend",
-                "Processing 3 pages via docling-fast backend",
-            ),
-            (
-                "INFO:     Application startup complete.",
-                "Application startup complete.",
-            ),
-            # java.util.logging's own header line, above the message
-            ("9月 20, 2026 4:18:25 org.opendataloader.pdf.X processDocument", None),
-            # uvicorn's access log: one line per health probe
-            ('INFO:     127.0.0.1:57033 - "GET /health HTTP/1.1" 200 OK', None),
-            ("", None),
-            ("   ", None),
-            ("Using a slow image processor as `use_fast` is unset", None),
-        ],
-    )
-    def test_only_a_logged_message_is_shown(self, raw, expected):
-        assert opendataloader.backend_note(raw) == expected
+    `_Sink` stands in for `sys.stdout` during a conversion, so nothing the
+    parser logs scrolls past the operator and the last thing it said
+    becomes the progress line's detail -- and, if the conversion dies, the
+    reason in the failure message.
+    """
 
     def test_the_converter_s_own_output_reaches_the_line(self):
         said = []
-        sink = opendataloader._LineSink(said.append)
-        # the runner writes whole lines, one write each
-        sink.write("INFO: Number of pages: 3\n")
+        sink = docling_parser._Sink(said.append)
+        # whole lines arrive as whole lines
+        sink.write("Processing document book.pdf\n")
         # ... but a partial write must not be shown as half a sentence
-        sink.write("INFO: Processing 3 pages")
-        assert said == ["INFO: Number of pages: 3"]
-        sink.write(" via docling-fast backend\n")
-        assert said[-1] == "INFO: Processing 3 pages via docling-fast backend"
+        sink.write("Finished converting document")
+        assert said == ["Processing document book.pdf"]
+        sink.write(" in 22.22 sec\n")
+        assert said[-1] == "Finished converting document in 22.22 sec"
+
+    def test_two_lines_in_one_write_are_two_notes(self):
+        said = []
+        sink = docling_parser._Sink(said.append)
+        sink.write("first\nsecond\n")
+        assert said == ["first", "second"]
+
+    def test_what_is_left_unterminated_is_flushed_not_lost(self):
+        said = []
+        sink = docling_parser._Sink(said.append)
+        sink.write("a line nobody ended")
+        assert said == []
+        sink.flush()
+        assert said == ["a line nobody ended"]
+
+    def test_it_is_never_mistaken_for_a_terminal(self):
+        # A parser that asks would draw its own progress bar into a stream
+        # that is being read line by line.
+        assert docling_parser._Sink(lambda text: None).isatty() is False

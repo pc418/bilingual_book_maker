@@ -44,6 +44,7 @@ from .messages import (
     ENGINE_OCR,
     EXTRACT_DONE,
     EXTRACT_PROGRESS_LABEL,
+    EXTRACTION_EMPTY,
     OCR_LANG_DEFAULT,
     OCR_REQUIRED,
     PAGE_TOO_DENSE,
@@ -56,6 +57,7 @@ from .messages import (
 )
 from .pdf_common import (
     PAGE_MARKER,
+    _prose,
     check_recognised_text,
     dense_pages,
     first_selected_page,
@@ -160,7 +162,9 @@ def _convert(pdf, *, out_dir, span, device, ocr, languages):
     """Markdown for `span` of `pdf`, with its pictures written to `out_dir`.
 
     The default seam: `extract_pdf(convert=...)` replaces this whole call,
-    so a test never loads a model.
+    so a test never loads a model. It does not replace `resolve_device`,
+    which runs first either way and needs docling importable -- a test on
+    a base install has to stub that too.
     """
     from docling_core.types.doc.base import ImageRefMode
 
@@ -258,8 +262,11 @@ def extract_pdf(
     pages = one_based_pages(page_range)
     languages = parse_ocr_lang(ocr_lang)
 
-    bundle.create()
+    # Before the bundle is created, because it can refuse: an unusable
+    # device, or no parser installed at all, must not leave a half-made
+    # bundle directory behind for the next run to puzzle over.
     resolved, message = resolve_device(device)
+    bundle.create()
     print(message)
 
     bundle.set_stage(STAGE, "running", parser=PARSER, device=resolved)
@@ -355,6 +362,20 @@ def extract_pdf(
         )
 
     try:
+        # Asked of what the parser returned, before the page markers are
+        # added: once they are in, a conversion that produced nothing is a
+        # document full of HTML comments, which is not blank, and the
+        # importer's own "no content" refusal never fires. Reporting
+        # `completed` over an empty book is the silent failure this
+        # pipeline refuses.
+        #
+        # Only when no page needed OCR. When some did, `check_recognised_text`
+        # below owns the refusal and says the more useful thing -- that the
+        # OCR pass itself came back with pictures only. Saying "rerun with
+        # --pdf-ocr" to somebody who just ran it would be worse than saying
+        # nothing.
+        if not missing and not _prose(markdown):
+            raise PipelineError(EXTRACTION_EMPTY, stage=STAGE)
         text = _number_pages(markdown, first_selected_page(page_range))
         if gapped:
             text = _selected_only(text, ranges)

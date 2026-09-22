@@ -219,6 +219,7 @@ def text_layer_report(pdf_path, page_range=None):
         )
     finally:
         document.close()
+    return missing, examined
 
 
 def _prose(chunk):

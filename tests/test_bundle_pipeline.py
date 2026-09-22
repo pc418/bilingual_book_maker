@@ -160,7 +160,7 @@ def test_export_only_needs_no_translator_and_no_extraction(
         raise AssertionError("export must not translate or extract")
 
     monkeypatch.setattr(FakeTranslator, "__init__", refuse)
-    monkeypatch.setattr("book_maker.pipeline.opendataloader.extract_pdf", refuse)
+    monkeypatch.setattr("book_maker.pipeline.docling_parser.extract_pdf", refuse)
     monkeypatch.setattr("book_maker.cli.main", refuse)
 
     export_epub(bundle, pandoc=pandoc)
