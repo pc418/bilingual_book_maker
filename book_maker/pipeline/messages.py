@@ -40,41 +40,48 @@ PANDOC_TOO_OLD = (
 )
 NAV_INVALID = "EPUB navigation is invalid: "
 PDF_OPTIONS_INERT = (
-    "--with-ocr, --no-gpu, --ocr-lang and --pages apply only to PDF input."
+    "--pdf-ocr, --device, --ocr-lang and --pages apply only to PDF input."
 )
-DEVICE_SELECTED = "OpenDataLoader device: {device}."
-DEVICE_CPU_FALLBACK = "OpenDataLoader device: cpu (no supported accelerator detected)."
-DEVICE_UNAVAILABLE = "Requested OpenDataLoader device is unavailable: {device}."
-JAVA_REQUIRED = (
-    "OpenDataLoader requires Java 11 or newer on PATH (a JRE is enough); "
-    "install one, for example Temurin from https://adoptium.net/, and retry."
+DEVICE_SELECTED = "PDF extraction device: {device}."
+DEVICE_CPU_FALLBACK = "PDF extraction device: cpu (no supported accelerator detected)."
+# Two refusals, not one. docling reports both of these as the same
+# unavailable-device error, but they need opposite answers from the
+# operator: one is a reinstall, the other is a machine that has no such
+# accelerator and never will.
+DEVICE_NO_CUDA_BUILD = (
+    "--device cuda was asked for, but the installed PyTorch is a CPU-only "
+    "build. Reinstall through the CUDA route; see docs/installation-pdf.md."
+)
+DEVICE_UNAVAILABLE = (
+    "--device {device} was asked for, but this machine has no {device} "
+    "accelerator available. Use --device cpu to run on the processor, or "
+    "--device auto to take whatever is here."
 )
 PDF_ROUTE_NOT_INSTALLED = (
-    "the PDF route's packages are not installed; they are base dependencies "
-    "of this package (pip install opendataloader-pdf pypdfium2 pillow, or "
-    "reinstall it). Detail: {err}"
+    "reading a PDF needs the pdf extra, which is not installed: "
+    'pip install "bbook_maker[pdf]" -- or, from a checkout, pip install -r '
+    "requirements-pdf-cpu.txt (requirements-pdf-gpu.txt for CUDA). On Linux "
+    "the CPU route also needs --extra-index-url "
+    "https://download.pytorch.org/whl/cpu, or it downloads the CUDA build; "
+    "on macOS and Windows that flag does nothing. Full instructions in "
+    "docs/installation-pdf.md. Detail: {err}"
 )
 PDFIUM_UNUSABLE = (
     "pypdfium2 is installed but unusable (no PdfDocument); reinstall it with "
     "pip install --force-reinstall pypdfium2"
 )
-OCR_NOT_INSTALLED = (
-    "the OCR runtime is not installed; --with-ocr needs the ocr extra: "
-    'pip install "bbook_maker[ocr]" (from a checkout: pip install -r '
-    "requirements-ocr.txt). Detail: {err}"
-)
-BACKEND_FAILED = "OpenDataLoader backend failed: {detail}"
+BACKEND_FAILED = "PDF extraction failed: {detail}"
 SCANNED_PAGES = (
-    "{count} of {total} selected pages have no text layer; every page is sent "
-    "to the OCR backend."
+    "{count} of {total} selected pages have no text layer; they are read by "
+    "the OCR models."
 )
 OCR_REQUIRED = (
     "{count} of {total} selected pages have no text layer (page(s) {pages}); "
-    "rerun with --with-ocr to read them with the OCR models."
+    "rerun with --pdf-ocr on to read them with the OCR models."
 )
 OCR_EMPTY = (
-    "OpenDataLoader produced no text for a document whose pages have no text "
-    "layer; the OCR backend returned pictures only."
+    "The parser produced no text for a document whose pages have no text "
+    "layer; the OCR pass returned pictures only."
 )
 OCR_LANG_DEFAULT = (
     "The OCR models read English, Spanish, French and German unless --ocr-lang "
@@ -86,23 +93,15 @@ OCR_EMPTY_PAGES = (
     "Warning: no text was recognised on page(s) {pages}; check source.md "
     "before translating."
 )
-HIDDEN_TEXT_RASTERIZED = (
-    "Page {page}: a figure carrying {hidden} characters of clipped-away text "
-    "was rasterized; the reading edition shows it as a picture."
-)
-FIGURE_KEPT = (
-    "Page {page}: a figure hiding {hidden} characters of clipped-away text "
-    "drew nothing on its own and was left in place; that text may reach the "
-    "extraction, so read source.md for that page."
-)
-FIGURES_RASTERIZED = (
-    "Page(s) {pages}: {count} vector figure(s) rasterized; the reading edition "
-    "shows them as pictures instead of their labels."
-)
 SELECTION_HEADING_ADDED = (
     "Page {page}: the selection starts inside a section, so a heading "
     '"Page {page}" was added above its prose; the table of contents needs '
     "one there. Rename it in source.md before translating if you like."
+)
+PAGES_SPAN_CONVERTED = (
+    "The page selection is not one run of pages, so pages {span} were read "
+    "and the ones outside the selection dropped afterwards; a single range "
+    "reads fewer pages."
 )
 PAGE_TOO_DENSE = (
     "Warning: page {page} extracted {chars} characters, several times what a "
@@ -111,18 +110,16 @@ PAGE_TOO_DENSE = (
 
 # Progress. The line is rewritten in place on a terminal and printed every
 # ten seconds into a log, so it says the same thing either way: what is
-# running, how long it has been running, and the last thing the engine or
-# the OCR backend said for itself.
+# running, how long it has been running, and the last thing the parser
+# said for itself.
 PROGRESS_LINE = "{label}, {elapsed}s"
 PROGRESS_LINE_DETAIL = "{label}, {elapsed}s - {detail}"
 EXTRACT_PROGRESS_LABEL = "Extracting PDF: {scope}, {engine}"
 EXTRACT_DONE = "PDF extracted: {scope}, {engine}, {elapsed}s."
-# Which engines are reading: the Java engine alone, or the model backend
-# with it -- reading pages nobody typed, or only laying out pages that
-# spell themselves out.
-ENGINE_JAVA = "Java engine"
-ENGINE_OCR = "OCR on {device}"
-ENGINE_LAYOUT = "layout models on {device}"
+# What the models are doing: laying out and reading tables on pages that
+# spell themselves out, or additionally reading pages nobody typed.
+ENGINE_LAYOUT = "layout and table models on {device}"
+ENGINE_OCR = "OCR and layout models on {device}"
 PAGE_SCOPE = "{count} page"
 PAGES_SCOPE = "{count} pages"
 
@@ -142,21 +139,22 @@ TRANSLATION_REUSED = (
 # Argument and subcommand help, as authored.
 DESCRIPTION = "Create bilingual Markdown and a reflowable EPUB from PDF or Markdown."
 HELP_IMPORT = "Import Markdown and its local images."
-HELP_EXTRACT = "Extract Markdown and images from a PDF with OpenDataLoader."
-HELP_WITH_OCR = (
-    "Start the OCR backend (docling models): required for pages with no text "
-    "layer, which are refused without it; on typed pages it adds table and "
-    "layout detection, and reads no pictures. The default is the Java engine "
-    "alone: no models, no download."
+HELP_EXTRACT = "Extract Markdown and images from a PDF with docling."
+HELP_PDF_OCR = (
+    "Read pages that carry no text layer with the OCR models; such pages are "
+    "refused without it. Off by default: a born-digital PDF is already "
+    "readable, and OCR costs several times the time without changing what is "
+    "read. Layout and table detection run either way."
 )
-HELP_NO_GPU = (
-    "With --with-ocr: run the models on the CPU even when an accelerator is "
-    "available; the default detects one and falls back to CPU."
+HELP_DEVICE = (
+    "Which processor the extraction models run on: auto (detect, falling back "
+    "to the CPU), cpu, cuda, mps or xpu. CPU is fully supported and produces "
+    "the same output; it is slower."
 )
 HELP_OCR_LANG = (
-    "With --with-ocr: the languages the OCR models read on pages with no text "
-    "layer, as EasyOCR codes, comma-separated (ch_sim,en; ja; ko); the default "
-    "is en,es,fr,de."
+    "With --pdf-ocr on: the languages the OCR models read on pages with no "
+    "text layer, as EasyOCR codes, comma-separated (ch_sim,en; ja; ko); the "
+    "default is en,es,fr,de."
 )
 HELP_PAGES = "PDF pages, numbered from 1; for example 1-20."
 HELP_TRANSLATE = "Translate a prepared bundle with BBM."

@@ -17,9 +17,11 @@ MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown"}
 PDF_SUFFIXES = {".pdf"}
 
 # The one parser a PDF is read with. Spelled here rather than imported so
-# that a Markdown import never touches the adapter; `book_maker.pipeline.
-# opendataloader.PARSER` is the same string, and a test holds them equal.
-PDF_PARSER = "opendataloader"
+# that a Markdown import never touches the adapter -- importing it would
+# pull in docling and torch for a file that is not going near them.
+# `book_maker.pipeline.docling_parser.PARSER` is the same string, and a
+# test holds them equal.
+PDF_PARSER = "docling"
 
 
 def source_kind(path):
@@ -37,25 +39,25 @@ def source_kind(path):
 def check_pdf_options(kind, options):
     """The device for a PDF run, and a refusal when it cannot apply.
 
-    A Markdown import reads no PDF, so `--with-ocr`, `--no-gpu`,
+    A Markdown import reads no PDF, so `--pdf-ocr`, `--device`,
     `--ocr-lang` and `--pages` have nothing to act on there. Accepting one
     silently would let an operator believe a page selection, a device or a
     set of OCR languages was honoured when the file they handed in never
     went near the parser, so typing any of them with Markdown is an error
     rather than a no-op.
     """
-    no_gpu = getattr(options, "no_gpu", False)
-    with_ocr = getattr(options, "with_ocr", False)
+    device = getattr(options, "device", None)
+    pdf_ocr = getattr(options, "pdf_ocr", False)
     pages = getattr(options, "pages", None)
     ocr_lang = getattr(options, "ocr_lang", None)
-    if kind != "pdf" and (no_gpu or with_ocr or pages or ocr_lang):
+    if kind != "pdf" and (device or pdf_ocr or pages or ocr_lang):
         raise PipelineError(PDF_OPTIONS_INERT)
-    return device_for(no_gpu)
+    return device_for(device)
 
 
-def device_for(no_gpu):
-    """`cpu` when the operator said so, otherwise docling's own detection."""
-    return "cpu" if no_gpu else "auto"
+def device_for(device):
+    """The device as asked for; `auto` is docling's own detection."""
+    return (device or "auto").lower()
 
 
 def already_prepared(bundle, input_path, parser, pages, ocr_lang=None):
@@ -125,7 +127,7 @@ def prepare(
         return None
     if kind == "markdown":
         return import_markdown(bundle, input_path, pandoc=pandoc)
-    from .opendataloader import extract_pdf
+    from .docling_parser import extract_pdf
 
     return extract_pdf(
         bundle,

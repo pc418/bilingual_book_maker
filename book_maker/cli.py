@@ -1460,20 +1460,21 @@ COMPAT_RULES = (
     CompatRule(
         "C26",
         "warn",
-        lambda f: f.options.no_gpu and not (f.options.to_epub and f.options.with_ocr),
+        lambda f: bool(f.options.device) and not f.options.to_epub,
         lambda f: (
-            "--no-gpu chooses where the PDF's OCR models run, and they only run "
-            "on the --to-epub route with --with-ocr; this run reads it and does "
+            "--device chooses where the PDF's extraction models run, and they "
+            "only run on the --to-epub route; this run reads it and does "
             "nothing with it."
         ),
     ),
     CompatRule(
         "C27",
         "warn",
-        lambda f: f.options.with_ocr and not f.options.to_epub,
+        lambda f: f.options.pdf_ocr and not f.options.to_epub,
         lambda f: (
-            "--with-ocr starts the PDF route's OCR models, and that route only "
-            "runs with --to-epub; this run reads it and does nothing with it."
+            "--pdf-ocr reads the PDF's pages that carry no text layer, and "
+            "that route only runs with --to-epub; this run reads it and does "
+            "nothing with it."
         ),
     ),
     CompatRule(
@@ -1489,11 +1490,11 @@ COMPAT_RULES = (
         "C29",
         "warn",
         lambda f: bool(f.options.ocr_lang)
-        and not (f.options.to_epub and f.options.with_ocr),
+        and not (f.options.to_epub and f.options.pdf_ocr),
         lambda f: (
-            "--ocr-lang names the languages the PDF's OCR models read, and they "
-            "only run on the --to-epub route with --with-ocr; this run reads it "
-            "and does nothing with it."
+            "--ocr-lang names the languages the PDF's OCR models read, and "
+            "they only run on the --to-epub route with --pdf-ocr; this run "
+            "reads it and does nothing with it."
         ),
     ),
 )
@@ -2040,26 +2041,42 @@ off. Minimum 1.
         "stays in <name>_book/ for editing and resume.",
     )
     parser.add_argument(
+        "--pdf-ocr",
+        dest="pdf_ocr",
+        action="store_true",
+        help="PDF only, with --to-epub: read pages that carry no text layer "
+        "with the OCR models; such pages are refused without it. Off by "
+        "default -- a born-digital PDF is already readable, and OCR costs "
+        "several times the time without changing what is read. Layout and "
+        "table detection run either way.",
+    )
+    parser.add_argument(
+        "--device",
+        dest="device",
+        default=None,
+        choices=("auto", "cpu", "cuda", "mps", "xpu"),
+        help="PDF only, with --to-epub: which processor the extraction models "
+        "run on. The default detects one and falls back to the CPU. CPU is "
+        "fully supported and produces the same output; it is slower.",
+    )
+    parser.add_argument(
         "--with-ocr",
         dest="with_ocr",
         action="store_true",
-        help="PDF only, with --to-epub: start the OCR models. Required for "
-        "scanned pages (refused without it); adds table detection on typed "
-        "pages. Without it only the Java engine runs: no models, no download.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--no-gpu",
         dest="no_gpu",
         action="store_true",
-        help="PDF only, with --to-epub --with-ocr: run the models on the CPU "
-        "even when an accelerator is available.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--ocr-lang",
         dest="ocr_lang",
         default=None,
         metavar="LANGS",
-        help="PDF only, with --to-epub --with-ocr: the languages the OCR models "
+        help="PDF only, with --to-epub --pdf-ocr: the languages the OCR models "
         "read on pages with no text layer, as EasyOCR codes, comma-separated "
         "(ch_sim,en; ch_tra; ja; ko; see https://www.jaided.ai/easyocr/). "
         "Without it the models read en,es,fr,de and a scanned page in another "
@@ -2317,6 +2334,42 @@ def parallel_session_conflict(options):
     )
 
 
+# The PDF route's retired spellings. `--with-ocr` named a thing that no
+# longer exists -- it used to start a second engine beside the Java one --
+# and `--no-gpu` was a size knob in disguise. Both keep working for a
+# release, because a person with them in a script deserves a sentence
+# rather than an argparse error.
+PDF_ALIASES = (
+    (
+        "with_ocr",
+        "--with-ocr is now --pdf-ocr; it reads pages with no text layer. "
+        "Layout and table detection no longer need it -- they always run.",
+    ),
+    (
+        "no_gpu",
+        "--no-gpu is now --device cpu.",
+    ),
+)
+
+
+def retire_pdf_aliases(options):
+    """Map the retired PDF spellings onto the current ones.
+
+    Returns the notices to print. An explicit `--device` wins over
+    `--no-gpu`: the operator who wrote the current flag meant it.
+    """
+    notices = []
+    for attribute, notice in PDF_ALIASES:
+        if not getattr(options, attribute, False):
+            continue
+        notices.append(notice)
+        if attribute == "with_ocr":
+            options.pdf_ocr = True
+        elif attribute == "no_gpu" and not options.device:
+            options.device = "cpu"
+    return notices
+
+
 def run_to_epub(options, argv):
     """`--to-epub` on a PDF: the bundle pipeline instead of the PDF loader.
 
@@ -2334,8 +2387,8 @@ def run_to_epub(options, argv):
         pdf_to_epub(
             options.book_name,
             argv,
-            no_gpu=options.no_gpu,
-            with_ocr=options.with_ocr,
+            device=options.device,
+            pdf_ocr=options.pdf_ocr,
             ocr_lang=options.ocr_lang,
             pages=options.pages,
             quiet=options.quiet,
@@ -2402,6 +2455,9 @@ def main(argv=None, *, markdown_loader_class=None):
     if not os.path.isfile(options.book_name):
         print(f"Error: the book {options.book_name!r} does not exist.")
         exit(1)
+
+    for notice in retire_pdf_aliases(options):
+        print(f"[yellow]deprecated:[/yellow] {escape(notice)}")
 
     if options.to_epub and get_book_type(options.book_name) == "pdf":
         # The PDF reading edition, which is a different route rather than a

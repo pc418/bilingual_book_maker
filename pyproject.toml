@@ -22,19 +22,6 @@ dependencies = [
     "google-genai",
     # chat.completions.parse (Structured Outputs) is unavailable before 1.92.
     "openai>=1.92.0",
-    # The PDF route (--to-epub), about 31 MB together (owner, 260921: "put
-    # it in requirements.txt"): the local PDF parser, a Java engine behind a
-    # thin wrapper that declares no Python dependencies of its own (the jar
-    # is inside; 2.5.10 is the version this was built and verified against,
-    # the one whose `convert(hybrid=..., hybrid_url=..., hybrid_fallback=...)`
-    # signature and `opendataloader-pdf-hybrid --device` flag were checked);
-    # pdfium, which measures what a page shows before the engines read it
-    # and tells a scanned page from a typed one; Pillow, on which the
-    # sanitizer composes a figure's rendering. The parser's OCR backend is
-    # the `ocr` extra below, never a base dependency.
-    "opendataloader-pdf>=2.5.10",
-    "pypdfium2>=5",
-    "pillow>=10",
     "pydantic>=2.0",
     "requests",
     "rich",
@@ -51,10 +38,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The PDF parser's OCR backend, for --with-ocr: docling, torch, the CUDA
-# wheels, several gigabytes. Deliberately not a base dependency; the run
-# refuses --with-ocr without it and names this extra.
-ocr = ["opendataloader-pdf[hybrid]>=2.5.10"]
+# The PDF reading edition (--to-epub): docling reads the PDF with layout
+# and table models, pdfium measures what a page shows so a scanned page is
+# told from a typed one before the models start. Deliberately not a base
+# dependency -- it brings PyTorch, and most of this tool's users translate
+# EPUBs and never open a PDF. A PDF without it is refused with the install
+# line, never read by something weaker.
+#
+# This declares WHAT is needed, never WHICH PyTorch build. A PyPI package
+# cannot express "the CPU build": PEP 735 groups are not emitted into
+# distributions and exclude index servers, direct references are banned
+# from public indexes, and uv's --torch-backend cannot be inherited by a
+# dependent. So the CPU/CUDA choice lives in requirements-pdf-cpu.txt,
+# requirements-pdf-gpu.txt and docs/installation-pdf.md instead.
+pdf = [
+    "docling>=2.129,<3",
+    "pypdfium2>=5",
+]
+# The retired spelling, for one release. `--with-ocr` used to start a
+# second engine; OCR is now one option of the one parser.
+ocr = ["bbook_maker[pdf]"]
 
 [project.scripts]
 bbook_maker = "book_maker.cli:main"

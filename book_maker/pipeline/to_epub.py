@@ -34,8 +34,8 @@ EPUB_SUFFIX = "_bilingual.epub"
 # typed is a translation option and is handed to the translate stage
 # untouched -- the model, the key, the language, --test, --use_context, the
 # prompt, all of it.
-OWNED_OPTIONS = ("--to-epub", "--with-ocr", "--no-gpu")
-OWNED_VALUE_OPTIONS = ("--book_name", "--ocr-lang", "--pages")
+OWNED_OPTIONS = ("--to-epub", "--pdf-ocr", "--with-ocr", "--no-gpu")
+OWNED_VALUE_OPTIONS = ("--book_name", "--ocr-lang", "--pages", "--device")
 
 
 def translation_argv(argv):
@@ -89,8 +89,8 @@ def pdf_to_epub(
     pdf_path,
     argv,
     *,
-    no_gpu=False,
-    with_ocr=False,
+    device=None,
+    pdf_ocr=False,
     ocr_lang=None,
     pages=None,
     quiet=False,
@@ -125,9 +125,9 @@ def pdf_to_epub(
         bundle,
         pdf,
         pandoc=executable,
-        device=device_for(no_gpu),
+        device=device_for(device),
         pages=pages,
-        ocr=with_ocr,
+        ocr=pdf_ocr,
         ocr_lang=ocr_lang,
         progress=not quiet,
     )

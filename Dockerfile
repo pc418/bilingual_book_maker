@@ -34,21 +34,22 @@ ENTRYPOINT ["python", "make_book.py"]
 CMD ["--help"]
 
 # ---------------------------------------------------------------------------
-# The `ocr` tag: the PDF route (--to-epub) with its OCR backend. The image
-# above carries none of it. This stage adds a Java runtime (the extractor is
-# a jar; a JRE is enough), Pandoc (builds the EPUB) and the route's Python
-# packages with the OCR runtime pinned in requirements-ocr.txt (docling,
-# torch: several gigabytes on amd64 with the CUDA wheels), which is why it
-# is its own tag and never `latest`.
+# The `pdf` tag: the PDF reading edition (--to-epub). The image above carries
+# none of it. This stage adds Pandoc (which builds the EPUB) and the route's
+# Python packages from requirements-pdf-gpu.txt -- docling and PyTorch, which
+# on amd64 means the CUDA wheels and several gigabytes. That is why it is its
+# own tag and never `latest`.
 #   GPU: on a Linux host with an NVIDIA driver and the NVIDIA Container
 #   Toolkit, `docker run --gpus all` is all it takes; torch's wheels carry
-#   the CUDA runtime. On macOS the container is CPU-only whatever is passed:
-#   Docker runs a Linux VM that cannot see the Metal accelerator.
+#   the CUDA runtime. Without it the same image runs on the CPU -- pass
+#   `--device cpu` to skip the detection. On macOS the container is CPU-only
+#   whatever is passed: Docker runs a Linux VM that cannot see Metal.
 #   Codex: the codex route drives a `codex` binary signed in on the host;
 #   neither the binary nor the login is in this image.
-# The docling models download on the first --with-ocr run into
-# /root/.cache; mount a volume there to keep them between runs.
-FROM core AS ocr
+# No Java: the Java extractor was retired in favour of docling (260921).
+# The docling models download on the first --to-epub run into /root/.cache;
+# mount a volume there to keep them between runs.
+FROM core AS pdf
 # Pandoc comes from its GitHub release, not apt: the route needs 3.1.12 or
 # newer (its EPUB contents point at headings) and Debian 13 ships 3.1.11.
 # TARGETARCH is amd64 or arm64 under buildx, matching the release's .deb names.
@@ -56,11 +57,11 @@ ARG TARGETARCH
 ARG PANDOC_VERSION=3.11
 ADD https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-${TARGETARCH}.deb /tmp/pandoc.deb
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends default-jre-headless /tmp/pandoc.deb \
+    && apt-get install -y --no-install-recommends /tmp/pandoc.deb \
     && rm -rf /var/lib/apt/lists/* /tmp/pandoc.deb \
     && pandoc --version | head -1
-COPY requirements-ocr.txt ./
-RUN pip install --no-cache-dir -r requirements-ocr.txt
+COPY requirements-pdf-gpu.txt ./
+RUN pip install --no-cache-dir -r requirements-pdf-gpu.txt
 
 # The last stage is what a plain `docker build .` produces, so the small
 # image stays the default; this stage is `core` under another name.
