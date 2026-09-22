@@ -266,6 +266,10 @@ FRONT_MATTER_MAX_CHARS = 80
 # and a heading is never moved. (A horizontal rule looks the same and is
 # treated the same: conservatively, nothing above it moves.)
 SETEXT_UNDERLINE = re.compile(r"^(?:=+|-+)$")
+# A fenced div's opening line (`::: {.bbm-translation lang="en"}`) and its
+# closing line (`:::` alone).
+DIV_OPEN = re.compile(r"^:{3,}\s*(?:\{.*\}|\S+)\s*$")
+DIV_CLOSE = re.compile(r"^:{3,}\s*$")
 
 
 def _is_front_matter(line):
@@ -276,6 +280,31 @@ def _is_front_matter(line):
         or FRONT_MATTER_LINE.match(line)
         or len(line) <= FRONT_MATTER_MAX_CHARS
     )
+
+
+def _all_front_matter(lines):
+    """Whether every one of these non-blank lines is front matter.
+
+    A line inside a fenced div goes with the div: a translation block
+    belongs to the source line above it, and that line has already been
+    judged. Judging the translation's own length made the outcome depend
+    on the target language -- a 13-character Chinese banner whose English
+    ran to 89 characters was refused (260921, a scanned book whose first
+    heading the OCR had lost).
+    """
+    depth = 0
+    for line in lines:
+        if depth and DIV_CLOSE.match(line):
+            depth -= 1
+            continue
+        if DIV_OPEN.match(line):
+            depth += 1
+            continue
+        if depth:
+            continue
+        if not _is_front_matter(line):
+            return False
+    return True
 
 
 def _pandoc_input(bundle, text):
@@ -303,8 +332,8 @@ def _pandoc_input(bundle, text):
     )
     if not heading:
         return bundle.bilingual_markdown
-    prefix = [line for line in lines[:heading] if line.strip()]
-    if not prefix or not all(_is_front_matter(line.strip()) for line in prefix):
+    prefix = [line.strip() for line in lines[:heading] if line.strip()]
+    if not prefix or not _all_front_matter(prefix):
         return bundle.bilingual_markdown
     moved = (
         [lines[heading], ""]

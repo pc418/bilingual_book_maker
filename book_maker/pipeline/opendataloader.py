@@ -39,7 +39,13 @@ import urllib.request
 from collections import deque
 from pathlib import Path
 
-from .bundle import EXTRACTION_JOB, one_based_pages, parse_pages, sha256_file
+from .bundle import (
+    EXTRACTION_JOB,
+    one_based_pages,
+    parse_ocr_lang,
+    parse_pages,
+    sha256_file,
+)
 from .errors import PipelineError
 from .importer import import_markdown
 from .pdf_sanitize import picture_share, sanitize_pdf
@@ -62,6 +68,7 @@ from .messages import (
     PDFIUM_UNUSABLE,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
+    OCR_LANG_DEFAULT,
     OCR_REQUIRED,
     PAGE_TOO_DENSE,
     SELECTION_HEADING_ADDED,
@@ -105,6 +112,11 @@ LOG_LEVEL_PREFIX = re.compile(
 # uvicorn's access log: one line per health probe, saying nothing about the
 # conversion.
 ACCESS_LOG = re.compile(r"^\w+:\s+\d{1,3}(?:\.\d{1,3}){3}:\d+\s+-\s+\"")
+# The last line of a Python traceback in the backend's log: the one line
+# of it that says why (an OCR language the engine has no model for names
+# itself there, and the Java engine then reports only that the backend
+# failed).
+EXCEPTION_LINE = re.compile(r"^[A-Za-z_][\w.]*(?:Error|Exception)\b: \S")
 
 # `%page-number%` is substituted by the Java engine. An HTML comment is a
 # block the Markdown loader passes through untouched and Pandoc drops from
@@ -179,6 +191,7 @@ class HybridBackend:
         device,
         *,
         ocr=True,
+        ocr_lang=None,
         host=HOST,
         port=None,
         readiness_timeout=READINESS_TIMEOUT,
@@ -190,6 +203,7 @@ class HybridBackend:
     ):
         self.device = device
         self.ocr = ocr
+        self.ocr_lang = list(ocr_lang or [])
         self.host = host
         self.port = port or free_port(host)
         self.readiness_timeout = readiness_timeout
@@ -220,14 +234,21 @@ class HybridBackend:
         paragraphs -- measured on a rasterized figure, whose panel titles
         even came back as headings. A page with no text layer is the one
         case the models must read, and then every picture is read with it.
+
+        `--ocr-lang` only when the operator named languages: the server's
+        default is the engine's own (EasyOCR: en, es, fr, de), and the
+        codes are passed through as typed, since which ones exist is the
+        engine's business.
         """
-        executable = shutil.which("opendataloader-pdf-hybrid")
-        launcher = (
-            [executable]
-            if executable
-            else [sys.executable, "-m", "opendataloader_pdf.hybrid_server"]
-        )
-        command = launcher + [
+        # Our own interpreter's module, never the `opendataloader-pdf-hybrid`
+        # script on PATH: that one can belong to another installation (a
+        # pyenv shim was picked over the venv the converter was imported
+        # from, and started a server without docling, 260921), and the
+        # backend must be the same package the converter is.
+        command = [
+            sys.executable,
+            "-m",
+            "opendataloader_pdf.hybrid_server",
             "--host",
             self.host,
             "--port",
@@ -238,6 +259,8 @@ class HybridBackend:
         ]
         if not self.ocr:
             command.append("--no-ocr")
+        if self.ocr_lang:
+            command.extend(["--ocr-lang", ",".join(self.ocr_lang)])
         return command
 
     def _http_health(self, url):
@@ -466,6 +489,8 @@ def backend_note(line):
     line = (line or "").strip()
     if not line or ACCESS_LOG.match(line):
         return None
+    if EXCEPTION_LINE.match(line):
+        return line
     match = LOG_LEVEL_PREFIX.match(line)
     if not match:
         return None
@@ -600,6 +625,7 @@ def extract_pdf(
     device="auto",
     page_range=None,
     ocr=False,
+    ocr_lang=None,
     backend_factory=HybridBackend,
     convert=None,
     progress=True,
@@ -618,6 +644,7 @@ def extract_pdf(
         raise PipelineError(JAVA_REQUIRED, stage=STAGE)
     converter = convert if convert is not None else _load_converter()
     pages = one_based_pages(page_range)
+    languages = parse_ocr_lang(ocr_lang)
 
     bundle.create()
     _refuse_a_foreign_bundle(bundle)
@@ -661,6 +688,10 @@ def extract_pdf(
     triage = TRIAGE_FULL if missing else TRIAGE_AUTO
     if missing:
         print(SCANNED_PAGES.format(count=len(missing), total=examined))
+        # The models are about to read these pages in whatever languages
+        # they were given; an operator who gave none is told which.
+        if not languages:
+            print(OCR_LANG_DEFAULT)
 
     scope = (PAGE_SCOPE if examined == 1 else PAGES_SCOPE).format(count=examined)
     if not ocr:
@@ -685,7 +716,11 @@ def extract_pdf(
 
     # No backend at all without `ocr`: the Java engine needs nothing
     # started, downloaded or stopped.
-    backend = backend_factory(resolved, ocr=bool(missing)) if ocr else _NoBackend()
+    backend = (
+        backend_factory(resolved, ocr=bool(missing), ocr_lang=languages)
+        if ocr
+        else _NoBackend()
+    )
     reader = getattr(backend, "new_output", None)
     finished = False
     # Started before the backend is: loading the models is part of the wait
@@ -720,6 +755,11 @@ def extract_pdf(
                 except PipelineError:
                     raise
                 except Exception as err:
+                    # What the backend logged as it failed, which the
+                    # ticking poll has not read yet: a request refused
+                    # at once dies before the first tick.
+                    if reader:
+                        note(reader())
                     raise PipelineError(
                         BACKEND_FAILED.format(detail=_failure_detail(err, transcript)),
                         stage=STAGE,
@@ -769,6 +809,7 @@ def extract_pdf(
         examined=examined,
         hidden=hidden,
         ocr=ocr,
+        ocr_lang=languages,
     )
     limitations = [
         "Extraction reading order, headings and diacritics are not verified "
@@ -778,6 +819,8 @@ def extract_pdf(
         limitations.append(
             OCR_EMPTY_PAGES.format(pages=", ".join(str(n) for n in silent))
         )
+    if missing and not languages:
+        limitations.append(OCR_LANG_DEFAULT)
     limitations.extend(_rasterized_lines(hidden))
     if headed is not None:
         limitations.append(
@@ -865,6 +908,11 @@ def _failure_detail(err, transcript):
     detail = f"{type(err).__name__}: {err}"
     if transcript:
         detail = f"{detail}; last output: {transcript[-1]}"
+        # The Java engine speaks last and says only that the backend
+        # failed; what the backend raised, if it was kept, is the reason.
+        raised = [entry for entry in transcript if EXCEPTION_LINE.match(entry)]
+        if raised and raised[-1] != transcript[-1]:
+            detail = f"{detail}; the backend raised: {raised[-1]}"
     return detail
 
 
@@ -919,6 +967,7 @@ def _write_provenance(
     examined=0,
     hidden=(),
     ocr=False,
+    ocr_lang=None,
 ):
     version = _installed_version()
     bundle.work.mkdir(parents=True, exist_ok=True)
@@ -933,6 +982,7 @@ def _write_provenance(
                 "pages": pages,
                 "hybrid_mode": triage if ocr else None,
                 "ocr": ocr,
+                "ocr_lang": ocr_lang,
                 "version": version,
                 "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             },
@@ -962,6 +1012,9 @@ def _write_provenance(
             # document's charts stay pictures.
             "ocr": ocr,
             "pages_read_by_ocr": list(scanned) if ocr else [],
+            # The languages the models were told to read, as given
+            # (`--ocr-lang`); None means the engine's own default.
+            "ocr_lang": ocr_lang,
             # Figures whose clipped-away text was taken out and which the
             # engines therefore saw as pictures: page, object, characters.
             "hidden_text_figures": list(hidden),

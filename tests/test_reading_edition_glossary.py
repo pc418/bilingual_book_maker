@@ -149,7 +149,15 @@ def test_the_translate_stage_is_handed_both_flags(tmp_path, monkeypatch):
     handed = []
 
     def prepare_stage(
-        bundle, source, *, pandoc, device=None, pages=None, ocr=False, progress=True
+        bundle,
+        source,
+        *,
+        pandoc,
+        device=None,
+        pages=None,
+        ocr=False,
+        ocr_lang=None,
+        progress=True,
     ):
         bundle.source.write_text(SOURCE, encoding="utf-8")
 

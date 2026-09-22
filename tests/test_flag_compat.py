@@ -203,6 +203,19 @@ class TestStops:
         f = facts(["--book_name", "b.pdf", "--pages", "6-7"], book_type="pdf")
         assert "C28" in tripped(f)
 
+    def test_ocr_lang_beside_with_ocr_is_not_warned_about(self):
+        f = facts(
+            ["--book_name", "b.pdf", "--to-epub", "--with-ocr", "--ocr-lang", "ja"],
+            book_type="pdf",
+        )
+        assert tripped(f) == []
+
+    def test_ocr_lang_without_with_ocr_is_inert_even_on_the_route(self):
+        f = facts(
+            ["--book_name", "b.pdf", "--to-epub", "--ocr-lang", "ja"], book_type="pdf"
+        )
+        assert "C29" in tripped(f)
+
     def test_no_gpu_without_with_ocr_is_inert_even_on_the_route(self):
         f = facts(["--book_name", "b.pdf", "--to-epub", "--no-gpu"], book_type="pdf")
         assert "C26" in tripped(f)
@@ -630,6 +643,14 @@ WARN_FIXTURES = [
         ["--pages", "6-7"],
         {},
         "translates the whole file",
+    ),
+    (
+        # C29: --ocr-lang names what the OCR models read, and they only run
+        # on the --to-epub route with --with-ocr
+        "C29",
+        ["--ocr-lang", "ch_sim,en"],
+        {},
+        "only run on the --to-epub route with --with-ocr",
     ),
 ]
 

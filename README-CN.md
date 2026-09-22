@@ -332,10 +332,13 @@ python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context 
 python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
 # 只要一章：第 12 到 30 页，成书是 paper_pages-12-30_bilingual.epub
 python3 make_book.py --book_name paper.pdf --to-epub --pages 12-30 --key ${key} --use_context session
+# 中文扫描件：告诉 OCR 模型要认的文字
+python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --ocr-lang ch_sim,en --key ${key} --use_context session
 ```
 
 - `--with-ocr` 启动 OCR 后端：docling 模型，用 `pip install "bbook_maker[ocr]"` 安装（从源码目录则 `pip install -r requirements-ocr.txt`），首次运行时下载。没有文字层的页面在不加它时会被拒绝，绝不会被悄悄跳过。文字版 PDF 上它额外提供表格和版面识别，不会读取图片。不加它时只运行 Java 引擎：没有模型，没有下载，也没有需要加速的东西。
 - `--no-gpu` 让模型留在 CPU 上；默认自动检测加速器（NVIDIA CUDA，或本机安装下 Apple 芯片的 MPS，不用加任何参数），没有时自行回退到 CPU。
+- `--ocr-lang` 指定 OCR 模型在没有文字层的页面上识别的语言，用 [EasyOCR 的代码](https://www.jaided.ai/easyocr/)，逗号分隔：`ch_sim,en` 是简体中文加英文，`ch_tra` 繁体，`ja`、`ko`。不加它时模型只认英语、西班牙语、法语和德语，其他文字的扫描件会识别成空白或错字；遇到扫描页而没有这个参数时，运行会提醒。某种语言第一次使用时下载它的模型（几十 MB）。引擎没有模型的代码在读任何页面之前就被拒绝，消息里附引擎自己的列表。文字版 PDF 上它不起作用；换语言重跑扫描件会重新提取。
 - `--pages` 只读指定的页，从 1 数起（`12-30`，或 `1,3,5-7`）；PDF 其余部分不进书，也不会被提取或付费。页码选择会写进文件名，所以单章运行和整本运行并排放着，不会互相覆盖：`<name>_pages-12-30_book/` 和 `<name>_pages-12-30_bilingual.epub`。用同一选择重跑会续用那个工作目录。目录只剩这些页里的标题；选择从某一节中间开始时，第一个标题之前的正文会得到一个以页码命名的标题（`Page 12`），在翻译前就写进 `source.md`，想改名就在那里改。
 - 需要：PATH 中有 **Java 运行时，11 或更新版本**。JRE 就够了，引擎是一个 jar；用 `java -version` 检查，没有的话从 [Adoptium](https://adoptium.net/) 装 Temurin。PATH 中有 [Pandoc](https://pandoc.org/installing.html) **3.1.12 或更新版本**（`pandoc -v` 检查；Ubuntu 24.04 和 Debian 13 的 apt 版本太旧，请从 pandoc.org 下载发行版）。这条路由的 Python 包（引擎的封装连同 jar、pdfium、Pillow，共约 31 MB）随基础安装一起装好。只有 `--with-ocr` 需要额外的东西：`ocr` extra（`pip install "bbook_maker[ocr]"`，从源码目录则 `pip install -r requirements-ocr.txt`），即 OCR 运行时，带着 torch 有好几个 GB。缺哪个，都会在打开 PDF 之前被拒绝，消息里指明是哪一个。
 

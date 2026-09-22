@@ -1485,6 +1485,17 @@ COMPAT_RULES = (
             "runs with --to-epub; this run reads it and translates the whole file."
         ),
     ),
+    CompatRule(
+        "C29",
+        "warn",
+        lambda f: bool(f.options.ocr_lang)
+        and not (f.options.to_epub and f.options.with_ocr),
+        lambda f: (
+            "--ocr-lang names the languages the PDF's OCR models read, and they "
+            "only run on the --to-epub route with --with-ocr; this run reads it "
+            "and does nothing with it."
+        ),
+    ),
 )
 
 
@@ -2044,6 +2055,17 @@ off. Minimum 1.
         "even when an accelerator is available.",
     )
     parser.add_argument(
+        "--ocr-lang",
+        dest="ocr_lang",
+        default=None,
+        metavar="LANGS",
+        help="PDF only, with --to-epub --with-ocr: the languages the OCR models "
+        "read on pages with no text layer, as EasyOCR codes, comma-separated "
+        "(ch_sim,en; ch_tra; ja; ko; see https://www.jaided.ai/easyocr/). "
+        "Without it the models read en,es,fr,de and a scanned page in another "
+        "script comes out wrong.",
+    )
+    parser.add_argument(
         "--pages",
         dest="pages",
         default=None,
@@ -2314,6 +2336,7 @@ def run_to_epub(options, argv):
             argv,
             no_gpu=options.no_gpu,
             with_ocr=options.with_ocr,
+            ocr_lang=options.ocr_lang,
             pages=options.pages,
             quiet=options.quiet,
         )

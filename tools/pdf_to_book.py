@@ -113,6 +113,7 @@ def _add_pdf_options(parser):
     """
     parser.add_argument("--with-ocr", action="store_true", help=messages.HELP_WITH_OCR)
     parser.add_argument("--no-gpu", action="store_true", help=messages.HELP_NO_GPU)
+    parser.add_argument("--ocr-lang", default=None, help=messages.HELP_OCR_LANG)
     parser.add_argument("--pages", default=None, help=messages.HELP_PAGES)
 
 
@@ -158,6 +159,7 @@ def main(argv=None):
                 device=device,
                 pages=options.pages,
                 ocr=options.with_ocr,
+                ocr_lang=options.ocr_lang,
             )
         elif command == "translate":
             bundle = Bundle(options.bundle)
@@ -185,6 +187,7 @@ def main(argv=None):
                 device=device,
                 pages=options.pages,
                 ocr=options.with_ocr,
+                ocr_lang=options.ocr_lang,
             )
             translate_bundle(bundle, bbm_options, pandoc=pandoc)
             export_epub(

@@ -19,7 +19,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .bundle import Bundle, parse_pages
+from .bundle import Bundle, parse_ocr_lang, parse_pages
 from .epub_export import export_epub
 from .errors import PipelineError
 from .messages import PANDOC_ON_PATH, PANDOC_REQUIRED, TO_EPUB_BUNDLE, TO_EPUB_COPY
@@ -35,7 +35,7 @@ EPUB_SUFFIX = "_bilingual.epub"
 # untouched -- the model, the key, the language, --test, --use_context, the
 # prompt, all of it.
 OWNED_OPTIONS = ("--to-epub", "--with-ocr", "--no-gpu")
-OWNED_VALUE_OPTIONS = ("--book_name", "--pages")
+OWNED_VALUE_OPTIONS = ("--book_name", "--ocr-lang", "--pages")
 
 
 def translation_argv(argv):
@@ -91,6 +91,7 @@ def pdf_to_epub(
     *,
     no_gpu=False,
     with_ocr=False,
+    ocr_lang=None,
     pages=None,
     quiet=False,
     pandoc=None,
@@ -116,6 +117,7 @@ def pdf_to_epub(
         raise PipelineError(PANDOC_ON_PATH)
     options = check_options(translation_argv(argv))
     parse_pages(pages)  # a selection that does not parse is refused here too
+    parse_ocr_lang(ocr_lang)  # and an empty language list
 
     bundle = Bundle(bundle_path(pdf, pages)).create()
     print(TO_EPUB_BUNDLE.format(path=bundle.root))
@@ -126,6 +128,7 @@ def pdf_to_epub(
         device=device_for(no_gpu),
         pages=pages,
         ocr=with_ocr,
+        ocr_lang=ocr_lang,
         progress=not quiet,
     )
     translate_stage(bundle, options, pandoc=executable)

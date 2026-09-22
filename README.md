@@ -453,6 +453,8 @@ python3 make_book.py --book_name paper.pdf --to-epub --key ${key} --use_context 
 python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --key ${key} --use_context session
 # one chapter: pages 12 to 30 only, into paper_pages-12-30_bilingual.epub
 python3 make_book.py --book_name paper.pdf --to-epub --pages 12-30 --key ${key} --use_context session
+# a scanned Chinese book: name the script the OCR models read
+python3 make_book.py --book_name scan.pdf --to-epub --with-ocr --ocr-lang ch_sim,en --key ${key} --use_context session
 ```
 
 - `--with-ocr` starts the OCR backend: the docling models, installed with
@@ -465,6 +467,17 @@ python3 make_book.py --book_name paper.pdf --to-epub --pages 12-30 --key ${key} 
 - `--no-gpu` keeps the models on the CPU; the default detects an accelerator
   (NVIDIA CUDA, or Apple silicon's MPS from a native install, no flag
   needed) and falls back to the CPU on its own.
+- `--ocr-lang` names the languages the OCR models read on pages with no
+  text layer, as [EasyOCR codes](https://www.jaided.ai/easyocr/), comma
+  separated: `ch_sim,en` for simplified Chinese with English, `ch_tra` for
+  traditional, `ja`, `ko`. Without it the models read English, Spanish,
+  French and German, and a scan in another script comes back empty or as
+  the wrong characters; the run says so when it meets a scanned page
+  without the flag. The first use of a language downloads its model (tens
+  of megabytes). A code the engine has no model for is refused before any
+  page is read, with the engine's own list in the message. On a typed PDF
+  the flag changes nothing; rerunning a scan with other languages reads it
+  again.
 - `--pages` reads only the pages named, numbered from 1 (`12-30`, or
   `1,3,5-7`); the rest of the PDF is left out of the book, and nothing else
   is extracted or paid for. The selection goes into the names, so a chapter

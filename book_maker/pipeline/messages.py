@@ -39,7 +39,9 @@ PANDOC_TOO_OLD = (
     "or provide --pandoc PATH."
 )
 NAV_INVALID = "EPUB navigation is invalid: "
-PDF_OPTIONS_INERT = "--with-ocr, --no-gpu and --pages apply only to PDF input."
+PDF_OPTIONS_INERT = (
+    "--with-ocr, --no-gpu, --ocr-lang and --pages apply only to PDF input."
+)
 DEVICE_SELECTED = "OpenDataLoader device: {device}."
 DEVICE_CPU_FALLBACK = "OpenDataLoader device: cpu (no supported accelerator detected)."
 DEVICE_UNAVAILABLE = "Requested OpenDataLoader device is unavailable: {device}."
@@ -74,6 +76,12 @@ OCR_EMPTY = (
     "OpenDataLoader produced no text for a document whose pages have no text "
     "layer; the OCR backend returned pictures only."
 )
+OCR_LANG_DEFAULT = (
+    "The OCR models read English, Spanish, French and German unless --ocr-lang "
+    "names the pages' languages (EasyOCR codes, comma-separated: ch_sim, ja, "
+    "ko, ...); check source.md before translating."
+)
+OCR_LANG_EMPTY = "--ocr-lang needs at least one language code, for example ch_sim,en"
 OCR_EMPTY_PAGES = (
     "Warning: no text was recognised on page(s) {pages}; check source.md "
     "before translating."
@@ -144,6 +152,11 @@ HELP_WITH_OCR = (
 HELP_NO_GPU = (
     "With --with-ocr: run the models on the CPU even when an accelerator is "
     "available; the default detects one and falls back to CPU."
+)
+HELP_OCR_LANG = (
+    "With --with-ocr: the languages the OCR models read on pages with no text "
+    "layer, as EasyOCR codes, comma-separated (ch_sim,en; ja; ko); the default "
+    "is en,es,fr,de."
 )
 HELP_PAGES = "PDF pages, numbered from 1; for example 1-20."
 HELP_TRANSLATE = "Translate a prepared bundle with BBM."

@@ -315,7 +315,12 @@ opened, naming the missing one, so nothing is paid):
    without the flag, never silently skipped, so the run tells you when it
    is needed. The device is detected: CUDA on NVIDIA, MPS on Apple
    silicon from a native install (Docker on a Mac is CPU-only), no flag
-   to pass. `--no-gpu` keeps those models on the CPU.
+   to pass. `--no-gpu` keeps those models on the CPU. A scan in a script
+   other than Latin also needs `--ocr-lang` (EasyOCR codes: `ch_sim,en`,
+   `ch_tra`, `ja`, `ko`): the models' default is en, es, fr, de, and a
+   Chinese scan without it comes back empty (`OpenDataLoader produced no
+   text …`) or as wrong characters. Ask what language the book is in; a
+   mixed book lists both. The first use of a language downloads its model.
 
 **Two-page first look, always.** Run once with `--test` (the Markdown
 loader's slice) so the extraction happens and only a few blocks are paid
@@ -346,6 +351,7 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-ep
 | `--use_context session` | the default on the openai/anthropic routes here too (§1d); `--parallel-workers` is refused with it |
 | `--with-ocr` | a scanned PDF (the run refuses without it and says so), or tables the user needs kept; costs the `ocr` extra |
 | `--no-gpu` | with `--with-ocr`, when the accelerator misbehaves |
+| `--ocr-lang ch_sim,en` | with `--with-ocr`, a scan in Chinese, Japanese, Korean or any other non-Latin script; EasyOCR codes (`ch_sim`/`ch_tra`, not `zh`); a typed PDF ignores it |
 | `--pages 12-30` | the user wants one chapter or a range, or the paper's bibliography and appendix are not worth paying for; numbered from 1. The book is `<name>_pages-12-30_bilingual.epub` beside the whole-book one, never over it. A selection starting mid-section gets a `Page 12` heading in `source.md`; rename it there before the full run if the user wants a real title |
 | `--glossary` | the same file contract as on an EPUB; worth it on a paper with recurring terms |
 
@@ -659,6 +665,8 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `OpenDataLoader requires Java 11 or newer on PATH …` / `Pandoc is required for --to-epub …` | install them (§1e); both are checked before the PDF is opened |
 | `pandoc 3.x is too old for EPUB export; Pandoc 3.1.12 or newer is required …` | apt's Pandoc (Ubuntu 24.04: 3.1.3, Debian 13: 3.1.11); install the release from pandoc.org (§1e). Nothing was paid |
 | `N of M selected pages have no text layer …; rerun with --with-ocr` | a scanned PDF; the flag and the `ocr` extra, not a different tool |
+| `OpenDataLoader produced no text for a document whose pages have no text layer …`, or `no text was recognised on page(s) …`, on a non-Latin scan | the models read en, es, fr, de by default: rerun with `--ocr-lang` (`ch_sim,en`, `ja`, `ko`); the bundle is read again |
+| `… EasyOcr has no model for the OCR language 'xx'. Supported: …` | a code the engine does not know (Chinese is `ch_sim`/`ch_tra`); the message carries the engine's list; nothing was read or paid |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
 | codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints; rerun with `--resume` after the time it names |

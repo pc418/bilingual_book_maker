@@ -8,7 +8,7 @@ one that drifted would silently re-extract a book somebody had edited.
 
 from pathlib import Path
 
-from .bundle import sha256_file
+from .bundle import parse_ocr_lang, sha256_file
 from .errors import PipelineError
 from .importer import import_markdown
 from .messages import PDF_OPTIONS_INERT, STAGE_COMPLETE
@@ -37,16 +37,18 @@ def source_kind(path):
 def check_pdf_options(kind, options):
     """The device for a PDF run, and a refusal when it cannot apply.
 
-    A Markdown import reads no PDF, so `--with-ocr`, `--no-gpu` and
-    `--pages` have nothing to act on there. Accepting them silently would let an operator believe a
-    page selection or a device was honoured when the file they handed in
-    never went near the parser, so typing either with Markdown is an error
+    A Markdown import reads no PDF, so `--with-ocr`, `--no-gpu`,
+    `--ocr-lang` and `--pages` have nothing to act on there. Accepting one
+    silently would let an operator believe a page selection, a device or a
+    set of OCR languages was honoured when the file they handed in never
+    went near the parser, so typing any of them with Markdown is an error
     rather than a no-op.
     """
     no_gpu = getattr(options, "no_gpu", False)
     with_ocr = getattr(options, "with_ocr", False)
     pages = getattr(options, "pages", None)
-    if kind != "pdf" and (no_gpu or with_ocr or pages):
+    ocr_lang = getattr(options, "ocr_lang", None)
+    if kind != "pdf" and (no_gpu or with_ocr or pages or ocr_lang):
         raise PipelineError(PDF_OPTIONS_INERT)
     return device_for(no_gpu)
 
@@ -56,12 +58,18 @@ def device_for(no_gpu):
     return "cpu" if no_gpu else "auto"
 
 
-def already_prepared(bundle, input_path, parser, pages):
+def already_prepared(bundle, input_path, parser, pages, ocr_lang=None):
     """Whether this bundle already holds this input, prepared this way.
 
     A second run over a finished bundle must not buy the extraction again,
     and must not overwrite a `source.md` somebody edited between the two
     runs -- editing it is the whole reason the stage is separate.
+
+    Prepared this way: the same pages, and, when the models read any of
+    them, the same OCR languages -- a rerun with other languages is asking
+    for those pages to be read again, and reusing the old text would be
+    honouring the flag in name only. On a document the models never read,
+    the languages changed nothing, and the extraction stands.
     """
     if not bundle.manifest_path.is_file():
         return False
@@ -83,11 +91,23 @@ def already_prepared(bundle, input_path, parser, pages):
             return False
         if (extraction.get("page_range") or None) != (pages or None):
             return False
+        if extraction.get("pages_read_by_ocr") and (
+            extraction.get("ocr_lang") or None
+        ) != (ocr_lang or None):
+            return False
     return done[0]
 
 
 def prepare(
-    bundle, input_path, *, pandoc, device=None, pages=None, ocr=False, progress=True
+    bundle,
+    input_path,
+    *,
+    pandoc,
+    device=None,
+    pages=None,
+    ocr=False,
+    ocr_lang=None,
+    progress=True,
 ):
     """Import or extract, chosen by the input's suffix alone.
 
@@ -96,8 +116,9 @@ def prepare(
     process management for a file it is not going to read.
     """
     kind = source_kind(input_path)
+    languages = parse_ocr_lang(ocr_lang)
     finished = already_prepared(
-        bundle, input_path, PDF_PARSER if kind == "pdf" else None, pages
+        bundle, input_path, PDF_PARSER if kind == "pdf" else None, pages, languages
     )
     if finished:
         print(STAGE_COMPLETE.format(stage=finished))
@@ -113,5 +134,6 @@ def prepare(
         device=device or "auto",
         page_range=pages,
         ocr=ocr,
+        ocr_lang=languages,
         progress=progress,
     )

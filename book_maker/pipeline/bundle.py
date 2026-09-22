@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from .errors import PipelineError
+from .messages import OCR_LANG_EMPTY
 
 SCHEMA_VERSION = 1
 
@@ -78,6 +79,24 @@ def contained_path(root, relative, *, what="path"):
 # selection silently off by one page is the kind of mistake that is only
 # found after the book has been paid for.
 PAGE_SPEC = re.compile(r"^\s*\d+\s*(?:-\s*\d+\s*)?(?:,\s*\d+\s*(?:-\s*\d+\s*)?)*$")
+
+
+def parse_ocr_lang(value):
+    """The language codes in an `--ocr-lang` value, or None for none given.
+
+    Split on commas, blanks dropped; the codes themselves are not checked
+    here (the engine knows its own list and refuses an unknown one). A
+    list already split is taken as it is, so a stage that parsed the flag
+    can hand the result on without it being split a second time (which
+    turned `["ch_sim", "en"]` into the code `['ch_sim'`, 260921).
+    """
+    if value is None:
+        return None
+    parts = value.split(",") if isinstance(value, str) else list(value)
+    codes = [str(code).strip() for code in parts if str(code).strip()]
+    if not codes:
+        raise PipelineError(OCR_LANG_EMPTY)
+    return codes
 
 
 def parse_pages(spec):

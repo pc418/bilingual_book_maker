@@ -30,7 +30,10 @@ from book_maker.pipeline.bundle import (
     Bundle,
     sha256_file,
 )  # noqa: E402
-from book_maker.pipeline.epub_export import export_epub  # noqa: E402
+from book_maker.pipeline.epub_export import (  # noqa: E402
+    FRONT_MATTER_MAX_CHARS,
+    export_epub,
+)
 from book_maker.pipeline.errors import PipelineError  # noqa: E402
 from book_maker.pipeline.importer import import_markdown  # noqa: E402
 from book_maker.pipeline.messages import (  # noqa: E402
@@ -334,6 +337,29 @@ def test_front_matter_above_the_first_heading_does_not_break_the_nav(
     toc = re.search(r'<nav[^>]*epub:type="toc".*?</nav>', nav, re.S).group(0)
     assert toc.count("<a href=") == 1
     assert "NVIDIA" in body and "译:NVIDIA" in body
+
+
+def test_a_banner_s_translation_is_judged_with_its_banner_not_by_its_length(
+    tmp_path, pandoc, fake_format
+):
+    # PIN (lead, 260921, docs/260921-feat-PDF_OCR_LANG_FLAG.md): the OCR
+    # lost a scanned book's first heading, three short Chinese lines sat
+    # above the first one kept, and the export refused the nav because one
+    # line's *English* ran past eighty characters. A translation block goes
+    # with the line it translates; only the source line is measured.
+    banner = "A" * FRONT_MATTER_MAX_CHARS  # front matter; its translation is longer
+    text = f"<!-- page 1 -->\n\n{banner}\n\n# Title\n\nProse.\n"
+    bundle = prepared(tmp_path, pandoc, text)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    translated = bundle.bilingual_markdown.read_text(encoding="utf-8")
+    assert f"译:{banner}" in translated  # 82 characters, past the banner limit
+
+    export_epub(bundle, pandoc=pandoc)
+
+    with zipfile.ZipFile(bundle.epub) as archive:
+        nav = archive.read("EPUB/nav.xhtml").decode("utf-8")
+    toc = re.search(r'<nav[^>]*epub:type="toc".*?</nav>', nav, re.S).group(0)
+    assert toc.count("<a href=") == 1
 
 
 def test_prose_above_the_first_heading_is_not_front_matter(

@@ -42,6 +42,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     JAVA_REQUIRED,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
+    OCR_LANG_DEFAULT,
     OCR_REQUIRED,
     PAGE_TOO_DENSE,
     PDF_OPTIONS_INERT,
@@ -349,6 +350,48 @@ def test_ocr_is_off_when_every_page_spells_itself_out():
         assert "--no-ocr" in instance.started_commands[0]
     with backend("mps") as instance:
         assert "--no-ocr" not in instance.started_commands[0]
+
+
+def test_the_languages_the_operator_named_reach_the_backend_as_typed():
+    with backend("mps", ocr_lang=["ch_sim", "en"]) as instance:
+        command = instance.started_commands[0]
+        assert command[command.index("--ocr-lang") + 1] == "ch_sim,en"
+    # none named: the engine's own default, and no flag to second-guess it
+    with backend("mps") as instance:
+        assert "--ocr-lang" not in instance.started_commands[0]
+
+
+def test_the_backend_is_this_interpreter_s_module_not_a_script_on_path(monkeypatch):
+    # PIN (lead, 260921, docs/260921-feat-PDF_OCR_LANG_FLAG.md): the
+    # launcher on PATH belonged to another installation (a pyenv shim
+    # without docling) and the server it started could not OCR at all.
+    monkeypatch.setattr(opendataloader.shutil, "which", lambda name: "/elsewhere/x")
+    command = opendataloader.HybridBackend("cpu", popen=None).command()
+    assert command[:3] == [
+        opendataloader.sys.executable,
+        "-m",
+        "opendataloader_pdf.hybrid_server",
+    ]
+
+
+def test_the_backend_s_own_exception_is_kept_for_the_failure_message():
+    raised = (
+        "docling.exceptions.OcrLanguageNotSupportedError: EasyOcr has no model "
+        "for the OCR language 'xx'. Supported: iso:zh, iso:ja"
+    )
+    assert opendataloader.backend_note(raised) == raised
+    assert opendataloader.backend_note('  File "x.py", line 1, in f') is None
+    transcript = [
+        raised,
+        "Exception during processing file a.pdf: Backend processing failed",
+    ]
+    detail = opendataloader._failure_detail(RuntimeError("exit 1"), transcript)
+    assert detail.endswith(f"; the backend raised: {raised}")
+    assert "last output: Exception during processing" in detail
+    # no exception line kept: nothing invented
+    assert "raised" not in opendataloader._failure_detail(
+        RuntimeError("x"), ["Finished converting"]
+    )
 
 
 def test_the_models_read_pictures_only_when_a_page_has_no_text_layer(
@@ -888,6 +931,92 @@ def test_a_page_with_no_text_layer_sends_every_page_to_the_backend(
     assert job["hybrid_mode"] == "full"
 
 
+def test_scanned_pages_without_named_languages_are_read_with_the_default_and_say_so(
+    bundle, pdf, pandoc, accelerators, text_layer, capsys
+):
+    # PIN (owner ask 260921, docs/260921-feat-PDF_OCR_LANG_FLAG.md): the
+    # engine's default reads Latin scripts only, so a scan in another
+    # script came back empty without a word about why (measured: a
+    # Chinese two-page scan, OCR_EMPTY). The default stands; the operator
+    # is told it is in force and where the switch is.
+    text_layer["missing"] = [2]
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        backend_factory=lambda device, **kw: backend(device, **kw),
+        convert=fake_convert(),
+    )
+    assert OCR_LANG_DEFAULT in capsys.readouterr().out
+    manifest = bundle.read_manifest()
+    assert manifest["extraction"]["ocr_lang"] is None
+    assert OCR_LANG_DEFAULT in manifest["limitations"]
+
+
+def test_named_languages_reach_the_backend_and_the_manifest(
+    bundle, pdf, pandoc, accelerators, text_layer, capsys
+):
+    text_layer["missing"] = [2]
+    started = []
+
+    def factory(device, **kw):
+        started.append(kw)
+        return backend(device, **kw)
+
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        ocr_lang=" zh , en",
+        backend_factory=factory,
+        convert=fake_convert(),
+    )
+    assert started == [{"ocr": True, "ocr_lang": ["zh", "en"]}]
+    assert OCR_LANG_DEFAULT not in capsys.readouterr().out
+    manifest = bundle.read_manifest()
+    assert manifest["extraction"]["ocr_lang"] == ["zh", "en"]
+    assert OCR_LANG_DEFAULT not in manifest["limitations"]
+    job = json.loads(bundle.work_file(EXTRACTION_JOB).read_text(encoding="utf-8"))
+    assert job["ocr_lang"] == ["zh", "en"]
+
+
+def test_a_typed_document_says_nothing_about_ocr_languages(
+    bundle, pdf, pandoc, accelerators, text_layer, capsys
+):
+    # every page has a text layer: the models lay out, read nothing, and
+    # the language line would be noise
+    opendataloader.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        backend_factory=lambda device, **kw: backend(device, **kw),
+        convert=fake_convert(),
+    )
+    assert OCR_LANG_DEFAULT not in capsys.readouterr().out
+    assert OCR_LANG_DEFAULT not in bundle.read_manifest()["limitations"]
+
+
+def test_an_empty_language_list_is_refused_before_the_models_start(
+    bundle, pdf, pandoc, accelerators, text_layer
+):
+    started = []
+    with pytest.raises(PipelineError) as refused:
+        opendataloader.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            ocr=True,
+            ocr_lang=",",
+            backend_factory=lambda device, **kw: started.append(kw),
+            convert=fake_convert(),
+        )
+    assert "--ocr-lang needs at least one language code" in refused.value.detail
+    assert started == []
+
+
 def test_ocr_that_returned_nothing_is_a_failure_not_an_empty_book(
     bundle, pdf, pandoc, accelerators, text_layer
 ):
@@ -959,6 +1088,75 @@ def test_a_conversion_failure_stops_the_backend_and_fails_the_stage(
     assert bundle.stage_status("extract") == "failed"
     assert processes[0].process is None
     assert not bundle.source.exists()
+
+
+def test_a_refusal_the_backend_logged_is_named_in_the_failure(
+    bundle, pdf, pandoc, accelerators
+):
+    # Measured 260921: an unknown OCR language is refused by docling inside
+    # the backend, the Java engine then says only "Backend processing
+    # failed", and the request died before the first progress tick had
+    # read the backend's log -- so the reason never reached the operator.
+    raised = (
+        "docling.exceptions.OcrLanguageNotSupportedError: EasyOcr has no model "
+        "for the OCR language 'xx'. Supported: iso:zh, iso:ja"
+    )
+    logged = (
+        "INFO:     Application startup complete.\n"
+        "Traceback (most recent call last):\n"
+        '  File "server.py", line 1, in convert\n'
+        f"{raised}\n"
+        'INFO:     127.0.0.1:1 - "POST /v1/convert/file HTTP/1.1" 500\n'
+    )
+    with pytest.raises(PipelineError) as failed:
+        opendataloader.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            ocr=True,
+            backend_factory=lambda device, **kw: backend(
+                device, process=FakeProcess(output=logged), **kw
+            ),
+            convert=fake_convert(fail=RuntimeError("java exited 1")),
+        )
+    assert raised in failed.value.detail
+
+
+def test_the_stage_hands_the_extraction_the_languages_it_parsed_once(
+    tmp_path, pdf, pandoc, accelerators, text_layer, monkeypatch
+):
+    # PIN (lead, 260921, docs/260921-feat-PDF_OCR_LANG_FLAG.md): the stage
+    # splits the flag and the extraction must not split the list again --
+    # the backend was once started with the code `['ch_sim'` and refused
+    # every page.
+    from book_maker.pipeline import stages
+
+    text_layer["missing"] = [1, 2]
+    started = []
+
+    def factory(device, **kw):
+        instance = backend(device, **kw)
+        started.append(instance)
+        return instance
+
+    real = opendataloader.extract_pdf
+    monkeypatch.setattr(
+        opendataloader,
+        "extract_pdf",
+        lambda *a, **kw: real(
+            *a, backend_factory=factory, convert=fake_convert(), **kw
+        ),
+    )
+    stages.prepare(
+        Bundle(tmp_path / "b").create(),
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        ocr_lang="ch_sim, en",
+        progress=False,
+    )
+    command = started[0].started_commands[0]
+    assert command[command.index("--ocr-lang") + 1] == "ch_sim,en"
 
 
 def test_an_interruption_stops_the_backend_it_owns(bundle, pdf, pandoc, accelerators):
@@ -1137,7 +1335,9 @@ def test_the_parser_selector_is_gone_and_is_refused(
 
 
 @pytest.mark.parametrize(
-    "given", [["--no-gpu"], ["--pages", "1-2"]], ids=["--no-gpu", "--pages"]
+    "given",
+    [["--no-gpu"], ["--pages", "1-2"], ["--ocr-lang", "zh"]],
+    ids=["--no-gpu", "--pages", "--ocr-lang"],
 )
 def test_a_pdf_only_option_on_markdown_is_refused_not_ignored(
     tmp_path, pandoc, given, capsys, monkeypatch
@@ -1276,6 +1476,44 @@ def test_a_rerun_with_a_different_page_selection_extracts_again(
     assert harness.already_prepared(bundle, pdf, "opendataloader", "1-2")
     assert not harness.already_prepared(bundle, pdf, "opendataloader", "3-4")
     assert not harness.already_prepared(bundle, pdf, "datalab", "1-2")
+
+
+def test_a_rerun_with_other_ocr_languages_reads_a_scan_again_but_not_a_typed_document(
+    tmp_path, pandoc, pdf, accelerators, text_layer, monkeypatch
+):
+    from book_maker.pipeline import stages
+
+    # a scan: the languages decided what the models read
+    text_layer["missing"] = [1, 2]
+    scan = Bundle(tmp_path / "scan").create()
+    opendataloader.extract_pdf(
+        scan,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        ocr_lang="zh,en",
+        backend_factory=lambda device, **kw: backend(device, **kw),
+        convert=fake_convert(),
+    )
+    assert stages.already_prepared(scan, pdf, "opendataloader", None, ["zh", "en"])
+    assert not stages.already_prepared(scan, pdf, "opendataloader", None, ["ja"])
+    assert not stages.already_prepared(scan, pdf, "opendataloader", None, None)
+
+    # a typed document: the models read no page, so the languages changed
+    # nothing and the extraction stands whatever is typed next time
+    text_layer["missing"] = []
+    typed = Bundle(tmp_path / "typed").create()
+    opendataloader.extract_pdf(
+        typed,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        ocr_lang="zh,en",
+        backend_factory=lambda device, **kw: backend(device, **kw),
+        convert=fake_convert(),
+    )
+    assert stages.already_prepared(typed, pdf, "opendataloader", None, ["ja"])
+    assert stages.already_prepared(typed, pdf, "opendataloader", None, None)
 
 
 # --------------------------------------------------------------------------
