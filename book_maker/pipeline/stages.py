@@ -109,6 +109,7 @@ def prepare(
     pages=None,
     ocr=False,
     ocr_lang=None,
+    formula_images=True,
     progress=True,
 ):
     """Import or extract, chosen by the input's suffix alone.
@@ -137,5 +138,6 @@ def prepare(
         page_range=pages,
         ocr=ocr,
         ocr_lang=languages,
+        formula_images=formula_images,
         progress=progress,
     )

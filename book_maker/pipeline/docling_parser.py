@@ -32,9 +32,11 @@ from .bundle import (
     parse_pages,
     sha256_file,
 )
+from . import pdf_formula
 from .errors import PipelineError
 from .importer import import_markdown
 from .messages import (
+    FORMULA_IMAGES,
     BACKEND_FAILED,
     DEVICE_CPU_FALLBACK,
     DEVICE_NO_CUDA_BUILD,
@@ -158,25 +160,36 @@ def _converter(device, ocr, languages):
     )
 
 
-def _convert(pdf, *, out_dir, span, device, ocr, languages):
+def _convert(pdf, *, out_dir, span, device, ocr, languages, formulas=True):
     """Markdown for `span` of `pdf`, with its pictures written to `out_dir`.
 
     The default seam: `extract_pdf(convert=...)` replaces this whole call,
     so a test never loads a model. It does not replace `resolve_device`,
     which runs first either way and needs docling importable -- a test on
     a base install has to stub that too.
+
+    Returns `(markdown, formula count, warnings)`. A stub may return the
+    Markdown alone; `extract_pdf` accepts either.
     """
     from docling_core.types.doc.base import ImageRefMode
 
     converter = _converter(device, ocr, languages)
     result = converter.convert(str(pdf), page_range=span)
+    # Before the export, and only then: an undecoded formula with no
+    # `orig` exports to nothing at all, so the regions are collected and
+    # the placeholders forced into existence while the document is still
+    # in hand.
+    regions = pdf_formula.mark(result.document) if formulas else []
     images = Path(out_dir) / IMAGE_DIR
     markdown = result.document.export_to_markdown(
         page_break_placeholder=PAGE_BREAK,
         image_mode=ImageRefMode.REFERENCED,
         image_dir=images,
     )
-    return _relative_images(markdown, images)
+    markdown = _relative_images(markdown, images)
+    if not formulas:
+        return markdown, 0, []
+    return pdf_formula.apply(markdown, regions, pdf, out_dir)
 
 
 def _relative_images(markdown, image_dir):
@@ -244,6 +257,7 @@ def extract_pdf(
     page_range=None,
     ocr=False,
     ocr_lang=None,
+    formula_images=True,
     convert=None,
     progress=True,
 ):
@@ -335,14 +349,21 @@ def extract_pdf(
         with ticking(line):
             try:
                 with contextlib.redirect_stdout(_Sink(note)):
-                    markdown = converter(
+                    produced = converter(
                         pdf,
                         out_dir=staging,
                         span=span,
                         device=resolved,
                         ocr=bool(ocr),
                         languages=languages,
+                        formulas=bool(formula_images),
                     )
+                # A stub seam returns the Markdown alone; the real
+                # converter also reports what it did with the formulas.
+                if isinstance(produced, str):
+                    markdown, formulas, formula_warnings = produced, 0, []
+                else:
+                    markdown, formulas, formula_warnings = produced
                 finished = True
             except PipelineError:
                 raise
@@ -387,6 +408,10 @@ def extract_pdf(
             text = headed
             source.write_text(text, encoding="utf-8")
             print(SELECTION_HEADING_ADDED.format(page=first_selected_page(page_range)))
+        for warning in formula_warnings:
+            print(warning)
+        if formulas:
+            print(FORMULA_IMAGES.format(count=formulas))
         dense = dense_pages(text)
         for number, chars in dense:
             print(PAGE_TOO_DENSE.format(page=number, chars=chars))

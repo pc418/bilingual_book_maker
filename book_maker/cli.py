@@ -1497,6 +1497,16 @@ COMPAT_RULES = (
             "reads it and does nothing with it."
         ),
     ),
+    CompatRule(
+        "C30",
+        "warn",
+        lambda f: not f.options.formula_images and not f.options.to_epub,
+        lambda f: (
+            "--no-formula-images turns off the pictures the PDF route keeps "
+            "of display formulas, and that route only runs with --to-epub; "
+            "this run reads it and does nothing with it."
+        ),
+    ),
 )
 
 
@@ -2051,6 +2061,18 @@ off. Minimum 1.
         "table detection run either way.",
     )
     parser.add_argument(
+        "--no-formula-images",
+        dest="formula_images",
+        action="store_false",
+        default=True,
+        help="PDF only, with --to-epub: leave display formulas as "
+        "placeholders instead of cropping each one from the page as an "
+        "image. The parser never reads equations, so without the images "
+        "the mathematics is missing from the book entirely; the images "
+        "cost no model and no time, so turn this off only if you want the "
+        "text alone.",
+    )
+    parser.add_argument(
         "--device",
         dest="device",
         default=None,
@@ -2391,6 +2413,7 @@ def run_to_epub(options, argv):
             pdf_ocr=options.pdf_ocr,
             ocr_lang=options.ocr_lang,
             pages=options.pages,
+            formula_images=options.formula_images,
             quiet=options.quiet,
         )
     except PipelineError as err:

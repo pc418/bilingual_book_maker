@@ -113,6 +113,36 @@ PAGES_SPAN_CONVERTED = (
     "and the ones outside the selection dropped afterwards; a single range "
     "reads fewer pages."
 )
+# Display formulas. docling finds the equation and does not read it, so
+# the region is cropped from the page and kept as a picture; the wording
+# says plainly that the equations are not translated, because a reader of
+# a bilingual maths book will notice and should not have to guess why.
+FORMULA_IMAGES = (
+    "Display formulas kept as images: {count}. The parser does not read "
+    "equations, so each one is cropped from the page; the prose around them "
+    "is translated, the equations are not."
+)
+FORMULA_REGION_OVERSIZE = (
+    "Warning: a formula region on page {page} covers {share}% of the page, "
+    "which is a layout mistake rather than an equation; it was left as a "
+    "placeholder instead of replacing the page with a picture of itself."
+)
+FORMULA_UNPLACEABLE = (
+    "Warning: a formula on page {page} has no usable position on the page, "
+    "so its placeholder is left where it is."
+)
+FORMULA_COUNT_MISMATCH = (
+    "Warning: the parser found {regions} undecoded formula(s) but the "
+    "Markdown carries {found} placeholder(s). Every equation was left as a "
+    "placeholder rather than risk putting one in the wrong place; please "
+    "report this together with the PDF."
+)
+HELP_NO_FORMULA_IMAGES = (
+    "Leave display formulas as <!-- formula-not-decoded --> placeholders "
+    "instead of cropping each one from the page as an image. The parser "
+    "never reads equations, so without the images the mathematics is "
+    "missing from the book entirely."
+)
 PAGE_TOO_DENSE = (
     "Warning: page {page} extracted {chars} characters, several times what a "
     "printed page holds; inspect source.md before translating."

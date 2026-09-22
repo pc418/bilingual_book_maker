@@ -656,6 +656,14 @@ WARN_FIXTURES = [
         {},
         "only run on the --to-epub route with --pdf-ocr",
     ),
+    (
+        # C30: --no-formula-images turns off the pictures the PDF route
+        # keeps of display formulas, and that route needs --to-epub
+        "C30",
+        ["--no-formula-images"],
+        {},
+        "only runs with --to-epub",
+    ),
 ]
 
 

@@ -40,6 +40,7 @@ def stages(recorder, *, export=True, fail=None):
         pages=None,
         ocr=False,
         ocr_lang=None,
+        formula_images=True,
         progress=True,
     ):
         recorder.append(("extract", device, ocr, progress, pages, ocr_lang))
@@ -78,7 +79,9 @@ class TestRouting:
     ):
         seen = {}
 
-        def fake(path, argv, *, device, pdf_ocr, ocr_lang, pages, quiet):
+        def fake(
+            path, argv, *, device, pdf_ocr, ocr_lang, pages, formula_images, quiet
+        ):
             seen.update(
                 path=Path(path),
                 argv=list(argv),
@@ -86,6 +89,7 @@ class TestRouting:
                 pdf_ocr=pdf_ocr,
                 ocr_lang=ocr_lang,
                 pages=pages,
+                formula_images=formula_images,
                 quiet=quiet,
             )
 
@@ -153,6 +157,9 @@ class TestRouting:
             "pdf_ocr": False,
             "ocr_lang": None,
             "pages": None,
+            # Display formulas are kept as pictures unless asked otherwise:
+            # without them the equations are missing from the book.
+            "formula_images": True,
             "quiet": True,
         }
 
@@ -182,6 +189,7 @@ class TestRouting:
             "pdf_ocr": False,
             "ocr_lang": None,
             "pages": "6-7",
+            "formula_images": True,
             "quiet": False,
         }
 
@@ -206,6 +214,7 @@ class TestRouting:
             "pdf_ocr": True,
             "ocr_lang": "ch_sim,en",
             "pages": None,
+            "formula_images": True,
             "quiet": False,
         }
 
@@ -220,6 +229,7 @@ class TestRouting:
             "pdf_ocr": True,
             "ocr_lang": None,
             "pages": None,
+            "formula_images": True,
             "quiet": False,
         }
 
@@ -248,6 +258,7 @@ class TestRouting:
             "pdf_ocr": False,
             "ocr_lang": None,
             "pages": None,
+            "formula_images": True,
             "quiet": False,
             **expected,
         }

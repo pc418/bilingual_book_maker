@@ -93,6 +93,7 @@ def pdf_to_epub(
     pdf_ocr=False,
     ocr_lang=None,
     pages=None,
+    formula_images=True,
     quiet=False,
     pandoc=None,
     prepare_stage=prepare,
@@ -129,6 +130,7 @@ def pdf_to_epub(
         pages=pages,
         ocr=pdf_ocr,
         ocr_lang=ocr_lang,
+        formula_images=formula_images,
         progress=not quiet,
     )
     translate_stage(bundle, options, pandoc=executable)

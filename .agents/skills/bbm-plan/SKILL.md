@@ -367,9 +367,14 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-ep
 
 What to tell the user up front, in one line each, because they are
 limits of the format rather than of the run: figures stay pictures and
-their labels are not translated; **display equations are not decoded** and
-arrive as `<!-- formula-not-decoded -->`, so a maths-heavy paper loses its
-maths; a sentence
+their labels are not translated; **display equations are not decoded, so
+they are kept as pictures** — each one is cropped from the page and placed
+where it stood, so the reader sees the real equation but it is not
+translated and not searchable (`--no-formula-images` restores the bare
+`<!-- formula-not-decoded -->` placeholders, which is almost never what
+anyone wants); **inline** mathematics inside a paragraph is not a formula
+region and is not covered at all — on a scan it arrives as whatever OCR
+made of it, and the translator will carry that through; a sentence
 containing `\s`, `[u](y)` or `<k>` can be refused before translation as raw
 TeX, a missing link or raw HTML (the message names the block; escape it in
 `source.md` and rerun); the EPUB carries no translation-metadata file and

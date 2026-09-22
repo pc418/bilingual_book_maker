@@ -383,7 +383,9 @@ def test_session_and_workers_are_refused_before_the_pdf_is_extracted(
     pdf.write_bytes(b"%PDF-1.7\n%fake\n")
     monkeypatch.setattr(to_epub, "find_pandoc", lambda explicit=None: "pandoc")
 
-    def prepare_stage(bundle, source, *, pandoc, device=None, progress=True):
+    def prepare_stage(
+        bundle, source, *, pandoc, device=None, formula_images=True, progress=True
+    ):
         pytest.fail("the PDF was extracted before the options were refused")
 
     with pytest.raises(PipelineError) as err:

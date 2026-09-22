@@ -489,6 +489,15 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   written into `source.md` before translation, so rename it there if you
   like. A selection with a gap in it (`1,5-7`) reads the whole run it spans
   and drops the rest afterwards; the run says so.
+- **Display formulas are kept as pictures.** The parser finds an equation but
+  does not read it, so each one is cropped out of the page and placed where it
+  stood; the prose around it is translated, the equation is not. This is why a
+  maths book survives the route at all — without it every display equation
+  would be a `<!-- formula-not-decoded -->` placeholder and the mathematics
+  would simply be missing. It costs no model, no network and no measurable
+  time. `--no-formula-images` turns it off and restores the placeholders.
+  **Inline** mathematics inside a paragraph is not a formula region and is not
+  covered: on a scan it arrives as whatever OCR made of it.
 - Requirements: the **`pdf` extra**, which is not part of the base install.
   It is not in the published package yet, so install it from a checkout —
   `pip install -r requirements-pdf-gpu.txt` (`pip install ".[pdf]"` does the
