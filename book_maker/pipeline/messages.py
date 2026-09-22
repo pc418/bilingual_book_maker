@@ -137,12 +137,6 @@ FORMULA_COUNT_MISMATCH = (
     "placeholder rather than risk putting one in the wrong place; please "
     "report this together with the PDF."
 )
-HELP_NO_FORMULA_IMAGES = (
-    "Leave display formulas as <!-- formula-not-decoded --> placeholders "
-    "instead of cropping each one from the page as an image. The parser "
-    "never reads equations, so without the images the mathematics is "
-    "missing from the book entirely."
-)
 PAGE_TOO_DENSE = (
     "Warning: page {page} extracted {chars} characters, several times what a "
     "printed page holds; inspect source.md before translating."

@@ -76,8 +76,12 @@ def mark(document):
     for item, _level in document.iterate_items():
         if "formula" not in str(getattr(item, "label", "")).lower():
             continue
-        if (getattr(item, "text", "") or "").strip():
-            continue  # docling read this one; leave its $$...$$ alone
+        if getattr(item, "text", ""):
+            # docling read this one; leave its $$...$$ alone. Truthiness,
+            # not content: the serializer tests `if text:` and would write
+            # `$$ $$` for a blank, and counting that as a region here would
+            # trip the count guard and drop every image in the document.
+            continue
         if not getattr(item, "orig", None):
             item.orig = " "
         prov = list(getattr(item, "prov", None) or [])
