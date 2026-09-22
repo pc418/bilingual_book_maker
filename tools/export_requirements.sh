@@ -4,10 +4,10 @@
 #
 #   requirements.txt          the base install (default group). No PDF, no torch.
 #   requirements-pdf-gpu.txt  the `pdf` extra as locked: PyPI's PyTorch, which
-#                             on Linux is the CUDA build (~1.8 GB with its
-#                             nvidia wheels)
+#                             on Linux is the CUDA build (821 MB plus ~2.16 GB
+#                             of nvidia/triton wheels, at torch 2.7.1)
 #   requirements-pdf-cpu.txt  the same requirements, fetched from PyTorch's CPU
-#                             index instead (~200 MB, no nvidia wheels)
+#                             index instead (176 MB, no nvidia wheels)
 #
 # The extra is exported without the default group so it is installed after
 # requirements.txt, each file self-contained for pip's hash-checking mode.

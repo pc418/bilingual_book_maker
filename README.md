@@ -491,8 +491,8 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   and drops the rest afterwards; the run says so.
 - Requirements: the **`pdf` extra**, which is not part of the base install —
   `pip install "bbook_maker[pdf]"`. It brings docling and PyTorch, so on Linux
-  without an NVIDIA GPU install it from PyTorch's CPU index (~200 MB instead
-  of ~1.8 GB); on macOS and Windows there is nothing to choose. The models
+  without an NVIDIA GPU install it from PyTorch's CPU index (~180 MB instead
+  of ~3 GB); on macOS and Windows there is nothing to choose. The models
   themselves (~500 MB) download on the first run.
   **[docs/installation-pdf.md](docs/installation-pdf.md) has the exact command
   for every case.** Also [Pandoc](https://pandoc.org/installing.html)

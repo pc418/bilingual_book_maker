@@ -300,7 +300,7 @@ opened, naming the missing one, so nothing is paid):
 1. The route is an **optional install**, not part of the base package:
    `python -c "import docling, pypdfium2"`. If it fails, the user needs
    `pip install "bbook_maker[pdf]"` — and on Linux without an NVIDIA GPU,
-   PyTorch's CPU index with it, or they download ~1.8 GB of CUDA they
+   PyTorch's CPU index with it, or they download ~3 GB of CUDA they
    cannot use. Send them to `docs/installation-pdf.md` rather than
    improvising a command; it covers CPU, CUDA and MPS and the uv forms.
    The models (~500 MB) download on the first run, so the first extraction
