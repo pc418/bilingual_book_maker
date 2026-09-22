@@ -262,11 +262,30 @@ def test_the_serializer_still_behaves_the_way_mark_depends_on():
     `mark` exists because the third one exports nothing at all. If a
     docling upgrade changes this, the placeholders stop lining up with the
     regions and equations would land in the wrong place -- so it fails
-    here, loudly, rather than in somebody's book.
+    here, loudly, rather than in somebody's book. Exercised on a real
+    document, not read off the library's source: the serializer's shape
+    can change without either string moving.
     """
-    serializer = pytest.importorskip("docling_core.transforms.serializer.markdown")
-    import inspect
+    docling_core = pytest.importorskip("docling_core.types.doc")
+    DoclingDocument = docling_core.DoclingDocument
+    FORMULA = docling_core.DocItemLabel.FORMULA
+    TEXT = docling_core.DocItemLabel.TEXT
 
-    source = inspect.getsource(serializer)
-    assert 'text_part = f"$${text}$$"' in source or "$${text}$$" in source
-    assert PLACEHOLDER in source
+    document = DoclingDocument(name="pin")
+    document.add_text(label=TEXT, text="before")
+    document.add_text(label=FORMULA, text="E = mc^2")
+    document.add_text(label=FORMULA, text="", orig="raw")
+    document.add_text(label=FORMULA, text="")
+    document.add_text(label=TEXT, text="after")
+
+    exported = document.export_to_markdown()
+    assert "$$E = mc^2$$" in exported
+    assert exported.count(PLACEHOLDER) == 1  # the `orig`-only one
+    # The third formula left nothing: exactly the gap `mark` closes.
+    assert exported.split("$$E = mc^2$$")[1].strip() == f"{PLACEHOLDER}\n\nafter"
+
+    # And after `mark`, the same document leaves one placeholder per
+    # undecoded formula, in order.
+    regions = pdf_formula.mark(document)
+    assert len(regions) == 2
+    assert document.export_to_markdown().count(PLACEHOLDER) == 2
