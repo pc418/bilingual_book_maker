@@ -109,6 +109,7 @@ _FOREIGN_FLAGS = frozenset(
         "--tag",
         "--user",
         "--gpus",  # docker run, in the README's ocr-tag paragraph
+        "--platform",  # docker run/pull: the amd64 image on an arm64 host
         "--flag",
         "--git-common-dir",
     }

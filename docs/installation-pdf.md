@@ -188,6 +188,55 @@ extra-index-url = https://download.pytorch.org/whl/cpu
 The uv equivalents are `UV_TORCH_BACKEND=cpu`, or `UV_INDEX_STRATEGY=unsafe-best-match`
 with `UV_EXTRA_INDEX_URL`.
 
+## Or skip all of it: Docker
+
+The `pdf` tag carries Pandoc and the whole docling runtime, so none of the
+steps above apply:
+
+```sh
+docker run --rm -v "$PWD":/book -v bbm-models:/root/.cache \
+    ghcr.io/yihong0618/bilingual_book_maker:pdf \
+    --book_name /book/paper.pdf --to-epub --key "$OPENAI_API_KEY" --use_context session
+```
+
+The named volume keeps the ~500 MB of models between runs; without it every
+run downloads them again.
+
+**GPU in a container is NVIDIA CUDA and nothing else**, which makes the
+platform story different from the native one above:
+
+| host | GPU in the container |
+|---|---|
+| Linux + NVIDIA | yes — NVIDIA Container Toolkit on the host, then `--gpus all` |
+| Windows + NVIDIA | yes — Docker Desktop on the **WSL2 backend**, then `--gpus all`. The driver goes on Windows, not inside WSL. Windows-containers mode cannot do it |
+| macOS | **no**, whatever you pass: Docker runs a Linux VM that cannot see Metal |
+
+Neither case needs the CUDA Toolkit — torch's wheels carry the runtime.
+Without a GPU the same image runs on the processor; `--device cpu` skips the
+detection.
+
+On **Apple Silicon, Docker costs you MPS**: the container cannot reach it, so
+the native install above is both faster and much smaller. That is the one
+platform where the container is the worse choice.
+
+### arm64 has no GPU in this image
+
+The image is published for `linux/amd64` and `linux/arm64`, but PyPI's
+PyTorch is a CUDA build **only on x86_64**:
+
+| torch 2.7.1, Linux | |
+|---|---|
+| `manylinux_2_28_x86_64` | 821.0 MB — the CUDA build |
+| `manylinux_2_28_aarch64` | 98.9 MB — no CUDA kernels |
+
+So an arm64 Linux host that *does* have a card — GH200, Jetson — pulls the
+arm64 manifest by default and runs on the processor however many `--gpus` are
+passed, silently. Pull the x86_64 image there instead:
+
+```sh
+docker run --rm --platform linux/amd64 --gpus all ... 
+```
+
 ## Sizes
 
 What the PDF step actually downloads, measured 2026-09-21 by resolving the
@@ -244,3 +293,7 @@ CUDA and you opt *out*; on Windows the default is CPU and you opt *in*.
 - **pages have no text layer** — the PDF is a scan. Add `--pdf-ocr`, and
   `--ocr-lang` if it is not in English, Spanish, French or German.
 - **Pandoc too old** — see step 2.
+- **In Docker, `--gpus all` seems ignored on an ARM machine** — it is: the
+  arm64 image has a CPU-only PyTorch. Add `--platform linux/amd64`.
+- **In Docker on a Mac, the GPU is never used** — correct and unfixable; the
+  Linux VM cannot see Metal. Install natively (steps 1-4) for MPS.

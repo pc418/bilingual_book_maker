@@ -734,7 +734,8 @@ docker run --rm -v "${folder_path}":/book -v bbm-models:/root/.cache ghcr.io/yih
 
 具名卷 `bbm-models` 让 docling 模型在多次运行之间保留下来；模型在第一次 `--to-epub` 运行时下载。用之前要知道两个限制：
 
-- **GPU** 只有 Linux 加 NVIDIA 这一条路：宿主机装好 NVIDIA Container Toolkit，再加 `--gpus all`；torch 的 wheel 自带 CUDA 运行时，别的不用装。macOS 上容器不管传什么都只用 CPU，因为 Docker 跑在一个看不见 Metal 加速器的 Linux 虚拟机里。想用 Apple 芯片加速，请在本机直接运行。
+- **GPU** 指的只有 NVIDIA CUDA，**Linux 和 Windows 都可以**，macOS 不行。Linux 上宿主机装好 NVIDIA Container Toolkit，再加 `--gpus all`；torch 的 wheel 自带 CUDA 运行时，别的不用装。Windows 上通过 Docker Desktop 的 **WSL2 后端**同样可用，NVIDIA 驱动装在 Windows 本身而不是 WSL 里面，同样不需要 CUDA Toolkit；Windows 容器模式则做不到。macOS 上容器不管传什么都只用 CPU，因为 Docker 跑在一个看不见 Metal 加速器的 Linux 虚拟机里。想用 Apple 芯片加速，请在本机直接运行。
+- **arm64 上这个镜像没有 GPU**，哪怕机器上有显卡。镜像两种架构都发布，但 PyPI 的 PyTorch 只有 x86_64 才是 CUDA 版——2.7.1 在那边是 821.0 MB，而 aarch64 只有 98.9 MB，完全不含 CUDA kernel。所以带显卡的 arm64 Linux 主机（GH200、Jetson）默认拉到的是 arm64 镜像，`--gpus` 传多少都还是跑在处理器上。那里要加 `--platform linux/amd64` 才能拉到 CUDA 镜像。
 - **codex 路由**两个镜像里都没有：它驱动的是宿主机上已登录的 `codex` 程序，程序和登录状态都不在容器里。Docker 里请用 API 路由。
 
 如果想自己构建镜像而不是拉取：

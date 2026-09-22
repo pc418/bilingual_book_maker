@@ -39,11 +39,23 @@ CMD ["--help"]
 # Python packages from requirements-pdf-gpu.txt -- docling and PyTorch, which
 # on amd64 means the CUDA wheels and several gigabytes. That is why it is its
 # own tag and never `latest`.
-#   GPU: on a Linux host with an NVIDIA driver and the NVIDIA Container
-#   Toolkit, `docker run --gpus all` is all it takes; torch's wheels carry
-#   the CUDA runtime. Without it the same image runs on the CPU -- pass
-#   `--device cpu` to skip the detection. On macOS the container is CPU-only
-#   whatever is passed: Docker runs a Linux VM that cannot see Metal.
+#   GPU means NVIDIA CUDA and nothing else, and only on the amd64 variant
+#   of this image -- see the warning below. Linux: an NVIDIA driver plus the
+#   NVIDIA Container Toolkit, then `docker run --gpus all`; torch's wheels
+#   carry the CUDA runtime, so there is nothing else to install. Windows:
+#   the same, through Docker Desktop's WSL2 backend, with the WSL-capable
+#   NVIDIA driver installed on Windows itself rather than inside WSL
+#   (Windows-containers mode cannot do it). Without a GPU the same image
+#   runs on the CPU -- pass `--device cpu` to skip the detection. On macOS
+#   the container is CPU-only whatever is passed: Docker runs a Linux VM
+#   that cannot see Metal.
+#   ARM64 WARNING: this image is built for linux/amd64 AND linux/arm64, but
+#   PyPI's torch is only a CUDA build on x86_64 (2.7.1: 821.0 MB there
+#   against 98.9 MB on aarch64, which carries no CUDA kernels). An arm64
+#   host with a card -- GH200, Jetson -- pulls the arm64 manifest by
+#   default and runs on the CPU however many --gpus are passed. Force the
+#   x86_64 image with `--platform linux/amd64` there, or build the stage
+#   against PyTorch's aarch64 CUDA index.
 #   Codex: the codex route drives a `codex` binary signed in on the host;
 #   neither the binary nor the login is in this image.
 # No Java: the Java extractor was retired in favour of docling (260921).
