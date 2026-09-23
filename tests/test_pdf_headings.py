@@ -57,12 +57,31 @@ def test_a_bare_number_counts_with_a_neighbour_in_its_style_and_not_alone():
     assert vouched([("2024 in review", big), ("2025 outlook", section)]) == set()
     # A year in a title, with no neighbour, is a title that starts with a number.
     assert vouched([("2024 was a year", big), ("1.1 Sub", sub)]) == set()
+    # A dotted heading vouches for its own parent, the nearest `2` above
+    # it, not for a title that happens to start with the same number.
+    assert vouched(
+        [
+            ("2 Fast Algorithms", big),
+            ("1 Introduction", section),
+            ("2 Method", section),
+            ("2.1 Setup", sub),
+        ]
+    ) == {1, 2}
+    assert vouched([("2.1 Setup", sub), ("2 Later", section)]) == set()
     assert pdf_headings.levels(
         [("2024 was a year", big), ("Abstract", section), ("1.1 Sub", section)]
     ) == [1, 3, 3]
     assert pdf_headings.levels(
         [("2 Fast Algorithms", big), ("1 Introduction", section), ("1.1 Sub", sub)]
     ) == [1, 2, 3]
+    assert pdf_headings.levels(
+        [
+            ("2 Fast Algorithms", big),
+            ("1 Introduction", section),
+            ("2 Method", section),
+            ("2.1 Setup", sub),
+        ]
+    ) == [1, 2, 2, 3]
 
 
 def test_numbering_first_then_the_largest_style_then_a_numbered_sibling_s_level():

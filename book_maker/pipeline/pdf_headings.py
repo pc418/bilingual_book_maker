@@ -111,41 +111,43 @@ def numbering_level(text, bare=False):
 
 
 def _vouched(headings):
-    """Whether each heading's bare leading integer has a neighbour.
+    """The indices of bare leading integers a neighbour vouches for.
 
     `7 Results` is numbering beside `8 Discussion` set in the same style,
     or above `7.1 Setup`; alone, or beside `2025 outlook` in another
     style, it is a title that starts with a number. A run of years in one
-    style (`2024 …`, `2025 …`) still passes, as it would for a reader.
-    Numbering asserted by a dot or a paren needs no vouching.
+    style (`2024 …`, `2025 …`) still passes, as it would for a reader. A
+    dotted heading vouches for the nearest bare heading of its number
+    above it -- its parent -- and not for every heading that starts
+    with that number. Numbering asserted by a dot or a paren needs no
+    vouching.
     """
     bare = {}  # index -> (number, style)
-    dotted_parents = set()  # first component of every dotted heading
+    marked = set()  # (number, style) of every `N.` heading
+    vouched = set()
     for index, (text, style) in enumerate(headings):
         text = text.strip()
         dotted = DOTTED.match(text)
         if dotted:
-            dotted_parents.add(int(dotted.group(1).split(".")[0]))
+            parent = int(dotted.group(1).split(".")[0])
+            above = [i for i, (number, _style) in bare.items() if number == parent]
+            if above:
+                vouched.add(max(above))
+            continue
+        marker = re.match(r"^(\d+)\.\s+\S", text)
+        if marker:
+            marked.add((int(marker.group(1)), style))
             continue
         if numbering_level(text) is not None:
-            continue  # an explicit marker
+            continue  # a roman, letter or paren marker
         alone = BARE.match(text)
         if alone:
             bare[index] = (int(alone.group(1)), style)
-    marked = {
-        (int(match.group(1)), style)
-        for text, style in headings
-        for match in [re.match(r"^(\d+)\.\s+\S", text.strip())]
-        if match
-    }
     peers = set(bare.values()) | marked
-    return {
-        index
-        for index, (number, style) in bare.items()
-        if number in dotted_parents
-        or (number - 1, style) in peers
-        or (number + 1, style) in peers
-    }
+    for index, (number, style) in bare.items():
+        if (number - 1, style) in peers or (number + 1, style) in peers:
+            vouched.add(index)
+    return vouched
 
 
 def levels(headings):
