@@ -32,7 +32,7 @@ from .bundle import (
     parse_pages,
     sha256_file,
 )
-from . import pdf_formula
+from . import pdf_formula, pdf_headings
 from .errors import PipelineError
 from .importer import import_markdown
 from .messages import (
@@ -180,13 +180,16 @@ def _convert(pdf, *, out_dir, span, device, ocr, languages, formulas=True):
     # text, so the serializer writes the marker where the equation stands
     # and the picture can only land at its own item.
     regions = pdf_formula.mark(result.document) if formulas else []
+    # And the headings' levels, which docling does not give: numbering and
+    # the glyphs under each heading decide them before the export.
+    pdf_headings.assign(result.document, pdf)
     images = Path(out_dir) / IMAGE_DIR
     markdown = result.document.export_to_markdown(
         page_break_placeholder=PAGE_BREAK,
         image_mode=ImageRefMode.REFERENCED,
         image_dir=images,
     )
-    markdown = _relative_images(markdown, images)
+    markdown = pdf_headings.promote(_relative_images(markdown, images))
     if not formulas:
         return markdown, 0, []
     return pdf_formula.apply(
