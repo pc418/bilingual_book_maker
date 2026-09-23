@@ -52,15 +52,20 @@ IMAGE_DIR = "images"
 # 3x the PDF's own 72 dpi. Enough that a subscript stays legible on a
 # high-density screen without making the bundle heavy.
 SCALE = 3.0
-# Padding is deliberately asymmetric, measured on the fixture. The layout
-# box sits tight against the glyphs and clips a tall bracket or an
-# integral sign at the sides, so the horizontal pad is generous; but a
-# display equation is separated from the prose above and below it by
-# ordinary line leading, so the same generosity vertically drags the
-# neighbouring sentence into the picture (seen at 12pt: "Thus (Equation
-# 2.36)" appeared under a derivation).
+# Padding, measured. The layout box sits tight against the glyphs and
+# clips a tall bracket or an integral sign, so the horizontal pad is
+# generous. Vertically no fixed number works: at 12pt the sentence under
+# a derivation was dragged into the picture ("Thus (Equation 2.36)" on
+# the Griffiths scan), at 2pt a tall brace lost its bottom 8pt (2310.19788
+# p. 2, where the next line began 15pt below the box). So the vertical
+# pad reaches as far as PAD_Y_MAX unless something the layout model
+# placed stands in the same column within reach, and then it stops
+# PAD_CLEAR short of that item. PAD_Y is the floor, used when the
+# neighbour already touches or overlaps the box.
 PAD_X = 12.0
 PAD_Y = 2.0
+PAD_Y_MAX = 12.0
+PAD_CLEAR = 1.0
 # A "formula" covering most of the page is a layout mistake, not an
 # equation; cropping it would silently replace the page's prose with a
 # picture of itself.
@@ -107,6 +112,40 @@ def mark(document):
             )
         )
     return regions
+
+
+def neighbours(document):
+    """`{page: [box, ...]}` of every positioned item, for the vertical pad."""
+    boxes = {}
+    for item, _level in document.iterate_items():
+        for prov in getattr(item, "prov", None) or []:
+            box = prov.bbox
+            boxes.setdefault(prov.page_no, []).append(
+                (float(box.l), float(box.b), float(box.r), float(box.t))
+            )
+    return boxes
+
+
+def _vertical_pads(box, others, floor, ceiling):
+    """`(below, above)`: up to `ceiling`, stopping short of an item in the
+    same column. An item beside the box (another column) does not count,
+    and one that overlaps it vertically -- its own members, a neighbour
+    the layout model drew over it -- leaves the floor."""
+    left, bottom, right, top = box
+    below = above = ceiling
+    for o_left, o_bottom, o_right, o_top in others:
+        if o_right <= left or o_left >= right:
+            continue
+        if o_top <= bottom:
+            below = min(below, bottom - o_top - PAD_CLEAR)
+        elif o_bottom >= top:
+            above = min(above, o_bottom - top - PAD_CLEAR)
+        else:  # overlaps the box: whichever edge it crosses gets the floor
+            if o_bottom < bottom:
+                below = floor
+            if o_top > top:
+                above = floor
+    return max(floor, below), max(floor, above)
 
 
 def _overlap(first, second):
@@ -162,8 +201,10 @@ def merge(regions):
     return groups
 
 
-def _crop(page, box, pad_x, pad_y):
+def _crop(page, box, pad_x, pads):
     """The render `crop` margins for `box`, clamped to the rendered page.
+
+    `pads` is `(below, above)` in points.
 
     The frame is the page as rendered -- `get_size()` is the CropBox
     after /Rotate -- because that is the frame docling reports in
@@ -173,18 +214,33 @@ def _crop(page, box, pad_x, pad_y):
     CropBox's own origin play no part.
     """
     width, height = (float(value) for value in page.get_size())
+    below, above = pads
     l = max(0.0, box[0] - pad_x)
-    b = max(0.0, box[1] - pad_y)
+    b = max(0.0, box[1] - below)
     r = min(width, box[2] + pad_x)
-    t = min(height, box[3] + pad_y)
+    t = min(height, box[3] + above)
     if r <= l or t <= b:
         return None, 0.0
     share = ((r - l) * (t - b)) / max(width * height, 1e-9)
     return (l, b, width - r, height - t), share
 
 
-def rasterize(pdf_path, groups, out_dir, *, scale=SCALE, pad_x=PAD_X, pad_y=PAD_Y):
-    """Write one PNG per group; return {group index: file name} and warnings."""
+def rasterize(
+    pdf_path,
+    groups,
+    out_dir,
+    *,
+    neighbours=None,
+    scale=SCALE,
+    pad_x=PAD_X,
+    pad_y=PAD_Y,
+    pad_y_max=PAD_Y_MAX,
+):
+    """Write one PNG per group; return {group index: file name} and warnings.
+
+    With `neighbours` (from `neighbours(document)`) the vertical pad is
+    chosen per equation; without, it is `pad_y` both ways.
+    """
     from pathlib import Path
 
     from .pdf_common import _pdfium
@@ -196,7 +252,13 @@ def rasterize(pdf_path, groups, out_dir, *, scale=SCALE, pad_x=PAD_X, pad_y=PAD_
     try:
         for index, (page_number, box, _members) in enumerate(groups):
             page = document[page_number - 1]
-            margins, share = _crop(page, box, pad_x, pad_y)
+            if neighbours is None:
+                pads = (pad_y, pad_y)
+            else:
+                pads = _vertical_pads(
+                    box, neighbours.get(page_number, ()), pad_y, pad_y_max
+                )
+            margins, share = _crop(page, box, pad_x, pads)
             if margins is None:
                 warnings.append(FORMULA_UNPLACEABLE.format(page=page_number))
                 continue
@@ -239,6 +301,9 @@ def replace(markdown, regions, groups, images):
         if not exported:
             unplaced.append(members[0])
             continue
+        # No alt text on purpose: Pandoc turns an image with alt text that
+        # stands alone in a paragraph into a figure with the alt as its
+        # caption, and every equation would carry one.
         target[exported[0]] = f"![]({IMAGE_DIR}/{name})"
         for extra in exported[1:]:
             target[extra] = ""
@@ -251,7 +316,15 @@ def replace(markdown, regions, groups, images):
 
 
 def apply(
-    markdown, regions, pdf_path, out_dir, *, scale=SCALE, pad_x=PAD_X, pad_y=PAD_Y
+    markdown,
+    regions,
+    pdf_path,
+    out_dir,
+    *,
+    neighbours=None,
+    scale=SCALE,
+    pad_x=PAD_X,
+    pad_y=PAD_Y,
 ):
     """Rasterize every marked formula. Returns (markdown, placed, warnings).
 
@@ -261,7 +334,13 @@ def apply(
         return markdown, 0, []
     groups = merge(regions)
     images, warnings = rasterize(
-        pdf_path, groups, out_dir, scale=scale, pad_x=pad_x, pad_y=pad_y
+        pdf_path,
+        groups,
+        out_dir,
+        neighbours=neighbours,
+        scale=scale,
+        pad_x=pad_x,
+        pad_y=pad_y,
     )
     for index, region in enumerate(regions):
         if region.page is None:

@@ -237,21 +237,26 @@ def first_selected_page(page_range):
     return ranges[0][0] if ranges else None
 
 
-def heading_for_mid_section(markdown_text, first_page):
-    """The Markdown with a heading above a selection that starts mid-section.
+TOP_HEADING = re.compile(r"^#\s+\S")
 
-    A page selection normally begins inside a section, so the extraction
-    opens with prose the previous pages' heading would have owned. The
-    EPUB's table of contents follows the headings and the export refuses
-    prose above the first one, so the extraction gets a heading naming the
-    page it starts on -- written into source.md, where the operator sees
-    it before anything is paid for and can rename it. Only a selection
-    that starts after page 1 gets one; the document's own first page owns
-    its front matter, and a selection whose first content is a heading
-    needs nothing. Returns None when nothing was added.
+
+def heading_for_top(markdown_text, first_page, title):
+    """The Markdown opened with a level-1 heading, or None if it already is.
+
+    The EPUB's table of contents follows the headings, and Pandoc gives a
+    document that does not open with a level-1 heading a book-title entry
+    of its own -- at any split level -- which the navigation check then
+    refuses as an entry the outline never had. docling writes every
+    section heading, the paper's title included, as `##`, so without this
+    every page-1 paper failed at export, after the translation was paid
+    for (Opus corpus run, 260922: 9 of 12 bundles). A selection that
+    starts after page 1 is headed with the page it starts on, as before;
+    anything else is headed with `title`. Written into source.md, where
+    the operator sees it before anything is paid for and can rename it.
+
+    Returns `(text, heading text)`, or None when the first content line is
+    already a level-1 heading or there is no content to head.
     """
-    if not first_page or first_page < 2:
-        return None
     lines = markdown_text.splitlines()
     insert_at = 0
     for index, line in enumerate(lines):
@@ -259,15 +264,16 @@ def heading_for_mid_section(markdown_text, first_page):
         if not stripped or LEADING_MARKER.match(stripped):
             insert_at = index + 1
             continue
-        if FIRST_CONTENT_HEADING.match(stripped):
+        if TOP_HEADING.match(stripped):
             return None
         break
     else:
-        return None  # nothing but markers: no prose to head
-    heading = [f"# Page {first_page}", ""]
+        return None  # nothing but markers: no content to head
+    text = f"Page {first_page}" if first_page and first_page >= 2 else title
+    heading = [f"# {text}", ""]
     if insert_at and lines[insert_at - 1].strip():
         heading.insert(0, "")
-    return "\n".join(lines[:insert_at] + heading + lines[insert_at:]) + "\n"
+    return "\n".join(lines[:insert_at] + heading + lines[insert_at:]) + "\n", text
 
 
 def blank_pages(markdown_text):

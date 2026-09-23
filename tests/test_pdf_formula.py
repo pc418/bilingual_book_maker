@@ -323,6 +323,64 @@ def _same_pixels(crop, expected):
     return ImageChops.difference(crop, expected).getbbox() is None
 
 
+def test_the_vertical_pad_reaches_out_but_stops_short_of_a_neighbour():
+    """PIN (lead 260922, docs/260922-feat-PDF_FORMULA_IMAGES.md, measured on
+    the Opus corpus run): a fixed vertical pad cannot be right -- 12pt
+    dragged the next sentence into a Griffiths crop, 2pt clipped a brace on
+    2310.19788 p. 2 whose next line was 15pt away. The pad reaches PAD_Y_MAX
+    unless an item in the same column is nearer, then stops PAD_CLEAR short
+    of it; an item beside the box, in another column, does not count."""
+    box = (100.0, 500.0, 300.0, 530.0)
+    floor, ceiling = pdf_formula.PAD_Y, pdf_formula.PAD_Y_MAX
+    clear = pdf_formula.PAD_CLEAR
+    # nothing near: the ceiling both ways
+    assert pdf_formula._vertical_pads(box, [box], floor, ceiling) == (ceiling, ceiling)
+    # a line 20pt above and one 5pt below, both in the column
+    others = [(90.0, 550.0, 310.0, 562.0), (90.0, 480.0, 310.0, 495.0)]
+    assert pdf_formula._vertical_pads(box, others, floor, ceiling) == (
+        5.0 - clear,
+        ceiling,
+    )
+    # the same line 5pt below but in the other column: ignored
+    beside = [(320.0, 480.0, 500.0, 495.0)]
+    assert pdf_formula._vertical_pads(box, beside, floor, ceiling) == (ceiling, ceiling)
+    # a neighbour the layout model drew over the box: the floor
+    over = [(90.0, 495.0, 310.0, 505.0)]
+    assert pdf_formula._vertical_pads(box, over, floor, ceiling) == (floor, ceiling)
+
+
+def test_neighbours_are_every_positioned_item_by_page():
+    doc = FakeDoc(
+        FakeItem(label="text", page=1, box=(0, 0, 10, 10)),
+        FakeItem(page=2, box=(5, 5, 20, 20)),
+        FakeItem(label="text", box=None),
+    )
+    assert pdf_formula.neighbours(doc) == {
+        1: [(0.0, 0.0, 10.0, 10.0)],
+        2: [(5.0, 5.0, 20.0, 20.0)],
+    }
+
+
+def test_rasterize_uses_the_neighbour_aware_pads(tmp_path):
+    pdfium_or_skip()
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    pdf = write_pdf(tmp_path / "book.pdf", ["A typed line of prose on the page."])
+    box = (50, 700, 300, 730)
+    regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=box)))
+    near = {1: [box, (40, 690, 310, 695)]}  # 5pt below the box, same column
+    images, warnings = pdf_formula.rasterize(
+        pdf, pdf_formula.merge(regions), tmp_path, neighbours=near
+    )
+    assert warnings == []
+    with Image.open(tmp_path / pdf_formula.IMAGE_DIR / images[0]) as picture:
+        expected = (30 + (5 - pdf_formula.PAD_CLEAR) + pdf_formula.PAD_Y_MAX) * (
+            pdf_formula.SCALE
+        )
+        assert abs(picture.height - expected) <= 2
+
+
 def test_the_crop_is_taken_in_the_frame_docling_reports_in(tmp_path):
     """PIN (lead 260922, measured on the Griffiths scan with a CropBox set to
     (40, 60, 452, 600)): docling reports every coordinate relative to the

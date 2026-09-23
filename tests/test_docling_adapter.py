@@ -52,6 +52,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     PDF_OPTIONS_INERT,
     SCANNED_PAGES,
     SELECTION_HEADING_ADDED,
+    TITLE_HEADING_ADDED,
 )
 
 # The real page-geometry reader, captured before the autouse fixture below
@@ -674,30 +675,69 @@ class TestASelectionThatStartsMidSection:
     # extraction now heads such prose with the page it starts on, in
     # source.md, before anything is paid for.
 
+    # PIN (lead 260922, docs/260922-feat-PDF_FORMULA_IMAGES.md, from the Opus
+    # corpus run): Pandoc gives any document that does not OPEN with a
+    # level-1 heading a book-title contents entry, at every split level, and
+    # docling writes every heading -- the paper's title too -- as `##`. So
+    # the rule is "opens with a level-1 heading", not "opens with a
+    # heading"; a page-1 document gets the PDF's stem, a later start its
+    # page. This reverses the 260921 choice that page 1 owns its front
+    # matter: with docling, that choice failed 9 of 12 corpus bundles at
+    # export, after paying for the translation.
     @pytest.mark.parametrize(
-        "text,first_page,expected",
+        "text,first_page,expected,heading",
         [
-            (MID_SECTION_NUMBERED, 6, "<!-- page 6 -->\n\n# Page 6\n\nagent.\n"),
-            ("prose first\n\n# H\n", 4, "# Page 4\n\nprose first\n"),
+            (
+                MID_SECTION_NUMBERED,
+                6,
+                "<!-- page 6 -->\n\n# Page 6\n\nagent.\n",
+                "Page 6",
+            ),
+            ("prose first\n\n# H\n", 4, "# Page 4\n\nprose first\n", "Page 4"),
+            # a selection opening with a section heading, not a chapter one
+            (
+                "<!-- page 4 -->\n\n## 3.1 Encoder\n\nprose\n",
+                4,
+                "<!-- page 4 -->\n\n# Page 4\n\n## 3.1 Encoder\n",
+                "Page 4",
+            ),
+            # page 1: docling's `##` title, and a banner above it
+            (
+                "<!-- page 1 -->\n\n## Attention\n\n## Abstract\n",
+                1,
+                "<!-- page 1 -->\n\n# 1706.03762\n\n## Attention\n",
+                "1706.03762",
+            ),
+            (
+                "<!-- page 1 -->\n\nPermission banner.\n\n## Attention\n",
+                1,
+                "<!-- page 1 -->\n\n# 1706.03762\n\nPermission banner.\n",
+                "1706.03762",
+            ),
+            (
+                MID_SECTION_NUMBERED,
+                None,  # no selection at all
+                "<!-- page 6 -->\n\n# 1706.03762\n\nagent.\n",
+                "1706.03762",
+            ),
         ],
     )
-    def test_prose_above_the_first_heading_gets_the_page_as_heading(
-        self, text, first_page, expected
+    def test_a_document_that_does_not_open_with_a_chapter_heading_gets_one(
+        self, text, first_page, expected, heading
     ):
-        assert pdf_common.heading_for_mid_section(text, first_page).startswith(expected)
+        headed = pdf_common.heading_for_top(text, first_page, "1706.03762")
+        assert headed[0].startswith(expected) and headed[1] == heading
 
     @pytest.mark.parametrize(
         "text,first_page",
         [
-            # the document's own first page owns its front matter
-            (MID_SECTION_NUMBERED, 1),
-            (MID_SECTION_NUMBERED, None),  # no selection at all
             ("<!-- page 6 -->\n\n# 3. Eval\n\nprose\n", 6),  # already headed
+            ("# Title\n\n## Abstract\n", 1),
             ("<!-- page 6 -->\n", 6),  # nothing to head
         ],
     )
     def test_nothing_is_added_when_nothing_needs_it(self, text, first_page):
-        assert pdf_common.heading_for_mid_section(text, first_page) is None
+        assert pdf_common.heading_for_top(text, first_page, "book") is None
 
     def test_the_extraction_writes_the_heading_and_says_so(
         self, bundle, pdf, pandoc, device, capsys
@@ -716,7 +756,7 @@ class TestASelectionThatStartsMidSection:
         assert expected in capsys.readouterr().out
         assert expected in bundle.read_manifest()["limitations"]
 
-    def test_a_selection_from_page_one_is_left_alone(
+    def test_a_document_from_page_one_is_headed_with_the_pdf_s_name(
         self, bundle, pdf, pandoc, device, capsys
     ):
         docling_parser.extract_pdf(
@@ -726,8 +766,12 @@ class TestASelectionThatStartsMidSection:
             page_range="1-2",
             convert=fake_convert(markdown=MID_SECTION),
         )
-        assert "# Page" not in bundle.source.read_text(encoding="utf-8")
-        assert "selection starts inside" not in capsys.readouterr().out
+        source = bundle.source.read_text(encoding="utf-8")
+        assert "# Page" not in source
+        assert source.count(f"# {pdf.stem}\n") == 1
+        expected = TITLE_HEADING_ADDED.format(title=pdf.stem)
+        assert expected in capsys.readouterr().out
+        assert expected in bundle.read_manifest()["limitations"]
 
     def test_the_headed_selection_translates_and_exports(
         self, bundle, pdf, pandoc, device, monkeypatch

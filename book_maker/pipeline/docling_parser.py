@@ -56,6 +56,7 @@ from .messages import (
     PDF_ROUTE_NOT_INSTALLED,
     SCANNED_PAGES,
     SELECTION_HEADING_ADDED,
+    TITLE_HEADING_ADDED,
 )
 from .pdf_common import (
     PAGE_MARKER,
@@ -63,7 +64,7 @@ from .pdf_common import (
     check_recognised_text,
     dense_pages,
     first_selected_page,
-    heading_for_mid_section,
+    heading_for_top,
     text_layer_report,
 )
 from .progress import ProgressLine, ticking
@@ -188,7 +189,13 @@ def _convert(pdf, *, out_dir, span, device, ocr, languages, formulas=True):
     markdown = _relative_images(markdown, images)
     if not formulas:
         return markdown, 0, []
-    return pdf_formula.apply(markdown, regions, pdf, out_dir)
+    return pdf_formula.apply(
+        markdown,
+        regions,
+        pdf,
+        out_dir,
+        neighbours=pdf_formula.neighbours(result.document),
+    )
 
 
 def _relative_images(markdown, image_dir):
@@ -402,11 +409,18 @@ def extract_pdf(
         source = staging / "source.md"
         source.write_text(text, encoding="utf-8")
         silent = check_recognised_text(source, missing)
-        headed = heading_for_mid_section(text, first_selected_page(page_range))
+        first = first_selected_page(page_range)
+        headed = heading_for_top(text, first, pdf.stem)
+        heading_note = None
         if headed is not None:
-            text = headed
+            text, heading_text = headed
             source.write_text(text, encoding="utf-8")
-            print(SELECTION_HEADING_ADDED.format(page=first_selected_page(page_range)))
+            heading_note = (
+                SELECTION_HEADING_ADDED.format(page=first)
+                if first and first >= 2
+                else TITLE_HEADING_ADDED.format(title=heading_text)
+            )
+            print(heading_note)
         for warning in formula_warnings:
             print(warning)
         if formulas:
@@ -447,10 +461,8 @@ def extract_pdf(
         )
     if missing and not languages:
         limitations.append(OCR_LANG_DEFAULT)
-    if headed is not None:
-        limitations.append(
-            SELECTION_HEADING_ADDED.format(page=first_selected_page(page_range))
-        )
+    if heading_note is not None:
+        limitations.append(heading_note)
     for number, chars in dense:
         limitations.append(PAGE_TOO_DENSE.format(page=number, chars=chars))
     # A formula that could not be placed is a gap in the book, and the

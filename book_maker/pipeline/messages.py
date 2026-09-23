@@ -108,6 +108,11 @@ SELECTION_HEADING_ADDED = (
     '"Page {page}" was added above its prose; the table of contents needs '
     "one there. Rename it in source.md before translating if you like."
 )
+TITLE_HEADING_ADDED = (
+    "The document does not open with a top-level heading, so a heading "
+    '"{title}" was added above its text; the table of contents needs one '
+    "there. Rename it in source.md before translating if you like."
+)
 PAGES_SPAN_CONVERTED = (
     "The page selection is not one run of pages, so pages {span} were read "
     "and the ones outside the selection dropped afterwards; a single range "
