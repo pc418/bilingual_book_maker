@@ -12,12 +12,25 @@ can tell us:
 1. **Section numbering**, when a heading carries it: `1 Introduction` is
    level 2, `1.1` level 3, `1.1.1` level 4; `I.` is 2, `A.` is 3, `1)` is
    4. Numbering is the author's own statement of depth and beats any
-   typographic guess -- `3.1` and `3.2.1` can be set in the same font.
+   typographic guess -- `3.1` and `3.2.1` can be set in the same font. A
+   bare integer (`2024 was the year`) counts only with a neighbour: another
+   heading numbered one above or below it, or a dotted one under it
+   (`3.1`), so a chapter run starting anywhere is read and a year is not.
 2. **Typographic style** otherwise: the rendered font size and whether the
    glyphs under the heading's box are bold, read from the PDF's text layer
-   with pypdfium2. The heading in the largest style is level 1 (the
-   title); any other unnumbered heading takes the level of a numbered
-   heading set in the same style, else level 2.
+   with pypdfium2. An unnumbered heading takes the level of a numbered
+   heading set in the same style; failing that, the largest style is
+   level 1 (the title), and anything else is level 2. The numbered
+   sibling is asked first so that, when docling has already taken the
+   title out as a title item, `Abstract` in the section font does not
+   become a second title.
+
+docling 2.129 ships its own `HeadingHierarchyModel` (off by default:
+bookmarks, then numbering, then cell style). Measured on the same corpus
+(260922, `heading_hierarchy_options.enabled`, `generate_parsed_pages`):
+24.6% of levels exact, and on 15 of 20 papers the title sits at the level
+of its sections, because it compresses `1 Introduction` to level 1. That
+is the flat contents page again, so it is not used.
 
 Measured 260922 (headings-eval, same corpus): 95.9% of levels exact, 19 of
 20 papers entirely right. The one miss is a paper with no numbering whose
@@ -38,9 +51,12 @@ import collections
 import ctypes
 import re
 
-# `1 Intro`, `2.3 Method`, `2.3.1 Detail`; a trailing dot after the number
-# is allowed (`1. Introduction`).
-NUMBERED = re.compile(r"^(\d+(?:\.\d+)*)\.?\s+\S")
+# `2.3 Method`, `2.3.1. Detail`: the dots state the depth.
+DOTTED = re.compile(r"^(\d+(?:\.\d+)+)\.?\s+\S")
+# `1. Introduction`: the dot makes it a marker.
+ARABIC = re.compile(r"^\d+\.\s+\S")
+# `1 Introduction`: a number alone, read as a marker only with a neighbour.
+BARE = re.compile(r"^(\d+)\s+\S")
 ROMAN = re.compile(r"^[IVXL]+\.\s+\S")
 LETTER = re.compile(r"^[A-H]\.\s+\S")
 PAREN = re.compile(r"^\d+\)\s+\S")
@@ -71,19 +87,54 @@ NAME_WEIGHTS = (
 SIZE_STEP = 0.5
 
 
-def numbering_level(text):
-    """The level a heading's own numbering states, or None."""
+def numbering_level(text, bare=False):
+    """The level a heading's own numbering states, or None.
+
+    `bare` accepts a number without a dot (`1 Introduction`); `levels`
+    grants it only with the evidence of a neighbour.
+    """
     text = text.strip()
-    numbered = NUMBERED.match(text)
-    if numbered:
-        return min(MAX_LEVEL, numbered.group(1).count(".") + 2)
+    dotted = DOTTED.match(text)
+    if dotted:
+        return min(MAX_LEVEL, dotted.group(1).count(".") + 2)
+    if ARABIC.match(text):
+        return 2
     if ROMAN.match(text):
         return 2
     if LETTER.match(text):
         return 3
     if PAREN.match(text):
         return 4
+    if bare and BARE.match(text):
+        return 2
     return None
+
+
+def _bare_numbers(texts):
+    """The bare leading integers that a neighbour vouches for.
+
+    `7 Results` is numbering next to `8 Discussion` or above `7.1 Setup`;
+    alone, or beside `2024 in review`, it is a title that starts with a
+    number. A run of years (`2024 …`, `2025 …`) still passes, as it would
+    for a reader.
+    """
+    stated = set()  # numbers a dotted or dotted-marker heading states
+    bare = set()
+    for text in texts:
+        text = text.strip()
+        dotted = DOTTED.match(text)
+        if dotted:
+            stated.add(int(dotted.group(1).split(".")[0]))
+            continue
+        marker = re.match(r"^(\d+)\.\s+\S", text)
+        if marker:
+            stated.add(int(marker.group(1)))
+            continue
+        alone = BARE.match(text)
+        if alone:
+            bare.add(int(alone.group(1)))
+    known = stated | bare
+    return {n for n in bare if n in stated or n - 1 in known or n + 1 in known}
 
 
 def levels(headings):
@@ -91,22 +142,31 @@ def levels(headings):
 
     A style is `(size, bold)`. The rule is the module docstring's.
     """
+    vouched = _bare_numbers(text for text, _style in headings)
+
+    def number_of(text):
+        alone = BARE.match(text.strip())
+        if alone and int(alone.group(1)) not in vouched:
+            return numbering_level(text)
+        return numbering_level(text, bare=True)
+
+    numbers = [number_of(text) for text, _style in headings]
     styled = [style for _text, style in headings if style is not None]
     top = max(styled) if styled else None
     by_style = {}
-    for text, style in headings:
-        number = numbering_level(text)
+    for (_text, style), number in zip(headings, numbers):
         if number and style is not None:
             by_style.setdefault(style, number)
     out = []
-    for text, style in headings:
-        number = numbering_level(text)
+    for (_text, style), number in zip(headings, numbers):
         if number:
             out.append(number)
+        elif style in by_style:
+            out.append(by_style[style])
         elif style is not None and style == top:
             out.append(1)
         else:
-            out.append(by_style.get(style, 2))
+            out.append(2)
     return out
 
 
@@ -140,13 +200,40 @@ def _glyphs(raw, textpage):
         )
 
 
+def _display(page):
+    """User-space point -> the point on the page as displayed.
+
+    The frame is docling's: CropBox origin at (0, 0), the page turned by
+    its `/Rotate`. The four cases were measured against docling's own
+    heading boxes on a page saved at each rotation (260922).
+    """
+    left, bottom, right, top = page.get_bbox()
+    width, height = right - left, top - bottom
+    rotation = page.get_rotation()
+
+    def display(x, y):
+        x, y = x - left, y - bottom
+        if rotation == 90:
+            return y, width - x
+        if rotation == 180:
+            return width - x, height - y
+        if rotation == 270:
+            return height - y, x
+        return x, y
+
+    return display
+
+
 def styles(pdf_path, boxes):
     """`{index: (size, bold) or None}` for `boxes = {index: (page, box)}`.
 
     The box is docling's: PDF points, bottom-left origin, relative to the
-    CropBox; pdfium's character boxes are in user space, so the CropBox
-    origin is subtracted. A box with no glyphs under it (a scan, a rotated
-    page) gets None.
+    CropBox, on the page as displayed (`/Rotate` applied: a 90-degree page
+    is reported as wide as it is tall, measured 260922 on docling 2.129).
+    pdfium's character boxes are in user space, unrotated, so the CropBox
+    origin is subtracted and the page's rotation applied before a glyph is
+    looked for under a box. A box with no glyphs under it (a scan) gets
+    None.
     """
     from .pdf_common import _pdfium
 
@@ -159,10 +246,10 @@ def styles(pdf_path, boxes):
     try:
         for page_number, wanted in by_page.items():
             page = document[page_number - 1]
-            left, bottom = page.get_bbox()[:2]
+            display = _display(page)
             textpage = page.get_textpage()
             glyphs = [
-                (x - left, y - bottom, size, weight)
+                (*display(x, y), size, weight)
                 for x, y, size, weight in _glyphs(raw, textpage)
             ]
             for index, (l, b, r, t) in wanted:
@@ -204,7 +291,8 @@ def assign(document, pdf_path):
     return len(items), sum(style is not None for _text, style in headings)
 
 
-_ATX = re.compile(r"^#(#+\s)", re.M)
+_ATX = re.compile(r"^#(#+\s)")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
 def promote(markdown):
@@ -213,6 +301,24 @@ def promote(markdown):
     The serializer writes a section header with one hash more than its
     level, keeping `#` for a title item, so with levels assigned the top
     heading arrives as `##`. Lifting every `##`-or-deeper line by one puts
-    it at `#`, and a title item already there stays.
+    it at `#`, and a title item already there stays. A code block's lines
+    are left alone: the serializer fences a code item, and `## comment`
+    inside it is code.
     """
-    return _ATX.sub(r"\1", markdown)
+    out = []
+    fence = None
+    for line in markdown.split("\n"):
+        found = _FENCE.match(line)
+        if fence is None:
+            if found:
+                fence = found.group(1)
+            else:
+                line = _ATX.sub(r"\1", line)
+        elif (
+            found
+            and found.group(1)[0] == fence[0]
+            and len(found.group(1)) >= len(fence)
+        ):
+            fence = None
+        out.append(line)
+    return "\n".join(out)
