@@ -61,6 +61,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
 from book_maker.pipeline.pdf_common import (  # noqa: E402
     text_layer_report as real_text_layer_report,
 )
+from book_maker.pipeline.pdf_settings import ExtractionSettings  # noqa: E402
 from book_maker.pipeline.translate import translate_bundle  # noqa: E402
 
 HARNESS = Path(__file__).resolve().parent.parent / "tools" / "pdf_to_book.py"
@@ -335,8 +336,7 @@ def test_a_conversion_produces_the_same_bundle_contract(bundle, pdf, pandoc, dev
     # One run of pages, numbered from 1 like the flag.
     assert kwargs["span"] == (1, 2)
     assert kwargs["device"] == "mps"
-    assert kwargs["ocr"] is True
-    assert kwargs["languages"] is None
+    assert kwargs["settings"] == ExtractionSettings(ocr=True)
     assert device["requested"] == ["auto"]
 
     assert bundle.source.is_file()
@@ -424,7 +424,6 @@ def test_the_conversion_says_it_is_running_and_what_it_said_last(
         bundle,
         pdf,
         pandoc=pandoc,
-        ocr=True,
         convert=fake_convert(says=["INFO - Processing document book.pdf"]),
     )
     out = capsys.readouterr().out
@@ -850,7 +849,7 @@ def test_a_page_with_no_text_layer_is_read_by_the_models_and_recorded(
     text_layer["missing"] = [2]
     convert = fake_convert()
     docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, ocr=True, convert=convert)
-    assert convert.calls[0]["ocr"] is True
+    assert convert.calls[0]["settings"].ocr is True
     assert SCANNED_PAGES.format(count=1, total=2) in capsys.readouterr().out
     extraction = bundle.read_manifest()["extraction"]
     assert extraction["pages_without_text_layer"] == [2]
@@ -880,7 +879,7 @@ def test_a_plain_run_reads_without_ocr_and_says_so(bundle, pdf, pandoc, device, 
     # layout and table detection run either way.
     convert = fake_convert()
     docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, convert=convert)
-    assert convert.calls[0]["ocr"] is False
+    assert convert.calls[0]["settings"].ocr is False
     out = capsys.readouterr().out
     assert "Extracting PDF: 2 pages, layout and table models on mps, 0s" in out
     extraction = bundle.read_manifest()["extraction"]
@@ -901,10 +900,19 @@ def test_scanned_pages_without_named_languages_are_read_with_the_default_and_say
     docling_parser.extract_pdf(
         bundle, pdf, pandoc=pandoc, ocr=True, convert=fake_convert()
     )
-    assert OCR_LANG_DEFAULT in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert OCR_LANG_DEFAULT in out
+    engine_line = (
+        "OCR engine: auto (docling's choice on this install), "
+        "languages: the engine's defaults."
+    )
+    assert engine_line in out
     manifest = bundle.read_manifest()
     assert manifest["extraction"]["ocr_lang"] is None
-    assert OCR_LANG_DEFAULT in manifest["limitations"]
+    # The engine line, which names what the default was, replaces the old
+    # generic warning in the manifest.
+    assert engine_line in manifest["limitations"]
+    assert OCR_LANG_DEFAULT not in manifest["limitations"]
 
 
 def test_named_languages_reach_the_parser_and_the_manifest(
@@ -915,11 +923,13 @@ def test_named_languages_reach_the_parser_and_the_manifest(
     docling_parser.extract_pdf(
         bundle, pdf, pandoc=pandoc, ocr=True, ocr_lang=" zh , en", convert=convert
     )
-    assert convert.calls[0]["languages"] == ["zh", "en"]
-    assert OCR_LANG_DEFAULT not in capsys.readouterr().out
+    assert convert.calls[0]["settings"].ocr_lang == ("zh", "en")
+    out = capsys.readouterr().out
+    assert OCR_LANG_DEFAULT not in out
+    assert "languages: zh,en." in out
     manifest = bundle.read_manifest()
     assert manifest["extraction"]["ocr_lang"] == ["zh", "en"]
-    assert OCR_LANG_DEFAULT not in manifest["limitations"]
+    assert not [n for n in manifest["limitations"] if n.startswith("OCR engine:")]
     job = json.loads(bundle.work_file(EXTRACTION_JOB).read_text(encoding="utf-8"))
     assert job["ocr_lang"] == ["zh", "en"]
 
@@ -1292,9 +1302,7 @@ def test_a_finished_run_does_not_extract_again_or_clobber_an_edited_source(
 ):
     register_fake_format(monkeypatch)
     bundle = Bundle(tmp_path / "bundle").create()
-    docling_parser.extract_pdf(
-        bundle, pdf, pandoc=pandoc, ocr=True, convert=fake_convert()
-    )
+    docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, convert=fake_convert())
     edited = bundle.source.read_text(encoding="utf-8").replace(
         "Chapter One", "Chapter One, corrected"
     )
@@ -1333,7 +1341,7 @@ def test_a_rerun_with_a_different_page_selection_extracts_again(
 ):
     bundle = Bundle(tmp_path / "bundle").create()
     docling_parser.extract_pdf(
-        bundle, pdf, pandoc=pandoc, ocr=True, page_range="1-2", convert=fake_convert()
+        bundle, pdf, pandoc=pandoc, page_range="1-2", convert=fake_convert()
     )
     harness = load_harness()
     assert harness.already_prepared(bundle, pdf, "docling", "1-2")
@@ -1343,28 +1351,33 @@ def test_a_rerun_with_a_different_page_selection_extracts_again(
     assert not harness.already_prepared(bundle, pdf, "opendataloader", "1-2")
 
 
-def test_a_rerun_with_other_ocr_languages_reads_a_scan_again_but_not_a_typed_document(
+def test_a_rerun_with_other_ocr_languages_or_ocr_toggled_extracts_again(
     tmp_path, pandoc, pdf, device, text_layer
 ):
-    # a scan: the languages decided what the models read
-    text_layer["missing"] = [1, 2]
-    scan = Bundle(tmp_path / "scan").create()
-    docling_parser.extract_pdf(
-        scan, pdf, pandoc=pandoc, ocr=True, ocr_lang="zh,en", convert=fake_convert()
-    )
-    assert stages.already_prepared(scan, pdf, "docling", None, ["zh", "en"])
-    assert not stages.already_prepared(scan, pdf, "docling", None, ["ja"])
-    assert not stages.already_prepared(scan, pdf, "docling", None, None)
-
-    # a typed document: the models read no page, so the languages changed
-    # nothing and the extraction stands whatever is typed next time
-    text_layer["missing"] = []
-    typed = Bundle(tmp_path / "typed").create()
-    docling_parser.extract_pdf(
-        typed, pdf, pandoc=pandoc, ocr=True, ocr_lang="zh,en", convert=fake_convert()
-    )
-    assert stages.already_prepared(typed, pdf, "docling", None, ["ja"])
-    assert stages.already_prepared(typed, pdf, "docling", None, None)
+    # Behaviour change (lead 260923, stage 0): the languages and the OCR
+    # switch are extraction settings whether or not a page lacked a text
+    # layer -- OCR also reads the pictures on a typed page, so the old
+    # "the models read no page" exemption was a guess.
+    for missing, name in (([1, 2], "scan"), ([], "typed")):
+        text_layer["missing"] = missing
+        bundle = Bundle(tmp_path / name).create()
+        docling_parser.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            ocr=True,
+            ocr_lang="zh,en",
+            convert=fake_convert(),
+        )
+        asked = ExtractionSettings(ocr=True, ocr_lang=("zh", "en"))
+        assert stages.already_prepared(bundle, pdf, "docling", None, asked)
+        assert not stages.already_prepared(
+            bundle, pdf, "docling", None, ExtractionSettings(ocr=True, ocr_lang=("ja",))
+        )
+        assert not stages.already_prepared(
+            bundle, pdf, "docling", None, ExtractionSettings(ocr=True)
+        )
+        assert not stages.already_prepared(bundle, pdf, "docling", None)
 
 
 def test_a_rerun_that_changes_the_formula_picture_setting_extracts_again(
@@ -1388,16 +1401,16 @@ def test_a_rerun_that_changes_the_formula_picture_setting_extracts_again(
         convert=fake_convert(),
     )
     assert bundle.read_manifest()["extraction"]["formula_images"] is False
-    assert stages.already_prepared(bundle, pdf, "docling", None, formula_images=False)
-    assert not stages.already_prepared(bundle, pdf, "docling", None)
+    without = ExtractionSettings(ocr=True, formula_images=False)
+    with_them = ExtractionSettings(ocr=True)
+    assert stages.already_prepared(bundle, pdf, "docling", None, without)
+    assert not stages.already_prepared(bundle, pdf, "docling", None, with_them)
 
     manifest = bundle.read_manifest()
     del manifest["extraction"]["formula_images"]
     bundle.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    assert stages.already_prepared(bundle, pdf, "docling", None)
-    assert not stages.already_prepared(
-        bundle, pdf, "docling", None, formula_images=False
-    )
+    assert stages.already_prepared(bundle, pdf, "docling", None, with_them)
+    assert not stages.already_prepared(bundle, pdf, "docling", None, without)
 
 
 def test_the_stage_hands_the_extraction_the_formula_setting(
@@ -1466,7 +1479,7 @@ def test_the_stage_hands_the_extraction_the_languages_it_parsed_once(
         ocr_lang="ch_sim, en",
         progress=False,
     )
-    assert convert.calls[0]["languages"] == ["ch_sim", "en"]
+    assert convert.calls[0]["settings"].ocr_lang == ("ch_sim", "en")
 
 
 # --------------------------------------------------------------------------
@@ -1542,3 +1555,446 @@ def test_a_file_that_is_not_a_pdf_is_refused_before_the_models_start(tmp_path):
     with pytest.raises(PipelineError) as refused:
         real_text_layer_report(path)
     assert "broken.pdf" in refused.value.detail
+
+
+# --------------------------------------------------------------------------
+# Extraction settings: the converter, reuse, the snapshot, the engine line
+# --------------------------------------------------------------------------
+def _pipeline_options(settings):
+    pytest.importorskip("docling.document_converter")
+    from docling.datamodel.base_models import InputFormat
+
+    converter = docling_parser._converter("cpu", settings)
+    return converter.format_to_options[InputFormat.PDF].pipeline_options
+
+
+@pytest.mark.parametrize(
+    "settings,ocr_class,mode,lang",
+    [
+        (ExtractionSettings(ocr=True), "OcrAutoOptions", "default", []),
+        (
+            ExtractionSettings(
+                ocr=True,
+                ocr_engine="rapidocr",
+                ocr_mode="full_page",
+                ocr_lang=("en",),
+            ),
+            "RapidOcrOptions",
+            "full_page",
+            ["en"],
+        ),
+        (
+            ExtractionSettings(ocr=True, ocr_engine="ocrmac"),
+            "OcrMacOptions",
+            "default",
+            None,
+        ),
+        (
+            ExtractionSettings(
+                ocr=True, ocr_engine="easyocr", ocr_mode="layout_regions"
+            ),
+            "EasyOcrOptions",
+            "layout_regions",
+            None,
+        ),
+        (
+            ExtractionSettings(
+                ocr=True,
+                ocr_engine="tesseract",
+                ocr_mode="pdf_aware_layout_regions",
+                ocr_lang=("eng", "chi_sim"),
+            ),
+            "TesseractCliOcrOptions",
+            "pdf_aware_layout_regions",
+            ["eng", "chi_sim"],
+        ),
+    ],
+)
+def test_the_converter_is_built_from_the_ocr_settings(settings, ocr_class, mode, lang):
+    options = _pipeline_options(settings)
+    assert options.do_ocr is True
+    assert type(options.ocr_options).__name__ == ocr_class
+    assert options.ocr_options.mode.value == mode
+    if lang is not None:
+        assert options.ocr_options.lang == lang
+    else:
+        # no languages given: the engine's own default stands
+        assert options.ocr_options.lang == type(options.ocr_options)().lang
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        ExtractionSettings(),
+        ExtractionSettings(ocr=True),
+        ExtractionSettings(table_mode="fast"),
+        ExtractionSettings(table_mode="v2"),
+    ],
+)
+def test_the_converter_fixes_what_is_never_a_setting(settings):
+    options = _pipeline_options(settings)
+    # PIN (owner 260922, docs/260922-feat-PDF_FORMULA_IMAGES.md): formula
+    # enrichment stays off -- the 260921 eval measured it hallucinating and
+    # costing 29x; display formulas are cropped as pictures instead.
+    assert options.do_formula_enrichment is False
+    assert options.do_code_enrichment is False
+    assert options.generate_picture_images is True
+    assert options.do_table_structure is True
+    assert options.do_ocr is settings.ocr
+    assert options.accelerator_options.device == "cpu"
+
+
+def test_the_table_mode_reaches_the_converter():
+    from docling.datamodel.pipeline_options import (
+        TableFormerMode,
+        TableStructureOptions,
+        TableStructureV2Options,
+    )
+
+    accurate = _pipeline_options(ExtractionSettings()).table_structure_options
+    assert isinstance(accurate, TableStructureOptions)
+    assert accurate.mode == TableFormerMode.ACCURATE
+    fast = _pipeline_options(ExtractionSettings(table_mode="fast"))
+    assert fast.table_structure_options.mode == TableFormerMode.FAST
+    v2 = _pipeline_options(ExtractionSettings(table_mode="v2"))
+    assert isinstance(v2.table_structure_options, TableStructureV2Options)
+
+
+BASELINE = ExtractionSettings(
+    ocr=True, ocr_engine="rapidocr", ocr_lang=("en",), formula_images=True
+)
+
+
+@pytest.fixture
+def extracted(tmp_path, pdf, pandoc, device):
+    bundle = Bundle(tmp_path / "reuse").create()
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, settings=BASELINE, convert=fake_convert()
+    )
+    return bundle
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"ocr": False},
+        {"ocr_engine": "easyocr"},
+        {"ocr_mode": "full_page"},
+        {"ocr_lang": ("ch",)},
+        {"ocr_lang": ()},
+        {"table_mode": "fast"},
+        {"formula_images": False},
+    ],
+)
+def test_a_changed_setting_is_not_answered_from_the_bundle(extracted, pdf, changed):
+    asked = ExtractionSettings(**{**BASELINE.__dict__, **changed})
+    assert not stages.already_prepared(extracted, pdf, "docling", None, asked)
+
+
+def test_the_same_settings_are_answered_from_the_bundle(extracted, pdf, capsys):
+    capsys.readouterr()
+    assert stages.already_prepared(extracted, pdf, "docling", None, BASELINE)
+    # same docling, same device: nothing to say
+    assert "Reusing the extraction" not in capsys.readouterr().out
+
+
+def test_a_manifest_from_before_the_settings_counts_as_the_defaults(
+    tmp_path, pdf, pandoc, device
+):
+    bundle = Bundle(tmp_path / "old").create()
+    docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, convert=fake_convert())
+    manifest = bundle.read_manifest()
+    for key in (
+        "ocr_engine",
+        "ocr_engine_requested",
+        "ocr_mode",
+        "table_mode",
+        "raw_document",
+        "formula_images",
+    ):
+        del manifest["extraction"][key]
+    bundle.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert stages.already_prepared(bundle, pdf, "docling", None, ExtractionSettings())
+    assert not stages.already_prepared(
+        bundle, pdf, "docling", None, ExtractionSettings(ocr=True)
+    )
+
+
+def test_a_bundle_with_import_and_extract_both_done_is_still_checked(extracted, pdf):
+    # The gap this closes: with both stages completed the extraction checks
+    # used to be skipped, so a changed setting was answered from the bundle.
+    manifest = extracted.read_manifest()
+    manifest["stages"]["import"] = {"status": "completed"}
+    extracted.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert stages.already_prepared(extracted, pdf, "docling", None, BASELINE)
+    changed = ExtractionSettings(**{**BASELINE.__dict__, "ocr": False})
+    assert not stages.already_prepared(extracted, pdf, "docling", None, changed)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [{"version": "0.0.1"}, {"device_requested": "cuda", "device": "cuda"}],
+)
+def test_another_docling_or_device_reuses_and_says_so_once(
+    extracted, pdf, edit, capsys
+):
+    from book_maker.pipeline.messages import EXTRACTION_REUSED_OTHER_RUNTIME
+
+    manifest = extracted.read_manifest()
+    manifest["extraction"].update(edit)
+    extracted.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    capsys.readouterr()
+    assert stages.already_prepared(
+        extracted, pdf, "docling", None, BASELINE, device="auto"
+    )
+    out = capsys.readouterr().out
+    head = EXTRACTION_REUSED_OTHER_RUNTIME.split("{")[0]
+    assert out.count(head) == 1
+    extraction = extracted.read_manifest()["extraction"]
+    assert f"docling {extraction['version']} on {extraction['device']}" in out
+
+
+def test_the_stage_reuses_on_another_device_and_says_so_once(
+    extracted, pdf, pandoc, capsys
+):
+    capsys.readouterr()
+    stages.prepare(
+        extracted,
+        pdf,
+        pandoc=pandoc,
+        device="cpu",
+        settings=BASELINE,
+        progress=False,
+    )
+    out = capsys.readouterr().out
+    assert out.count("Reusing the extraction made with docling") == 1
+    assert "this run would use docling" in out and "on cpu." in out
+    assert "Stage complete: extract" in out
+
+
+class _FakeItem:
+    def __init__(self, label, text):
+        self.label = label
+        self.text = text
+        self.prov = []
+
+
+class _FakeDocument:
+    def __init__(self):
+        self.formula = _FakeItem("formula", "")
+
+    def iterate_items(self):
+        yield self.formula, 1
+
+    def export_to_dict(self):
+        return {"texts": [{"label": "formula", "text": self.formula.text}]}
+
+    def export_to_markdown(self, **kwargs):
+        return f"## Heading\n\nA paragraph.\n\n{self.formula.text}\n"
+
+
+def test_the_raw_document_is_written_before_anything_of_ours_touches_it(
+    tmp_path, pdf, monkeypatch
+):
+    pytest.importorskip("docling_core")
+    document = _FakeDocument()
+
+    class Converter:
+        def convert(self, source, page_range=None):
+            return types.SimpleNamespace(document=document)
+
+    seen = {}
+
+    def converter(device, settings):
+        seen.update(device=device, settings=settings)
+        return Converter()
+
+    monkeypatch.setattr(docling_parser, "_converter", converter)
+    # the picture crop needs a real page; what is under test is the order
+    monkeypatch.setattr(
+        docling_parser.pdf_formula,
+        "apply",
+        lambda markdown, regions, *a, **kw: (markdown, len(regions), []),
+    )
+    report = {}
+    out_dir = tmp_path / "staging"
+    out_dir.mkdir()
+    docling_parser._convert(
+        pdf,
+        out_dir=out_dir,
+        span=None,
+        device="cpu",
+        settings=ExtractionSettings(),
+        report=report,
+    )
+    snapshot = out_dir / docling_parser.SNAPSHOT
+    assert report["snapshot"] == snapshot
+    raw = json.loads(snapshot.read_text(encoding="utf-8"))
+    # the formula as docling left it, not the marker written into it after
+    assert raw == {"texts": [{"label": "formula", "text": ""}]}
+    assert "bbm-formula" not in snapshot.read_text(encoding="utf-8")
+    assert "bbm-formula" in document.formula.text
+    assert seen == {"device": "cpu", "settings": ExtractionSettings()}
+
+
+def test_the_raw_document_is_named_in_the_manifest(tmp_path, pdf, pandoc, device):
+    inner = fake_convert()
+
+    def convert(pdf_path, **kwargs):
+        snapshot = Path(kwargs["out_dir"]) / docling_parser.SNAPSHOT
+        snapshot.write_text("{}", encoding="utf-8")
+        kwargs["report"]["snapshot"] = snapshot
+        return inner(pdf_path, **kwargs)
+
+    bundle = Bundle(tmp_path / "b").create()
+    docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, convert=convert)
+    extraction = bundle.read_manifest()["extraction"]
+    assert extraction["raw_document"] == ".work/extraction/docling.json"
+    assert (bundle.root / extraction["raw_document"]).is_file()
+    job = json.loads(bundle.work_file(EXTRACTION_JOB).read_text(encoding="utf-8"))
+    assert job["raw_document"] == ".work/extraction/docling.json"
+
+
+def _logging_convert(*lines, fail=None):
+    inner = fake_convert()
+
+    def convert(pdf_path, **kwargs):
+        import logging
+
+        for line in lines:
+            logging.getLogger("docling.models.stages.ocr.auto_ocr_model").info(line)
+        if fail is not None:
+            raise fail
+        return inner(pdf_path, **kwargs)
+
+    return convert
+
+
+def test_the_engine_docling_chose_is_named_and_recorded(
+    bundle, pdf, pandoc, device, capsys
+):
+    docling_parser.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        convert=_logging_convert("Auto OCR model selected rapidocr with onnxruntime."),
+    )
+    out = capsys.readouterr().out
+    assert (
+        "OCR engine: rapidocr (docling's choice on this install), "
+        "languages: the engine's defaults." in out
+    )
+    # docling's INFO line reaches the progress line, not the terminal
+    assert "Auto OCR model selected" not in out
+    extraction = bundle.read_manifest()["extraction"]
+    assert extraction["ocr_engine"] == "rapidocr"
+    assert extraction["ocr_engine_requested"] == "auto"
+    assert extraction["ocr_mode"] == "default"
+    assert extraction["table_mode"] == "accurate"
+    job = json.loads(bundle.work_file(EXTRACTION_JOB).read_text(encoding="utf-8"))
+    assert job["ocr_engine"] == "rapidocr"
+    assert job["ocr_engine_requested"] == "auto"
+
+
+def test_the_engine_line_names_the_languages_given(bundle, pdf, pandoc, device, capsys):
+    docling_parser.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        ocr_lang="ch",
+        convert=_logging_convert("Auto OCR model selected ocrmac."),
+    )
+    out = capsys.readouterr().out
+    assert (
+        "OCR engine: ocrmac (docling's choice on this install), languages: ch." in out
+    )
+    assert bundle.read_manifest()["extraction"]["ocr_engine"] == "ocrmac"
+
+
+def test_an_engine_asked_for_by_name_is_the_engine(bundle, pdf, pandoc, device, capsys):
+    docling_parser.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        settings=ExtractionSettings(ocr=True, ocr_engine="easyocr"),
+        convert=fake_convert(),
+    )
+    assert (
+        "OCR engine: easyocr, languages: the engine's defaults."
+        in capsys.readouterr().out
+    )
+    extraction = bundle.read_manifest()["extraction"]
+    assert extraction["ocr_engine"] == extraction["ocr_engine_requested"] == "easyocr"
+
+
+def test_without_ocr_no_engine_is_named(bundle, pdf, pandoc, device, capsys):
+    docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, convert=fake_convert())
+    assert "OCR engine:" not in capsys.readouterr().out
+    extraction = bundle.read_manifest()["extraction"]
+    assert extraction["ocr_engine"] is None
+    assert not [
+        n for n in bundle.read_manifest()["limitations"] if n.startswith("OCR engine")
+    ]
+
+
+def test_a_docling_log_line_reaches_the_failure_message(bundle, pdf, pandoc, device):
+    with pytest.raises(PipelineError) as failed:
+        docling_parser.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            ocr=True,
+            convert=_logging_convert(
+                "Loading plugin 'docling_defaults'", fail=RuntimeError("boom")
+            ),
+        )
+    assert failed.value.detail == BACKEND_FAILED.format(
+        detail="RuntimeError: boom (last log line: Loading plugin 'docling_defaults')"
+    )
+
+
+def test_the_docling_logger_is_left_as_it_was(bundle, pdf, pandoc, device):
+    import logging
+
+    logger = logging.getLogger("docling")
+    before = (logger.level, logger.propagate, list(logger.handlers))
+    docling_parser.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        convert=_logging_convert("Auto OCR model selected rapidocr with onnxruntime."),
+    )
+    assert (logger.level, logger.propagate, list(logger.handlers)) == before
+
+
+def test_ocr_on_a_typed_pdf_is_named_in_the_progress_label(
+    bundle, pdf, pandoc, device, text_layer, capsys
+):
+    text_layer["missing"] = []
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, ocr=True, convert=fake_convert()
+    )
+    out = capsys.readouterr().out
+    assert "Extracting PDF: 2 pages, OCR and layout models on mps" in out
+    assert "layout and table models" not in out
+
+
+def test_the_harness_hands_the_formula_setting_to_the_stage(
+    tmp_path, pandoc, pdf, monkeypatch
+):
+    harness = load_harness()
+    seen = {}
+
+    def record(bundle, path, **kwargs):
+        seen.update(kwargs)
+        raise PipelineError("stopped before the models", stage="extract")
+
+    monkeypatch.setattr(harness, "prepare", record)
+    base = ["--pandoc", pandoc, "extract", str(pdf), "--output", str(tmp_path / "b")]
+    assert harness.main([*base, "--no-formula-images"]) == 1
+    assert seen["formula_images"] is False
+    assert harness.main(base) == 1
+    assert seen["formula_images"] is True

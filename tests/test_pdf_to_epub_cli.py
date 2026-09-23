@@ -488,6 +488,9 @@ class TestTheStages:
     [
         (["--to-epub", "--model", "m"], ["--model", "m"]),
         (["--pdf-ocr", "--key", "k"], ["--key", "k"]),
+        # an extraction setting: it must not reach the translation run, where
+        # it would trip compat row C30 and enter the translation fingerprint
+        (["--no-formula-images", "--key", "k"], ["--key", "k"]),
         (["--device", "cpu", "--key", "k"], ["--key", "k"]),
         (["--device=cpu", "--key", "k"], ["--key", "k"]),
         # The retired spellings are still stripped: they still parse, so

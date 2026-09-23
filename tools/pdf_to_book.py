@@ -119,6 +119,12 @@ def _add_pdf_options(parser):
     )
     parser.add_argument("--ocr-lang", default=None, help=messages.HELP_OCR_LANG)
     parser.add_argument("--pages", default=None, help=messages.HELP_PAGES)
+    parser.add_argument(
+        "--no-formula-images",
+        dest="formula_images",
+        action="store_false",
+        help=messages.HELP_FORMULA_IMAGES,
+    )
 
 
 def main(argv=None):
@@ -164,6 +170,7 @@ def main(argv=None):
                 pages=options.pages,
                 ocr=options.pdf_ocr,
                 ocr_lang=options.ocr_lang,
+                formula_images=options.formula_images,
             )
         elif command == "translate":
             bundle = Bundle(options.bundle)
@@ -192,6 +199,7 @@ def main(argv=None):
                 pages=options.pages,
                 ocr=options.pdf_ocr,
                 ocr_lang=options.ocr_lang,
+                formula_images=options.formula_images,
             )
             translate_bundle(bundle, bbm_options, pandoc=pandoc)
             export_epub(

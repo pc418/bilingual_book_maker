@@ -94,9 +94,18 @@ OCR_EMPTY = (
     "layer; the OCR pass returned pictures only."
 )
 OCR_LANG_DEFAULT = (
-    "The OCR models read English, Spanish, French and German unless --ocr-lang "
-    "names the pages' languages (EasyOCR codes, comma-separated: ch_sim, ja, "
-    "ko, ...); check source.md before translating."
+    "No --ocr-lang given: the OCR engine reads its own default languages, "
+    "which may not be the pages'; the line after extraction names the engine "
+    "and languages it used. Check source.md before translating."
+)
+OCR_ENGINE_USED = "OCR engine: {engine}{chosen}, languages: {languages}."
+OCR_ENGINE_CHOSEN = " (docling's choice on this install)"
+OCR_LANGUAGES_GIVEN = "{languages}"  # comma-joined, as given
+OCR_LANGUAGES_DEFAULT = "the engine's defaults"
+EXTRACTION_REUSED_OTHER_RUNTIME = (
+    "Reusing the extraction made with docling {old_version} on {old_device}; "
+    "this run would use docling {new_version} on {new_device}. Delete the "
+    "bundle directory to extract again."
 )
 OCR_LANG_EMPTY = "--ocr-lang needs at least one language code, for example ch_sim,en"
 OCR_EMPTY_PAGES = (
@@ -193,9 +202,15 @@ HELP_DEVICE = (
     "the same output; it is slower."
 )
 HELP_OCR_LANG = (
-    "With --pdf-ocr on: the languages the OCR models read on pages with no "
-    "text layer, as EasyOCR codes, comma-separated (ch_sim,en; ja; ko); the "
-    "default is en,es,fr,de."
+    "With --pdf-ocr on: the languages the OCR engine reads on pages with no "
+    "text layer, comma-separated, in that engine's own codes (rapidocr: ch, "
+    "en, latin; easyocr: ch_sim, ja, ko; ocrmac: zh-Hans, ja-JP); the run "
+    "names the engine and languages it used. Without it the engine reads its "
+    "own default languages."
+)
+HELP_FORMULA_IMAGES = (
+    "Keep display formulas as the bare placeholder instead of a picture "
+    "cropped from the page; the default keeps the picture."
 )
 HELP_PAGES = "PDF pages, numbered from 1; for example 1-20."
 HELP_TRANSLATE = "Translate a prepared bundle with BBM."

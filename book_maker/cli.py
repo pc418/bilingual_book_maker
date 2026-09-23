@@ -2098,11 +2098,12 @@ off. Minimum 1.
         dest="ocr_lang",
         default=None,
         metavar="LANGS",
-        help="PDF only, with --to-epub --pdf-ocr: the languages the OCR models "
-        "read on pages with no text layer, as EasyOCR codes, comma-separated "
-        "(ch_sim,en; ch_tra; ja; ko; see https://www.jaided.ai/easyocr/). "
-        "Without it the models read en,es,fr,de and a scanned page in another "
-        "script comes out wrong.",
+        help="PDF only, with --to-epub --pdf-ocr: the languages the OCR engine "
+        "reads on pages with no text layer, comma-separated, in the engine's "
+        "own codes (rapidocr: ch, en, latin; easyocr: ch_sim, ja, ko; ocrmac: "
+        "zh-Hans, ja-JP); the run names the engine and languages it used. "
+        "Without it the engine reads its own default languages and a scanned "
+        "page in another script comes out wrong.",
     )
     parser.add_argument(
         "--pages",

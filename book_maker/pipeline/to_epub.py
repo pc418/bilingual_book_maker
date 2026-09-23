@@ -34,7 +34,13 @@ EPUB_SUFFIX = "_bilingual.epub"
 # typed is a translation option and is handed to the translate stage
 # untouched -- the model, the key, the language, --test, --use_context, the
 # prompt, all of it.
-OWNED_OPTIONS = ("--to-epub", "--pdf-ocr", "--with-ocr", "--no-gpu")
+OWNED_OPTIONS = (
+    "--to-epub",
+    "--pdf-ocr",
+    "--with-ocr",
+    "--no-gpu",
+    "--no-formula-images",
+)
 OWNED_VALUE_OPTIONS = ("--book_name", "--ocr-lang", "--pages", "--device")
 
 

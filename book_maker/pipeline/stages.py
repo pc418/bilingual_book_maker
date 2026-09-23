@@ -11,7 +11,12 @@ from pathlib import Path
 from .bundle import parse_ocr_lang, sha256_file
 from .errors import PipelineError
 from .importer import import_markdown
-from .messages import PDF_OPTIONS_INERT, STAGE_COMPLETE
+from .messages import (
+    EXTRACTION_REUSED_OTHER_RUNTIME,
+    PDF_OPTIONS_INERT,
+    STAGE_COMPLETE,
+)
+from .pdf_settings import ExtractionSettings
 
 MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown"}
 PDF_SUFFIXES = {".pdf"}
@@ -60,25 +65,26 @@ def device_for(device):
     return (device or "auto").lower()
 
 
-def already_prepared(
-    bundle, input_path, parser, pages, ocr_lang=None, formula_images=True
-):
+def already_prepared(bundle, input_path, parser, pages, settings=None, device=None):
     """Whether this bundle already holds this input, prepared this way.
 
     A second run over a finished bundle must not buy the extraction again,
     and must not overwrite a `source.md` somebody edited between the two
     runs -- editing it is the whole reason the stage is separate.
 
-    Prepared this way: the same pages, and, when the models read any of
-    them, the same OCR languages -- a rerun with other languages is asking
-    for those pages to be read again, and reusing the old text would be
-    honouring the flag in name only. On a document the models never read,
-    the languages changed nothing, and the extraction stands. And the same
-    choice about display formulas: a bundle made with --no-formula-images
-    has no pictures to reuse, and one made with them is not what a rerun
-    asking for none wants. A manifest from before the setting existed
-    counts as the default.
+    Prepared this way: the same parser, the same pages, and the same
+    extraction settings (`ExtractionSettings.identity()`: OCR on or off,
+    its engine, mode and languages, the table mode, the formula pictures).
+    A rerun that changes any of them is asking for different text, and
+    reusing the old one would honour the flag in name only. Without OCR
+    the OCR fields are inert and do not count; a manifest from before a
+    key existed counts as that key's default, which is what those runs did.
+
+    The docling version and the device are provenance, not settings: the
+    extraction stands, and the operator is told once that it was made
+    elsewhere.
     """
+    settings = settings or ExtractionSettings()
     if not bundle.manifest_path.is_file():
         return False
     manifest = bundle.read_manifest()
@@ -94,18 +100,45 @@ def already_prepared(
     if source.get("origin_sha256") != sha256_file(input_path):
         return False
     extraction = manifest.get("extraction") or {}
-    if done == ["extract"]:
+    if "extract" in done:
         if extraction.get("provider") != parser:
             return False
         if (extraction.get("page_range") or None) != (pages or None):
             return False
-        if extraction.get("pages_read_by_ocr") and (
-            extraction.get("ocr_lang") or None
-        ) != (ocr_lang or None):
+        if ExtractionSettings.from_manifest(extraction).identity() != (
+            settings.identity()
+        ):
             return False
-        if bool(extraction.get("formula_images", True)) != bool(formula_images):
-            return False
+        _report_other_runtime(extraction, device_for(device))
     return done[0]
+
+
+def _report_other_runtime(extraction, device):
+    """One line when the reused extraction ran on another docling or device."""
+    old_version = extraction.get("version")
+    new_version = _installed_docling()
+    old_requested = extraction.get("device_requested") or "auto"
+    other_version = new_version is not None and old_version != new_version
+    if not other_version and old_requested == device:
+        return
+    print(
+        EXTRACTION_REUSED_OTHER_RUNTIME.format(
+            old_version=old_version or "unknown",
+            old_device=extraction.get("device") or old_requested,
+            new_version=new_version or "unknown",
+            new_device=device,
+        )
+    )
+
+
+def _installed_docling():
+    """docling's installed version, read without importing docling."""
+    try:
+        from importlib.metadata import version
+
+        return version("docling")
+    except Exception:
+        return None
 
 
 def prepare(
@@ -119,22 +152,32 @@ def prepare(
     ocr_lang=None,
     formula_images=True,
     progress=True,
+    settings=None,
 ):
     """Import or extract, chosen by the input's suffix alone.
+
+    The extraction settings are built from `ocr`, `ocr_lang` and
+    `formula_images` unless `settings` is given, and the same value is
+    what the bundle is compared against and what the extraction runs with.
 
     The adapter is imported here rather than at the top of the file so a
     Markdown import never pulls in the PDF parser, its models or its
     process management for a file it is not going to read.
     """
     kind = source_kind(input_path)
-    languages = parse_ocr_lang(ocr_lang)
+    if settings is None:
+        settings = ExtractionSettings(
+            ocr=bool(ocr),
+            ocr_lang=tuple(parse_ocr_lang(ocr_lang) or ()),
+            formula_images=bool(formula_images),
+        )
     finished = already_prepared(
         bundle,
         input_path,
         PDF_PARSER if kind == "pdf" else None,
         pages,
-        languages,
-        formula_images=formula_images,
+        settings,
+        device=device,
     )
     if finished:
         print(STAGE_COMPLETE.format(stage=finished))
@@ -149,8 +192,6 @@ def prepare(
         pandoc=pandoc,
         device=device or "auto",
         page_range=pages,
-        ocr=ocr,
-        ocr_lang=languages,
-        formula_images=formula_images,
+        settings=settings,
         progress=progress,
     )
