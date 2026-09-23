@@ -110,31 +110,42 @@ def numbering_level(text, bare=False):
     return None
 
 
-def _bare_numbers(texts):
-    """The bare leading integers that a neighbour vouches for.
+def _vouched(headings):
+    """Whether each heading's bare leading integer has a neighbour.
 
-    `7 Results` is numbering next to `8 Discussion` or above `7.1 Setup`;
-    alone, or beside `2024 in review`, it is a title that starts with a
-    number. A run of years (`2024 …`, `2025 …`) still passes, as it would
-    for a reader.
+    `7 Results` is numbering beside `8 Discussion` set in the same style,
+    or above `7.1 Setup`; alone, or beside `2025 outlook` in another
+    style, it is a title that starts with a number. A run of years in one
+    style (`2024 …`, `2025 …`) still passes, as it would for a reader.
+    Numbering asserted by a dot or a paren needs no vouching.
     """
-    stated = set()  # numbers a dotted or dotted-marker heading states
-    bare = set()
-    for text in texts:
+    bare = {}  # index -> (number, style)
+    dotted_parents = set()  # first component of every dotted heading
+    for index, (text, style) in enumerate(headings):
         text = text.strip()
         dotted = DOTTED.match(text)
         if dotted:
-            stated.add(int(dotted.group(1).split(".")[0]))
+            dotted_parents.add(int(dotted.group(1).split(".")[0]))
             continue
-        marker = re.match(r"^(\d+)\.\s+\S", text)
-        if marker:
-            stated.add(int(marker.group(1)))
-            continue
+        if numbering_level(text) is not None:
+            continue  # an explicit marker
         alone = BARE.match(text)
         if alone:
-            bare.add(int(alone.group(1)))
-    known = stated | bare
-    return {n for n in bare if n in stated or n - 1 in known or n + 1 in known}
+            bare[index] = (int(alone.group(1)), style)
+    marked = {
+        (int(match.group(1)), style)
+        for text, style in headings
+        for match in [re.match(r"^(\d+)\.\s+\S", text.strip())]
+        if match
+    }
+    peers = set(bare.values()) | marked
+    return {
+        index
+        for index, (number, style) in bare.items()
+        if number in dotted_parents
+        or (number - 1, style) in peers
+        or (number + 1, style) in peers
+    }
 
 
 def levels(headings):
@@ -142,15 +153,11 @@ def levels(headings):
 
     A style is `(size, bold)`. The rule is the module docstring's.
     """
-    vouched = _bare_numbers(text for text, _style in headings)
-
-    def number_of(text):
-        alone = BARE.match(text.strip())
-        if alone and int(alone.group(1)) not in vouched:
-            return numbering_level(text)
-        return numbering_level(text, bare=True)
-
-    numbers = [number_of(text) for text, _style in headings]
+    vouched = _vouched(headings)
+    numbers = [
+        numbering_level(text, bare=index in vouched)
+        for index, (text, _style) in enumerate(headings)
+    ]
     styled = [style for _text, style in headings if style is not None]
     top = max(styled) if styled else None
     by_style = {}
@@ -293,6 +300,7 @@ def assign(document, pdf_path):
 
 _ATX = re.compile(r"^#(#+\s)")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_CLOSER = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*$")
 
 
 def promote(markdown):
@@ -308,17 +316,21 @@ def promote(markdown):
     out = []
     fence = None
     for line in markdown.split("\n"):
-        found = _FENCE.match(line)
         if fence is None:
+            found = _FENCE.match(line)
             if found:
                 fence = found.group(1)
             else:
                 line = _ATX.sub(r"\1", line)
-        elif (
-            found
-            and found.group(1)[0] == fence[0]
-            and len(found.group(1)) >= len(fence)
-        ):
-            fence = None
+        else:
+            # A closer is the same character, at least as long, and
+            # nothing after it: "```python" inside a block is code.
+            closer = _CLOSER.match(line)
+            if (
+                closer
+                and closer.group(1)[0] == fence[0]
+                and len(closer.group(1)) >= len(fence)
+            ):
+                fence = None
         out.append(line)
     return "\n".join(out)

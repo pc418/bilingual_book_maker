@@ -38,20 +38,31 @@ def test_numbering_states_the_level(text, level):
     assert pdf_headings.numbering_level(text) == level
 
 
-def test_a_bare_number_counts_with_a_neighbour_and_not_alone():
+def test_a_bare_number_counts_with_a_neighbour_in_its_style_and_not_alone():
     assert pdf_headings.numbering_level("1 Introduction") is None
     assert pdf_headings.numbering_level("1 Introduction", bare=True) == 2
+    big, section, sub = (17.0, False), (12.0, True), (10.0, True)
+    vouched = pdf_headings._vouched
     # A chapter run starting anywhere: 7 vouches for 8 and 8 for 7.
-    assert pdf_headings._bare_numbers(["7 Results", "8 Discussion"]) == {7, 8}
+    assert vouched([("7 Results", section), ("8 Discussion", section)]) == {0, 1}
     # A dotted heading under it vouches for a bare one; a `1.` marker too.
-    assert pdf_headings._bare_numbers(["3 Results", "3.1 Setup"]) == {3}
-    assert pdf_headings._bare_numbers(["1. Intro", "2 Method"]) == {2}
+    assert vouched([("3 Results", section), ("3.1 Setup", sub)]) == {0}
+    assert vouched([("1. Intro", section), ("2 Method", section)]) == {1}
+    # A scan: no style at all, the run still reads.
+    assert vouched([("1 Intro", None), ("2 Method", None)]) == {0, 1}
+    # A number next in line but set in another style is not a peer: the
+    # title `2 Fast Algorithms` above `1 Introduction`, or a year-titled
+    # paper above a `2025 outlook` section.
+    assert vouched([("2 Fast Algorithms", big), ("1 Introduction", section)]) == set()
+    assert vouched([("2024 in review", big), ("2025 outlook", section)]) == set()
     # A year in a title, with no neighbour, is a title that starts with a number.
-    assert pdf_headings._bare_numbers(["2024 was a year", "1.1 Sub"]) == set()
-    style = (12.0, True)
+    assert vouched([("2024 was a year", big), ("1.1 Sub", sub)]) == set()
     assert pdf_headings.levels(
-        [("2024 was a year", (17.0, False)), ("Abstract", style), ("1.1 Sub", style)]
+        [("2024 was a year", big), ("Abstract", section), ("1.1 Sub", section)]
     ) == [1, 3, 3]
+    assert pdf_headings.levels(
+        [("2 Fast Algorithms", big), ("1 Introduction", section), ("1.1 Sub", sub)]
+    ) == [1, 2, 3]
 
 
 def test_numbering_first_then_the_largest_style_then_a_numbered_sibling_s_level():
@@ -192,6 +203,11 @@ def test_promote_leaves_a_fenced_code_block_alone():
         "~~~\n## tilde fenced\n``` not a closer\n## still code\n~~~\n\n## 2 Next\n"
         "````\n```\n## inside a longer fence\n````\n\n## 3 Last\n"
     )
+    # A fence line with an info string inside a block is code, not a closer.
+    nested = "## Top\n\n```\n```python\n## preserve this\n```\n\n### 1 Intro\n"
+    assert pdf_headings.promote(nested) == (
+        "# Top\n\n```\n```python\n## preserve this\n```\n\n## 1 Intro\n"
+    )
 
 
 def test_promote_leaves_the_serializer_s_own_code_fence_alone():
@@ -200,8 +216,8 @@ def test_promote_leaves_the_serializer_s_own_code_fence_alone():
     DoclingDocument = pytest.importorskip("docling_core.types.doc").DoclingDocument
     document = DoclingDocument(name="t")
     document.add_heading("Top", level=1)
-    document.add_code("## not a heading\nprint(1)")
+    document.add_code("## not a heading\n```python\n## preserve this")
     document.add_heading("1 Intro", level=2)
     assert pdf_headings.promote(document.export_to_markdown()) == (
-        "# Top\n\n```\n## not a heading\nprint(1)\n```\n\n## 1 Intro"
+        "# Top\n\n```\n## not a heading\n```python\n## preserve this\n```\n\n## 1 Intro"
     )
