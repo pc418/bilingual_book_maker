@@ -68,6 +68,18 @@ def test_a_bare_number_counts_with_a_neighbour_in_its_style_and_not_alone():
         ]
     ) == {1, 2}
     assert vouched([("2.1 Setup", sub), ("2 Later", section)]) == set()
+    # A `2.` parent in between consumes the evidence just the same.
+    assert (
+        vouched(
+            [
+                ("2 Fast Algorithms", big),
+                ("1. Introduction", section),
+                ("2. Method", section),
+                ("2.1 Setup", sub),
+            ]
+        )
+        == set()
+    )
     assert pdf_headings.levels(
         [("2024 was a year", big), ("Abstract", section), ("1.1 Sub", section)]
     ) == [1, 3, 3]

@@ -117,32 +117,39 @@ def _vouched(headings):
     or above `7.1 Setup`; alone, or beside `2025 outlook` in another
     style, it is a title that starts with a number. A run of years in one
     style (`2024 …`, `2025 …`) still passes, as it would for a reader. A
-    dotted heading vouches for the nearest bare heading of its number
-    above it -- its parent -- and not for every heading that starts
-    with that number. Numbering asserted by a dot or a paren needs no
+    dotted heading vouches for its parent -- the nearest heading of its
+    number above it, bare or `N.` -- and for nothing else, so a title
+    that happens to start with the same number is not reached past a
+    real parent. Numbering asserted by a dot or a paren needs no
     vouching.
     """
     bare = {}  # index -> (number, style)
+    parents = []  # (index, number, is bare), in order
     marked = set()  # (number, style) of every `N.` heading
     vouched = set()
     for index, (text, style) in enumerate(headings):
         text = text.strip()
         dotted = DOTTED.match(text)
         if dotted:
-            parent = int(dotted.group(1).split(".")[0])
-            above = [i for i, (number, _style) in bare.items() if number == parent]
-            if above:
-                vouched.add(max(above))
+            number = int(dotted.group(1).split(".")[0])
+            parent = next(
+                ((i, is_bare) for i, n, is_bare in reversed(parents) if n == number),
+                None,
+            )
+            if parent and parent[1]:
+                vouched.add(parent[0])
             continue
         marker = re.match(r"^(\d+)\.\s+\S", text)
         if marker:
             marked.add((int(marker.group(1)), style))
+            parents.append((index, int(marker.group(1)), False))
             continue
         if numbering_level(text) is not None:
             continue  # a roman, letter or paren marker
         alone = BARE.match(text)
         if alone:
             bare[index] = (int(alone.group(1)), style)
+            parents.append((index, int(alone.group(1)), True))
     peers = set(bare.values()) | marked
     for index, (number, style) in bare.items():
         if (number - 1, style) in peers or (number + 1, style) in peers:
