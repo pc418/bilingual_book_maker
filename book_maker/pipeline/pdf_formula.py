@@ -126,26 +126,31 @@ def neighbours(document):
     return boxes
 
 
-def _vertical_pads(box, others, floor, ceiling):
-    """`(below, above)`: up to `ceiling`, stopping short of an item in the
-    same column. An item beside the box (another column) does not count,
-    and one that overlaps it vertically -- its own members, a neighbour
-    the layout model drew over it -- leaves the floor."""
+def _vertical_pads(box, others, floor, ceiling, pad_x):
+    """`(below, above)`: up to `ceiling`, stopping `PAD_CLEAR` short of an
+    item in the same column -- the column being the crop's own footprint,
+    `pad_x` wider than the box on each side. An item beside that footprint
+    does not count. An item that already overlaps the box's edge (a
+    neighbour the layout model drew over it) leaves `floor` on that side;
+    an item merely close leaves whatever clearance is left, floor or not.
+    Members of a merged group lie inside their union and constrain
+    nothing."""
     left, bottom, right, top = box
+    left, right = left - pad_x, right + pad_x
     below = above = ceiling
     for o_left, o_bottom, o_right, o_top in others:
         if o_right <= left or o_left >= right:
             continue
         if o_top <= bottom:
-            below = min(below, bottom - o_top - PAD_CLEAR)
+            below = min(below, max(0.0, bottom - o_top - PAD_CLEAR))
         elif o_bottom >= top:
-            above = min(above, o_bottom - top - PAD_CLEAR)
-        else:  # overlaps the box: whichever edge it crosses gets the floor
+            above = min(above, max(0.0, o_bottom - top - PAD_CLEAR))
+        else:
             if o_bottom < bottom:
-                below = floor
+                below = min(below, floor)
             if o_top > top:
-                above = floor
-    return max(floor, below), max(floor, above)
+                above = min(above, floor)
+    return below, above
 
 
 def _overlap(first, second):
@@ -256,7 +261,7 @@ def rasterize(
                 pads = (pad_y, pad_y)
             else:
                 pads = _vertical_pads(
-                    box, neighbours.get(page_number, ()), pad_y, pad_y_max
+                    box, neighbours.get(page_number, ()), pad_y, pad_y_max, pad_x
                 )
             margins, share = _crop(page, box, pad_x, pads)
             if margins is None:

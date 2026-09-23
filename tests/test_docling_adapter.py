@@ -793,6 +793,35 @@ class TestASelectionThatStartsMidSection:
         assert nav.count('<a href="text/ch') == 3
         assert "Page 6" in nav and "#page-6" in nav
 
+    def test_a_paper_whose_headings_are_all_second_level_exports(
+        self, bundle, pdf, pandoc, device, monkeypatch
+    ):
+        # PIN (lead 260922): the shape docling gives every arXiv paper -- a
+        # banner, then the title and every section as `##` -- through the
+        # real navigation check. Before `heading_for_top` this failed with
+        # "5 heading(s) ... 6 entry/entries" on 9 of 12 corpus bundles.
+        register_fake_format(monkeypatch)
+        paper = (
+            "Permission is granted to reproduce the tables and figures "
+            "in this paper solely for use in journalistic or scholarly works.\n\n"
+            "## Attention Is All You Need\n\nAuthors.\n\n"
+            "## Abstract\n\nThe abstract.\n\n## 1 Introduction\n\nProse.\n"
+        )
+        docling_parser.extract_pdf(
+            bundle, pdf, pandoc=pandoc, page_range="1-2", convert=fake_convert(paper)
+        )
+        assert bundle.source.read_text(encoding="utf-8").startswith(
+            f"<!-- page 1 -->\n\n# {pdf.stem}\n\nPermission"
+        )
+        translate_bundle(
+            bundle, ["--api_format", "faketest", "--language", "zh-hans"], pandoc=pandoc
+        )
+        export_epub(bundle, pandoc=pandoc)
+        with zipfile.ZipFile(bundle.epub) as archive:
+            nav = archive.read("EPUB/nav.xhtml").decode("utf-8")
+        assert nav.count('<a href="text/ch') == 4  # the book heading + 3 sections
+        assert "Attention Is All You Need" in nav and "1 Introduction" in nav
+
 
 # --------------------------------------------------------------------------
 # What is read, and what is refused

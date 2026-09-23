@@ -328,25 +328,35 @@ def test_the_vertical_pad_reaches_out_but_stops_short_of_a_neighbour():
     the Opus corpus run): a fixed vertical pad cannot be right -- 12pt
     dragged the next sentence into a Griffiths crop, 2pt clipped a brace on
     2310.19788 p. 2 whose next line was 15pt away. The pad reaches PAD_Y_MAX
-    unless an item in the same column is nearer, then stops PAD_CLEAR short
-    of it; an item beside the box, in another column, does not count."""
+    unless an item in the crop's column is nearer, then stops PAD_CLEAR
+    short of it -- below the floor if that is what the clearance leaves
+    (Codex 260922: the floor must not cross a neighbour 1pt away). The
+    column is the crop's footprint, PAD_X wider than the box (Codex again:
+    prose beginning 5pt beyond the box's edge was inside the crop and
+    ignored). An item overlapping the box leaves the floor on that side."""
     box = (100.0, 500.0, 300.0, 530.0)
-    floor, ceiling = pdf_formula.PAD_Y, pdf_formula.PAD_Y_MAX
+    floor, ceiling, pad_x = pdf_formula.PAD_Y, pdf_formula.PAD_Y_MAX, pdf_formula.PAD_X
     clear = pdf_formula.PAD_CLEAR
-    # nothing near: the ceiling both ways
-    assert pdf_formula._vertical_pads(box, [box], floor, ceiling) == (ceiling, ceiling)
+
+    def pads(others):
+        return pdf_formula._vertical_pads(box, others, floor, ceiling, pad_x)
+
+    # nothing near (the box itself is in the list): the ceiling both ways
+    assert pads([box]) == (ceiling, ceiling)
     # a line 20pt above and one 5pt below, both in the column
-    others = [(90.0, 550.0, 310.0, 562.0), (90.0, 480.0, 310.0, 495.0)]
-    assert pdf_formula._vertical_pads(box, others, floor, ceiling) == (
+    assert pads([(90.0, 550.0, 310.0, 562.0), (90.0, 480.0, 310.0, 495.0)]) == (
         5.0 - clear,
         ceiling,
     )
-    # the same line 5pt below but in the other column: ignored
-    beside = [(320.0, 480.0, 500.0, 495.0)]
-    assert pdf_formula._vertical_pads(box, beside, floor, ceiling) == (ceiling, ceiling)
-    # a neighbour the layout model drew over the box: the floor
-    over = [(90.0, 495.0, 310.0, 505.0)]
-    assert pdf_formula._vertical_pads(box, over, floor, ceiling) == (floor, ceiling)
+    # a line 1pt below: the clearance wins over the floor
+    assert pads([(90.0, 480.0, 310.0, 499.0)]) == (0.0, ceiling)
+    # 5pt below, beginning 5pt beyond the box's right edge: inside the
+    # crop's footprint, so it counts
+    assert pads([(305.0, 480.0, 500.0, 495.0)]) == (5.0 - clear, ceiling)
+    # 5pt below but beyond the footprint (the other column): ignored
+    assert pads([(320.0, 480.0, 500.0, 495.0)]) == (ceiling, ceiling)
+    # a neighbour the layout model drew over the box's bottom edge: the floor
+    assert pads([(90.0, 495.0, 310.0, 505.0)]) == (floor, ceiling)
 
 
 def test_neighbours_are_every_positioned_item_by_page():
@@ -362,23 +372,33 @@ def test_neighbours_are_every_positioned_item_by_page():
 
 
 def test_rasterize_uses_the_neighbour_aware_pads(tmp_path):
+    """Pixel-equal to the window the pads describe, with the text inside it
+    and the pads asymmetric, so swapping above and below would fail."""
     pdfium_or_skip()
     pytest.importorskip("PIL")
+    import pypdfium2 as pdfium
     from PIL import Image
 
+    # The helper writes its text at (72, 700), 18pt, on a 612x792 page.
     pdf = write_pdf(tmp_path / "book.pdf", ["A typed line of prose on the page."])
-    box = (50, 700, 300, 730)
+    box = (60.0, 690.0, 320.0, 720.0)
     regions = pdf_formula.mark(FakeDoc(FakeItem(page=1, box=box)))
-    near = {1: [box, (40, 690, 310, 695)]}  # 5pt below the box, same column
+    near = {1: [box, (60.0, 675.0, 320.0, 685.0)]}  # 5pt below, same column
     images, warnings = pdf_formula.rasterize(
-        pdf, pdf_formula.merge(regions), tmp_path, neighbours=near
+        pdf, pdf_formula.merge(regions), tmp_path, neighbours=near, scale=2.0
     )
     assert warnings == []
-    with Image.open(tmp_path / pdf_formula.IMAGE_DIR / images[0]) as picture:
-        expected = (30 + (5 - pdf_formula.PAD_CLEAR) + pdf_formula.PAD_Y_MAX) * (
-            pdf_formula.SCALE
-        )
-        assert abs(picture.height - expected) <= 2
+    below, above = 5.0 - pdf_formula.PAD_CLEAR, pdf_formula.PAD_Y_MAX
+    window = (
+        box[0] - pdf_formula.PAD_X,
+        box[1] - below,
+        box[2] + pdf_formula.PAD_X,
+        box[3] + above,
+    )
+    page = pdfium.PdfDocument(str(pdf))[0]
+    full = page.render(scale=2.0).to_pil().convert("RGB")
+    crop = Image.open(tmp_path / pdf_formula.IMAGE_DIR / images[0]).convert("RGB")
+    assert _same_pixels(crop, _expected_window(full, window, page.get_size()[1], 2.0))
 
 
 def test_the_crop_is_taken_in_the_frame_docling_reports_in(tmp_path):
