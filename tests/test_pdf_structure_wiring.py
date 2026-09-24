@@ -846,3 +846,21 @@ def test_a_reply_that_left_an_id_out_is_extracted_again(
     assert full.calls == ["gpt-5.6-luna"]
     assert bundle.read_manifest()["extraction"]["structure_status"] == "complete"
     assert stages.already_prepared(bundle, real_pdf, "docling", None, luna)
+
+
+@pytest.mark.parametrize("error", ["QuestionTimedOut", "VisionRequestFailed"])
+def test_a_timed_out_or_refused_question_is_lost_not_the_run(error):
+    """packet F (added 260923): `QuestionTimedOut` stays a soft failure of
+    one structure question through the Classifier's image backend, like a
+    refused image; the pass records it and goes on."""
+    from book_maker.pipeline import decisions
+    from book_maker.translator import vision
+
+    class Timing(FakeVisionTranslator):
+        def structured_json_with_image(self, *args, **kwargs):
+            raise getattr(vision, error)("no answer before the deadline")
+
+    structure = request(Timing(ANSWERS))
+    schema = {"schema": {"properties": {"1": {"enum": ["text", "abstain"]}}}}
+    with pytest.raises(decisions.AskFailed):
+        structure.ask("prompt", schema, b"png")
