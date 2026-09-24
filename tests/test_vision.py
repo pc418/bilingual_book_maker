@@ -17,6 +17,7 @@ import httpx
 import pytest
 from openai import (
     APIConnectionError,
+    APITimeoutError,
     AuthenticationError,
     BadRequestError,
     RateLimitError,
@@ -455,8 +456,45 @@ class TestRequestFailures:
             "digits": "9"
         }
         assert create.call_count == 31
-        # the deadline is not a request parameter
+        # the deadline is not a request parameter, and without one the
+        # client's own timeout stands
         assert "deadline" not in create.call_args.kwargs
+        assert "timeout" not in create.call_args.kwargs
+
+    def test_a_deadline_bounds_the_request_in_flight(self, monkeypatch):
+        clock = {"now": 500.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        monkeypatch.setattr("tenacity.nap.time.sleep", lambda s: None)
+        timeouts, options = [], []
+
+        def create(**kwargs):
+            timeouts.append(kwargs["timeout"])
+            clock["now"] += kwargs["timeout"]  # hangs as long as it may
+            raise APITimeoutError(request=REQUEST)
+
+        class Client:
+            chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+
+            def with_options(self, **kwargs):
+                options.append(kwargs)
+                return self
+
+        translator = _translator(create, verdict="strict")
+        translator.openai_client = Client()
+        with pytest.raises(APITimeoutError):
+            translator.structured_json_with_image(
+                "read it", SCHEMA, PNG, deadline=560.0
+            )
+        assert timeouts == [60.0] and clock["now"] == 560.0
+        # the SDK's own retry would start a second request past the deadline
+        assert options == [{"max_retries": 0}]
+
+    def test_the_timeout_is_never_below_one_second(self, monkeypatch):
+        monkeypatch.setattr("time.monotonic", lambda: 559.9)
+        create = Mock(return_value=_completion('{"digits": "1"}'))
+        translator = _translator(create, verdict="strict")
+        translator.structured_json_with_image("read it", SCHEMA, PNG, deadline=560.0)
+        assert create.call_args.kwargs["timeout"] == 1.0
 
     def test_auth_errors_are_fatal_before_any_deadline(self):
         create = Mock(side_effect=_api_error(AuthenticationError, 401, "bad key"))

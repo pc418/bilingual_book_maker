@@ -538,6 +538,9 @@ class FailingOnPageTwo(FakeVisionTranslator):
         )
 
 
+BOTH_PAGES = {**ANSWERS, "Page two prose.": "text"}
+
+
 @pytest.fixture
 def two_page_pdf(tmp_path):
     pytest.importorskip("pypdfium2")
@@ -557,7 +560,7 @@ def test_a_partial_pass_is_extracted_again_and_a_complete_one_is_reused(
     pandoc = pandoc_or_skip()
     stub_docling["pages"] = 2
     bundle = Bundle(tmp_path / "b").create()
-    flaky = FailingOnPageTwo(ANSWERS)
+    flaky = FailingOnPageTwo(BOTH_PAGES)
     stages.prepare(
         bundle, two_page_pdf, pandoc=pandoc, structure=request(flaky), progress=False
     )
@@ -575,7 +578,7 @@ def test_a_partial_pass_is_extracted_again_and_a_complete_one_is_reused(
     assert not stages.already_prepared(bundle, two_page_pdf, "docling", None)
 
     # the rerun extracts again, asks both pages, and completes
-    steady = FakeVisionTranslator(ANSWERS)
+    steady = FakeVisionTranslator(BOTH_PAGES)
     stages.prepare(
         bundle, two_page_pdf, pandoc=pandoc, structure=request(steady), progress=False
     )
@@ -583,7 +586,7 @@ def test_a_partial_pass_is_extracted_again_and_a_complete_one_is_reused(
     assert bundle.read_manifest()["extraction"]["structure_status"] == "complete"
     capsys.readouterr()
     # and a complete pass is reused: nothing is asked again, nothing said
-    again = FakeVisionTranslator(ANSWERS)
+    again = FakeVisionTranslator(BOTH_PAGES)
     stages.prepare(
         bundle, two_page_pdf, pandoc=pandoc, structure=request(again), progress=False
     )
@@ -614,3 +617,37 @@ def test_a_pass_that_raised_is_recorded_failed(
     assert manifest["extraction"]["structure_status"] == "failed"
     luna = ExtractionSettings(structure="gpt-5.6-luna", structure_rev=REV)
     assert not stages.already_prepared(bundle, real_pdf, "docling", None, luna)
+
+
+def test_a_reply_that_left_an_id_out_is_extracted_again(
+    tmp_path, real_pdf, stub_docling, device, capsys
+):
+    """PIN (lead 260923, Codex re-verification of E2): an id missing from
+    an otherwise valid reply is `unanswered`, so the pass is `partial`
+    and a later run that asks for structure extracts and asks again."""
+    from book_maker.pipeline.messages import STRUCTURE_NOT_REUSED
+
+    pandoc = pandoc_or_skip()
+    bundle = Bundle(tmp_path / "b").create()
+    shy = {k: v for k, v in ANSWERS.items() if k != "Prose three."}
+    stages.prepare(
+        bundle,
+        real_pdf,
+        pandoc=pandoc,
+        structure=request(FakeVisionTranslator(shy)),
+        progress=False,
+    )
+    assert bundle.read_manifest()["extraction"]["structure_status"] == "partial"
+    capsys.readouterr()
+    luna = ExtractionSettings(structure="gpt-5.6-luna", structure_rev=REV)
+    assert not stages.already_prepared(bundle, real_pdf, "docling", None, luna)
+    line = STRUCTURE_NOT_REUSED.format(status="partial", model="gpt-5.6-luna")
+    assert line in capsys.readouterr().out.replace("\n", "")
+
+    full = FakeVisionTranslator(ANSWERS)
+    stages.prepare(
+        bundle, real_pdf, pandoc=pandoc, structure=request(full), progress=False
+    )
+    assert full.calls == ["gpt-5.6-luna"]
+    assert bundle.read_manifest()["extraction"]["structure_status"] == "complete"
+    assert stages.already_prepared(bundle, real_pdf, "docling", None, luna)

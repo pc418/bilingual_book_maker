@@ -673,6 +673,35 @@ class FakeClock:
         self.now += seconds
 
 
+def vision_structure(create):
+    """The route's `StructureRequest` over a real `ChatGPTAPI` whose
+    client's `create` is `create`."""
+    from book_maker.pipeline.docling_parser import _structure_ask
+    from book_maker.translator.base_translator import UsageMeter
+    from book_maker.translator.capabilities import CapabilityLedger
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+    translator = ChatGPTAPI.__new__(ChatGPTAPI)
+    translator.model = "vision-model"
+    translator.extra_body = {}
+    translator.capabilities = CapabilityLedger()
+    translator.capabilities.verdicts["vision-model"] = "strict"
+    translator._rung_refusals = {}
+    translator.usage = UsageMeter()
+    translator.openai_client = type(
+        "Client",
+        (),
+        {
+            "chat": type(
+                "Chat",
+                (),
+                {"completions": type("C", (), {"create": staticmethod(create)})},
+            )
+        },
+    )()
+    return _structure_ask(None, "vision-model", translator=translator)
+
+
 def test_each_question_is_given_the_pass_s_deadline(pdf, monkeypatch):
     clock = FakeClock()
     monkeypatch.setattr(decisions.time, "monotonic", clock)
@@ -703,11 +732,7 @@ def test_an_outage_ends_the_question_at_the_deadline_and_the_pass_returns(
     import httpx
     from openai import APIConnectionError
 
-    from book_maker.pipeline.docling_parser import _structure_ask
     from book_maker.pipeline.messages import STRUCTURE_DETAIL_DEADLINE
-    from book_maker.translator.base_translator import UsageMeter
-    from book_maker.translator.capabilities import CapabilityLedger
-    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
 
     clock = FakeClock()
     monkeypatch.setattr("time.monotonic", clock)
@@ -719,25 +744,7 @@ def test_an_outage_ends_the_question_at_the_deadline_and_the_pass_returns(
         attempts.append(clock.now)
         raise APIConnectionError(request=request)
 
-    translator = ChatGPTAPI.__new__(ChatGPTAPI)
-    translator.model = "vision-model"
-    translator.extra_body = {}
-    translator.capabilities = CapabilityLedger()
-    translator.capabilities.verdicts["vision-model"] = "strict"
-    translator._rung_refusals = {}
-    translator.usage = UsageMeter()
-    translator.openai_client = type(
-        "Client",
-        (),
-        {
-            "chat": type(
-                "Chat",
-                (),
-                {"completions": type("C", (), {"create": staticmethod(create)})},
-            )
-        },
-    )()
-    structure = _structure_ask(None, "vision-model", translator=translator)
+    structure = vision_structure(create)
 
     document = new_document(pages=2)
     document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov(page=1))
@@ -773,11 +780,6 @@ def test_an_auth_error_still_ends_the_pass_at_once(pdf, monkeypatch):
     import httpx
     from openai import AuthenticationError
 
-    from book_maker.pipeline.docling_parser import _structure_ask
-    from book_maker.translator.base_translator import UsageMeter
-    from book_maker.translator.capabilities import CapabilityLedger
-    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
-
     clock = FakeClock()
     monkeypatch.setattr("time.monotonic", clock)
     monkeypatch.setattr("tenacity.nap.time.sleep", clock.sleep)
@@ -790,25 +792,7 @@ def test_an_auth_error_still_ends_the_pass_at_once(pdf, monkeypatch):
             "bad key", response=httpx.Response(401, request=request), body=None
         )
 
-    translator = ChatGPTAPI.__new__(ChatGPTAPI)
-    translator.model = "vision-model"
-    translator.extra_body = {}
-    translator.capabilities = CapabilityLedger()
-    translator.capabilities.verdicts["vision-model"] = "strict"
-    translator._rung_refusals = {}
-    translator.usage = UsageMeter()
-    translator.openai_client = type(
-        "Client",
-        (),
-        {
-            "chat": type(
-                "Chat",
-                (),
-                {"completions": type("C", (), {"create": staticmethod(create)})},
-            )
-        },
-    )()
-    structure = _structure_ask(None, "vision-model", translator=translator)
+    structure = vision_structure(create)
     document = new_document()
     document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov())
 
@@ -916,3 +900,58 @@ def test_the_overlay_box_lands_on_the_glyphs_of_a_turned_page(tmp_path):
     x0 = int(turned[0] * 2)
     mid = int((height - (turned[1] + turned[3]) / 2) * 2)
     assert drawn.getpixel((x0, mid)) == decisions.COLOURS["text"]
+
+
+def test_a_stalled_request_ends_at_the_deadline_too(pdf, monkeypatch):
+    # PIN (lead 260923, Codex re-verification of E2): the deadline bounds
+    # the call in flight, not only the waits between calls -- each attempt
+    # is sent with the seconds left as its timeout, so an endpoint that
+    # accepts the request and never answers costs the budget, not the run.
+    import httpx
+    from openai import APITimeoutError
+
+    from book_maker.pipeline.messages import STRUCTURE_DETAIL_DEADLINE
+
+    clock = FakeClock()
+    monkeypatch.setattr("time.monotonic", clock)
+    monkeypatch.setattr("tenacity.nap.time.sleep", clock.sleep)
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    timeouts = []
+
+    def create(**kwargs):
+        # a request that hangs: it runs for exactly as long as it may
+        timeouts.append(kwargs["timeout"])
+        clock.now += kwargs["timeout"]
+        raise APITimeoutError(request=request)
+
+    structure = vision_structure(create)
+    document = new_document(pages=2)
+    document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov(page=1))
+    document.add_text(label=DocItemLabel.TEXT, text="second", prov=prov(page=2))
+    overlay = decisions.decide_roles(
+        structure.ask,
+        document,
+        pdf,
+        [1, 2],
+        budget=decisions.Budget(max_seconds=120),
+        log=lambda line: None,
+    )
+    assert timeouts == [120.0]
+    assert clock.now == 1120.0 and clock.naps == []
+    [call] = overlay.pages[1]["calls"]
+    prefix = STRUCTURE_DETAIL_DEADLINE.split("{error}")[0]
+    assert call["error"].startswith("AskFailed: " + prefix)
+    assert "APITimeoutError" in call["error"]
+    assert overlay.pages[2]["status"] == "unasked"
+    assert overlay.status() == decisions.STATUS_PARTIAL
+
+
+def test_a_reply_that_leaves_an_id_out_is_a_partial_pass(pdf):
+    document = new_document()
+    document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov(top=760))
+    document.add_text(label=DocItemLabel.TEXT, text="second", prov=prov(top=700))
+    overlay = decisions.decide_roles(fake_ask({"first": "text"}), document, pdf, [1])
+    statuses = sorted(d["status"] for d in overlay.pages[1]["decisions"])
+    assert statuses == ["kept", "unanswered"]
+    assert not any(call.get("error") for call in overlay.pages[1]["calls"])
+    assert overlay.status() == decisions.STATUS_PARTIAL

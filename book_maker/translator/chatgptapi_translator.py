@@ -811,22 +811,32 @@ class ChatGPTAPI(Base):
         field is not sent to this model again); one naming the image raises
         `VisionRequestFailed`; one about the schema, or anything else, is a
         rung refusal exactly as `_completion_text` makes it. `deadline` is
-        `_patiently`'s.
+        `_patiently`'s, and bounds the request in flight too: each attempt
+        is sent with the seconds left as its timeout (at least one) and
+        without the SDK's own retries, so a stalled call ends at the
+        deadline as a timeout rather than running on past it.
         """
         kwargs.setdefault("extra_body", self.extra_body or None)
         messages = [{"role": "user", "content": parts}]
+        client = self.openai_client
+        if deadline is not None and hasattr(client, "with_options"):
+            client = client.with_options(max_retries=0)
+
+        def send(optional):
+            bounded = {}
+            if deadline is not None:
+                bounded["timeout"] = max(1.0, deadline - time.monotonic())
+            return client.chat.completions.create(
+                model=model, messages=messages, **optional, **kwargs, **bounded
+            )
+
         while True:
             unsent = self.capabilities.vision_unsent.get(model, set())
             optional = {
                 k: v for k, v in VISION_REQUEST_PARAMS.items() if k not in unsent
             }
             try:
-                completion = self._patiently(
-                    lambda: self.openai_client.chat.completions.create(
-                        model=model, messages=messages, **optional, **kwargs
-                    ),
-                    deadline=deadline,
-                )
+                completion = self._patiently(lambda: send(optional), deadline=deadline)
             except RUNG_REFUSAL_ERRORS as e:
                 field = refused_optional_param(e, optional)
                 if field is not None:

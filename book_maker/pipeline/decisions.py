@@ -236,10 +236,11 @@ class Overlay:
     def status(self):
         """`complete`, or `partial` when anything asked for went without.
 
-        Complete: every batch asked got a usable answer and every page's
-        answers were applied. Partial: a question failed or its reply was
-        rejected whole, a page could not be changed safely, the budget
-        stopped the pass, or a page was not asked. (`failed`, the pass
+        Complete: every batch asked got a usable answer for every id and
+        every page's answers were applied. Partial: a question failed or
+        its reply was rejected whole, a reply left an id out (`unanswered`),
+        a page could not be changed safely, the budget stopped the pass,
+        or a page was not asked. (`failed`, the pass
         raising, is the caller's to record: there is no overlay then.)
         """
         if self.totals.get("budget_exhausted"):
@@ -248,6 +249,11 @@ class Overlay:
             if entry.get("status") in ("unasked", "failed_apply"):
                 return STATUS_PARTIAL
             if any(call.get("error") for call in entry.get("calls", [])):
+                return STATUS_PARTIAL
+            if any(
+                decision.get("status") == "unanswered"
+                for decision in entry.get("decisions", [])
+            ):
                 return STATUS_PARTIAL
         return STATUS_COMPLETE
 
