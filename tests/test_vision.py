@@ -35,6 +35,7 @@ from book_maker.translator.vision import (
     challenge_png,
     image_part,
     probe_image,
+    QuestionTimedOut,
 )
 
 REQUEST = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
@@ -587,3 +588,122 @@ class TestTranslatorVerdict:
         assert translator.usage.prompt == 300
         # the schema verdict is untouched by the image question
         assert translator.capabilities.verdicts == {"test-model": "strict"}
+
+
+class TestTheDeadlineBoundsTheLoopsOwnRetries:
+    """Port 260923 (Codex finding on port/260920-batch): the two retries
+    `_vision_completion_text` makes itself -- a refused optional field
+    dropped, a refused --no-thinking spelling advanced -- used to `continue`
+    without looking at the clock, so several rejected spellings could each
+    start a request after the pass's deadline. Past it they raise
+    `QuestionTimedOut`, which the structure pass records as a lost question.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh_controls(self, monkeypatch):
+        from book_maker.translator import reasoning
+        from book_maker.translator.reasoning import ThinkingOff
+
+        monkeypatch.setattr(reasoning, "CONTROLS", ThinkingOff())
+
+    @staticmethod
+    def _rejecting(field):
+        return BadRequestError(
+            "Error code: 400",
+            response=httpx.Response(400, request=REQUEST),
+            body={"message": "Rejected", "param": field, "code": "unknown_parameter"},
+        )
+
+    def _no_thinking_translator(self, create):
+        translator = _translator(create, verdict="strict")
+        translator.no_thinking = True
+        translator.api_base = "https://api.openai.com/v1"
+        return translator
+
+    def test_a_reasoning_spelling_refused_at_the_deadline_ends_the_question(
+        self, monkeypatch
+    ):
+        clock = {"now": 500.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+
+        def create(**kwargs):
+            clock["now"] = 600.0  # the refusal arrives after the deadline
+            raise self._rejecting("reasoning_effort")
+
+        create = Mock(side_effect=create)
+        translator = self._no_thinking_translator(create)
+        with pytest.raises(QuestionTimedOut, match="deadline had passed"):
+            translator.structured_json_with_image(
+                "read it", SCHEMA, PNG, deadline=560.0
+            )
+        # one request; the next spelling is not tried past the deadline
+        assert create.call_count == 1
+
+    def test_a_reasoning_spelling_refused_in_time_is_negotiated(self, monkeypatch):
+        monkeypatch.setattr("time.monotonic", lambda: 500.0)
+        create = Mock(
+            side_effect=[
+                self._rejecting("reasoning_effort"),
+                _completion('{"digits": "1"}'),
+            ]
+        )
+        translator = self._no_thinking_translator(create)
+        translator.structured_json_with_image("read it", SCHEMA, PNG, deadline=560.0)
+        bodies = [c.kwargs["extra_body"] for c in create.call_args_list]
+        assert bodies == [
+            {"reasoning_effort": "none"},
+            {"reasoning": {"effort": "none"}},
+        ]
+
+    def test_an_optional_field_refused_at_the_deadline_ends_the_question(
+        self, monkeypatch
+    ):
+        clock = {"now": 500.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+
+        def create(**kwargs):
+            clock["now"] = 600.0
+            raise _api_error(
+                BadRequestError, 400, "unknown parameter: reasoning_effort"
+            )
+
+        create = Mock(side_effect=create)
+        translator = _translator(create, verdict="strict")
+        with pytest.raises(QuestionTimedOut, match="reasoning_effort"):
+            translator.structured_json_with_image(
+                "read it", SCHEMA, PNG, deadline=560.0
+            )
+        assert create.call_count == 1
+        # the refusal is still remembered for the next question
+        assert translator.capabilities.vision_unsent["test-model"] == {
+            "reasoning_effort"
+        }
+
+    def test_without_a_deadline_the_retries_are_unbounded_as_before(self):
+        create = Mock(
+            side_effect=[
+                _api_error(BadRequestError, 400, "unknown parameter: reasoning_effort"),
+                _completion('{"digits": "1"}'),
+            ]
+        )
+        translator = _translator(create, verdict="strict")
+        assert translator.structured_json_with_image("read it", SCHEMA, PNG) == {
+            "digits": "1"
+        }
+        assert create.call_count == 2
+
+    def test_no_thinking_drops_the_convenience_effort_setting(self):
+        create = Mock(return_value=_completion('{"digits": "1"}'))
+        translator = self._no_thinking_translator(create)
+        translator.structured_json_with_image("read it", SCHEMA, PNG)
+        sent = create.call_args.kwargs
+        # one instruction about reasoning, the flag's; not `low` beside `none`
+        assert "reasoning_effort" not in sent
+        assert sent["extra_body"] == {"reasoning_effort": "none"}
+        assert sent["max_completion_tokens"] == 2000
+
+    def test_without_the_flag_the_effort_setting_is_sent(self):
+        create = Mock(return_value=_completion('{"digits": "1"}'))
+        translator = _translator(create, verdict="strict")
+        translator.structured_json_with_image("read it", SCHEMA, PNG)
+        assert create.call_args.kwargs["reasoning_effort"] == "low"

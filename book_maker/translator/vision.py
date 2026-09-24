@@ -49,6 +49,18 @@ class VisionRequestFailed(Exception):
     """
 
 
+class QuestionTimedOut(Exception):
+    """The question's deadline passed between two attempts at one request.
+
+    Raised instead of sending again when a retry the loop would otherwise
+    make (a refused optional field dropped, a refused `--no-thinking`
+    spelling advanced) would start a request after the caller's deadline.
+    Not a `RungRejected` (no rung was refused) and not a transport error
+    (nothing timed out): the question is out of time, and the caller
+    records it as such.
+    """
+
+
 # Readable at a glance and unambiguous in any font: no 0/O, no 1/I.
 CHALLENGE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 CHALLENGE_LENGTH = 4

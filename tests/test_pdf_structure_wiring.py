@@ -385,6 +385,54 @@ def test_the_structure_model_runs_on_the_translation_s_endpoint_and_key(
     assert structure.rev == REV
 
 
+@pytest.mark.parametrize("flagged", [True, False])
+def test_no_thinking_reaches_the_structure_translator(fake_pdf, monkeypatch, flagged):
+    """Port 260923 (Codex finding on port/260920-batch): the CLI set
+    `no_thinking` on the translation-stage instance only, so `--to-epub
+    --structure-model M --no-thinking` still sent the pass's image requests
+    with reasoning on. The pass's translator is built here from the same
+    parsed options and gets the flag on the routes that carry it."""
+    built = {}
+
+    class Built(FakeVisionTranslator):
+        SUPPORTS_REQUEST_EXTRAS = True
+        no_thinking = False
+
+        def __init__(self, key, language, api_base=None, **kwargs):
+            super().__init__(ANSWERS)
+            built["instance"] = self
+
+        def set_model_list(self, models):
+            pass
+
+    monkeypatch.setitem(cli.FORMAT_DICT, "openai", Built)
+    monkeypatch.setattr(to_epub, "find_pandoc", lambda explicit=None: "pandoc")
+
+    def prepare_stage(bundle, source, **kwargs):
+        raise PipelineError("stop here", stage="extract")
+
+    translation = [
+        "--model",
+        "gpt-5.6-nano",
+        "--key",
+        "sk-test",
+        "--language",
+        "zh-hans",
+    ]
+    if flagged:
+        translation.append("--no-thinking")
+    with pytest.raises(PipelineError):
+        to_epub.pdf_to_epub(
+            fake_pdf,
+            translation,
+            structure_model="gpt-5.6-luna",
+            prepare_stage=prepare_stage,
+            translate_stage=None,
+            export_stage=None,
+        )
+    assert built["instance"].no_thinking is flagged
+
+
 def test_without_the_flag_nothing_of_the_pass_is_loaded_or_probed(
     fake_pdf, monkeypatch
 ):

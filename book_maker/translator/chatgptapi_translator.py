@@ -58,6 +58,7 @@ from .capabilities import (
 from .reasoning import NO_THINKING_FIELDS
 from .vision import (
     VISION_REQUEST_PARAMS,
+    QuestionTimedOut,
     VisionRequestFailed,
     image_part,
     names_image_refusal,
@@ -845,7 +846,10 @@ class ChatGPTAPI(Base):
         `_patiently`'s, and bounds the request in flight too: each attempt
         is sent with the seconds left as its timeout (at least one) and
         without the SDK's own retries, so a stalled call ends at the
-        deadline as a timeout rather than running on past it.
+        deadline as a timeout rather than running on past it. The two
+        retries this loop makes itself (a refused optional field dropped, a
+        refused `--no-thinking` spelling advanced) are bounded the same way:
+        past the deadline they raise `QuestionTimedOut` instead of sending.
         """
         # As in `_completion_text`: a caller that built its own body owns it;
         # otherwise the body (and so the --no-thinking spelling) is read
@@ -865,6 +869,15 @@ class ChatGPTAPI(Base):
                 model=model, messages=messages, **optional, **call, **bounded
             )
 
+        def out_of_time(error, what):
+            if deadline is None or time.monotonic() < deadline:
+                return
+            raise QuestionTimedOut(
+                f"'{model}' refused {what} on an image request and the "
+                f"question's deadline had passed before it could be asked "
+                f"again: {redact(error)}"
+            ) from error
+
         while True:
             unsent = self.capabilities.vision_unsent.get(model, set())
             optional = {
@@ -873,6 +886,10 @@ class ChatGPTAPI(Base):
             call = dict(kwargs)
             if not owned:
                 call["extra_body"] = self.request_extra_body(model)
+                if call["extra_body"] and self._no_thinking_control(model):
+                    # The flag asked for no reasoning; the convenience
+                    # effort setting would be a second instruction about it.
+                    optional.pop("reasoning_effort", None)
             try:
                 completion = self._patiently(
                     lambda: send(optional, call), deadline=deadline
@@ -883,6 +900,7 @@ class ChatGPTAPI(Base):
                     and self._no_thinking_control(model)
                     and reasoning.CONTROLS.rejected(self.api_base, model, e)
                 ):
+                    out_of_time(e, "the reasoning field")
                     continue
                 field = refused_optional_param(e, optional)
                 if field is not None:
@@ -894,6 +912,7 @@ class ChatGPTAPI(Base):
                         f"[yellow]ℹ '{model}' refused {field} on an image "
                         f"request; asking without it[/yellow]"
                     )
+                    out_of_time(e, field)
                     continue
                 if classify_bad_request(e) != "schema" and names_image_refusal(e):
                     raise VisionRequestFailed(

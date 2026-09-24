@@ -426,6 +426,14 @@ def _structure_translator(options, model):
     prices = getattr(options, "price_table", None)
     if prices is not None and hasattr(translator, "usage"):
         translator.usage.prices = prices
+    # --no-thinking, as the CLI applies it to the translation run: a field
+    # in the request body, so only on a translator that builds one. The
+    # pass's image requests then carry and negotiate the spelling like every
+    # other request (port 260923, Codex finding).
+    if getattr(options, "no_thinking", False) and getattr(
+        translator, "SUPPORTS_REQUEST_EXTRAS", False
+    ):
+        translator.no_thinking = True
     translator.set_model_list([model])
     return translator
 
@@ -436,9 +444,9 @@ def _soft_failures():
 
     soft = [StructuredJSONFailed]
     try:
-        from book_maker.translator.vision import VisionRequestFailed
+        from book_maker.translator.vision import QuestionTimedOut, VisionRequestFailed
 
-        soft.append(VisionRequestFailed)
+        soft.extend((VisionRequestFailed, QuestionTimedOut))
     except ImportError:
         pass
     return tuple(soft)
