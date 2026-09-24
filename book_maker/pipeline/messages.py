@@ -175,7 +175,7 @@ PAGE_TOO_DENSE = (
 # help text are the lead's (packet E2, 260923), verbatim.
 STRUCTURE_APPLIED = (
     "Region roles: {accepted} of {asked} asked items changed by {model} "
-    "({kept} kept, {rejected} rejected, {quarantined} pages quarantined); "
+    "({kept} kept, {rejected} rejected, {high_change} pages with many changes); "
     "overlay at {path}."
 )
 STRUCTURE_PARTIAL = "Region roles: {detail}; the detector's own labels stand there."

@@ -37,7 +37,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
 )
 from book_maker.pipeline.pdf_settings import ExtractionSettings  # noqa: E402
 
-REV = "260923a/260923a"
+REV = "260923a/260923b"
 
 
 # --------------------------------------------------------------------------
@@ -151,7 +151,7 @@ def stub_docling(monkeypatch):
     """docling's converter replaced by one returning a real document."""
     state = {}
 
-    def converter(device, settings):
+    def converter(device, settings, pdfium_page_images=False):
         state["document"] = real_document()
 
         class Converter:
@@ -193,7 +193,7 @@ def test_convert_writes_the_overlay_and_exports_the_new_roles(
         structure=request(translator),
     )
     overlay = json.loads((out_dir / "decisions.json").read_text(encoding="utf-8"))
-    assert overlay["prompt_rev"] == "260923a" and overlay["policy_rev"] == "260923a"
+    assert overlay["prompt_rev"] == "260923a" and overlay["policy_rev"] == "260923b"
     assert overlay["model"] == "gpt-5.6-luna"
     [call] = overlay["pages"]["1"]["calls"]
     assert call["usage"] == {"prompt_tokens": 1000, "completion_tokens": 20}
@@ -227,7 +227,7 @@ def test_a_verified_endpoint_runs_the_pass_and_the_manifest_says_so(
     out = " ".join(capsys.readouterr().out.split())
     assert (
         "Region roles: 2 of 5 asked items changed by gpt-5.6-luna (3 kept, "
-        "0 rejected, 0 pages quarantined); overlay at "
+        "0 rejected, 0 pages with many changes); overlay at "
         ".work/extraction/decisions.json." in out
     )
     extraction = bundle.read_manifest()["extraction"]

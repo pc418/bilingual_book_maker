@@ -502,9 +502,7 @@ def _structure_lines(model, summary, bundle):
         model=model,
         kept=summary["kept"],
         rejected=summary["rejected"],
-        # Nothing is quarantined any more (ruling 260923); the lead's
-        # sentence keeps the slot until it is reworded.
-        quarantined=0,
+        high_change=summary.get("high_change_pages", 0),
         path=shown,
     )
     detail = []

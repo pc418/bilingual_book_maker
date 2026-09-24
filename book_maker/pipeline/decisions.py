@@ -46,7 +46,7 @@ from .messages import STRUCTURE_DETAIL_BUDGET, STRUCTURE_PARTIAL
 # POLICY_REV when ELIGIBLE_SOURCE, TARGETS or ALLOWED change. Both enter the extraction identity: a rerun under another
 # revision extracts again.
 PROMPT_REV = "260923a"
-POLICY_REV = "260923a"
+POLICY_REV = "260923b"  # b: the quarantine became a warning (260923)
 
 OVERLAY_FILE = "decisions.json"
 

@@ -502,6 +502,18 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   time. `--no-formula-images` turns it off and restores the placeholders.
   **Inline** mathematics inside a paragraph is not a formula region and is not
   covered: on a scan it arrives as whatever OCR made of it.
+- **A vision model can correct the layout detector's region roles**
+  (`--structure-model MODEL`, off by default). Docling sometimes calls an
+  author line a heading, a listing's lines footnotes, or a figure's label a
+  section; with the flag, each page is shown to the named model with the
+  detector's boxes drawn on it, and the model answers one role per region
+  (text, heading, title, caption, footnote, code, or abstain). Accepted
+  answers are applied before export, so the contents and the code blocks
+  come out right; text is never rewritten. It needs an OpenAI-compatible
+  endpoint that accepts images (the run's own endpoint, probed once); where
+  the model abstains or the endpoint cannot see the page, the detector's
+  labels stand and the terminal says so. Measured on gpt-5.6-luna: 40 of 66
+  catalogued label faults fixed, about 3k prompt tokens per page.
 - Requirements: the **`pdf` extra**, which is not part of the base install.
   It is not in the published package yet, so install it from a checkout —
   `pip install -r requirements-pdf-gpu.txt` (`pip install ".[pdf]"` does the
