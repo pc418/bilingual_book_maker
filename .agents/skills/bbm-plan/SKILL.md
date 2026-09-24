@@ -273,7 +273,32 @@ run adds `--quiet`, and `--resume` only once a cache exists (§5); the
 optional smoke adds `--quiet --test --test_num 8`. Nothing from the "Never
 pass in plan mode" list, ever.
 
+By document type (EPUB; the human page is `docs/features/plan-mode.md`):
+
+| book | what changes |
+|---|---|
+| novel | nothing: the §1d row, session on |
+| textbook with tables and formulas | nothing on the command; in §3 read the table-cell, caption and sidebar signatures with care, they are where a textbook's real text hides. MathML and SVG never reach the model, so equations stay as they are |
+| paper as EPUB | as a novel. A paper as PDF is §1e (no plan) |
+| scan, Chinese scan | a PDF: §1e |
+
+By system: the endpoint does the work, so a hosted route is the same
+command everywhere. A local model (Ollama, llama.cpp, vLLM, LM Studio) is
+`--api_base http://localhost:11434/v1 --model <id>` (Ollama's address; the
+server's own otherwise). Such a server rarely verifies a strict schema;
+the probe decides, and the run then halves the unit cap to 8 (and, outside
+a session, the budget to 800) by itself: do not lower them further up
+front. With a session, leave `--context-compact-at` at 8192 unless the
+local server's context window is smaller; then set it below that window.
+On a CPU-only machine a local model is slow for a whole book: say so and
+offer a hosted route. Docker is `ghcr.io/yihong0618/bilingual_book_maker:latest`
+with the book's folder mounted (`docs/docker.md`).
+
 ## 1e. A PDF: recommend the bilingual EPUB, not the txt
+
+Human pages: `docs/features/pdf-to-epub.md` (commands per document type
+and system, every terminal line and its fix), `docs/formats/pdf.md` (every
+flag). Measurements behind the advice: `docs/evaluation/pdf-*.md`.
 
 When the book is a `.pdf`, recommend `--to-epub` and say why in one line:
 it reads the PDF's text layer into Markdown, translates that, and writes a
@@ -327,7 +352,11 @@ opened, naming the missing one, so nothing is paid):
    headings and tables are detected either way; OCR is not what makes the
    extraction good. A scan in a script other than Latin also needs
    `--ocr-lang` (portable `iso:` tags: `iso:zh-Hans`, `iso:zh-Hant`,
-   `iso:ja`, `iso:ko`; or the engine's own codes). The engine is whatever
+   `iso:ja`, `iso:ko`, which docling 2.129 maps onto whichever engine
+   runs; or the engine's own codes, which `--help` lists). Prefer the
+   `iso:` tag and always name the language: on a Mac with ocrmac
+   installed docling picks ocrmac, and with its default languages it read
+   a Chinese scan as Latin (measured on one scan). The engine is whatever
    docling selects on the install (rapidocr with the shipped requirements),
    and the run prints `OCR engine: ..., languages: ...` after extraction.
    rapidocr's default reads Chinese and English, one language per run, so a
@@ -369,6 +398,25 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-ep
 | `--ocr-lang iso:ja` | with `--pdf-ocr`, a scan in a script the engine's default does not read (rapidocr's default reads Chinese and English); portable `iso:` tags (`iso:zh-Hant`, `iso:ja`, `iso:ko`) or the engine's own codes; a typed PDF ignores it |
 | `--pages 12-30` | the user wants one chapter or a range, or the paper's bibliography and appendix are not worth paying for; numbered from 1. The book is `<name>_pages-12-30_bilingual.epub` beside the whole-book one, never over it. A selection starting mid-section gets a `Page 12` heading in `source.md`; rename it there before the full run if the user wants a real title |
 | `--glossary` | the same file contract as on an EPUB; worth it on a paper with recurring terms |
+
+By document type (the full run; every one starts with the two-page first look):
+
+| document | add to the full run | say to the user |
+|---|---|---|
+| novel | `--use_context session --quiet` | chapters set without numbering get their level from font size alone: read the headings in `source.md` |
+| textbook with tables and formulas | `--pages A-B` per chapter, `--glossary` if terms recur | tables are detected without OCR; display formulas become pictures, not translated (`docs/evaluation/pdf-formulas-as-images.md`); inline maths is not covered |
+| paper | `--use_context session`; `--pages` to leave out the bibliography | heading levels were exact on 187 of 195 headings across 20 arXiv papers (`docs/evaluation/pdf-heading-levels.md`) |
+| scanned book | `--pdf-ocr`, plus `--ocr-lang iso:<lang>` outside Chinese/English | an Internet Archive or ABBYY scan can reach OCR as a smear in this build and come back empty or as the old OCR layer while the run completes: read `source.md` before paying (`docs/evaluation/pdf-page-render-backend.md`) |
+| Chinese scan | `--pdf-ocr --ocr-lang iso:zh-Hans` (`iso:zh-Hant` for traditional) | horizontal text reads well; **vertical** text comes back with its columns in the wrong order (CER 0.905 on the one page measured): do not translate it unreviewed (`docs/evaluation/pdf-ocr-llm-vs-local.md`) |
+
+By system (the route needs no GPU; the device changes speed, never the text):
+
+| system | install | device |
+|---|---|---|
+| macOS, Apple silicon | `requirements-pdf-gpu.txt` (nothing to choose) | `auto` finds MPS; the run prints `PDF extraction device: mps.` Docker cannot reach MPS on a Mac: install natively |
+| Linux with NVIDIA | `requirements-pdf-gpu.txt` | `auto` finds CUDA; `--device cuda` makes the run refuse, with the reason, if it cannot use it |
+| CPU only | `requirements-pdf-cpu.txt` on Linux (the GPU file would pull ~3 GB of CUDA); `requirements-pdf-gpu.txt` on Windows, where PyPI's wheel is already the CPU build | `--device cpu`; one two-page OCR scan measured 26.3 s on the CPU against 10.6 s on MPS, identical text |
+| Docker | image `ghcr.io/yihong0618/bilingual_book_maker:pdf` (Pandoc and the PDF packages inside); mount the book's folder and a models volume at `/root/.cache` | `--gpus all` on Linux or Windows (WSL2) with NVIDIA, amd64 image only (`docs/docker.md`) |
 
 What to tell the user up front, in one line each, because they are
 limits of the format rather than of the run: figures stay pictures and
@@ -558,7 +606,7 @@ so you can honour a request without guessing at legal values.
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | `--use_context` | bare/`window`, `session` | **`session`** on openai and anthropic; **nothing** on codex, where the thread is the context | the progress bar's `cached=` count is still 0 after a dozen requests: the endpoint is not caching, and session mode re-reads the history at full price. Drop to bare `--use_context`, which re-sends the last few pairs. Drop to it too when a run must go parallel, where `session` is refused. The bar shows `in= out= cached=` live (`spent=` when the entry carries `prices`, §0b) and the run ends with one closing line; under `--quiet` only the line |
-| `--context-compact-at` | estimated-token budget, minimum 500 | **unset → 8192**, pinned, printed at start — every session run, grouped or not, codex included | leave it unset: owner-set for continuity, not cost — 8192 keeps the compaction count at the old defaults' level (9 vs 8 at 300 units), the margin local-device models need. It is NOT the cheap setting: under the halved budgets every request re-reads the window, so lower C (toward 4096) measures ~10% cheaper in session mode at 300 units — set it lower only when session cost outranks seams. Past 16000 the cost wall is steep and the only drift ever observed lived in the long-window cell. Set it only when the user insists on a number — an explicit value always wins. **Needs `--use_context session`** on an API route; without it the flag is accepted and does nothing. On `codex` it always applies |
+| `--context-compact-at` | estimated-token budget, minimum 1500 | **unset → 8192**, pinned, printed at start — every session run, grouped or not, codex included | leave it unset: owner-set for continuity, not cost — 8192 keeps the compaction count at the old defaults' level (9 vs 8 at 300 units), the margin local-device models need. It is NOT the cheap setting: under the halved budgets every request re-reads the window, so a lower C is cheaper in session mode (300 units: 360,681 tokens at 4096 against 396,197 at 8192) — set it lower only when session cost outranks seams, or below a local server's context window. Past 16000 the cost wall is steep and the only drift ever observed lived in the long-window cell (`docs/evaluation/session-compact-budget.md`). Set it only when the user insists on a number — an explicit value always wins. **Needs `--use_context session`** on an API route; without it the flag is accepted and does nothing. On `codex` it always applies |
 | `--context_paragraph_limit` | integer | *unset* (the translator uses 3) | window mode only, when the user wants a different number of pairs re-sent |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one (§1) | the user hands over their own voice/register — the usual reason to set it. Three sections: `user` (must keep `{text}`), `system`, `style`; a section without a native slot on the route is appended to the user message, and the run prints where each landed |
 | `--glossary` / `--terminology` | path to a `term → translation` file | *unset* unless the user has pinned terms | the user names renderings that must hold (people, places, titles). Hits-only: costs nothing on untouched paragraphs. openai-shaped and codex routes only; a pin is verbatim — use only renderings the user stands behind. `--glossary-auto` defaults off — pass `on` only for a session run on a capable model when the user wants self-taught renderings kept across window seams |
@@ -584,8 +632,8 @@ so you can honour a request without guessing at legal values.
 | `--resume` | on/off | **off on the first run, on for every rerun** | never off after a crash — replay is positional and fingerprint-guarded. With no `.<book>.temp.bin` it raises an uncaught traceback, so it goes on neither a smoke nor a full run that follows a skipped smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
 | `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock matters more than consistency. Then drop to bare `--use_context`: **`--use_context session` is refused with it** (one history, which workers cannot share), and window context is per chapter anyway, so continuity stops at every chapter boundary. **Never on `codex`** (below) |
 | `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
-| `--accumulated_num` | integer (tokens per request) | *unset* — derived per run: `1200` stock prompts, up to `1600` under a fat `--prompt`, `800` off-schema; session runs keep the un-halved value; the run narrates its choice | the run keeps printing misalignment recoveries (shorten it), or you want fewer/larger requests for cost (a typed value always wins, un-halved; `1` turns grouping off). Trade-offs and measurements: `docs/session_grouping_eval.md` §7 |
-| `--max-batch-units` | integer (units per request) | `16` (`8` automatically off-schema) — owner-set margin under the measured 64-unit fault onset | the run keeps printing misalignment recoveries: halve it (`8`, then `4`). Never past `48`. Detail: `docs/session_grouping_eval.md` §7 |
+| `--accumulated_num` | integer (tokens per request) | *unset* — derived per run: `1200` stock prompts, up to `1600` under a fat `--prompt`, `800` off-schema; session runs keep the un-halved value; the run narrates its choice | the run keeps printing misalignment recoveries (shorten it), or you want fewer/larger requests for cost (a typed value always wins, un-halved; `1` turns grouping off). Trade-offs and measurements: `docs/evaluation/grouping-batch-size.md` |
+| `--max-batch-units` | integer (units per request) | `16` (`8` automatically off-schema) — owner-set margin under the measured 64-unit fault onset | the run keeps printing misalignment recoveries: halve it (`8`, then `4`). Never past `48`. Detail: `docs/evaluation/grouping-batch-size.md` |
 
 ### Never pass in plan mode
 
@@ -667,7 +715,7 @@ name-then-rule reasoning), what the read-back showed, and hand over
 
 | symptom | meaning |
 |---|---|
-| `doesn't apply JSON schema … using delimiter method`, `honors JSON schema shape but not value constraints`, `no strict structured-output support` | **not a failure.** The endpoint does not do strict schema decoding, so translation uses the delimiter method. Expected on the anthropic route and most proxies; note it, do not switch models over it |
+| `doesn't apply JSON schema … using delimiter method`, `honors JSON schema shape but not value constraints`, `no strict structured-output support` | **not a failure.** The endpoint does not do strict schema decoding, so translation uses the delimiter method. Expected on the anthropic route and most proxies; note it, do not switch models over it (`docs/evaluation/structured-output-ladder.md`) |
 | `refused the … request shape; using a simpler one` | classification's ladder descended a rung. Informational |
 | a `--test` run printing its request count (grouping merges the slice into few requests), or that classification covers the whole book regardless of `--test` | **not a failure.** New compatibility narration; the smoke recipe triggers both by design |
 | `classifying over a plain session` | **not a failure.** The endpoint has no structured output, so plan classification runs over a conversation with verbatim `skip`/`translate` replies |
