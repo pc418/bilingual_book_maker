@@ -18,7 +18,16 @@ from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.classify import can_session_classify
 from book_maker.loader.ledger import PlanLedgerError
 from book_maker.loader.plan import GENERAL_GROUP_MAX_UNITS
-from book_maker.pipeline.messages import HELP_STRUCTURE_MODEL
+from book_maker.endpoints import (
+    CLASSIFY_BASE_WITHOUT_MODEL,
+    HELP_CLASSIFY_BASE_URL,
+    HELP_CLASSIFY_KEY,
+    HELP_CLASSIFY_MODEL,
+    HELP_IMG_BASE_URL,
+    HELP_IMG_KEY,
+    HELP_IMG_MODEL,
+    IMG_BASE_WITHOUT_MODEL,
+)
 from book_maker.prompt_file import parse_prompt_markdown
 from book_maker.provider_loader import resolve_provider
 from book_maker.session_context import DEFAULT_COMPACT_BUDGET, compact_budget_notice
@@ -272,6 +281,9 @@ def apply_provider(options):
         route = resolve_provider(options.provider)
     except ValueError as err:
         raise SystemExit(str(err))
+    # The entry's image and classify endpoints (`img_*`, `classify_*`) are
+    # read by `book_maker.endpoints`, after the run's own is settled.
+    options.provider_route = route
     # The entry's key belongs to the entry's *address*, and travels only as
     # far as that address does. Either flag can move it: --api_base says so
     # outright, and --api_format moves an entry that has no base_url of its
@@ -889,21 +901,24 @@ def resolve_plan_mode(
     return "model", reason
 
 
-def resolve_classify_mode(options):
-    """`(classify mode, still-auto)` from the two --plan-classify flags.
+def resolve_classify_mode(options, book_type=None):
+    """`(classify mode, still-auto)` from --plan-classify and --classify-model.
 
-    Pure: it resolves what the command asked for and refuses nothing. The
-    one contradiction the CLI stops on (a classifier model named alongside a
-    mode that classifies nothing) is deliberately left as it was typed, so
-    the refusal that owns that message is the one the run meets.
+    Pure: it resolves what the command asked for and refuses nothing.
+    Naming a classifier on an epub is naming the mode it belongs to, unless
+    the command chose one (`agent` asks that model's session, `all` asks
+    nothing). On another book the classifier serves whatever that route
+    classifies, and plan mode, which is epub-only, is not asked for.
     """
     mode = options.plan_classify
     plan_auto = mode == "auto"
     if plan_auto:
         # tag mode until the endpoint's probe settles it
         mode = "none"
-    if options.plan_classify_model:
-        # naming a classifier is naming the mode it belongs to
+    classify_model = getattr(options, "classify_model", "") or getattr(
+        options, "plan_classify_model", ""
+    )
+    if classify_model and book_type in (None, "epub"):
         plan_auto = False
         if mode not in ("all", "agent"):
             mode = "model"
@@ -1118,11 +1133,27 @@ COMPAT_RULES = (
         ),
     ),
     CompatRule(
+        "A14",
+        "stop",
+        lambda f: bool(getattr(f.options, "img_base_url", None))
+        and not getattr(f.options, "img_model", None),
+        lambda f: IMG_BASE_WITHOUT_MODEL,
+    ),
+    CompatRule(
+        "A15",
+        "stop",
+        lambda f: bool(getattr(f.options, "classify_base_url", None))
+        and not getattr(f.options, "classify_model", None),
+        lambda f: CLASSIFY_BASE_WITHOUT_MODEL,
+    ),
+    CompatRule(
         "A10",
         "stop",
         lambda f: f.book_type == "epub"
         and f.classify_mode == "model"
-        and f.api_format not in LLM_FORMATS,
+        and f.api_format not in LLM_FORMATS
+        # a classifier at an address of its own is not this format's to ask
+        and not getattr(f.options, "classify_base_url", ""),
         lambda f: (
             f"{f.classify_flag} asks an LLM to rule on every plan "
             f"signature, and the "
@@ -1534,15 +1565,47 @@ COMPAT_RULES = (
     CompatRule(
         "C31",
         "warn",
-        lambda f: bool(getattr(f.options, "structure_model", None))
-        and not f.options.to_epub,
+        lambda f: any(
+            getattr(f.options, dest, None)
+            for dest in ("img_model", "img_base_url", "img_key")
+        ),
         lambda f: (
-            "--structure-model corrects the region roles the PDF route's "
-            "layout detector assigns, and that route only runs with "
-            "--to-epub; this run reads it and does nothing with it."
+            "--img-model, --img-base-url and --img-key choose the vision model "
+            "for the steps that look at a page image, and only the PDF route "
+            "(--to-epub on a PDF) has one; this run reads them and does "
+            "nothing with them."
+        ),
+    ),
+    CompatRule(
+        "C32",
+        "warn",
+        lambda f: f.book_type == "epub"
+        and f.classify_mode == "all"
+        and any(
+            getattr(f.options, dest, None)
+            for dest in ("classify_model", "classify_base_url", "classify_key")
+        ),
+        lambda f: (
+            f"{_typed_classify_flag(f.options)} names a "
+            f"classifier, and --plan-classify all translates the whole "
+            f"partition without classifying anything; it is ignored this run."
         ),
     ),
 )
+
+
+def _typed_classify_flag(options):
+    """The classify flag the command typed first, for a message naming it."""
+    if getattr(options, "classify_model_flag", ""):
+        return options.classify_model_flag
+    for flag, dest in (
+        ("--classify-model", "classify_model"),
+        ("--classify-base-url", "classify_base_url"),
+        ("--classify-key", "classify_key"),
+    ):
+        if getattr(options, dest, None):
+            return flag
+    return "--classify-model"
 
 
 def preview_endpoint(options):
@@ -1572,6 +1635,46 @@ def preview_endpoint(options):
         return PLAN_AUTO_FORMAT, FORMAT_DICT.get(PLAN_AUTO_FORMAT)
     route = ROUTE_DICT.get(model_names[0]) if len(model_names) == 1 else None
     return api_format, route or FORMAT_DICT.get(api_format)
+
+
+def endpoint_preview_lines(options):
+    """`Classifier: ...` and `Image model: ...`, as the run would resolve them.
+
+    The same resolvers the run calls (`book_maker.endpoints`), on a copy of
+    the options and without a key, so a preview needs no credentials and
+    rewrites nothing. A choice the run would refuse is printed with the
+    refusal instead of stopping the preview.
+    """
+    from book_maker.endpoints import (
+        resolve_classify_endpoint,
+        resolve_image_endpoint,
+        run_choice,
+    )
+
+    copy = argparse.Namespace(**vars(options))
+    try:
+        names, api_format, _keys = resolve_endpoint(copy)
+    except SystemExit:
+        names, api_format = [], PLAN_AUTO_FORMAT
+    run = run_choice(names[0] if names else "", copy.api_base, None, api_format)
+    provider = getattr(copy, "provider_route", None)
+    lines = []
+    try:
+        choice = resolve_classify_endpoint(copy, run, provider, with_key=False)
+        model = choice.model or "the run's model"
+        lines.append(f"Classifier: {model} at {choice.where()} ({choice.source})")
+    except SystemExit as err:
+        lines.append(f"Classifier: refused: {err}")
+    try:
+        choice = resolve_image_endpoint(copy, run, provider, with_key=False)
+        lines.append(
+            "Image model: off"
+            if choice is None
+            else f"Image model: {choice.model} at {choice.where()} ({choice.source})"
+        )
+    except SystemExit as err:
+        lines.append(f"Image model: refused: {err}")
+    return lines
 
 
 def dry_run_plan_divergence(facts):
@@ -1664,6 +1767,18 @@ def normalize_options(options, given=None):
     """
     options.context_flag, options.context_mode = resolve_context_mode(options)
     given = given or SimpleNamespace()
+    # `--plan-classify-model` is the old name of `--classify-model`; typed
+    # together, the old spelling wins (packet F's test list), and the
+    # message that names the flag names the one that was typed.
+    old_name = getattr(options, "plan_classify_model", "") or ""
+    new_name = getattr(options, "classify_model", "") or ""
+    if old_name:
+        options.classify_model = old_name
+    options.classify_model_flag = (
+        "--plan-classify-model"
+        if old_name
+        else ("--classify-model" if new_name else "")
+    )
     given.accumulated_num = options.accumulated_num is not None
     given.batch_units = options.batch_units is not None
     given.plan_min_coverage = options.plan_min_coverage is not None
@@ -1743,9 +1858,8 @@ def run_facts(options, given, **resolved):
     facts.__dict__.update(resolved)
     facts.plan_mode = plan_mode_expected(facts)
     facts.classify_flag = (
-        "--plan-classify-model"
-        if options.plan_classify_model
-        else f"--plan-classify {facts.classify_mode}"
+        getattr(options, "classify_model_flag", "")
+        or f"--plan-classify {facts.classify_mode}"
     )
     facts.codex_ignored_flags = [
         flag
@@ -1778,6 +1892,40 @@ def check_compatibility(facts, rules=COMPAT_RULES):
         raise SystemExit(1)
     for rule in tripped:
         print(f"[bold yellow]Warning:[/bold yellow] {rule.say(facts)}")
+
+
+def compat_stops(options, book_type):
+    """The stop rows' sentences for a parsed command line, without running it.
+
+    For a caller that runs the translation later and cannot afford to hear
+    a refusal then: the `--to-epub` route extracts a PDF before its inner
+    run reaches `check_compatibility`. The endpoint is resolved on a copy of
+    the options, as `main` resolves it; an endpoint that does not resolve is
+    itself the refusal. Warn rows are left to the run that will print them.
+    """
+    copy = argparse.Namespace(**vars(options))
+    given = normalize_options(copy)
+    try:
+        names, api_format, _keys = resolve_endpoint(copy)
+    except SystemExit as err:
+        return [str(err)]
+    route = ROUTE_DICT.get(names[0]) if len(names) == 1 else None
+    classify_mode, plan_auto = resolve_classify_mode(copy, book_type)
+    facts = run_facts(
+        copy,
+        given,
+        book_type=book_type,
+        api_format=api_format,
+        translate_model=route or FORMAT_DICT.get(api_format),
+        model_names=names,
+        classify_mode=classify_mode,
+        plan_auto=plan_auto,
+    )
+    return [
+        rule.say(facts)
+        for rule in COMPAT_RULES
+        if rule.level == "stop" and rule.when(facts)
+    ]
 
 
 def build_parser():
@@ -1972,13 +2120,37 @@ def build_parser():
         "rerun the same command afterwards to translate",
     )
     parser.add_argument(
+        "--classify-model",
+        dest="classify_model",
+        type=str,
+        default="",
+        metavar="MODEL",
+        help=HELP_CLASSIFY_MODEL,
+    )
+    parser.add_argument(
+        "--classify-base-url",
+        dest="classify_base_url",
+        type=str,
+        default="",
+        metavar="URL",
+        help=HELP_CLASSIFY_BASE_URL,
+    )
+    parser.add_argument(
+        "--classify-key",
+        dest="classify_key",
+        type=str,
+        default="",
+        metavar="KEY",
+        help=HELP_CLASSIFY_KEY,
+    )
+    # The old name of --classify-model (owner 260923): still accepted,
+    # hidden from the help, merged by `normalize_options`, where it wins.
+    parser.add_argument(
         "--plan-classify-model",
         dest="plan_classify_model",
         type=str,
         default="",
-        help="model for plan-signature classification (default: the "
-        "translating model). When set explicitly, a classification failure "
-        "aborts the run instead of falling back to the heuristic plan",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--exclude-translate-tags",
@@ -2152,11 +2324,25 @@ off. Minimum 1.
         "so a chapter never overwrites the whole book.",
     )
     parser.add_argument(
-        "--structure-model",
-        dest="structure_model",
+        "--img-model",
+        dest="img_model",
         default=None,
         metavar="MODEL",
-        help=HELP_STRUCTURE_MODEL,
+        help=HELP_IMG_MODEL,
+    )
+    parser.add_argument(
+        "--img-base-url",
+        dest="img_base_url",
+        default=None,
+        metavar="URL",
+        help=HELP_IMG_BASE_URL,
+    )
+    parser.add_argument(
+        "--img-key",
+        dest="img_key",
+        default=None,
+        metavar="KEY",
+        help=HELP_IMG_KEY,
     )
     parser.add_argument(
         "--retranslate",
@@ -2468,7 +2654,9 @@ def run_to_epub(options, argv):
             ocr_lang=options.ocr_lang,
             pages=options.pages,
             formula_images=options.formula_images,
-            structure_model=options.structure_model,
+            img_model=options.img_model,
+            img_base_url=options.img_base_url,
+            img_key=options.img_key,
             quiet=options.quiet,
         )
     except PipelineError as err:
@@ -2628,6 +2816,10 @@ def main(argv=None, *, markdown_loader_class=None):
         # cannot promise a window the run does not use.
         if options.context_mode == "session" and not options.no_context_compact:
             print(compact_budget_notice(options.context_compact_at))
+        # Which endpoints the run would ask, resolved as the run resolves
+        # them, without a key (a dry run needs no credentials).
+        for line in endpoint_preview_lines(options):
+            print(escape(line))
         # What this preview cannot know: whether the real run will be in plan
         # mode at all, and how far the endpoint will be trusted with one
         # request. Both change the numbers just printed.
@@ -2745,10 +2937,9 @@ def main(argv=None, *, markdown_loader_class=None):
             f"now only support files of these formats: {','.join(support_type_list)}",
         )
 
-    # Which mode the two --plan-classify flags asked for. Resolved here
-    # because the compatibility table asks about it; the one contradiction
-    # between them is still refused further down, where its message lives.
-    classify_mode, plan_auto = resolve_classify_mode(options)
+    # Which mode --plan-classify and --classify-model asked for. Resolved
+    # here because the compatibility table asks about it.
+    classify_mode, plan_auto = resolve_classify_mode(options, book_type)
 
     # The compatibility table: every combination that would be paid for and
     # then wasted, degraded or ignored. After the endpoint is resolved (the
@@ -2781,6 +2972,30 @@ def main(argv=None, *, markdown_loader_class=None):
         options.api_base,
         endpoint_env_keys + legacy.env_keys,
     )
+    # The classify endpoint (`--classify-model`, else the provider entry's
+    # classify_model, else the run's own), resolved with its key before the
+    # book is opened: an endpoint of another format, or one with no key, is
+    # refused while nothing has been spent. Plan mode is its only user.
+    # `--plan-classify all` asks nothing, so nothing is resolved for it
+    # (row C32 says the flags are ignored).
+    classify_choice = None
+    if book_type == "epub" and classify_mode != "all":
+        from book_maker.endpoints import resolve_classify_endpoint, run_choice
+
+        try:
+            classify_choice = resolve_classify_endpoint(
+                options,
+                run_choice(
+                    model_names[0] if model_names else "",
+                    options.api_base,
+                    API_KEY,
+                    api_format,
+                ),
+                getattr(options, "provider_route", None),
+            )
+        except SystemExit as err:
+            print(f"[bold red]Error: {escape(redact(str(err)))}[/bold red]")
+            exit(1)
 
     # Read before the book is opened: a glossary that will not parse is the
     # operator's typo, and finding it after the first paid request would mean
@@ -2997,22 +3212,6 @@ def main(argv=None, *, markdown_loader_class=None):
         e.sentence_mode = True
     if options.allow_navigable_strings:
         e.allow_navigable_strings = True
-    # --plan-classify-model names a classifier, which only makes sense in
-    # model mode; asking for it alongside a no-classification mode is a
-    # contradiction, not a preference to resolve silently. (The modes
-    # themselves are resolved by resolve_classify_mode above, which leaves
-    # this combination as typed so this refusal still owns it.)
-    if options.plan_classify_model and classify_mode in ("all", "agent"):
-        reason = (
-            "agent mode makes no API call"
-            if classify_mode == "agent"
-            else "all mode skips classification"
-        )
-        print(
-            f"[bold red]Error:[/bold red] --plan-classify-model cannot be "
-            f"combined with --plan-classify {classify_mode} ({reason})"
-        )
-        exit(1)
     # Plan mode is epub-only, and 'agent' in particular promises to stop
     # before spending anything; silently translating a txt/md book instead
     # would be the exact opposite of what was asked.
@@ -3052,7 +3251,6 @@ def main(argv=None, *, markdown_loader_class=None):
         # translate-everything decision, and the loader has to know it was
         # made rather than infer it from the absence of one.
         e.plan_classify = classify_mode
-        e.plan_classify_model = options.plan_classify_model or None
     if options.quiet and hasattr(e, "quiet"):
         e.quiet = True
         # The translator prints echoes of its own — handoff reports, window
@@ -3145,6 +3343,35 @@ def main(argv=None, *, markdown_loader_class=None):
         e.batch_flag = options.batch_flag
     if options.batch_use_flag:
         e.batch_use_flag = options.batch_use_flag
+
+    # A fixed engine (google, deepl ...) has no model to ask; a run on one
+    # classifies only through a classifier at an address of its own, and
+    # row A10 has stopped the rest.
+    if (
+        classify_choice is not None
+        and hasattr(e, "classify_translator")
+        and (
+            classify_choice.api_format in LLM_FORMATS
+            or classify_choice.api_format == "jev"
+        )
+    ):
+        from book_maker.classifier import DEFAULT_PREFER, SESSION_FIRST
+        from book_maker.endpoints import build_classifier
+
+        # `agent` and `all` ask the classify endpoint's conversation first
+        # (owner 260923): agent mode "just works like plan classify" there.
+        e.classify_translator = build_classifier(
+            classify_choice,
+            e.translate_model,
+            options,
+            language,
+            prompt_config,
+            prefer=(
+                SESSION_FIRST if classify_mode in ("agent", "all") else DEFAULT_PREFER
+            ),
+        )
+        if e.classify_translator.separate:
+            print(f"classifier: {escape(e.classify_translator.describe())}")
 
     if plan_auto:
         # the verdict is cached, so the first translation does not pay again

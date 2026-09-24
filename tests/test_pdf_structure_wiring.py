@@ -1,12 +1,13 @@
-"""`--structure-model`: how the region-role pass is reached, and when not.
+"""`--img-model`: how the region-role pass is reached, and when not.
 
-PIN (lead 260923, packet E2): the pass is opt-in. Without the flag nothing
-of it is imported, built or probed; with it, the model runs on the
-translation's own OpenAI-shaped endpoint and key (the
-`--plan-classify-model` pattern), an endpoint of another format is refused
-before a page is read, an endpoint that cannot see a page image leaves the
-detector's labels and says so, and the model plus the prompt/policy
-revision are part of the extraction identity.
+PIN (lead 260923, packet E2; packet F, owner 260923 22:30): the pass is
+opt-in. Without an image model (the flag, else the provider entry's
+img_model; never the run's own model) nothing of it is imported, built or
+probed; with one, the model runs on the translation's endpoint and key, or
+on `--img-base-url` with `--img-key`; an endpoint of another format is
+refused before a page is read, an endpoint that cannot see a page image
+leaves the detector's labels and says so, and the model, its base and the
+prompt/policy revision are part of the extraction identity.
 
 The model is a fake translator exposing the two names the pass uses
 (`structured_json_with_image`, `vision_verdict` / `capabilities.
@@ -30,11 +31,12 @@ from book_maker import cli  # noqa: E402
 from book_maker.pipeline import docling_parser, stages, to_epub  # noqa: E402
 from book_maker.pipeline.bundle import Bundle  # noqa: E402
 from book_maker.pipeline.errors import PipelineError  # noqa: E402
-from book_maker.pipeline.messages import (  # noqa: E402
-    DEVICE_SELECTED,
-    STRUCTURE_ROUTE_UNSUPPORTED,
-    STRUCTURE_VISION_UNVERIFIED,
+from book_maker.endpoints import (  # noqa: E402
+    IMG_ENDPOINT_UNSUPPORTED,
+    IMG_ENDPOINT_UNVERIFIED,
+    EndpointChoice,
 )
+from book_maker.pipeline.messages import DEVICE_SELECTED  # noqa: E402
 from book_maker.pipeline.pdf_settings import ExtractionSettings  # noqa: E402
 
 REV = "260923a/260923b"
@@ -55,6 +57,24 @@ def test_the_structure_model_and_revision_are_identity():
     assert len({str(s.identity()) for s in (luna, other_model, other_rev)}) == 3
     # a revision without a model changes nothing: no pass ran
     assert ExtractionSettings(structure_rev=REV).identity() == plain.identity()
+
+
+def test_the_image_base_is_identity():
+    """packet F: the same model id at another address may be another model."""
+    run_s = ExtractionSettings(structure="m", structure_rev=REV)
+    local = ExtractionSettings(
+        structure="m", structure_rev=REV, structure_base="http://127.0.0.1:1/v1"
+    )
+    assert run_s.identity()["structure_base"] is None
+    assert local.identity()["structure_base"] == "http://127.0.0.1:1/v1"
+    assert run_s.identity() != local.identity()
+    manifest = {"structure": "m", "structure_rev": REV, **local.identity()}
+    assert ExtractionSettings.from_manifest(manifest).identity() == local.identity()
+    # a base without a model changes nothing
+    assert (
+        ExtractionSettings(structure_base="http://x/v1").identity()
+        == ExtractionSettings().identity()
+    )
 
 
 def test_from_manifest_reads_the_structure_back():
@@ -177,10 +197,9 @@ def stub_docling(monkeypatch):
     return state
 
 
-def request(translator, model="gpt-5.6-luna"):
-    return docling_parser._structure_ask(
-        types.SimpleNamespace(api_format="openai"), model, translator=translator
-    )
+def request(translator, model="gpt-5.6-luna", base=""):
+    choice = EndpointChoice(model, base, "k", "openai", "cli", own_base=bool(base))
+    return docling_parser._structure_ask(choice, None, translator=translator)
 
 
 def test_convert_writes_the_overlay_and_exports_the_new_roles(
@@ -243,6 +262,9 @@ def test_a_verified_endpoint_runs_the_pass_and_the_manifest_says_so(
     assert extraction["structure_applied"] is True
     assert extraction["structure_status"] == "complete"
     assert extraction["structure_totals"]["applied"] == 2
+    assert extraction["img_source"] == "cli"
+    assert extraction["img_verdict"] == "verified"
+    assert extraction["structure_base"] is None
     assert (bundle.work_file("extraction") / "decisions.json").is_file()
     source = bundle.source.read_text(encoding="utf-8")
     assert "```\nimport os\n```" in source
@@ -263,8 +285,8 @@ def test_an_endpoint_that_cannot_see_keeps_the_detector_s_labels_and_says_so(
     stages.prepare(
         bundle, real_pdf, pandoc=pandoc, structure=request(translator), progress=False
     )
-    line = STRUCTURE_VISION_UNVERIFIED.format(
-        model="gpt-5.6-luna", verdict="unsupported"
+    line = IMG_ENDPOINT_UNVERIFIED.format(
+        model="gpt-5.6-luna", base="the run's endpoint", verdict="unsupported"
     )
     assert line in capsys.readouterr().out.replace("\n", "")
     assert translator.calls == []  # not one page was sent
@@ -274,6 +296,8 @@ def test_an_endpoint_that_cannot_see_keeps_the_detector_s_labels_and_says_so(
     assert extraction["structure"] == "gpt-5.6-luna"
     assert extraction["structure_applied"] is False
     assert extraction["structure_status"] == "not_run"
+    assert extraction["img_source"] == "cli"
+    assert extraction["img_verdict"] == "unsupported"
     assert not (bundle.work_file("extraction") / "decisions.json").exists()
     assert "import os" in bundle.source.read_text(encoding="utf-8")
     assert "```" not in bundle.source.read_text(encoding="utf-8")
@@ -318,21 +342,35 @@ def test_another_api_format_is_refused_before_anything_is_extracted(
         to_epub.pdf_to_epub(
             fake_pdf,
             TRANSLATION,
-            structure_model="gpt-5.6-luna",
+            img_model="gpt-5.6-luna",
             **refusing_stages(),
         )
-    assert refused.value.detail == STRUCTURE_ROUTE_UNSUPPORTED.format(
-        api_format="google"
+    assert refused.value.detail.startswith(
+        "--img-model needs an OpenAI-compatible endpoint;"
     )
+    assert refused.value.detail.endswith("resolves to the google format.")
     assert not (fake_pdf.parent / "book_book").exists()
 
 
-def test_a_translator_without_an_image_channel_is_refused():
+def test_an_image_base_of_another_format_is_refused(fake_pdf, monkeypatch):
+    monkeypatch.setattr(to_epub, "find_pandoc", lambda explicit=None: "pandoc")
     with pytest.raises(PipelineError) as refused:
-        request(object())
-    assert refused.value.detail == STRUCTURE_ROUTE_UNSUPPORTED.format(
-        api_format="openai"
+        to_epub.pdf_to_epub(
+            fake_pdf,
+            ["--model", "gpt-5.6-nano", "--key", "sk-test", "--language", "zh-hans"],
+            img_model="claude-x",
+            img_base_url="https://api.anthropic.com",
+            **refusing_stages(),
+        )
+    assert refused.value.detail == IMG_ENDPOINT_UNSUPPORTED.format(
+        base="https://api.anthropic.com", api_format="anthropic"
     )
+
+
+def test_a_translator_without_an_image_channel_cannot_see():
+    # the resolver refuses a format without the channel; a translator that
+    # still lacks one answers "unsupported" and the pass is skipped
+    assert request(object()).vision() == "unsupported"
 
 
 def test_the_structure_model_runs_on_the_translation_s_endpoint_and_key(
@@ -372,9 +410,7 @@ def test_the_structure_model_runs_on_the_translation_s_endpoint_and_key(
         "zh-hans",
     ]
     with pytest.raises(PipelineError):
-        to_epub.pdf_to_epub(
-            fake_pdf, translation, structure_model="gpt-5.6-luna", **stages_
-        )
+        to_epub.pdf_to_epub(fake_pdf, translation, img_model="gpt-5.6-luna", **stages_)
     assert built == {
         "key": "sk-test",
         "api_base": "https://gateway.example/v1",
@@ -383,13 +419,118 @@ def test_the_structure_model_runs_on_the_translation_s_endpoint_and_key(
     structure = seen["structure"]
     assert structure.model == "gpt-5.6-luna"
     assert structure.rev == REV
+    assert structure.source == "cli"
+    assert structure.base == "https://gateway.example/v1"
+
+    # at an address of its own, with its own key; the run's key stays home
+    built.clear()
+    with pytest.raises(PipelineError):
+        to_epub.pdf_to_epub(
+            fake_pdf,
+            translation,
+            img_model="local-vl",
+            img_base_url="http://127.0.0.1:8080/v1",
+            img_key="vk-test",
+            **stages_,
+        )
+    assert built == {
+        "key": "vk-test",
+        "api_base": "http://127.0.0.1:8080/v1",
+        "models": ["local-vl"],
+    }
+    assert seen["structure"].base == "http://127.0.0.1:8080/v1"
+
+
+def test_img_model_none_builds_nothing(fake_pdf, monkeypatch):
+    """PIN (owner 260923 22:30, packet F): 'none' is off, and nothing of the
+    pass is built or probed."""
+
+    def never(*args, **kwargs):
+        pytest.fail("the pass was built for --img-model none")
+
+    monkeypatch.setattr(docling_parser, "_structure_ask", never)
+    monkeypatch.setattr(to_epub, "find_pandoc", lambda explicit=None: "pandoc")
+    seen = {}
+
+    def prepare_stage(bundle, source, **kwargs):
+        seen.update(kwargs)
+        raise PipelineError("stop here", stage="extract")
+
+    with pytest.raises(PipelineError):
+        to_epub.pdf_to_epub(
+            fake_pdf,
+            TRANSLATION,
+            img_model="none",
+            prepare_stage=prepare_stage,
+            translate_stage=None,
+            export_stage=None,
+        )
+    assert seen["structure"] is None
+
+
+def test_a_stop_row_refuses_before_the_extraction(fake_pdf, monkeypatch):
+    """packet F, after the port's Codex review: the route diverts before
+    `check_compatibility`, so its stop rows (A12 codex x --no-thinking here)
+    are asked before `prepare_stage`, which is never called."""
+    monkeypatch.setattr(to_epub, "find_pandoc", lambda explicit=None: "pandoc")
+    with pytest.raises(PipelineError) as refused:
+        to_epub.pdf_to_epub(
+            fake_pdf,
+            ["--api_format", "codex", "--no-thinking", "--language", "zh-hans"],
+            **refusing_stages(),
+        )
+    assert "--no-thinking" in refused.value.detail
+    assert not (fake_pdf.parent / "book_book").exists()
+
+
+def test_the_image_usage_is_its_own_line(fake_pdf, monkeypatch, capsys):
+    from book_maker.pipeline.messages import IMAGE_MODEL_USAGE
+    from book_maker.translator.base_translator import UsageMeter
+
+    meter = UsageMeter()
+
+    class Built(FakeVisionTranslator):
+        def __init__(self, key, language, api_base=None, **kwargs):
+            super().__init__(ANSWERS)
+            self.usage = meter
+
+        def set_model_list(self, models):
+            pass
+
+    monkeypatch.setitem(cli.FORMAT_DICT, "openai", Built)
+    monkeypatch.setattr(to_epub, "find_pandoc", lambda explicit=None: "pandoc")
+
+    def prepare_stage(bundle, source, **kwargs):
+        meter.note(prompt=3000, completion=40)
+
+    def translate_stage(bundle, options, *, pandoc):
+        print("the inner run's own usage line")
+
+    def export_stage(bundle, *, pandoc):
+        bundle.epub.write_bytes(b"PK")
+        return bundle.epub
+
+    to_epub.pdf_to_epub(
+        fake_pdf,
+        ["--model", "gpt-5.6-nano", "--key", "sk-test", "--language", "zh-hans"],
+        img_model="gpt-5.6-luna",
+        prepare_stage=prepare_stage,
+        translate_stage=translate_stage,
+        export_stage=export_stage,
+    )
+    out = capsys.readouterr().out
+    line = IMAGE_MODEL_USAGE.format(
+        model="gpt-5.6-luna", base="the run's endpoint", summary=meter.summary()
+    )
+    assert line in out.replace("\n", "")
+    assert out.index("Image model (") < out.index("the inner run's own usage line")
 
 
 @pytest.mark.parametrize("flagged", [True, False])
 def test_no_thinking_reaches_the_structure_translator(fake_pdf, monkeypatch, flagged):
     """Port 260923 (Codex finding on port/260920-batch): the CLI set
     `no_thinking` on the translation-stage instance only, so `--to-epub
-    --structure-model M --no-thinking` still sent the pass's image requests
+    --structure-model M --no-thinking` (now `--img-model`) still sent the pass's image requests
     with reasoning on. The pass's translator is built here from the same
     parsed options and gets the flag on the routes that carry it."""
     built = {}
@@ -425,7 +566,7 @@ def test_no_thinking_reaches_the_structure_translator(fake_pdf, monkeypatch, fla
         to_epub.pdf_to_epub(
             fake_pdf,
             translation,
-            structure_model="gpt-5.6-luna",
+            img_model="gpt-5.6-luna",
             prepare_stage=prepare_stage,
             translate_stage=None,
             export_stage=None,
@@ -440,7 +581,7 @@ def test_without_the_flag_nothing_of_the_pass_is_loaded_or_probed(
     from book_maker.translator import capabilities
 
     def never(*args, **kwargs):
-        pytest.fail("the image probe ran without --structure-model")
+        pytest.fail("the image probe ran without --img-model")
 
     monkeypatch.setattr(capabilities.CapabilityLedger, "ensure_vision", never)
     monkeypatch.setattr(docling_parser, "_structure_ask", never)
@@ -481,12 +622,18 @@ def test_the_flag_reaches_the_route_and_not_the_translation(fake_pdf, monkeypatc
             "--book_name",
             str(fake_pdf),
             "--to-epub",
-            "--structure-model",
+            "--img-model",
             "gpt-5.6-luna",
+            "--img-base-url",
+            "http://127.0.0.1:1/v1",
+            "--img-key",
+            "vk",
             *TRANSLATION,
         ]
     )
-    assert seen["structure_model"] == "gpt-5.6-luna"
+    assert seen["img_model"] == "gpt-5.6-luna"
+    assert seen["img_base_url"] == "http://127.0.0.1:1/v1"
+    assert seen["img_key"] == "vk"
     assert to_epub.translation_argv(seen["argv"]) == TRANSLATION
 
 
@@ -512,13 +659,13 @@ def test_the_harness_hands_the_structure_request_to_the_stage(
     monkeypatch.setattr(harness, "prepare", record)
     monkeypatch.setattr(
         docling_parser,
-        "_structure_ask",
-        lambda options, model: made.append(model) or "request",
+        "image_request",
+        lambda image, translation: made.append(image.img_model) or "request",
     )
     base = ["--pandoc", pandoc, "extract", str(fake_pdf), "--output", str(tmp_path)]
     assert harness.main(base) == 1
     assert "structure" not in seen and made == []
-    assert harness.main([*base, "--structure-model", "gpt-5.6-luna"]) == 1
+    assert harness.main([*base, "--img-model", "gpt-5.6-luna"]) == 1
     assert seen["structure"] == "request" and made == ["gpt-5.6-luna"]
 
 

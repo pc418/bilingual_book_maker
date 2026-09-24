@@ -207,7 +207,9 @@ class SchemaBackend:
     def ask(self, question):
         translator = self.translator
         if question.image_png is not None:
-            kwargs = {"model": self.model, "accept": question.accept}
+            kwargs = {"model": self.model}
+            if question.accept is not None:
+                kwargs["accept"] = question.accept
             if question.deadline is not None:
                 kwargs["deadline"] = question.deadline
             result, usage = _metered(

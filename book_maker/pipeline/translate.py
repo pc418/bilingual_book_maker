@@ -125,7 +125,11 @@ def check_options(bbm_options):
     minute of Java and OCR to be told something that was true of the command
     line they typed.
     """
-    from book_maker.cli import PARALLEL_SESSION_REFUSAL, parallel_session_conflict
+    from book_maker.cli import (
+        PARALLEL_SESSION_REFUSAL,
+        compat_stops,
+        parallel_session_conflict,
+    )
 
     options = parse_bbm_options(bbm_options)
     for field, (flag, why) in FORBIDDEN_OPTIONS.items():
@@ -139,6 +143,13 @@ def check_options(bbm_options):
             "translating and hands off a plan",
             stage=STAGE,
         )
+    # The compatibility table's stop rows, for the Markdown book the inner
+    # run translates (packet F, after the port's Codex review: the route
+    # diverts before `check_compatibility`, so a stop there came after the
+    # extraction was paid for).
+    stops = compat_stops(options, "md")
+    if stops:
+        raise PipelineError(" ".join(stops), stage=STAGE)
     return list(bbm_options)
 
 

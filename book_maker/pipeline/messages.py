@@ -40,7 +40,7 @@ PANDOC_TOO_OLD = (
 )
 NAV_INVALID = "EPUB navigation is invalid: "
 PDF_OPTIONS_INERT = (
-    "--pdf-ocr, --device, --ocr-lang, --pages and --structure-model apply "
+    "--pdf-ocr, --device, --ocr-lang, --pages and --img-model apply "
     "only to PDF input."
 )
 DEVICE_SELECTED = "PDF extraction device: {device}."
@@ -170,28 +170,22 @@ PAGE_TOO_DENSE = (
     "printed page holds; inspect source.md before translating."
 )
 
-# Region roles (`--structure-model`): a vision model re-names the layout
-# detector's regions before the export. The four sentences below and the
-# help text are the lead's (packet E2, 260923), verbatim.
+# Region roles (`--img-model`, packet F; `--structure-model` in packet E2):
+# a vision model re-names the layout detector's regions before the export.
+# The sentences below are the lead's (packet E2, 260923), verbatim; an
+# endpoint that cannot see a page and one of another format are said by
+# `book_maker.endpoints` (IMG_ENDPOINT_UNVERIFIED, IMG_ENDPOINT_UNSUPPORTED).
 STRUCTURE_APPLIED = (
     "Region roles: {accepted} of {asked} asked items changed by {model} "
     "({kept} kept, {rejected} rejected, {high_change} pages with many changes); "
     "overlay at {path}."
 )
 STRUCTURE_PARTIAL = "Region roles: {detail}; the detector's own labels stand there."
-STRUCTURE_VISION_UNVERIFIED = (
-    "--structure-model {model} cannot read a page image on this endpoint "
-    "(probe: {verdict}); the extraction keeps the detector's labels."
-)
 # The lead's text, verbatim (ruling 260923): a page on which most asked
 # items changed keeps its changes and is called out instead.
 STRUCTURE_HIGH_CHANGE = (
     "Region roles: {changed} of {asked} asked items on page {page} changed; "
     "read that page in source.md before translating."
-)
-STRUCTURE_ROUTE_UNSUPPORTED = (
-    "--structure-model needs an OpenAI-compatible endpoint (api_format "
-    "openai); this run uses {api_format}."
 )
 # The `{detail}` of STRUCTURE_PARTIAL, one clause per kind, joined by "; ".
 STRUCTURE_DETAIL_BUDGET = (
@@ -208,11 +202,14 @@ STRUCTURE_DETAIL_DEADLINE = (
 )
 STRUCTURE_NOT_REUSED = (
     "Extracting again: the bundle's region-role pass is {status}; this run "
-    "asks for --structure-model {model}, which only a complete pass satisfies."
+    "asks for --img-model {model}, which only a complete pass satisfies."
 )
 # Not the lead's text: an error asking the endpoint about images (an
 # authentication failure, say), which ends the run like any other.
-STRUCTURE_FAILED = "--structure-model {model} failed: {detail}"
+STRUCTURE_FAILED = "--img-model {model} failed: {detail}"
+# Not the lead's text: the image model's own bill, printed after the
+# extraction when a second translator asked the pages (packet F).
+IMAGE_MODEL_USAGE = "Image model ({model} at {base}): {summary}"
 
 # Progress. The line is rewritten in place on a terminal and printed every
 # ten seconds into a log, so it says the same thing either way: what is
@@ -269,13 +266,6 @@ HELP_FORMULA_IMAGES = (
     "cropped from the page; the default keeps the picture."
 )
 HELP_PAGES = "PDF pages, numbered from 1; for example 1-20."
-HELP_STRUCTURE_MODEL = (
-    "Vision model on this endpoint that corrects the layout detector's region "
-    "roles (text, heading, caption, footnote, code) from a page image before "
-    "export; off by default. Needs an endpoint that accepts image input; the "
-    "detector's labels stand wherever the model abstains or the endpoint "
-    "cannot see the page."
-)
 HELP_TRANSLATE = "Translate a prepared bundle with BBM."
 HELP_EXPORT = "Build an EPUB from the bundle's bilingual Markdown without translation."
 HELP_RUN = "Import or extract, translate once, and export both reading formats."

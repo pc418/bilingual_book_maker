@@ -125,29 +125,46 @@ def _add_pdf_options(parser):
         action="store_false",
         help=messages.HELP_FORMULA_IMAGES,
     )
+    from book_maker.endpoints import HELP_IMG_BASE_URL, HELP_IMG_KEY, HELP_IMG_MODEL
+
     parser.add_argument(
-        "--structure-model",
-        dest="structure_model",
+        "--img-model",
+        dest="img_model",
         default=None,
         metavar="MODEL",
-        help=messages.HELP_STRUCTURE_MODEL,
+        help=HELP_IMG_MODEL,
+    )
+    parser.add_argument(
+        "--img-base-url",
+        dest="img_base_url",
+        default=None,
+        metavar="URL",
+        help=HELP_IMG_BASE_URL,
+    )
+    parser.add_argument(
+        "--img-key", dest="img_key", default=None, metavar="KEY", help=HELP_IMG_KEY
     )
 
 
 def structure_request(options, trailing):
-    """`{"structure": request}` for `--structure-model`, else `{}`.
+    """`{"structure": request}` when an image model is chosen, else `{}`.
 
-    The model runs on the endpoint and key the translation options name
-    (`run`'s trailing options; `extract` has none, so the default endpoint
-    and its key variable). Nothing of the pass is loaded without the flag.
+    `--img-model`, else the `--provider` entry's img_model among the
+    translation options (`run`'s trailing options; `extract` has none, so
+    the default endpoint and its key variable), else off. Nothing of the
+    pass is loaded without a choice.
     """
-    model = getattr(options, "structure_model", None)
-    if not model:
-        return {}
-    from book_maker.pipeline.docling_parser import _structure_ask
     from book_maker.pipeline.translate import parse_bbm_options
 
-    return {"structure": _structure_ask(parse_bbm_options(trailing), model)}
+    translation = parse_bbm_options(trailing)
+    if not (getattr(options, "img_model", None) or "").strip() and not getattr(
+        translation, "provider", None
+    ):
+        return {}
+    from book_maker.pipeline.docling_parser import image_request
+
+    request = image_request(options, translation)
+    return {"structure": request} if request is not None else {}
 
 
 def main(argv=None):

@@ -57,8 +57,8 @@ def check_pdf_options(kind, options):
     pdf_ocr = getattr(options, "pdf_ocr", False)
     pages = getattr(options, "pages", None)
     ocr_lang = getattr(options, "ocr_lang", None)
-    structure_model = getattr(options, "structure_model", None)
-    if kind != "pdf" and (device or pdf_ocr or pages or ocr_lang or structure_model):
+    img_model = getattr(options, "img_model", None)
+    if kind != "pdf" and (device or pdf_ocr or pages or ocr_lang or img_model):
         raise PipelineError(PDF_OPTIONS_INERT)
     return device_for(device)
 
@@ -195,7 +195,7 @@ def prepare(
     Markdown import never pulls in the PDF parser, its models or its
     process management for a file it is not going to read.
 
-    `structure` (a `docling_parser.StructureRequest`) puts its model and
+    `structure` (a `docling_parser.StructureRequest`) puts its model, base and
     revision into the settings, so a bundle made by another model, or by
     none, is not reused for this one.
     """
@@ -208,7 +208,10 @@ def prepare(
         )
     if structure is not None:
         settings = replace(
-            settings, structure=structure.model, structure_rev=structure.rev
+            settings,
+            structure=structure.model,
+            structure_rev=structure.rev,
+            structure_base=getattr(structure, "base", None),
         )
     finished = already_prepared(
         bundle,

@@ -183,6 +183,59 @@ class TestStops:
         assert proc.returncode == 1
         assert "--to-epub is the PDF route" in _flat(proc)
 
+    def test_an_image_base_without_its_model(self, tmp_path):
+        # A14: --img-base-url says where --img-model is served; alone it
+        # names nothing to ask there
+        proc = _cli(
+            "--book_name",
+            str(_book(tmp_path)),
+            "--api_format",
+            "google",
+            "--img-base-url",
+            "http://127.0.0.1:9/v1",
+        )
+        assert proc.returncode == 1
+        assert "no --img-model was given" in _flat(proc)
+
+    def test_a_classify_base_without_its_model(self, tmp_path):
+        # A15: the same for the classify endpoint
+        proc = _cli(
+            "--book_name",
+            str(_book(tmp_path)),
+            "--api_format",
+            "google",
+            "--classify-base-url",
+            "http://127.0.0.1:9/v1",
+        )
+        assert proc.returncode == 1
+        assert "no --classify-model was given" in _flat(proc)
+
+    def test_agent_mode_with_a_classify_model_is_not_warned_about(self):
+        # owner 260923: agent asks the classify endpoint's session, so the
+        # pair is a choice, not a contradiction
+        f = facts(
+            [
+                "--book_name",
+                "b.epub",
+                "--plan-classify",
+                "agent",
+                "--classify-model",
+                "m",
+            ]
+        )
+        assert "C32" not in tripped(f)
+
+    def test_a10_is_exempt_for_a_classifier_at_its_own_address(self):
+        # a fixed-engine run can still plan through an OpenAI-compatible
+        # classifier it names with an address of its own
+        argv = ["--book_name", "b.epub", "--classify-model", "m"]
+        assert "A10" in tripped(facts(argv, api_format="google"))
+        f = facts(
+            [*argv, "--classify-base-url", "http://127.0.0.1:9/v1"],
+            api_format="google",
+        )
+        assert "A10" not in tripped(f)
+
     def test_to_epub_on_a_pdf_is_not_refused(self):
         # the same flag on the book it is for: no row fires, and the run is
         # diverted into the pipeline rather than stopped
@@ -687,12 +740,32 @@ WARN_FIXTURES = [
         "only runs with --to-epub",
     ),
     (
-        # C31: --structure-model re-names the PDF route's detector regions,
-        # and that route needs --to-epub
+        # C31: the image model serves the PDF route's page-image steps, and
+        # no other route has one (packet F, 260923)
         "C31",
-        ["--structure-model", "gpt-5.6-luna"],
+        ["--img-model", "gpt-5.6-luna"],
         {},
-        "only runs with --to-epub",
+        "only the PDF route (--to-epub on a PDF) has one",
+    ),
+    (
+        "C31:key",
+        ["--img-key", "k"],
+        {},
+        "does nothing with them",
+    ),
+    (
+        # C32: a classifier named beside --plan-classify all, which asks
+        # nothing (owner 260923: not with agent, which asks its session)
+        "C32",
+        ["--plan-classify", "all", "--classify-model", "gpt-5.6-luna"],
+        {},
+        "--classify-model names a classifier, and --plan-classify all",
+    ),
+    (
+        "C32:old-name",
+        ["--plan-classify", "all", "--plan-classify-model", "gpt-5.6-luna"],
+        {},
+        "--plan-classify-model names a classifier",
     ),
 ]
 
@@ -915,6 +988,46 @@ class TestDryRunPreview:
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "each turn plan mode off" in _flat(proc)
+
+    def test_the_preview_names_the_classify_and_image_endpoints(self, tmp_path):
+        # packet F: the preview mirrors the run's two resolutions, without a
+        # key; the run's own model classifies unless one is named, and the
+        # image model is off unless one is named
+        proc = _cli(
+            "--book_name",
+            str(_book(tmp_path)),
+            "--plan-dry-run",
+            "--api_format",
+            "openai",
+            "--model",
+            "gpt-5.6-luna",
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = _flat(proc)
+        assert (
+            "Classifier: gpt-5.6-luna at the openai endpoint's default host (run)"
+            in out
+        )
+        assert "Image model: off" in out
+        proc = _cli(
+            "--book_name",
+            str(_book(tmp_path)),
+            "--plan-dry-run",
+            "--api_format",
+            "openai",
+            "--model",
+            "gpt-5.6-luna",
+            "--classify-model",
+            "jev",
+            "--img-model",
+            "vision-m",
+            "--img-base-url",
+            "http://127.0.0.1:9/v1",
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = _flat(proc)
+        assert "Classifier: jev-latest at https://api.typesafe.ai (cli)" in out
+        assert "Image model: vision-m at http://127.0.0.1:9/v1 (cli)" in out
 
     def test_the_preview_says_its_request_count_is_a_floor(self, tmp_path):
         # B3: below strict decoding the run halves both the per-request unit

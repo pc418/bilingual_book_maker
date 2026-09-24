@@ -331,8 +331,10 @@ python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
   `skip`/`translate`/`unsure` replies; unsure and unparsable rows are
   translated), `none`, `all`, `model` (the same as auto, but an unresolved
   row stops the run instead of falling back), `agent`.
-  `--plan-classify-model X` classifies with another model; set explicitly,
-  a classification failure aborts instead of falling back.
+  `--classify-model X` classifies with another model (`--plan-classify-model`
+  is its old name); set explicitly, a classification failure aborts instead
+  of falling back. `--classify-base-url URL` asks it at another
+  OpenAI-compatible endpoint, with `--classify-key KEY`.
 - `--plan-min-coverage` (default 0.5): the run aborts when the plan covers
   less than this fraction of the book's text. `0` disables the guard; values
   above 0.9 tend to abort after the classification is already paid for.
@@ -503,14 +505,15 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   **Inline** mathematics inside a paragraph is not a formula region and is not
   covered: on a scan it arrives as whatever OCR made of it.
 - **A vision model can correct the layout detector's region roles**
-  (`--structure-model MODEL`, off by default). Docling sometimes calls an
+  (`--img-model MODEL`, off by default). Docling sometimes calls an
   author line a heading, a listing's lines footnotes, or a figure's label a
   section; with the flag, each page is shown to the named model with the
   detector's boxes drawn on it, and the model answers one role per region
   (text, heading, title, caption, footnote, code, or abstain). Accepted
   answers are applied before export, so the contents and the code blocks
   come out right; text is never rewritten. It needs an OpenAI-compatible
-  endpoint that accepts images (the run's own endpoint, probed once); where
+  endpoint that accepts images (the run's own endpoint, or
+  `--img-base-url URL` with `--img-key KEY`; probed once); where
   the model abstains or the endpoint cannot see the page, the detector's
   labels stand and the terminal says so. Measured on gpt-5.6-luna: 40 of 66
   catalogued label faults fixed, about 3k prompt tokens per page.

@@ -91,7 +91,9 @@ class TestRouting:
             ocr_lang,
             pages,
             formula_images,
-            structure_model,
+            img_model,
+            img_base_url,
+            img_key,
             quiet,
         ):
             seen.update(
@@ -102,7 +104,9 @@ class TestRouting:
                 ocr_lang=ocr_lang,
                 pages=pages,
                 formula_images=formula_images,
-                structure_model=structure_model,
+                img_model=img_model,
+                img_base_url=img_base_url,
+                img_key=img_key,
                 quiet=quiet,
             )
 
@@ -122,7 +126,7 @@ class TestRouting:
         assert seen["pdf_ocr"] is False
         assert seen["ocr_lang"] is None
         assert seen["pages"] is None
-        assert seen["structure_model"] is None
+        assert seen["img_model"] is None
         assert seen["quiet"] is False
         # every other option is the translation's, and is handed on as typed
         assert seen["argv"] == ["--book_name", str(pdf), "--to-epub", *TRANSLATION]
@@ -175,7 +179,9 @@ class TestRouting:
             # without them the equations are missing from the book.
             "formula_images": True,
             # The region-role pass is off unless its model is named.
-            "structure_model": None,
+            "img_model": None,
+            "img_base_url": None,
+            "img_key": None,
             "quiet": True,
         }
 
@@ -207,7 +213,9 @@ class TestRouting:
             "pages": "6-7",
             "formula_images": True,
             # The region-role pass is off unless its model is named.
-            "structure_model": None,
+            "img_model": None,
+            "img_base_url": None,
+            "img_key": None,
             "quiet": False,
         }
 
@@ -234,7 +242,9 @@ class TestRouting:
             "pages": None,
             "formula_images": True,
             # The region-role pass is off unless its model is named.
-            "structure_model": None,
+            "img_model": None,
+            "img_base_url": None,
+            "img_key": None,
             "quiet": False,
         }
 
@@ -251,7 +261,9 @@ class TestRouting:
             "pages": None,
             "formula_images": True,
             # The region-role pass is off unless its model is named.
-            "structure_model": None,
+            "img_model": None,
+            "img_base_url": None,
+            "img_key": None,
             "quiet": False,
         }
 
@@ -282,7 +294,9 @@ class TestRouting:
             "pages": None,
             "formula_images": True,
             # The region-role pass is off unless its model is named.
-            "structure_model": None,
+            "img_model": None,
+            "img_base_url": None,
+            "img_key": None,
             "quiet": False,
             **expected,
         }
@@ -526,10 +540,13 @@ class TestTheStages:
         (["--pages=6-7", "--key", "k"], ["--key", "k"]),
         (["--ocr-lang", "ch_sim,en", "--key", "k"], ["--key", "k"]),
         (["--ocr-lang=ja", "--key", "k"], ["--key", "k"]),
-        # route-owned: the structure model is the extraction's, and must
-        # not reach the translation run or its fingerprint
-        (["--structure-model", "gpt-5.6-luna", "--key", "k"], ["--key", "k"]),
-        (["--structure-model=gpt-5.6-luna", "--key", "k"], ["--key", "k"]),
+        # route-owned: the image endpoint is the extraction's, and must
+        # not reach the translation run (row C31 would warn) or its
+        # fingerprint
+        (["--img-model", "gpt-5.6-luna", "--key", "k"], ["--key", "k"]),
+        (["--img-model=gpt-5.6-luna", "--key", "k"], ["--key", "k"]),
+        (["--img-base-url", "http://h/v1", "--key", "k"], ["--key", "k"]),
+        (["--img-key", "vk", "--key", "k"], ["--key", "k"]),
         (["--book_name", "b.pdf", "--test"], ["--test"]),
         (["--book_name=b.pdf", "--test"], ["--test"]),
         # a value that happens to look like a flag this route owns is still

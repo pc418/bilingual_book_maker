@@ -46,6 +46,19 @@ SOURCE_PROVIDER = "provider"
 SOURCE_RUN = "run"
 SOURCE_OFF = "off"
 
+# The lead's text, verbatim (packet F, 260923): the six flags' help.
+HELP_IMG_MODEL = "Vision model for the steps that look at a page image (today: correcting the layout detector's region roles on the PDF route). Resolution: this flag, else the provider entry's img_model, else off; 'none' turns a provider entry's image model off. The run's own model is never used for images unless named here."
+HELP_IMG_BASE_URL = "Endpoint for --img-model when it is not the run's endpoint (OpenAI-compatible only)."
+HELP_IMG_KEY = "API key for --img-base-url; defaults to the run's key when the endpoint is the same, else the key the endpoint's format reads from the environment."
+HELP_CLASSIFY_MODEL = "Model for every classification step: plan mode's unit classifier and the PDF route's text-only structure decisions. Resolution: this flag, else the provider entry's classify_model, else the run's own model. --plan-classify-model is the old name of this flag. With --plan-classify agent the questions go over that model's session instead of a JSON schema."
+HELP_CLASSIFY_BASE_URL = "Endpoint for --classify-model when it is not the run's endpoint (OpenAI-compatible only)."
+HELP_CLASSIFY_KEY = "API key for --classify-base-url; same default rule as --img-key."
+
+# The run's closing usage line for a classifier on an endpoint of its own
+# (packet F: "Classifier ({model} at {base}): ..."); the image model's is
+# `pipeline.messages.IMAGE_MODEL_USAGE`.
+CLASSIFIER_USAGE = "Classifier ({model} at {base}): {summary}"
+
 # The lead's text, verbatim (packet F, 260923).
 IMG_ENDPOINT_UNSUPPORTED = (
     "--img-model needs an OpenAI-compatible endpoint; {base} resolves to the "

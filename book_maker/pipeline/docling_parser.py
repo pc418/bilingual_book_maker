@@ -72,8 +72,6 @@ from .messages import (
     STRUCTURE_FAILED,
     STRUCTURE_HIGH_CHANGE,
     STRUCTURE_PARTIAL,
-    STRUCTURE_ROUTE_UNSUPPORTED,
-    STRUCTURE_VISION_UNVERIFIED,
     TITLE_HEADING_ADDED,
 )
 from .pdf_common import (
@@ -358,22 +356,34 @@ def _decide_structure(document, pdf, out_dir, structure):
 
 
 class StructureRequest:
-    """The `--structure-model` pass as the extraction sees it.
+    """The region-role pass (`--img-model`) as the extraction sees it.
 
     `ask(prompt, schema, image_png, deadline=None)` is the model call (the
     parsed answer, carrying `model` and `usage`; a question still retried
     at `deadline` ends as `decisions.AskFailed`); `vision()` is the endpoint's verdict on
     image input ('verified', 'unsupported', 'deferred'), asked only when an
     extraction is about to run, so a reused bundle pays for no probe.
-    `rev` is the prompt/policy revision the answers are asked under.
+    `rev` is the prompt/policy revision the answers are asked under; `base`
+    the address the model is asked at (identity, with the model); `source`
+    where the choice came from (cli, provider); `translator` the instance
+    whose meter the pass's requests are counted on.
     """
 
-    def __init__(self, model, ask, vision, rev):
+    def __init__(
+        self, model, ask, vision, rev, *, base=None, source=None, translator=None
+    ):
         self.model = model
         self.ask = ask
         self.vision = vision
         self.rev = rev
+        self.base = base
+        self.source = source
+        self.translator = translator
         self.pages = None
+        self.verdict = None
+
+    def where(self):
+        return self.base or "the run's endpoint"
 
 
 class _Answer(dict):
@@ -383,66 +393,12 @@ class _Answer(dict):
     usage = None
 
 
-def _structure_translator(options, model):
-    """An OpenAI-shaped translator on the translation run's own endpoint.
-
-    The `--plan-classify-model` pattern: the same api_base, key, extras and
-    prices the run resolves, with the model id swapped. `options` is the
-    translation command line as the CLI parses it, and is not changed.
-    """
-    import argparse
-
-    from book_maker import cli
-
-    options = argparse.Namespace(**vars(options))
-    try:
-        _names, api_format, env_keys = cli.resolve_endpoint(options)
-    except SystemExit as err:
-        raise PipelineError(str(err), stage=STAGE)
-    if api_format != "openai":
-        raise PipelineError(
-            STRUCTURE_ROUTE_UNSUPPORTED.format(api_format=api_format), stage=STAGE
-        )
-    try:
-        key = cli.resolve_api_key(api_format, options.key, options.api_base, env_keys)
-    except SystemExit as err:
-        raise PipelineError(str(err), stage=STAGE)
-    translator = cli.FORMAT_DICT[api_format](
-        key, "English", api_base=options.api_base or None
-    )
-    extras = {}
-    for dest in ("extra_body", "extra_headers"):
-        raw = getattr(options, dest, None)
-        if not raw:
-            continue
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as err:
-            raise PipelineError(f"invalid JSON in --{dest}: {err}", stage=STAGE)
-        if isinstance(parsed, dict):
-            extras[dest] = parsed
-    if extras and hasattr(translator, "set_request_extras"):
-        translator.set_request_extras(**extras)
-    prices = getattr(options, "price_table", None)
-    if prices is not None and hasattr(translator, "usage"):
-        translator.usage.prices = prices
-    # --no-thinking, as the CLI applies it to the translation run: a field
-    # in the request body, so only on a translator that builds one. The
-    # pass's image requests then carry and negotiate the spelling like every
-    # other request (port 260923, Codex finding).
-    if getattr(options, "no_thinking", False) and getattr(
-        translator, "SUPPORTS_REQUEST_EXTRAS", False
-    ):
-        translator.no_thinking = True
-    translator.set_model_list([model])
-    return translator
-
-
 def _soft_failures():
     """The model call's failures that are about one request, not the run."""
+    from book_maker.classifier import NoBackend
     from book_maker.structured import StructuredJSONFailed
 
-    soft = [StructuredJSONFailed]
+    soft = [StructuredJSONFailed, NoBackend]
     try:
         from book_maker.translator.vision import QuestionTimedOut, VisionRequestFailed
 
@@ -452,37 +408,55 @@ def _soft_failures():
     return tuple(soft)
 
 
-def _structure_ask(options, model, *, translator=None):
-    """The `StructureRequest` for `--structure-model MODEL`, or a refusal.
+def _candidates(schema):
+    """`{id: allowed answers}` from the pass's own per-id enum schema."""
+    properties = ((schema or {}).get("schema") or {}).get("properties") or {}
+    return {key: tuple(entry.get("enum") or ()) for key, entry in properties.items()}
 
-    Refused here, before anything is extracted, when the endpoint is not
-    OpenAI-shaped or the translator has no image channel
-    (`structured_json_with_image`) to ask through. The image verdict is
-    the translator's `vision_verdict(model)` where it has one, else its
-    ledger's `capabilities.ensure_vision(model)`.
+
+def _structure_ask(choice, options=None, *, translator=None):
+    """The `StructureRequest` for the image endpoint `choice`.
+
+    `choice` is `book_maker.endpoints.resolve_image_endpoint`'s answer: the
+    model, the address and key it is asked at, where it came from. The
+    translator is built for it from the translation options (endpoint,
+    key, prices, `--no-thinking`; extras on the run's own address) unless
+    one is given, and every question goes through a `Classifier` over it:
+    the pass's questions are image questions, answered by the structured
+    channel once the endpoint has read the probe image.
     """
+    from book_maker.classifier import Classifier, Question
+    from book_maker.endpoints import build_translator
+
     from . import decisions
 
     if translator is None:
-        translator = _structure_translator(options, model)
-    image = getattr(translator, "structured_json_with_image", None)
-    verdict = getattr(translator, "vision_verdict", None)
-    ledger = getattr(translator, "capabilities", None)
-    if image is None or (verdict is None and not hasattr(ledger, "ensure_vision")):
-        api_format = getattr(options, "api_format", None) or "openai"
-        raise PipelineError(
-            STRUCTURE_ROUTE_UNSUPPORTED.format(api_format=api_format), stage=STAGE
-        )
+        translator = build_translator(choice, options, "English")
+    classifier = Classifier(
+        translator,
+        choice.model,
+        prefer=("schema",),
+        source=choice.source,
+        base=choice.api_base or None,
+        separate=True,
+    )
+    schema_backend = classifier.backend("schema")
     soft = _soft_failures()
-    usage = getattr(translator, "usage", None)
 
     def ask(prompt, schema, image_png, deadline=None):
         from book_maker.loader.helper import _is_retryable
         from book_maker.redaction import redact
 
-        before = (usage.prompt, usage.completion) if usage is not None else None
+        question = Question(
+            prompt=prompt,
+            schema=schema,
+            candidates=_candidates(schema),
+            image_png=image_png,
+            abstain=decisions.ABSTAIN,
+            deadline=deadline,
+        )
         try:
-            answer = image(prompt, schema, image_png, model=model, deadline=deadline)
+            answer = classifier.ask(question)
         except soft as err:
             raise decisions.AskFailed(f"{type(err).__name__}: {err}")
         except Exception as err:
@@ -500,25 +474,64 @@ def _structure_ask(options, model, *, translator=None):
                     )
                 ) from err
             raise
-        if not isinstance(answer, dict):
+        # The pass lints the reply itself (`decisions.parse_reply`: unknown
+        # ids are protocol violations, out-of-set values invalid), so it is
+        # handed the reply as it came, not the classifier's filtered values.
+        if not isinstance(answer.raw, dict):
             raise decisions.ReplyRejected("the reply is not a JSON object")
-        reply = _Answer(answer)
-        reply.model = model
-        if before is not None:
+        reply = _Answer(answer.raw)
+        reply.model = choice.model
+        if answer.usage is not None:
             reply.usage = {
-                "prompt_tokens": usage.prompt - before[0],
-                "completion_tokens": usage.completion - before[1],
+                name: answer.usage.get(name)
+                for name in ("prompt_tokens", "completion_tokens")
             }
         return reply
 
     def vision():
-        if verdict is not None:
-            return verdict(model)
-        return ledger.ensure_vision(model)
+        if schema_backend is None:
+            return "unsupported"
+        return schema_backend.vision()
 
     return StructureRequest(
-        model, ask, vision, f"{decisions.PROMPT_REV}/{decisions.POLICY_REV}"
+        choice.model,
+        ask,
+        vision,
+        f"{decisions.PROMPT_REV}/{decisions.POLICY_REV}",
+        base=choice.api_base or None,
+        source=choice.source,
+        translator=translator,
     )
+
+
+def image_request(image_options, translation_options):
+    """The route's `StructureRequest`, or None when image steps are off.
+
+    `image_options` carries `img_model`, `img_base_url`, `img_key`;
+    `translation_options` is the translation command line as the CLI
+    parses it (the run's endpoint, key and `--provider` entry), and is not
+    changed. Resolved before a page is read: a model at an endpoint of
+    another format, or one with no key, is refused here, in the words the
+    operator needs. Nothing of the pass is built without a choice.
+    """
+    import argparse
+
+    from book_maker import cli
+    from book_maker.endpoints import resolve_image_endpoint, run_choice
+
+    options = argparse.Namespace(**vars(translation_options))
+    try:
+        names, api_format, env_keys = cli.resolve_endpoint(options)
+        provider = getattr(options, "provider_route", None)
+        run = run_choice(names[0] if names else "", options.api_base, None, api_format)
+        if resolve_image_endpoint(image_options, run, provider, with_key=False) is None:
+            return None
+        key = cli.resolve_api_key(api_format, options.key, options.api_base, env_keys)
+        run = run_choice(names[0] if names else "", options.api_base, key, api_format)
+        choice = resolve_image_endpoint(image_options, run, provider)
+    except SystemExit as err:
+        raise PipelineError(str(err), stage=STAGE)
+    return _structure_ask(choice, options)
 
 
 def _structure_lines(model, summary, bundle):
@@ -689,7 +702,7 @@ def extract_pdf(
     `formula_images` when given; the stage passes the one it compared the
     bundle against, so what runs is what was checked.
 
-    `structure` (a `StructureRequest`, from `--structure-model`) runs the
+    `structure` (a `StructureRequest`, from `--img-model`) runs the
     region-role pass inside the conversion when the endpoint can see a
     page image; when it cannot, the extraction goes on with the
     detector's labels and says so.
@@ -759,6 +772,7 @@ def extract_pdf(
     if structure is not None:
         try:
             verdict = structure.vision()
+            structure.verdict = verdict
         except (PipelineError, KeyboardInterrupt):
             bundle.set_stage(STAGE, "failed", parser=PARSER, device=resolved)
             raise
@@ -777,8 +791,10 @@ def extract_pdf(
                     page for start, end in ranges for page in range(start, end + 1)
                 }
         else:
-            structure_note = STRUCTURE_VISION_UNVERIFIED.format(
-                model=structure.model, verdict=verdict
+            from book_maker.endpoints import IMG_ENDPOINT_UNVERIFIED
+
+            structure_note = IMG_ENDPOINT_UNVERIFIED.format(
+                model=structure.model, base=structure.where(), verdict=verdict
             )
             print(structure_note)
 
@@ -983,6 +999,7 @@ def extract_pdf(
         formulas=formulas,
         render=render,
         structure=structure_summary,
+        image=structure,
     )
     limitations = [
         "Extraction reading order, headings and diacritics are not verified "
@@ -1109,6 +1126,7 @@ def _write_provenance(
     formulas=0,
     render=None,
     structure=None,
+    image=None,
 ):
     settings = settings or ExtractionSettings()
     ocr = settings.ocr
@@ -1127,6 +1145,11 @@ def _write_provenance(
     roles = {
         "structure": settings.structure,
         "structure_rev": settings.structure_rev if settings.structure else None,
+        "structure_base": settings.structure_base if settings.structure else None,
+        # Where the choice came from (cli, provider) and the endpoint's
+        # answer to the probe image: provenance, not identity.
+        "img_source": getattr(image, "source", None),
+        "img_verdict": getattr(image, "verdict", None),
         "structure_applied": structure is not None,
         # complete / partial (decisions.Overlay.status), or not_run when
         # asked for and the endpoint could not see a page; only complete

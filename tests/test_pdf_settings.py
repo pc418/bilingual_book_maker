@@ -26,6 +26,7 @@ DEFAULT_IDENTITY = {
     "formula_images": True,
     "structure": None,
     "structure_rev": None,
+    "structure_base": None,
 }
 
 

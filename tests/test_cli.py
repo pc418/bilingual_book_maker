@@ -239,22 +239,20 @@ def test_classify_flag_rejects_non_epub_books(tmp_path):
     assert "epub-only" in proc.stdout
 
 
-def test_agent_mode_rejects_a_classifier_model(tmp_path):
-    proc, _ = _run(
+def test_agent_mode_accepts_a_classifier_model(tmp_path):
+    # PIN owner 260923 22:40 (packet F, endpoint overrides): --plan-classify
+    # agent no longer refuses a classifier; the
+    # classify endpoint's session backend is asked first. Agent mode still
+    # writes the plan and stops before translating.
+    proc, plan = _run(
         tmp_path, "--plan-classify", "agent", "--plan-classify-model", "gpt-4o"
     )
-    assert proc.returncode == 1
-    assert "cannot be combined" in proc.stdout
+    assert "cannot be combined" not in proc.stdout
+    assert plan.exists(), proc.stdout + proc.stderr
 
 
-def test_all_mode_rejects_a_classifier_model(tmp_path):
-    # 'all' explicitly skips classification; naming a classifier alongside
-    # it is a contradiction, not a preference to resolve silently
-    proc, _ = _run(
-        tmp_path, "--plan-classify", "all", "--plan-classify-model", "gpt-4o"
-    )
-    assert proc.returncode == 1
-    assert "cannot be combined" in proc.stdout
+# 'all' with a classifier: row C32's warn, fixtures in test_flag_compat.py
+# (a CLI run here would translate the whole book).
 
 
 def test_classify_model_flag_implies_model_mode(tmp_path):

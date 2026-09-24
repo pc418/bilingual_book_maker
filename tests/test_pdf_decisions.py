@@ -686,6 +686,9 @@ def vision_structure(create):
     translator.extra_body = {}
     translator.capabilities = CapabilityLedger()
     translator.capabilities.verdicts["vision-model"] = "strict"
+    # what the extraction's `vision()` left in the ledger before the pass
+    # ran: every question is asked through the Classifier's image gate
+    translator.capabilities.vision["vision-model"] = "verified"
     translator._rung_refusals = {}
     translator.usage = UsageMeter()
     translator.openai_client = type(
@@ -699,7 +702,10 @@ def vision_structure(create):
             )
         },
     )()
-    return _structure_ask(None, "vision-model", translator=translator)
+    from book_maker.endpoints import EndpointChoice
+
+    choice = EndpointChoice("vision-model", "", "k", "openai", "cli")
+    return _structure_ask(choice, None, translator=translator)
 
 
 def test_each_question_is_given_the_pass_s_deadline(pdf, monkeypatch):

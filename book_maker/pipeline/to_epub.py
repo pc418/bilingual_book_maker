@@ -18,6 +18,7 @@ the file next to the PDF is never a half-built one.
 import os
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 from .bundle import Bundle, parse_ocr_lang, parse_pages
 from .epub_export import export_epub
@@ -46,7 +47,11 @@ OWNED_VALUE_OPTIONS = (
     "--ocr-lang",
     "--pages",
     "--device",
-    "--structure-model",
+    # The image endpoint: resolved here, for the extraction. The inner
+    # translation run has no image step, and would warn that nothing uses it.
+    "--img-model",
+    "--img-base-url",
+    "--img-key",
 )
 
 
@@ -72,6 +77,25 @@ def translation_argv(argv):
             continue
         kept.append(token)
     return kept
+
+
+def _print_image_usage(structure):
+    """`Image model (<model> at <base>): <usage>`, once the pass has run.
+
+    The pass's requests are metered on a translator of their own, so they
+    are reported apart from the translation's (which the inner run prints).
+    Nothing is printed when no request was made (a reused bundle).
+    """
+    from .messages import IMAGE_MODEL_USAGE
+
+    usage = getattr(structure.translator, "usage", None)
+    summary = usage.summary() if usage is not None else None
+    if summary:
+        print(
+            IMAGE_MODEL_USAGE.format(
+                model=structure.model, base=structure.where(), summary=summary
+            )
+        )
 
 
 def selection_stem(pdf_path, pages=None):
@@ -106,7 +130,9 @@ def pdf_to_epub(
     ocr_lang=None,
     pages=None,
     formula_images=True,
-    structure_model=None,
+    img_model=None,
+    img_base_url=None,
+    img_key=None,
     quiet=False,
     pandoc=None,
     prepare_stage=prepare,
@@ -132,16 +158,19 @@ def pdf_to_epub(
     options = check_options(translation_argv(argv))
     parse_pages(pages)  # a selection that does not parse is refused here too
     parse_ocr_lang(ocr_lang)  # and an empty language list
-    # The structure model runs on the translation's own endpoint and key; an
-    # endpoint that cannot take it is refused here, before a page is read.
-    # Nothing of the pass is imported, built or probed without the flag.
+    # The image model (`--img-model`, else the provider entry's img_model,
+    # else off) is resolved here, before a page is read: an endpoint that
+    # cannot take it, or one with no key, is refused now. Nothing of the
+    # pass is imported, built or probed when there is no choice.
     structure = None
-    if structure_model:
-        from .docling_parser import _structure_ask
+    translation = parse_bbm_options(translation_argv(argv))
+    image = SimpleNamespace(
+        img_model=img_model, img_base_url=img_base_url, img_key=img_key
+    )
+    if (img_model or "").strip() or getattr(translation, "provider", None):
+        from .docling_parser import image_request
 
-        structure = _structure_ask(
-            parse_bbm_options(translation_argv(argv)), structure_model
-        )
+        structure = image_request(image, translation)
 
     bundle = Bundle(bundle_path(pdf, pages)).create()
     print(TO_EPUB_BUNDLE.format(path=bundle.root))
@@ -157,6 +186,8 @@ def pdf_to_epub(
         progress=not quiet,
         structure=structure,
     )
+    if structure is not None and structure.translator is not None:
+        _print_image_usage(structure)
     translate_stage(bundle, options, pandoc=executable)
     built = export_stage(bundle, pandoc=executable)
 

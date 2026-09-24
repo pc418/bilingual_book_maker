@@ -363,3 +363,116 @@ def test_build_translator_carries_the_run_s_settings():
     assert not t.extra_headers
     assert not t.extra_body
     assert t.no_thinking is True
+
+
+# --------------------------------------------------------------------------
+# The CLI's side: the old flag name, the mode it implies, the loader
+# --------------------------------------------------------------------------
+
+
+def _parsed(*argv):
+    from book_maker.cli import normalize_options, parse_args
+
+    options = parse_args(["--book_name", "b.epub", *argv])
+    normalize_options(options)
+    return options
+
+
+def test_the_old_flag_name_is_the_same_option_and_wins():
+    """PIN (owner 260923 22:40, packet F): --plan-classify-model is the old
+    name of --classify-model; typed together, the old spelling wins (the
+    packet's test list), and messages name the flag that was typed."""
+    assert _parsed("--plan-classify-model", "old").classify_model == "old"
+    both = _parsed("--classify-model", "new", "--plan-classify-model", "old")
+    assert both.classify_model == "old"
+    assert both.classify_model_flag == "--plan-classify-model"
+    assert _parsed("--classify-model", "new").classify_model_flag == "--classify-model"
+
+
+def test_the_old_flag_is_hidden_from_the_help():
+    from book_maker.cli import build_parser
+
+    text = build_parser().format_help()
+    options = [line.split()[0] for line in text.splitlines() if line.startswith("  -")]
+    assert "--classify-model" in options
+    assert "--plan-classify-model" not in options
+    # the help of the new flag names the old one (HELP_CLASSIFY_MODEL)
+    assert "--plan-classify-model is the old name" in " ".join(text.split())
+
+
+def test_a_classifier_implies_model_mode_on_an_epub_only():
+    from book_maker.cli import resolve_classify_mode
+
+    options = _parsed("--classify-model", "m")
+    assert resolve_classify_mode(options, "epub") == ("model", False)
+    # the PDF route's inner run translates Markdown: plan mode is not asked
+    assert resolve_classify_mode(options, "md")[0] == "none"
+    # agent and all stay what was typed
+    agent = _parsed("--classify-model", "m", "--plan-classify", "agent")
+    assert resolve_classify_mode(agent, "epub")[0] == "agent"
+
+
+class _Meter:
+    def __init__(self, line):
+        self.line = line
+
+    def summary(self):
+        return self.line
+
+
+def _loader():
+    from book_maker.loader.epub_loader import EPUBBookLoader
+
+    loader = EPUBBookLoader.__new__(EPUBBookLoader)
+    loader.translate_model = SimpleNamespace(usage_summary=lambda: "run line")
+    loader.classify_translator = None
+    return loader
+
+
+def test_a_classifier_of_its_own_gets_its_own_usage_line(capsys):
+    from book_maker.classifier import Classifier
+
+    loader = _loader()
+    loader._print_usage()
+    assert capsys.readouterr().out.split("\n") == ["run line", ""]
+
+    translator = SimpleNamespace(usage=_Meter("tokens: in 5"), model="c-model")
+    loader.classify_translator = Classifier(
+        translator, None, backends=[], base="http://c/v1", separate=True
+    )
+    loader._print_usage()
+    out = capsys.readouterr().out.split("\n")
+    assert out[:2] == ["run line", "Classifier (c-model at http://c/v1): tokens: in 5"]
+
+    # the run's own classifier is on the run's meter: one line
+    loader.classify_translator = Classifier(translator, None, backends=[])
+    loader._print_usage()
+    assert capsys.readouterr().out.split("\n") == ["run line", ""]
+
+
+def test_plan_classification_goes_through_the_injected_classifier(monkeypatch):
+    from book_maker.loader import epub_loader
+
+    seen = {}
+
+    def classify_plan(ledger, translator, model=None):
+        seen["translator"] = translator
+        return {}, []
+
+    monkeypatch.setattr(epub_loader, "classify_plan", classify_plan)
+    loader = _loader()
+    loader.plan_classify_model = None
+    injected = object()
+    loader.classify_translator = injected
+    ledger = SimpleNamespace(decide=lambda *a, **k: None)
+    try:
+        loader._classify_plan(ledger, None, "plan.json")
+    except Exception:
+        pass  # whatever follows the call is not this test's business
+    assert seen["translator"] is injected
+    loader.classify_translator = None
+    try:
+        loader._classify_plan(ledger, None, "plan.json")
+    except Exception:
+        pass
+    assert seen["translator"] is loader.translate_model
