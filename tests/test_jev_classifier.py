@@ -199,6 +199,26 @@ class TestPatience:
         assert "jev-test-key-000" not in str(err.value)
 
 
+class TestCoverage:
+    """Codex review 260923: jev takes a question only when every candidate
+    has a prompt of its own; the page prompt is never substituted."""
+
+    def test_a_partial_per_candidate_map_is_not_taken(self):
+        backend = _backend(Transport())
+        partial = _question(per_candidate={"a": "PROMPT A"})
+        assert backend.can(partial) is False
+        assert "1 candidate(s) have no prompt" in backend.why_not(partial)
+        assert backend.can(_question(per_candidate=None)) is False
+        assert backend.can(_question()) is True
+
+    def test_the_classifier_says_why_rather_than_substituting(self):
+        # a request, were one sent, is refused at once (no retry loop)
+        backend = _backend(Transport(Response(401, text="unauthorised")))
+        classifier = Classifier(None, "jev-latest", backends=[backend])
+        with pytest.raises(NoBackend, match="no prompt of their own"):
+            classifier.ask(_question(per_candidate={"a": "PROMPT A"}))
+
+
 class TestDispatch:
     def test_an_image_question_is_no_backend(self):
         c = Classifier(None, "j", backends=[_backend(Transport())])

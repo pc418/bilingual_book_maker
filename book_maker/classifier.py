@@ -24,6 +24,17 @@ question reaches a model and what comes back:
 The lint is deliberately the only judgment made here. A missing id is left
 missing: what it means is the caller's (`unsure` for the plan classifier,
 `unanswered` for the role pass).
+
+The contract's edge: `Classifier.ask` is one question, one request. Plan
+mode's session path (`loader/classify/session.py`) is not asked through it:
+it takes the `session` backend's held conversation (`SessionBackend.open`)
+and runs its own turn loop, because that conversation spans pages -- the
+trunk is sent once and every later page is a turn in the same history,
+restarted rather than compacted -- which a one-question call cannot carry.
+It still gets its backend, and its preference order, from the Classifier.
+A new caller (jev-calculator's import included) asks through `ask`; only a
+caller that must hold one conversation across questions takes the session
+from the backend.
 """
 
 import time
@@ -577,12 +588,25 @@ class JevBackend:
         self.usage = UsageMeter()
 
     def can(self, question):
-        return question.image_png is None and question.per_candidate is not None
+        return question.image_png is None and not self._uncovered(question)
+
+    def _uncovered(self, question):
+        """Candidate ids with no prompt of their own (all of them when the
+        question has no `per_candidate` at all). Codex review 260923: the
+        whole-page prompt is never substituted for a missing one."""
+        own = question.per_candidate or {}
+        return [cid for cid in question.candidates if cid not in own]
 
     def why_not(self, question):
         if question.image_png is not None:
             return "jev reads text only"
-        return "jev asks one question per candidate, and this one has no per-candidate prompt"
+        missing = self._uncovered(question)
+        if question.per_candidate is None:
+            return "jev asks one question per candidate, and this one has no per-candidate prompt"
+        return (
+            f"jev asks one question per candidate, and {len(missing)} "
+            f"candidate(s) have no prompt of their own"
+        )
 
     def options(self, question, cid):
         return [
@@ -602,7 +626,7 @@ class JevBackend:
                 continue
             questions[str(cid)] = {
                 "type": "choice",
-                "instructions": question.per_candidate.get(cid, question.prompt),
+                "instructions": question.per_candidate[cid],
                 "criteria": {option: None for option in options},
             }
         body = {"model": self.model, "state": question.prompt, "questions": questions}
