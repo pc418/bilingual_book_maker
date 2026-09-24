@@ -179,9 +179,11 @@ def _converter(device, settings):
     # text has been measured inventing content, and a translation would
     # then carry the invention.
     options.generate_picture_images = True
-    # Formulas are cropped as pictures instead of decoded: the 260921
-    # evaluation measured the enrichment model hallucinating and costing
-    # 29x (docs/260922-feat-PDF_FORMULA_IMAGES.md).
+    # Formulas are cropped as pictures instead of decoded: the owner's
+    # decision (260922, docs/260922-feat-PDF_FORMULA_IMAGES.md); the 260921
+    # measurement behind it is not trusted and a fresh paired evaluation is
+    # running. Code enrichment is off for the same reason: generated text is
+    # not source text.
     options.do_formula_enrichment = False
     options.do_code_enrichment = False
     options.do_ocr = settings.ocr
@@ -224,10 +226,7 @@ def _convert(pdf, *, out_dir, span, device, settings, formulas=True, report=None
     # docling's document as it came back, before the formula markers and
     # the heading levels below change it.
     snapshot = Path(out_dir) / SNAPSHOT
-    snapshot.write_text(
-        json.dumps(result.document.export_to_dict(), ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _write_snapshot(result.document, snapshot)
     report["snapshot"] = snapshot
     # Before the export: each undecoded formula is given a marker as its
     # text, so the serializer writes the marker where the equation stands
@@ -252,6 +251,44 @@ def _convert(pdf, *, out_dir, span, device, settings, formulas=True, report=None
         out_dir,
         neighbours=pdf_formula.neighbours(result.document),
     )
+
+
+# Every collection whose items can carry a picture (`FloatingItem.image`),
+# and the page images. Their `uri` is the picture itself as a base64 data
+# URI; the snapshot keeps the picture's size, dpi and mimetype and drops
+# the bytes.
+_PICTURE_BYTES = {
+    name: {"__all__": {"image": {"uri"}}}
+    for name in (
+        "pictures",
+        "tables",
+        "key_value_items",
+        "form_items",
+        "field_regions",
+        "field_items",
+        "pages",
+    )
+}
+
+
+def _write_snapshot(document, path):
+    """docling's document as JSON, without the pictures' bytes.
+
+    `export_to_dict()` (and `save_as_json` in PLACEHOLDER mode, which is
+    the same call on the same object, measured 260923) writes every
+    picture as a base64 data URI, and building that for a long illustrated
+    book costs memory the conversion already needed. The dump excludes
+    the bytes instead -- `model_dump` does not touch the document, so the
+    Markdown export afterwards still writes the picture files -- and is
+    streamed to the file rather than built as one string. The pictures'
+    `uri` is absent, so the file does not load back as a DoclingDocument
+    as it stands; nothing in the pipeline reads it.
+    """
+    data = document.model_dump(
+        mode="json", by_alias=True, exclude_none=True, exclude=_PICTURE_BYTES
+    )
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False)
 
 
 def _relative_images(markdown, image_dir):
@@ -356,6 +393,12 @@ def extract_pdf(
     resolved, message = resolve_device(device)
     bundle.create()
     print(message)
+    # A new extraction replaces the last one, and so do the limitations it
+    # recorded: a line about the old languages or headings would otherwise
+    # outlive the text it described. Only the lines the extraction listed
+    # as its own go; what other stages recorded stays.
+    previous = (bundle.read_manifest().get("extraction") or {}).get("limitations")
+    bundle.drop_limitations(previous or [])
 
     bundle.set_stage(STAGE, "running", parser=PARSER, device=resolved)
     staging = bundle.work_file("extraction")
@@ -408,7 +451,7 @@ def extract_pdf(
     transcript = deque(maxlen=LOG_TAIL_LINES)
     # What the conversion found out about itself: the snapshot's path from
     # the converter, the engine docling chose from its log.
-    report = {}
+    found = {}
 
     def note(text):
         for raw in (text or "").splitlines():
@@ -417,8 +460,8 @@ def extract_pdf(
                 transcript.append(entry)
                 line.note(entry)
                 chosen = AUTO_OCR_SELECTED.search(entry)
-                if chosen and "ocr_engine" not in report:
-                    report["ocr_engine"] = chosen.group(1)
+                if chosen and "ocr_engine" not in found:
+                    found["ocr_engine"] = chosen.group(1)
 
     finished = False
     # Started before the models are loaded: on a first run they are
@@ -436,7 +479,7 @@ def extract_pdf(
                         device=resolved,
                         settings=settings,
                         formulas=settings.formula_images,
-                        report=report,
+                        report=found,
                     )
                 # A stub seam returns the Markdown alone; the real
                 # converter also reports what it did with the formulas.
@@ -469,7 +512,7 @@ def extract_pdf(
     engine_line = None
     if ocr:
         ocr_engine = (
-            report.get("ocr_engine")
+            found.get("ocr_engine")
             if settings.ocr_engine == "auto"
             else settings.ocr_engine
         )
@@ -483,7 +526,7 @@ def extract_pdf(
             ),
         )
         print(engine_line)
-    snapshot = report.get("snapshot")
+    snapshot = found.get("snapshot")
 
     try:
         # Asked of what the parser returned, before the page markers are
@@ -570,6 +613,8 @@ def extract_pdf(
     # terminal line scrolls away; the manifest keeps it.
     limitations.extend(formula_warnings)
     bundle.add_limitations(limitations)
+    # What this extraction added, so the next one can take it back.
+    bundle.update_manifest(extraction={"limitations": limitations})
     return report
 
 

@@ -1772,32 +1772,29 @@ def test_the_stage_reuses_on_another_device_and_says_so_once(
     assert "Stage complete: extract" in out
 
 
-class _FakeItem:
-    def __init__(self, label, text):
-        self.label = label
-        self.text = text
-        self.prov = []
-
-
-class _FakeDocument:
-    def __init__(self):
-        self.formula = _FakeItem("formula", "")
-
-    def iterate_items(self):
-        yield self.formula, 1
-
-    def export_to_dict(self):
-        return {"texts": [{"label": "formula", "text": self.formula.text}]}
-
-    def export_to_markdown(self, **kwargs):
-        return f"## Heading\n\nA paragraph.\n\n{self.formula.text}\n"
-
-
 def test_the_raw_document_is_written_before_anything_of_ours_touches_it(
     tmp_path, pdf, monkeypatch
 ):
+    """The snapshot is docling's document as it came back, minus the bytes.
+
+    A real `DoclingDocument`, so the dump and the export are docling-core's
+    own: a picture that serializes as a base64 data URI, and an undecoded
+    formula whose empty text `pdf_formula.mark` replaces after the dump.
+    """
     pytest.importorskip("docling_core")
-    document = _FakeDocument()
+    from docling_core.types.doc import DocItemLabel
+    from docling_core.types.doc.document import DoclingDocument, ImageRef
+    from PIL import Image
+
+    document = DoclingDocument(name="snapshot")
+    document.add_heading(text="Heading")
+    document.add_text(label=DocItemLabel.TEXT, text="A paragraph.")
+    document.add_picture(
+        image=ImageRef.from_pil(Image.new("RGB", (40, 30), "red"), dpi=72)
+    )
+    formula = document.add_text(label=DocItemLabel.FORMULA, text="")
+    # the bytes the committed export_to_dict() path used to write
+    assert "data:image" in json.dumps(document.export_to_dict())
 
     class Converter:
         def convert(self, source, page_range=None):
@@ -1819,7 +1816,7 @@ def test_the_raw_document_is_written_before_anything_of_ours_touches_it(
     report = {}
     out_dir = tmp_path / "staging"
     out_dir.mkdir()
-    docling_parser._convert(
+    markdown, _count, _warnings = docling_parser._convert(
         pdf,
         out_dir=out_dir,
         span=None,
@@ -1829,11 +1826,22 @@ def test_the_raw_document_is_written_before_anything_of_ours_touches_it(
     )
     snapshot = out_dir / docling_parser.SNAPSHOT
     assert report["snapshot"] == snapshot
-    raw = json.loads(snapshot.read_text(encoding="utf-8"))
+    written = snapshot.read_text(encoding="utf-8")
+    raw = json.loads(written)
+    # no picture bytes, but the picture and its size are there
+    assert "data:image" not in written
+    assert len(raw["pictures"]) == 1
+    assert raw["pictures"][0]["image"]["size"] == {"width": 40.0, "height": 30.0}
     # the formula as docling left it, not the marker written into it after
-    assert raw == {"texts": [{"label": "formula", "text": ""}]}
-    assert "bbm-formula" not in snapshot.read_text(encoding="utf-8")
-    assert "bbm-formula" in document.formula.text
+    formulas = [t for t in raw["texts"] if t["label"] == "formula"]
+    assert [t["text"] for t in formulas] == [""]
+    assert "bbm-formula" not in written
+    assert "bbm-formula" in formula.text
+    # the document was not changed by the dump: the export after it still
+    # writes the picture and points at it
+    pictures = list((out_dir / docling_parser.IMAGE_DIR).iterdir())
+    assert len(pictures) == 1
+    assert f"({docling_parser.IMAGE_DIR}/{pictures[0].name})" in markdown
     assert seen == {"device": "cpu", "settings": ExtractionSettings()}
 
 
@@ -1998,3 +2006,117 @@ def test_the_harness_hands_the_formula_setting_to_the_stage(
     assert seen["formula_images"] is False
     assert harness.main(base) == 1
     assert seen["formula_images"] is True
+
+
+def test_a_new_extraction_takes_back_the_last_one_s_limitations(
+    tmp_path, pdf, pandoc, device, text_layer
+):
+    # Codex 260923: re-extraction kept the previous extraction's lines, so
+    # after --ocr-lang en the manifest still said "the engine's defaults".
+    text_layer["missing"] = [1, 2]
+    bundle = Bundle(tmp_path / "b").create()
+    defaults = (
+        "OCR engine: rapidocr (docling's choice on this install), "
+        "languages: the engine's defaults."
+    )
+    docling_parser.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        convert=_logging_convert("Auto OCR model selected rapidocr with onnxruntime."),
+    )
+    manifest = bundle.read_manifest()
+    assert defaults in manifest["limitations"]
+    assert defaults in manifest["extraction"]["limitations"]
+
+    bundle.add_limitations(["translator line"])
+    docling_parser.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        settings=ExtractionSettings(ocr=True, ocr_lang=("en",)),
+        convert=_logging_convert("Auto OCR model selected rapidocr with onnxruntime."),
+    )
+    manifest = bundle.read_manifest()
+    assert defaults not in manifest["limitations"]
+    assert "translator line" in manifest["limitations"]
+    # the new extraction's own lines are there, and listed as its own
+    own = manifest["extraction"]["limitations"]
+    assert own and all(line in manifest["limitations"] for line in own)
+    assert not [n for n in manifest["limitations"] if n.startswith("OCR engine")]
+    assert manifest["limitations"].count(own[0]) == 1
+
+
+def test_a_manifest_without_extraction_limitations_extracts_again(
+    tmp_path, pdf, pandoc, device
+):
+    bundle = Bundle(tmp_path / "old").create()
+    docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, convert=fake_convert())
+    manifest = bundle.read_manifest()
+    del manifest["extraction"]["limitations"]
+    manifest["limitations"].append("an older line nobody listed")
+    bundle.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, ocr=True, convert=fake_convert()
+    )
+    manifest = bundle.read_manifest()
+    assert "an older line nobody listed" in manifest["limitations"]
+    assert manifest["extraction"]["limitations"]
+
+
+def test_a_failing_conversion_leaves_the_docling_logger_as_it_was(
+    bundle, pdf, pandoc, device
+):
+    import logging
+
+    class Collect(logging.Handler):
+        def __init__(self):
+            super().__init__(level=logging.NOTSET)
+            self.records = []
+
+        def emit(self, record):
+            self.records.append(record)
+
+    root = logging.getLogger()
+    collect = Collect()
+    root.addHandler(collect)
+    logger = logging.getLogger("docling")
+    before = (logger.level, logger.propagate, list(logger.handlers))
+
+    def convert(pdf_path, **kwargs):
+        child = logging.getLogger("docling.pipeline")
+        child.info("Processing page 2")
+        child.warning("Page 2 has no layout")
+        raise RuntimeError("boom")
+
+    try:
+        with pytest.raises(PipelineError) as failed:
+            docling_parser.extract_pdf(
+                bundle, pdf, pandoc=pandoc, ocr=True, convert=convert
+            )
+    finally:
+        root.removeHandler(collect)
+    assert (logger.level, logger.propagate, list(logger.handlers)) == before
+    # both lines reached the transcript; the last one is quoted
+    assert failed.value.detail == BACKEND_FAILED.format(
+        detail="RuntimeError: boom (last log line: Page 2 has no layout)"
+    )
+    # the warning still reached the root handlers, the INFO line did not
+    messages = [r.getMessage() for r in collect.records]
+    assert "Page 2 has no layout" in messages
+    assert "Processing page 2" not in messages
+
+
+def test_the_info_line_of_a_failing_conversion_is_its_last_words(
+    bundle, pdf, pandoc, device
+):
+    with pytest.raises(PipelineError) as failed:
+        docling_parser.extract_pdf(
+            bundle,
+            pdf,
+            pandoc=pandoc,
+            ocr=True,
+            convert=_logging_convert("Processing page 2", fail=RuntimeError("boom")),
+        )
+    assert "(last log line: Processing page 2)" in failed.value.detail

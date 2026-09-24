@@ -262,6 +262,17 @@ class Bundle:
                 recorded.append(line)
         self.write_manifest(data)
 
+    def drop_limitations(self, limitations):
+        """Remove exactly these lines from the manifest's limitations."""
+        if not limitations:
+            return
+        data = self.read_manifest()
+        gone = set(limitations)
+        data["limitations"] = [
+            line for line in data.get("limitations") or [] if line not in gone
+        ]
+        self.write_manifest(data)
+
     # -- fingerprints -------------------------------------------------
     def asset_fingerprints(self):
         """Every file under assets/, as bundle-relative path -> sha256."""
