@@ -43,6 +43,13 @@ simply restarts with the trunk re-sent — no summary turn to pay for.
 
 from tqdm import tqdm
 
+from ...classifier import (
+    SESSION_FIRST,
+    Classifier,
+    Conversation,
+    can_session_classify,
+    has_schema_verdict,
+)
 from ...session_context import estimate_tokens
 from .candidates import gather_candidates
 from .model import PlanClassifyError, PlanClassifyFatal, describe_candidate
@@ -326,85 +333,32 @@ def parse_verdicts(reply, count):
     return verdicts
 
 
-def can_session_classify(translator):
-    """Whether this route can hold a conversation for the classifier.
-
-    Derived from the implementation, exactly as `supports_structured_json`
-    is, so a route cannot advertise a session it never built. Asked without
-    opening one: `classify_session` may cost a request (the codex route
-    opens a thread), and this question is answered before plan mode has
-    decided to spend anything.
-    """
-    from ...translator.base_translator import Base
-
-    factory = getattr(type(translator), "classify_session", None)
-    return factory is not None and factory is not Base.classify_session
-
-
-def has_schema_verdict(translator, model=None):
-    """Whether the endpoint's graded schema support reaches `json_object`.
-
-    The verdict is cached by the capability ledger, so asking here costs
-    nothing the run has not already paid for. A probe that cannot answer is
-    not a verdict, and a route with no probe at all has none either.
-    """
-    probe = getattr(translator, "_probe_verdict", None)
-    if probe is None:
-        return False
-    try:
-        verdict = probe(model) if model else probe()
-    except Exception:
-        return False
-    return verdict in ("strict", "shape", "json")
-
-
 def session_classify_engaged(translator, model=None):
     """Whether classification should run over a plain session.
 
     Below `json_object` and able to hold a conversation. Schema-capable
     routes keep the JSON path; google and the other MT engines can hold no
-    conversation, so plan classification stays off there as before.
+    conversation, so plan classification stays off there as before. This is
+    the default preference order of `Classifier` (`schema`, then `session`)
+    asked of a text question; `--plan-classify agent|all` puts the session
+    first instead.
     """
+    if isinstance(translator, Classifier):
+        return translator.text_backend() == "session"
     return can_session_classify(translator) and not has_schema_verdict(
         translator, model
     )
 
 
-class _Conversation:
+class _Conversation(Conversation):
     """The classifier's session, restarted rather than compacted.
 
-    The trunk — and, behind it, the one demonstrated exchange — is sent with
-    the first turn of each session and never again.
-    When the estimated history reaches the compact budget the next turn
-    opens a fresh session carrying the trunk — no handoff report is asked
-    for, because a verdict depends on the signatures in front of it and on
-    nothing that was said earlier.
+    `Conversation` with the plan's demonstrated exchange counted beside the
+    trunk: it rides in every session the trunk does, on both routes.
     """
 
     def __init__(self, session, trunk, budget):
-        self.session = session
-        self.trunk = trunk
-        self.budget = budget or 0
-        self.tokens = 0
-        self.sessions = 0
-        self._open = False
-
-    def ask(self, text):
-        if not self._open:
-            self.session.start(self.trunk)
-            # The demonstration rides in every session the trunk does, on
-            # both routes, so it is counted with it.
-            self.tokens = estimate_tokens(self.trunk) + example_tokens()
-            self.sessions += 1
-            self._open = True
-        reply = self.session.ask(text)
-        self.tokens += estimate_tokens(text) + estimate_tokens(reply or "")
-        if self.budget > 0 and self.tokens >= self.budget:
-            # The next ask starts over. Closing here rather than opening the
-            # replacement now keeps the last session of a run from paying
-            # for a trunk nobody uses.
-            self._open = False
-        return reply
+        super().__init__(session, trunk, budget, seed_tokens=example_tokens())
 
 
 # What a row not answered at all is recorded as. Not a verdict the model
@@ -457,12 +411,24 @@ def classify_over_session(ledger, translator, model=None, session=None):
     the bottom of the ladder all resolve to `translate`, so this entry never
     leaves the run with questions it cannot answer — the coverage guard
     polices the skip side, which is the side that loses content.
+
+    `translator` may be a `Classifier`: the session is then its `session`
+    backend's, opened on the classify endpoint (`--classify-model`). The
+    ladder, its restarts and its recovery stay here: a turn's size is this
+    entry's paging, not the request layer's.
     """
     candidates = gather_candidates(ledger)
     if not candidates:
         return {}, []
-    if session is None:
-        session = translator.classify_session(model=model)
+    if isinstance(translator, Classifier):
+        classifier = translator
+    else:
+        classifier = Classifier(
+            translator, model, prefer=SESSION_FIRST, session=session
+        )
+    translator = classifier.translator
+    backend = classifier.backend("session")
+    session = backend.open() if backend is not None else None
     if session is None:
         raise PlanClassifyError(
             f"{type(translator).__name__} cannot hold a classifier session"

@@ -9,6 +9,7 @@ Only signature-level decisions are made here. Node-level residue (a roman
 numeral inside a prose sentence) has no override mechanism.
 """
 
+from ...classifier import Classifier, Question
 from ...structured import StructuredJSONFailed
 from .candidates import gather_candidates
 
@@ -269,15 +270,59 @@ class _Budget:
             )
 
 
-def _ask_page(structured, page, model):
+def page_question(page):
+    """The page as a `Question`: this module's prompt and schema, verbatim.
+
+    Each candidate may answer with a `{content_type, verdict}` object whose
+    `verdict` is one of `VERDICTS`; `unsure` is the answer that settles
+    nothing. `per_candidate` is the same prompt built for each signature
+    alone, for a backend that asks one question per candidate (jev).
+    """
+    return Question(
+        prompt=build_prompt(page),
+        schema=build_schema(page),
+        candidates={c["key"]: tuple(VERDICTS) for c in page},
+        field="verdict",
+        abstain="unsure",
+        accept=lambda obj: _answers_all(obj, page),
+        per_candidate={c["key"]: build_prompt([c]) for c in page},
+    )
+
+
+# What a row's content_type says when the backend names nothing (jev answers
+# with a label and a probability, no words): how the verdict was reached,
+# which is what the plan JSON is audited on.
+NAMED_BY_JEV = "unnamed (jev verdict {verdict}, confidence {confidence:.2f})"
+
+
+def _named(answer):
+    """`answer`'s values as `{key: {content_type, verdict}}` entries.
+
+    A backend that returns bare labels (jev) gets its content_type written
+    from its own probability; an object answer is passed through, and the
+    values the shared lint set aside as invalid ride along so the name a
+    reply gave an out-of-enum verdict is still recorded as evidence.
+    """
+    entries = {**answer.values, **answer.invalid}
+    return {
+        key: (
+            value
+            if isinstance(value, dict)
+            else {
+                "verdict": value,
+                "content_type": NAMED_BY_JEV.format(
+                    verdict=value, confidence=answer.confidence.get(key, 0.0)
+                ),
+            }
+        )
+        for key, value in entries.items()
+    }
+
+
+def _ask_page(classifier, page, model=None):
     """One classification request. Returns (parsed result or None, why not)."""
     try:
-        result = structured(
-            build_prompt(page),
-            build_schema(page),
-            model=model,
-            accept=lambda obj: _answers_all(obj, page),
-        )
+        answer = classifier.ask(page_question(page))
     except StructuredJSONFailed as e:
         # Every rung was tried and none produced JSON. Not terminal yet: a
         # smaller page is an easier request, so the caller divides first.
@@ -288,19 +333,23 @@ def _ask_page(structured, page, model):
         # Auth, quota, transport, a model that does not exist: dividing cannot
         # help and would multiply the failure by the page count.
         raise PlanClassifyFatal(f"classification request failed: {e}") from e
-    return result, None
+    if not isinstance(answer.raw, dict):
+        # a reply that is not an object at all: `lint_verdicts` names it
+        return answer.raw, None
+    return _named(answer), None
 
 
-def _resolve(structured, page, model, budget):
+def _resolve(classifier, page, model, budget):
     """Verdicts for every signature in `page`, dividing until they are had.
 
-    Composes with the rung ladder underneath: `structured` descends rungs for
+    Composes with the rung ladder underneath: the classifier's schema
+    backend descends rungs for
     one request, this divides the request. Only a single signature that
     survives both is terminal — at that point the model has been shown one
     property described in prose, which is the easiest question we can ask.
     """
     budget.charge()
-    result, note = _ask_page(structured, page, model)
+    result, note = _ask_page(classifier, page, model)
     verdicts, answered = ({}, set())
     if result is not None:
         verdicts, answered = lint_verdicts(result, page)
@@ -320,7 +369,7 @@ def _resolve(structured, page, model, budget):
     failures = []
     for part in _split(page, unanswered):
         try:
-            resolved.update(_resolve(structured, part, model, budget))
+            resolved.update(_resolve(classifier, part, model, budget))
         except PlanClassifyError as e:
             # A branch that failed may still have answered some of what it
             # was asked before it got stuck. Those answers were requested,
@@ -373,7 +422,7 @@ def classify_plan(ledger, translator, model=None):
     candidates = gather_candidates(ledger)
     if not candidates:
         return {}, []
-    structured = _structured_json(translator)
+    classifier = _classifier(translator, model)
 
     pages = list(_pages(candidates))
     if len(pages) > 1:
@@ -389,7 +438,7 @@ def classify_plan(ledger, translator, model=None):
     failed = []
     for page in pages:
         try:
-            verdicts.update(_resolve(structured, page, model, budget))
+            verdicts.update(_resolve(classifier, page, model, budget))
         except PlanClassifyError as e:
             # whatever this page did answer before it got stuck
             verdicts.update(e.verdicts)
@@ -431,18 +480,23 @@ def classify_plan(ledger, translator, model=None):
     return decisions, candidates
 
 
-def _structured_json(translator):
-    """The translator's structured-question channel, or a loud refusal.
+def _classifier(translator, model=None):
+    """The classifier to ask, or a loud refusal when nothing can answer.
 
-    Every LLM-backed translator has one now (the bottom rung is a plain
+    `translator` is a `Classifier` (the run's classify endpoint) or a bare
+    translator, which is asked through its own backends. Every LLM-backed
+    translator has a structured channel now (the bottom rung is a plain
     prompt). Dedicated MT engines — google, deepl, caiyun, tencent transmart,
     qwen-mt, a custom translate endpoint — do not and never will: handing them
     a question returns a translation of the question.
     """
-    structured = getattr(translator, "structured_json", None)
-    supports = getattr(translator, "supports_structured_json", None)
-    if structured is None or (supports is not None and not supports()):
+    if isinstance(translator, Classifier):
+        classifier = translator
+    else:
+        classifier = Classifier(translator, model)
+    if classifier.backend("schema") is None and classifier.backend("jev") is None:
         raise PlanClassifyError(
-            f"{type(translator).__name__} has no structured-output support"
+            f"{type(classifier.translator).__name__} has no structured-output "
+            f"support"
         )
-    return structured
+    return classifier
