@@ -958,6 +958,18 @@ class TestTheProgressLine:
     indistinguishable from a stall.
     """
 
+    @pytest.fixture(autouse=True)
+    def _no_leftover_bars(self):
+        # tqdm stacks a new bar under any bar still alive in the process, with
+        # an extra newline and a cursor-up. Earlier tests that interrupt a
+        # loader run leave theirs in unreachable cycles (tqdm keeps only weak
+        # references), and in the full suite that shifted this bar down a row
+        # (port 260923: failed 1-in-suite, passed alone, on the source branch
+        # too). Collect them first; the assertions are about this bar alone.
+        import gc
+
+        gc.collect()
+
     def test_it_counts_signatures_decided_against_candidates(self, capsys):
         _decisions, _candidates, _session = _run(_many(12), Endpoint(), quiet=False)
         err = capsys.readouterr().err
