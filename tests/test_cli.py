@@ -240,10 +240,9 @@ def test_classify_flag_rejects_non_epub_books(tmp_path):
 
 
 def test_agent_mode_accepts_a_classifier_model(tmp_path):
-    # PIN owner 260923 22:40 (packet F, endpoint overrides): --plan-classify
-    # agent no longer refuses a classifier; the
-    # classify endpoint's session backend is asked first. Agent mode still
-    # writes the plan and stops before translating.
+    # PIN (owner 260924): agent mode never pre-fills; a pre-filled plan makes the agent less accurate. Record: docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md
+    # So a named classifier is accepted and not resolved at all: no key is
+    # demanded for it, and the plan is written and handed over.
     proc, plan = _run(
         tmp_path, "--plan-classify", "agent", "--plan-classify-model", "gpt-4o"
     )
@@ -257,7 +256,10 @@ def test_agent_mode_accepts_a_classifier_model(tmp_path):
 
 def test_classify_model_flag_implies_model_mode(tmp_path):
     # naming a classifier is asking for model mode; it must not silently
-    # sit in none mode doing nothing
+    # sit in none mode doing nothing. On a fixed engine (google) the named
+    # model is asked at the host its id implies (lead ruling 260923, Codex
+    # finding 4), so with no key for it the run stops, naming the flag,
+    # before anything is parsed or written.
     proc, plan = _run(
         tmp_path,
         "--plan-classify-model",
@@ -266,19 +268,61 @@ def test_classify_model_flag_implies_model_mode(tmp_path):
         "--test_num",
         "1",
     )
-    # google translates through one fixed engine with no model to ask, and a
-    # classifier that cannot run must block rather than degrade into
-    # translating undecided rows. Refused at the CLI now (audit row A10):
-    # the run used to parse the whole book and write a plan file nothing had
-    # decided before dying in the classifier.
     assert proc.returncode == 1
     flat = " ".join(proc.stdout.split())
-    assert "--plan-classify-model" in flat
-    assert "no model to ask" in flat
-    # and it must say what to do instead, not just what failed
-    assert "--plan-classify agent" in flat
-    # nothing was parsed or written on the way to the refusal
+    assert "No API key for the openai endpoint" in flat
+    assert "pass --classify-key" in flat
+    assert "no model to ask" not in flat  # A10 does not fire: a classifier exists
     assert not plan.exists()
+
+
+def _fixed_engine_with_a_provider_classifier(tmp_path, *extra):
+    """A google run whose provider entry supplies the classifier (Codex
+    finding 4): the entry is an OpenAI gateway with a classify_model at an
+    address of its own, and the run's --api_format moves translation to the
+    fixed engine."""
+    src = _provider_book(
+        tmp_path,
+        api_style="openai",
+        base_url="https://gw.example/v1",
+        classify_model="cls-model",
+        classify_base_url="https://cls.example/v1",
+        classify_env_key="BBM_TEST_CLS_KEY",
+    )
+    return _cli_in(
+        tmp_path,
+        "--book_name",
+        str(src),
+        "--provider",
+        "p",
+        "--api_format",
+        "google",
+        "--test",
+        "--test_num",
+        "1",
+        *extra,
+        BBM_TEST_CLS_KEY="sk-cls",
+    )
+
+
+@pytest.mark.parametrize("mode", [[], ["--plan-classify", "model"]])
+def test_a_fixed_engine_plans_with_the_provider_s_classifier(tmp_path, mode):
+    """PIN (lead ruling 260923, Codex finding 4): A10 and `auto` read the
+    resolved classify choice. A fixed-engine run with a provider classifier
+    is not stopped, and in auto it plans; the classifier (the offline
+    OpenAI stand-in at the entry's classify address) is what is asked."""
+    proc = _fixed_engine_with_a_provider_classifier(tmp_path, *mode)
+    out = " ".join(proc.stdout.split())
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "no model to ask" not in out
+    assert "classifier: cls-model at https://cls.example/v1" in out
+    assert "offline model list: ['cls-model']" in out
+    assert "llm classification:" in out
+    if not mode:
+        assert "plan mode: on (classified by cls-model" in out
+    plan = json.loads((tmp_path / f"{BOOK.stem}_plan.json").read_text())
+    assert {row["decided_by"] for row in plan["signatures"]} <= {"llm", "rule"}
+    assert any(row["decided_by"] == "llm" for row in plan["signatures"])
 
 
 def test_naming_a_model_for_a_fixed_engine_fails_loud(tmp_path):

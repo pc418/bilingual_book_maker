@@ -952,6 +952,8 @@ def plan_mode_expected(facts):
         return True
     if not facts.plan_auto or facts.translate_tags_given:
         return False
+    if getattr(facts, "classifier_resolved", False):
+        return True  # the resolved classifier plans it, whatever the route
     if facts.api_format == PLAN_AUTO_FORMAT:
         return True
     return _route_can_session_classify(facts.translate_model)
@@ -1152,8 +1154,9 @@ COMPAT_RULES = (
         lambda f: f.book_type == "epub"
         and f.classify_mode == "model"
         and f.api_format not in LLM_FORMATS
-        # a classifier at an address of its own is not this format's to ask
-        and not getattr(f.options, "classify_base_url", ""),
+        # a resolved classifier (cli or provider) is asked instead of this
+        # format (lead ruling 260923, Codex finding 4)
+        and not f.classifier_resolved,
         lambda f: (
             f"{f.classify_flag} asks an LLM to rule on every plan "
             f"signature, and the "
@@ -1591,7 +1594,72 @@ COMPAT_RULES = (
             f"partition without classifying anything; it is ignored this run."
         ),
     ),
+    CompatRule(
+        "C33",
+        "warn",
+        lambda f: f.book_type != "epub" and _ignored_classifier(f.options) is not None,
+        lambda f: (
+            f"Nothing on this route classifies yet, so "
+            f"{_ignored_classifier(f.options)} is ignored on a {f.book_type} book."
+        ),
+    ),
 )
+
+
+def _ignored_classifier(options):
+    """What names a classifier this command carries, or None (row C33)."""
+    if classify_flags_typed(options):
+        return _typed_classify_flag(options)
+    route = getattr(options, "provider_route", None)
+    if getattr(route, "classify_model", ""):
+        return "the provider entry's classify_model"
+    return None
+
+
+# The `--plan-classify` modes that never ask a classifier. `all` decides
+# every row the same way; `agent` hands every row to a coding agent
+# undecided. PIN (owner 260924): agent mode never pre-fills -- an agent
+# given a plan with verdicts already in it judges less accurately. (The
+# owner's exception, "unless the given context is not enough for
+# judgement", is not built.)
+NEVER_CLASSIFIES = ("all", "agent")
+
+
+def preview_classify_choice(options, model_names, api_format):
+    """The classify choice `main` will make, without a key (or SystemExit)."""
+    from book_maker.endpoints import resolve_classify_endpoint, run_choice
+
+    return resolve_classify_endpoint(
+        options,
+        run_choice(
+            model_names[0] if model_names else "", options.api_base, None, api_format
+        ),
+        getattr(options, "provider_route", None),
+        with_key=False,
+    )
+
+
+def is_separate_classifier(choice):
+    """Whether `choice` is a classifier other than the run's translator:
+    named (cli or provider) and on a route that can be asked."""
+    return (
+        choice is not None
+        and choice.source in ("cli", "provider")
+        and (choice.api_format in LLM_FORMATS or choice.api_format == "jev")
+    )
+
+
+def classify_flags_typed(options):
+    """The `--classify-*` flags the command typed (either spelling)."""
+    return [
+        flag
+        for flag, dest in (
+            ("--classify-model", "classify_model"),
+            ("--classify-base-url", "classify_base_url"),
+            ("--classify-key", "classify_key"),
+        )
+        if getattr(options, dest, None)
+    ]
 
 
 def _typed_classify_flag(options):
@@ -1637,6 +1705,10 @@ def preview_endpoint(options):
     return api_format, route or FORMAT_DICT.get(api_format)
 
 
+class _AsksNothing(Exception):
+    pass
+
+
 def endpoint_preview_lines(options):
     """`Classifier: ...` and `Image model: ...`, as the run would resolve them.
 
@@ -1659,10 +1731,15 @@ def endpoint_preview_lines(options):
     run = run_choice(names[0] if names else "", copy.api_base, None, api_format)
     provider = getattr(copy, "provider_route", None)
     lines = []
+    mode = getattr(copy, "plan_classify", None)
     try:
+        if mode in NEVER_CLASSIFIES:
+            raise _AsksNothing(mode)
         choice = resolve_classify_endpoint(copy, run, provider, with_key=False)
         model = choice.model or "the run's model"
         lines.append(f"Classifier: {model} at {choice.where()} ({choice.source})")
+    except _AsksNothing:
+        lines.append(f"Classifier: none (--plan-classify {mode} asks nothing)")
     except SystemExit as err:
         lines.append(f"Classifier: refused: {err}")
     try:
@@ -1851,6 +1928,8 @@ def run_facts(options, given, **resolved):
         key_given=given.key,
         source_language=source_evidence(options.source_lang),
         batch_units=GENERAL_GROUP_MAX_UNITS,
+        # a classifier other than the run's translator (see main)
+        classifier_resolved=False,
     )
     # The one parse of `--prompt` this run does. The rows below ask about it,
     # and `main` announces and re-raises from the same pair rather than
@@ -2941,6 +3020,20 @@ def main(argv=None, *, markdown_loader_class=None):
     # Which mode --plan-classify and --classify-model asked for. Resolved
     # here because the compatibility table asks about it.
     classify_mode, plan_auto = resolve_classify_mode(options, book_type)
+    # Whether a classifier other than the run's translator will be asked
+    # (`--classify-model`, the provider's classify_model), resolved here
+    # without a key because two rows depend on it (A10, and whether `auto`
+    # plans on a route that could not classify by itself). A choice that
+    # cannot be made is refused now, in its own words.
+    classifier_resolved = False
+    if book_type == "epub" and classify_mode not in NEVER_CLASSIFIES:
+        try:
+            classifier_resolved = is_separate_classifier(
+                preview_classify_choice(options, model_names, api_format)
+            )
+        except SystemExit as err:
+            print(f"[bold red]Error: {escape(redact(str(err)))}[/bold red]")
+            exit(1)
 
     # The compatibility table: every combination that would be paid for and
     # then wasted, degraded or ignored. After the endpoint is resolved (the
@@ -2955,6 +3048,7 @@ def main(argv=None, *, markdown_loader_class=None):
         classify_mode=classify_mode,
         plan_auto=plan_auto,
         batch_units=batch_units,
+        classifier_resolved=classifier_resolved,
     )
     check_compatibility(facts)
 
@@ -2977,10 +3071,11 @@ def main(argv=None, *, markdown_loader_class=None):
     # classify_model, else the run's own), resolved with its key before the
     # book is opened: an endpoint of another format, or one with no key, is
     # refused while nothing has been spent. Plan mode is its only user.
-    # `--plan-classify all` asks nothing, so nothing is resolved for it
-    # (row C32 says the flags are ignored).
+    # `--plan-classify all` and `agent` ask nothing, so nothing is resolved
+    # for them and no key is demanded (row C32 says the flags are ignored
+    # with `all`; agent mode never pre-fills, see NEVER_CLASSIFIES).
     classify_choice = None
-    if book_type == "epub" and classify_mode != "all":
+    if book_type == "epub" and classify_mode not in NEVER_CLASSIFIES:
         from book_maker.endpoints import resolve_classify_endpoint, run_choice
 
         try:
@@ -3356,24 +3451,31 @@ def main(argv=None, *, markdown_loader_class=None):
             or classify_choice.api_format == "jev"
         )
     ):
-        from book_maker.classifier import DEFAULT_PREFER, SESSION_FIRST
         from book_maker.endpoints import build_classifier
 
-        # `agent` and `all` ask the classify endpoint's conversation first
-        # (owner 260923): agent mode "just works like plan classify" there.
         e.classify_translator = build_classifier(
-            classify_choice,
-            e.translate_model,
-            options,
-            language,
-            prompt_config,
-            prefer=(
-                SESSION_FIRST if classify_mode in ("agent", "all") else DEFAULT_PREFER
-            ),
+            classify_choice, e.translate_model, options, language, prompt_config
         )
         if e.classify_translator.separate:
             print(f"classifier: {escape(e.classify_translator.describe())}")
 
+    separate = getattr(e, "classify_translator", None)
+    if (
+        plan_auto
+        and book_type == "epub"
+        and not translate_tags_given
+        and getattr(separate, "separate", False)
+    ):
+        # A classifier of its own plans the book whatever the run's route can
+        # answer (lead ruling 260923, Codex finding 4); grouping still reads
+        # the run translator's own verdict.
+        plan_auto = False
+        print(f"plan mode: on (classified by {escape(separate.describe())})")
+        e.plan_mode = True
+        e.plan_auto = True
+        e.plan_fallback_tags = options.translate_tags
+        e.translate_tags = "auto"
+        e.plan_classify = "model"
     if plan_auto:
         # the verdict is cached, so the first translation does not pay again
         try:

@@ -225,16 +225,31 @@ class TestStops:
         )
         assert "C32" not in tripped(f)
 
-    def test_a10_is_exempt_for_a_classifier_at_its_own_address(self):
-        # a fixed-engine run can still plan through an OpenAI-compatible
-        # classifier it names with an address of its own
-        argv = ["--book_name", "b.epub", "--classify-model", "m"]
+    def test_a10_reads_the_resolved_classifier(self):
+        """PIN (lead ruling 260923, Codex finding 4): a fixed-engine run is
+        stopped only when no classifier of its own was resolved (cli or
+        provider), not by which raw flags were typed."""
+        argv = ["--book_name", "b.epub", "--plan-classify", "model"]
         assert "A10" in tripped(facts(argv, api_format="google"))
-        f = facts(
-            [*argv, "--classify-base-url", "http://127.0.0.1:9/v1"],
-            api_format="google",
-        )
+        f = facts(argv, api_format="google", classifier_resolved=True)
         assert "A10" not in tripped(f)
+
+    def test_a_provider_classifier_on_a_book_nothing_classifies(self, capsys):
+        # C33, the provider half: an entry's classify_model on a plain md run
+        # warns now (intended, lead ruling 260923)
+        from book_maker.provider_loader import ProviderRoute
+
+        f = facts(["--book_name", "b.md"], book_type="md")
+        assert "C33" not in tripped(f)
+        route = ProviderRoute("openai", "", ["m"], "")
+        route.classify_model = "cls"
+        f.options.provider_route = route
+        assert "C33" in tripped(f)
+        check_compatibility(f)
+        assert (
+            "the provider entry's classify_model is ignored on a md book"
+            in " ".join(capsys.readouterr().out.split())
+        )
 
     def test_to_epub_on_a_pdf_is_not_refused(self):
         # the same flag on the book it is for: no row fires, and the run is
@@ -760,6 +775,15 @@ WARN_FIXTURES = [
         ["--plan-classify", "all", "--classify-model", "gpt-5.6-luna"],
         {},
         "--classify-model names a classifier, and --plan-classify all",
+    ),
+    (
+        # C33: nothing but plan mode classifies yet (lead ruling 260923,
+        # Codex finding 3)
+        "C33",
+        ["--classify-model", "gpt-5.6-luna"],
+        {"book_type": "md"},
+        "Nothing on this route classifies yet, so --classify-model is ignored "
+        "on a md book.",
     ),
     (
         "C32:old-name",

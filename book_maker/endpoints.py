@@ -281,10 +281,33 @@ def _choose(model, base, run, source, *, image):
             source=source,
             own_base=True,
         )
+    # A run on a fixed engine (google, deepl ...) has no model to ask, so a
+    # classify model named without an address speaks the format its id
+    # implies, at that format's own host (lead ruling 260923, Codex finding
+    # 4: `--api_format google --classify-model gpt-5.6-luna` classifies on
+    # OpenAI). Only the OpenAI shape carries the schema channel.
+    from book_maker.cli import FORMAT_DEFAULT_BASES, LLM_FORMATS
+
+    if not image and run.api_format not in LLM_FORMATS:
+        api_format = infer_api_format("", model)
+        own = FORMAT_DEFAULT_BASES.get(api_format, "")
+        if api_format != "openai":
+            raise SystemExit(
+                unsupported.format(
+                    base=own or f"the {api_format} endpoint", api_format=api_format
+                )
+            )
+        return EndpointChoice(
+            model=model,
+            api_base=own,
+            key=None,
+            api_format=api_format,
+            source=source,
+            own_base=True,
+        )
     # The run's endpoint with another model. Its format has to have the
     # channel the step asks through: images only on the OpenAI shape;
-    # classification on any route that can be asked a question (the MT
-    # engines are refused by compatibility row A10 before this).
+    # classification on any route that can be asked a question.
     if image and not _reads_images(run.api_format):
         raise SystemExit(
             unsupported.format(base=run.where(), api_format=run.api_format)
@@ -448,7 +471,7 @@ def build_classifier(
     translator = build_translator(choice, options, language, prompt_config)
     return Classifier(
         translator,
-        None,
+        choice.model or None,
         prefer=prefer,
         source=choice.source,
         base=choice.api_base or None,
