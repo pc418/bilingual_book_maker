@@ -65,6 +65,7 @@ from .messages import (
     SELECTION_HEADING_ADDED,
     STRUCTURE_APPLIED,
     STRUCTURE_DETAIL_BUDGET,
+    STRUCTURE_DETAIL_DEADLINE,
     STRUCTURE_DETAIL_FAILED,
     STRUCTURE_DETAIL_REJECTED,
     STRUCTURE_DETAIL_UNANSWERED,
@@ -277,9 +278,16 @@ def _convert(
     # levels below must see the corrected items, and a heading the model
     # made gets its level from `pdf_headings` like any other.
     if structure is not None:
-        report["structure"] = _decide_structure(
-            result.document, pdf, out_dir, structure
-        )
+        try:
+            report["structure"] = _decide_structure(
+                result.document, pdf, out_dir, structure
+            )
+        except BaseException:
+            # The extraction fails with it; the manifest says which part.
+            from .decisions import STATUS_FAILED
+
+            report["structure_status"] = STATUS_FAILED
+            raise
     # Before the export: each undecoded formula is given a marker as its
     # text, so the serializer writes the marker where the equation stands
     # and the picture can only land at its own item.
@@ -335,6 +343,7 @@ def _decide_structure(document, pdf, out_dir, structure):
 
     return {
         **overlay.totals,
+        "status": overlay.status(),
         "applied": applied.count,
         "transitions": dict(applied.transitions),
         "high_change": [
@@ -351,8 +360,9 @@ def _decide_structure(document, pdf, out_dir, structure):
 class StructureRequest:
     """The `--structure-model` pass as the extraction sees it.
 
-    `ask(prompt, schema, image_png)` is the model call (the parsed answer,
-    carrying `model` and `usage`); `vision()` is the endpoint's verdict on
+    `ask(prompt, schema, image_png, deadline=None)` is the model call (the
+    parsed answer, carrying `model` and `usage`; a question still retried
+    at `deadline` ends as `decisions.AskFailed`); `vision()` is the endpoint's verdict on
     image input ('verified', 'unsupported', 'deferred'), asked only when an
     extraction is about to run, so a reused bundle pays for no probe.
     `rev` is the prompt/policy revision the answers are asked under.
@@ -458,12 +468,30 @@ def _structure_ask(options, model, *, translator=None):
     soft = _soft_failures()
     usage = getattr(translator, "usage", None)
 
-    def ask(prompt, schema, image_png):
+    def ask(prompt, schema, image_png, deadline=None):
+        from book_maker.loader.helper import _is_retryable
+        from book_maker.redaction import redact
+
         before = (usage.prompt, usage.completion) if usage is not None else None
         try:
-            answer = image(prompt, schema, image_png, model=model)
+            answer = image(prompt, schema, image_png, model=model, deadline=deadline)
         except soft as err:
             raise decisions.AskFailed(f"{type(err).__name__}: {err}")
+        except Exception as err:
+            # Weather the translator waited out until the pass's deadline:
+            # this question is lost, the run is not. A fatal error (auth,
+            # a 400) was never retried and still ends the run.
+            if (
+                deadline is not None
+                and time.monotonic() >= deadline
+                and _is_retryable(err)
+            ):
+                raise decisions.AskFailed(
+                    STRUCTURE_DETAIL_DEADLINE.format(
+                        error=f"{type(err).__name__}: {redact(err)}"
+                    )
+                ) from err
+            raise
         if not isinstance(answer, dict):
             raise decisions.ReplyRejected("the reply is not a JSON object")
         reply = _Answer(answer)
@@ -830,6 +858,10 @@ def extract_pdf(
                     stage=STAGE,
                 )
     except (PipelineError, KeyboardInterrupt):
+        if found.get("structure_status") is not None:
+            bundle.update_manifest(
+                extraction={"structure_status": found["structure_status"]}
+            )
         bundle.set_stage(STAGE, "failed", parser=PARSER, device=resolved)
         raise
     finally:
@@ -1088,8 +1120,20 @@ def _write_provenance(
         "structure": settings.structure,
         "structure_rev": settings.structure_rev if settings.structure else None,
         "structure_applied": structure is not None,
+        # complete / partial (decisions.Overlay.status), or not_run when
+        # asked for and the endpoint could not see a page; only complete
+        # satisfies a rerun that asks for structure (stages.already_prepared).
+        "structure_status": (
+            structure["status"]
+            if structure is not None
+            else ("not_run" if settings.structure else None)
+        ),
         "structure_totals": (
-            {key: value for key, value in structure.items() if key != "overlay"}
+            {
+                key: value
+                for key, value in structure.items()
+                if key not in ("overlay", "status")
+            }
             if structure is not None
             else None
         ),

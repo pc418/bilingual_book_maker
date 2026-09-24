@@ -415,6 +415,58 @@ class TestRequestFailures:
             translator.structured_json_with_image("read it", SCHEMA, PNG)
         assert create.call_count == 1
 
+    def test_a_deadline_ends_the_waiting_with_the_last_transport_error(
+        self, monkeypatch
+    ):
+        # PIN (lead 260923, Codex review of E2): still no attempt cap (owner
+        # ruling 260907), but a caller with a time budget gets its question
+        # back at the deadline; no wait runs past it.
+        clock = {"now": 500.0}
+        naps = []
+
+        def nap(seconds):
+            naps.append(seconds)
+            clock["now"] += seconds
+
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        monkeypatch.setattr("tenacity.nap.time.sleep", nap)
+        errors = []
+
+        def create(**kwargs):
+            errors.append(APIConnectionError(request=REQUEST))
+            raise errors[-1]
+
+        translator = _translator(create, verdict="strict")
+        with pytest.raises(APIConnectionError) as raised:
+            translator.structured_json_with_image(
+                "read it", SCHEMA, PNG, deadline=560.0
+            )
+        assert raised.value is errors[-1]
+        assert clock["now"] == 560.0 and sum(naps) == 60.0
+        assert len(errors) > 3
+
+    def test_without_a_deadline_weather_is_waited_out_uncapped(self):
+        create = Mock(
+            side_effect=[APIConnectionError(request=REQUEST)] * 30
+            + [_completion('{"digits": "9"}')]
+        )
+        translator = _translator(create, verdict="strict")
+        assert translator.structured_json_with_image("read it", SCHEMA, PNG) == {
+            "digits": "9"
+        }
+        assert create.call_count == 31
+        # the deadline is not a request parameter
+        assert "deadline" not in create.call_args.kwargs
+
+    def test_auth_errors_are_fatal_before_any_deadline(self):
+        create = Mock(side_effect=_api_error(AuthenticationError, 401, "bad key"))
+        translator = _translator(create, verdict="strict")
+        with pytest.raises(AuthenticationError):
+            translator.structured_json_with_image(
+                "read it", SCHEMA, PNG, deadline=10**12
+            )
+        assert create.call_count == 1
+
     def test_usage_is_metered_under_the_model_used(self):
         create = Mock(return_value=_completion('{"digits": "1"}'))
         translator = _translator(create, verdict="strict")

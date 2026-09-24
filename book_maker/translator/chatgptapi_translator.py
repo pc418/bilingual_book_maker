@@ -756,7 +756,7 @@ class ChatGPTAPI(Base):
         )
 
     def structured_json_with_image(
-        self, prompt, schema, image_png, model=None, accept=None
+        self, prompt, schema, image_png, model=None, accept=None, deadline=None
     ):
         """`structured_json` with a PNG shown beside the prompt.
 
@@ -768,13 +768,20 @@ class ChatGPTAPI(Base):
 
         Raises `VisionRequestFailed` when the endpoint refuses the image,
         without counting it against any rung or the schema verdict.
+
+        `deadline` (a `time.monotonic()` value) bounds the waiting: weather
+        is retried without an attempt cap until then, and the last
+        transport error is raised once it has passed. None waits as the
+        translate path does.
         """
         entry = ENTRY_RUNG.get(self._probe_verdict(model), "prompt")
         target = model or self.model
         parts = [text_part(prompt), image_part(image_png)]
 
         def ask(content, **kwargs):
-            text = self._vision_completion_text(target, content, **kwargs)
+            text = self._vision_completion_text(
+                target, content, deadline=deadline, **kwargs
+            )
             return unwrap_schema_echo(
                 extract_json_object(text, schema_required_keys(schema))
             )
@@ -797,13 +804,14 @@ class ChatGPTAPI(Base):
         start = next(i for i, (name, _) in enumerate(ladder) if name == entry)
         return self._descend(ladder[start:], target, accept)
 
-    def _vision_completion_text(self, model, parts, **kwargs):
+    def _vision_completion_text(self, model, parts, *, deadline=None, **kwargs):
         """One image request: patient on weather, image refusals kept apart.
 
         A 400 naming an optional field is asked again without it (and the
         field is not sent to this model again); one naming the image raises
         `VisionRequestFailed`; one about the schema, or anything else, is a
-        rung refusal exactly as `_completion_text` makes it.
+        rung refusal exactly as `_completion_text` makes it. `deadline` is
+        `_patiently`'s.
         """
         kwargs.setdefault("extra_body", self.extra_body or None)
         messages = [{"role": "user", "content": parts}]
@@ -816,7 +824,8 @@ class ChatGPTAPI(Base):
                 completion = self._patiently(
                     lambda: self.openai_client.chat.completions.create(
                         model=model, messages=messages, **optional, **kwargs
-                    )
+                    ),
+                    deadline=deadline,
                 )
             except RUNG_REFUSAL_ERRORS as e:
                 field = refused_optional_param(e, optional)
@@ -840,7 +849,7 @@ class ChatGPTAPI(Base):
             return completion.choices[0].message.content
 
     @staticmethod
-    def _patiently(call):
+    def _patiently(call, deadline=None):
         """`call()`, waited out on weather exactly as the translate path is.
 
         The loader's `translate_with_backoff` rules (owner ruling 260907, in
@@ -848,12 +857,29 @@ class ChatGPTAPI(Base):
         RETRY_WAIT_CAP, a line per retry, and only the fatal errors (auth, a
         400, no such model) propagate at once. Imported here rather than at
         module level: the loader package imports the translators.
+
+        `deadline`, a `time.monotonic()` value, is the one bound: no wait
+        runs past it, and the first failure at or after it is raised as it
+        is -- a caller with a budget gets its question back, still without
+        an attempt cap.
         """
         from ..loader.helper import RETRY_WAIT_CAP, _is_retryable, _say_retrying
 
+        backoff = wait_exponential(multiplier=1, min=1, max=RETRY_WAIT_CAP)
+
+        def wait(state):
+            pause = backoff(state)
+            if deadline is None:
+                return pause
+            return max(0.0, min(pause, deadline - time.monotonic()))
+
+        def stop(state):
+            return deadline is not None and time.monotonic() >= deadline
+
         for attempt in Retrying(
             retry=retry_if_exception(_is_retryable),
-            wait=wait_exponential(multiplier=1, min=1, max=RETRY_WAIT_CAP),
+            wait=wait,
+            stop=stop,
             before_sleep=_say_retrying,
             reraise=True,
         ):

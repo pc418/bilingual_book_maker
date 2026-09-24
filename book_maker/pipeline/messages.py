@@ -200,6 +200,16 @@ STRUCTURE_DETAIL_BUDGET = (
 STRUCTURE_DETAIL_REJECTED = "{count} answer(s) rejected"
 STRUCTURE_DETAIL_UNANSWERED = "{count} region(s) not answered"
 STRUCTURE_DETAIL_FAILED = "page(s) {pages} could not be changed safely"
+# Not the lead's text (Codex follow-up 260923): a question the endpoint
+# kept failing until the pass's time budget ran out, and a bundle whose
+# pass was not complete, which a run asking for one extracts again.
+STRUCTURE_DETAIL_DEADLINE = (
+    "the max_seconds budget ran out while the endpoint was retried: {error}"
+)
+STRUCTURE_NOT_REUSED = (
+    "Extracting again: the bundle's region-role pass is {status}; this run "
+    "asks for --structure-model {model}, which only a complete pass satisfies."
+)
 # Not the lead's text: an error asking the endpoint about images (an
 # authentication failure, say), which ends the run like any other.
 STRUCTURE_FAILED = "--structure-model {model} failed: {detail}"

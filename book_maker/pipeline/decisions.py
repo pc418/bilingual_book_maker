@@ -49,6 +49,11 @@ PROMPT_REV = "260923a"
 POLICY_REV = "260923b"  # b: the quarantine became a warning (260923)
 
 OVERLAY_FILE = "decisions.json"
+# The pass's outcome, recorded as the manifest's `structure_status`: only a
+# complete pass satisfies a later run that asks for one (ruling 260923).
+STATUS_COMPLETE = "complete"
+STATUS_PARTIAL = "partial"
+STATUS_FAILED = "failed"
 
 # The lead's text, verbatim (packet E2, 260923). The candidate list is
 # appended after the final line as JSON; the overlay image is the second
@@ -227,6 +232,24 @@ class Overlay:
 
     def write(self, path):
         Path(path).write_text(self.to_json(), encoding="utf-8")
+
+    def status(self):
+        """`complete`, or `partial` when anything asked for went without.
+
+        Complete: every batch asked got a usable answer and every page's
+        answers were applied. Partial: a question failed or its reply was
+        rejected whole, a page could not be changed safely, the budget
+        stopped the pass, or a page was not asked. (`failed`, the pass
+        raising, is the caller's to record: there is no overlay then.)
+        """
+        if self.totals.get("budget_exhausted"):
+            return STATUS_PARTIAL
+        for entry in self.pages.values():
+            if entry.get("status") in ("unasked", "failed_apply"):
+                return STATUS_PARTIAL
+            if any(call.get("error") for call in entry.get("calls", [])):
+                return STATUS_PARTIAL
+        return STATUS_COMPLETE
 
     def recount(self):
         """`totals` from the pages as they stand now."""
@@ -686,16 +709,20 @@ def decide_roles(
     A page on which more than `CHANGE_RATE_WARN` of the asked items would
     change is marked `high_change` for the operator; its changes stand.
 
-    `ask(prompt, schema, image_png)` returns the parsed dict; it may carry
-    `raw` (the reply text), `usage` and `model` as attributes. It raises
-    `AskFailed` or `ReplyRejected` for a question that got no usable
-    answer (recorded, the pass goes on); anything else it raises ends the
-    pass.
+    `ask(prompt, schema, image_png, deadline=None)` returns the parsed
+    dict; it may carry `raw` (the reply text), `usage` and `model` as
+    attributes. It raises `AskFailed` or `ReplyRejected` for a question
+    that got no usable answer (recorded, the pass goes on); anything else
+    it raises ends the pass. `deadline` is the `time.monotonic()` at which
+    the pass's `max_seconds` runs out (None without one): a question still
+    waiting on the endpoint then is to end with `AskFailed`, so a
+    persistent outage costs the budget, not the run.
     """
     pages = [int(page) for page in pages]
     budget = budget or Budget.for_pages(len(pages))
     overlay = Overlay(model=model)
     started = time.monotonic()
+    deadline = started + budget.max_seconds if budget.max_seconds is not None else None
     calls = prompt_tokens = 0
     exhausted = None
     for position, page_no in enumerate(pages):
@@ -721,12 +748,15 @@ def decide_roles(
             begun = time.monotonic()
             calls += 1
             try:
-                reply = ask(prompt(batch), schema(batch), image)
+                reply = ask(prompt(batch), schema(batch), image, deadline=deadline)
             except (AskFailed, ReplyRejected) as err:
                 call["latency_s"] = round(time.monotonic() - begun, 2)
                 call["error"] = f"{type(err).__name__}: {err}"
                 entry["calls"].append(call)
                 entry["decisions"].extend(_unanswered(batch, call["error"]))
+                # A question that waited out the deadline spent the budget.
+                if deadline is not None and time.monotonic() >= deadline:
+                    exhausted = exhausted or "max_seconds"
                 continue
             call["latency_s"] = round(time.monotonic() - begun, 2)
             call["model"] = getattr(reply, "model", None) or model

@@ -93,7 +93,9 @@ class FakeVisionTranslator:
         self.usage = FakeUsage()
         self.calls = []
 
-    def structured_json_with_image(self, prompt, schema, image_png, model=None):
+    def structured_json_with_image(
+        self, prompt, schema, image_png, model=None, deadline=None
+    ):
         from book_maker.pipeline import decisions
 
         self.calls.append(model)
@@ -107,15 +109,16 @@ class FakeVisionTranslator:
         }
 
 
-def real_document():
+def real_document(pages=1):
     docling = pytest.importorskip("docling_core.types.doc")
     d = docling
     document = d.DoclingDocument(name="wired")
-    document.add_page(page_no=1, size=d.Size(width=612.0, height=792.0))
+    for number in range(1, pages + 1):
+        document.add_page(page_no=number, size=d.Size(width=612.0, height=792.0))
 
-    def prov(top):
+    def prov(top, page=1):
         return d.ProvenanceItem(
-            page_no=1,
+            page_no=page,
             bbox=d.BoundingBox(
                 l=72, t=top, r=400, b=top - 14, coord_origin=d.CoordOrigin.BOTTOMLEFT
             ),
@@ -127,6 +130,10 @@ def real_document():
     document.add_text(label=d.DocItemLabel.FOOTNOTE, text="import os", prov=prov(700))
     document.add_text(label=d.DocItemLabel.TEXT, text="Prose two.", prov=prov(680))
     document.add_text(label=d.DocItemLabel.TEXT, text="Prose three.", prov=prov(660))
+    if pages >= 2:
+        document.add_text(
+            label=d.DocItemLabel.TEXT, text="Page two prose.", prov=prov(740, page=2)
+        )
     return document
 
 
@@ -152,7 +159,7 @@ def stub_docling(monkeypatch):
     state = {}
 
     def converter(device, settings, pdfium_page_images=False):
-        state["document"] = real_document()
+        state["document"] = real_document(state.get("pages", 1))
 
         class Converter:
             def convert(self, source, page_range=None):
@@ -234,6 +241,7 @@ def test_a_verified_endpoint_runs_the_pass_and_the_manifest_says_so(
     assert extraction["structure"] == "gpt-5.6-luna"
     assert extraction["structure_rev"] == REV
     assert extraction["structure_applied"] is True
+    assert extraction["structure_status"] == "complete"
     assert extraction["structure_totals"]["applied"] == 2
     assert (bundle.work_file("extraction") / "decisions.json").is_file()
     source = bundle.source.read_text(encoding="utf-8")
@@ -265,6 +273,7 @@ def test_an_endpoint_that_cannot_see_keeps_the_detector_s_labels_and_says_so(
     extraction = manifest["extraction"]
     assert extraction["structure"] == "gpt-5.6-luna"
     assert extraction["structure_applied"] is False
+    assert extraction["structure_status"] == "not_run"
     assert not (bundle.work_file("extraction") / "decisions.json").exists()
     assert "import os" in bundle.source.read_text(encoding="utf-8")
     assert "```" not in bundle.source.read_text(encoding="utf-8")
@@ -511,3 +520,97 @@ def test_a_bundle_whose_pass_never_ran_is_not_reused_for_one_that_asks(
     assert seeing.calls == ["gpt-5.6-luna"]
     assert bundle.read_manifest()["extraction"]["structure_applied"] is True
     assert stages.already_prepared(bundle, real_pdf, "docling", None, luna)
+
+
+class FailingOnPageTwo(FakeVisionTranslator):
+    """Answers page 1; the question about page 2 gets no usable reply."""
+
+    def structured_json_with_image(
+        self, prompt, schema, image_png, model=None, deadline=None
+    ):
+        from book_maker.translator.vision import VisionRequestFailed
+
+        if "Page two prose." in prompt:
+            self.calls.append(model)
+            raise VisionRequestFailed("the endpoint refused the image")
+        return super().structured_json_with_image(
+            prompt, schema, image_png, model=model, deadline=deadline
+        )
+
+
+@pytest.fixture
+def two_page_pdf(tmp_path):
+    pytest.importorskip("pypdfium2")
+    pytest.importorskip("PIL")
+    return write_pdf(tmp_path / "paper.pdf", ["A line of prose.", "Page two prose."])
+
+
+def test_a_partial_pass_is_extracted_again_and_a_complete_one_is_reused(
+    tmp_path, two_page_pdf, stub_docling, device, capsys
+):
+    """PIN (lead 260923, Codex review of E2): only a `complete` pass
+    satisfies a later run that asks for one; `partial` (a failed question,
+    a failed apply, a budget stop, an unasked page) is extracted again,
+    and the terminal names the status."""
+    from book_maker.pipeline.messages import STRUCTURE_NOT_REUSED
+
+    pandoc = pandoc_or_skip()
+    stub_docling["pages"] = 2
+    bundle = Bundle(tmp_path / "b").create()
+    flaky = FailingOnPageTwo(ANSWERS)
+    stages.prepare(
+        bundle, two_page_pdf, pandoc=pandoc, structure=request(flaky), progress=False
+    )
+    assert flaky.calls == ["gpt-5.6-luna", "gpt-5.6-luna"]
+    extraction = bundle.read_manifest()["extraction"]
+    assert extraction["structure_applied"] is True
+    assert extraction["structure_status"] == "partial"
+    capsys.readouterr()
+
+    luna = ExtractionSettings(structure="gpt-5.6-luna", structure_rev=REV)
+    assert not stages.already_prepared(bundle, two_page_pdf, "docling", None, luna)
+    line = STRUCTURE_NOT_REUSED.format(status="partial", model="gpt-5.6-luna")
+    assert line in capsys.readouterr().out.replace("\n", "")
+    # a run without the flag still asks for different labels: not reused
+    assert not stages.already_prepared(bundle, two_page_pdf, "docling", None)
+
+    # the rerun extracts again, asks both pages, and completes
+    steady = FakeVisionTranslator(ANSWERS)
+    stages.prepare(
+        bundle, two_page_pdf, pandoc=pandoc, structure=request(steady), progress=False
+    )
+    assert steady.calls == ["gpt-5.6-luna", "gpt-5.6-luna"]
+    assert bundle.read_manifest()["extraction"]["structure_status"] == "complete"
+    capsys.readouterr()
+    # and a complete pass is reused: nothing is asked again, nothing said
+    again = FakeVisionTranslator(ANSWERS)
+    stages.prepare(
+        bundle, two_page_pdf, pandoc=pandoc, structure=request(again), progress=False
+    )
+    assert again.calls == []
+    assert "Extracting again" not in capsys.readouterr().out
+
+
+def test_a_pass_that_raised_is_recorded_failed(
+    tmp_path, real_pdf, stub_docling, device
+):
+    pandoc = pandoc_or_skip()
+    bundle = Bundle(tmp_path / "b").create()
+
+    class Broken(FakeVisionTranslator):
+        def structured_json_with_image(self, *args, **kwargs):
+            raise RuntimeError("the client broke")
+
+    with pytest.raises(PipelineError):
+        stages.prepare(
+            bundle,
+            real_pdf,
+            pandoc=pandoc,
+            structure=request(Broken(ANSWERS)),
+            progress=False,
+        )
+    manifest = bundle.read_manifest()
+    assert manifest["stages"]["extract"]["status"] == "failed"
+    assert manifest["extraction"]["structure_status"] == "failed"
+    luna = ExtractionSettings(structure="gpt-5.6-luna", structure_rev=REV)
+    assert not stages.already_prepared(bundle, real_pdf, "docling", None, luna)

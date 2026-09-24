@@ -85,7 +85,7 @@ def listed(prompt):
 def fake_ask(answers, log=None):
     """An `ask` answering by the region's text; `answers[text]` is the label."""
 
-    def ask(prompt, schema, image_png):
+    def ask(prompt, schema, image_png, deadline=None):
         assert image_png.startswith(b"\x89PNG")
         regions = listed(prompt)
         if log is not None:
@@ -412,7 +412,7 @@ def test_a_mixed_reply_changes_exactly_the_one_valid_item(pdf):
         document.add_text(label=DocItemLabel.TEXT, text=text, prov=prov(top=top))
     ids = {c.text_head: str(c.id) for c in decisions.eligible(document, 1)}
 
-    def ask(prompt, schema, image_png):
+    def ask(prompt, schema, image_png, deadline=None):
         return {
             ids["alpha"]: "footnote",  # valid change
             ids["beta"]: "banana",  # invalid
@@ -543,6 +543,7 @@ def test_a_replacement_that_fails_leaves_the_page_as_it_was(pdf, monkeypatch):
         pdf,
         [1],
     )
+    assert overlay.status() == decisions.STATUS_COMPLETE
     before = document.model_dump()
     items = list(document.texts)
     real = decisions._replacement
@@ -562,6 +563,7 @@ def test_a_replacement_that_fails_leaves_the_page_as_it_was(pdf, monkeypatch):
     assert document.model_dump() == before
     assert all(a is b for a, b in zip(document.texts, items))
     assert overlay.totals["failed_apply_pages"] == 1
+    assert overlay.status() == decisions.STATUS_PARTIAL
 
 
 # --------------------------------------------------------------------------
@@ -611,6 +613,7 @@ def test_a_spent_budget_leaves_the_remaining_pages_unasked(pdf):
     assert said and said[0].startswith(STRUCTURE_PARTIAL.split("{detail}")[0])
     assert "max_calls" in said[0] and "2" in said[0]
     assert decisions.apply(document, overlay).count == 0
+    assert overlay.status() == decisions.STATUS_PARTIAL
 
 
 def test_a_failed_question_is_recorded_and_the_pass_goes_on(pdf):
@@ -619,7 +622,7 @@ def test_a_failed_question_is_recorded_and_the_pass_goes_on(pdf):
     document.add_text(label=DocItemLabel.TEXT, text="1 Intro", prov=prov(page=2))
     document.add_text(label=DocItemLabel.TEXT, text="prose", prov=prov(page=2, top=600))
 
-    def ask(prompt, schema, image_png):
+    def ask(prompt, schema, image_png, deadline=None):
         regions = listed(prompt)
         if regions[0]["text_head"] == "first":
             raise decisions.AskFailed("the endpoint refused the image")
@@ -629,6 +632,195 @@ def test_a_failed_question_is_recorded_and_the_pass_goes_on(pdf):
     assert overlay.pages[1]["decisions"][0]["status"] == "unanswered"
     assert "refused the image" in overlay.pages[1]["calls"][0]["error"]
     assert overlay.pages[2]["decisions"][0]["status"] == "accepted"
+    assert overlay.status() == decisions.STATUS_PARTIAL
+
+
+def test_a_reply_rejected_whole_makes_the_pass_partial(pdf):
+    document = new_document()
+    document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov())
+
+    def ask(prompt, schema, image_png, deadline=None):
+        raise decisions.ReplyRejected("the reply is not a JSON object")
+
+    overlay = decisions.decide_roles(ask, document, pdf, [1])
+    assert overlay.pages[1]["decisions"][0]["status"] == "unanswered"
+    assert overlay.status() == decisions.STATUS_PARTIAL
+
+
+def test_every_batch_answered_is_a_complete_pass(pdf):
+    document = new_document(pages=2)
+    document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov(page=1))
+    document.add_text(label=DocItemLabel.TEXT, text="second", prov=prov(page=2))
+    overlay = decisions.decide_roles(
+        fake_ask({"first": "text", "second": "footnote"}), document, pdf, [1, 2]
+    )
+    decisions.apply(document, overlay)
+    assert overlay.status() == decisions.STATUS_COMPLETE
+
+
+class FakeClock:
+    """`time.monotonic` that moves only when tenacity sleeps."""
+
+    def __init__(self, now=1000.0):
+        self.now = now
+        self.naps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.naps.append(seconds)
+        self.now += seconds
+
+
+def test_each_question_is_given_the_pass_s_deadline(pdf, monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(decisions.time, "monotonic", clock)
+    document = new_document()
+    document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov())
+    seen = []
+
+    def ask(prompt, schema, image_png, deadline=None):
+        seen.append(deadline)
+        return {str(listed(prompt)[0]["id"]): "text"}
+
+    decisions.decide_roles(
+        ask, document, pdf, [1], budget=decisions.Budget(max_seconds=120)
+    )
+    assert seen == [1120.0]
+    decisions.decide_roles(ask, document, pdf, [1], budget=decisions.Budget())
+    assert seen[-1] is None
+
+
+def test_an_outage_ends_the_question_at_the_deadline_and_the_pass_returns(
+    pdf, monkeypatch
+):
+    # PIN (lead 260923, Codex review of E2): the translator's patient
+    # retries have no attempt cap (owner ruling 260907), so a question is
+    # bounded by the pass's time budget instead: at the deadline the last
+    # transport error comes back, the batch is recorded unanswered and the
+    # pass returns -- it does not hang the extraction.
+    import httpx
+    from openai import APIConnectionError
+
+    from book_maker.pipeline.docling_parser import _structure_ask
+    from book_maker.pipeline.messages import STRUCTURE_DETAIL_DEADLINE
+    from book_maker.translator.base_translator import UsageMeter
+    from book_maker.translator.capabilities import CapabilityLedger
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+    clock = FakeClock()
+    monkeypatch.setattr("time.monotonic", clock)
+    monkeypatch.setattr("tenacity.nap.time.sleep", clock.sleep)
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    attempts = []
+
+    def create(**kwargs):
+        attempts.append(clock.now)
+        raise APIConnectionError(request=request)
+
+    translator = ChatGPTAPI.__new__(ChatGPTAPI)
+    translator.model = "vision-model"
+    translator.extra_body = {}
+    translator.capabilities = CapabilityLedger()
+    translator.capabilities.verdicts["vision-model"] = "strict"
+    translator._rung_refusals = {}
+    translator.usage = UsageMeter()
+    translator.openai_client = type(
+        "Client",
+        (),
+        {
+            "chat": type(
+                "Chat",
+                (),
+                {"completions": type("C", (), {"create": staticmethod(create)})},
+            )
+        },
+    )()
+    structure = _structure_ask(None, "vision-model", translator=translator)
+
+    document = new_document(pages=2)
+    document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov(page=1))
+    document.add_text(label=DocItemLabel.TEXT, text="second", prov=prov(page=2))
+    said = []
+    overlay = decisions.decide_roles(
+        structure.ask,
+        document,
+        pdf,
+        [1, 2],
+        budget=decisions.Budget(max_seconds=120),
+        log=said.append,
+    )
+
+    # retried, patiently, and never past the deadline
+    assert len(attempts) > 3
+    assert clock.now == 1120.0 and attempts[-1] == 1120.0
+    assert max(clock.naps) <= 120
+    # the question ended as a recorded failure, not an exception
+    [call] = overlay.pages[1]["calls"]
+    prefix = STRUCTURE_DETAIL_DEADLINE.split("{error}")[0]
+    assert call["error"].startswith("AskFailed: " + prefix)
+    assert "APIConnectionError" in call["error"]
+    assert [d["status"] for d in overlay.pages[1]["decisions"]] == ["unanswered"]
+    # the budget is spent: the next page is not asked, and the operator hears
+    assert overlay.pages[2]["status"] == "unasked"
+    assert overlay.totals["budget_exhausted"] == "max_seconds"
+    assert said and "max_seconds" in said[0] and "2" in said[0]
+    assert overlay.status() == decisions.STATUS_PARTIAL
+
+
+def test_an_auth_error_still_ends_the_pass_at_once(pdf, monkeypatch):
+    import httpx
+    from openai import AuthenticationError
+
+    from book_maker.pipeline.docling_parser import _structure_ask
+    from book_maker.translator.base_translator import UsageMeter
+    from book_maker.translator.capabilities import CapabilityLedger
+    from book_maker.translator.chatgptapi_translator import ChatGPTAPI
+
+    clock = FakeClock()
+    monkeypatch.setattr("time.monotonic", clock)
+    monkeypatch.setattr("tenacity.nap.time.sleep", clock.sleep)
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    attempts = []
+
+    def create(**kwargs):
+        attempts.append(clock.now)
+        raise AuthenticationError(
+            "bad key", response=httpx.Response(401, request=request), body=None
+        )
+
+    translator = ChatGPTAPI.__new__(ChatGPTAPI)
+    translator.model = "vision-model"
+    translator.extra_body = {}
+    translator.capabilities = CapabilityLedger()
+    translator.capabilities.verdicts["vision-model"] = "strict"
+    translator._rung_refusals = {}
+    translator.usage = UsageMeter()
+    translator.openai_client = type(
+        "Client",
+        (),
+        {
+            "chat": type(
+                "Chat",
+                (),
+                {"completions": type("C", (), {"create": staticmethod(create)})},
+            )
+        },
+    )()
+    structure = _structure_ask(None, "vision-model", translator=translator)
+    document = new_document()
+    document.add_text(label=DocItemLabel.TEXT, text="first", prov=prov())
+
+    with pytest.raises(AuthenticationError):
+        decisions.decide_roles(
+            structure.ask,
+            document,
+            pdf,
+            [1],
+            budget=decisions.Budget(max_seconds=120),
+        )
+    assert attempts == [1000.0] and clock.naps == []
 
 
 def test_an_error_that_is_not_about_the_question_ends_the_pass(pdf):
@@ -638,7 +830,7 @@ def test_an_error_that_is_not_about_the_question_ends_the_pass(pdf):
     class AuthenticationError(Exception):
         pass
 
-    def ask(prompt, schema, image_png):
+    def ask(prompt, schema, image_png, deadline=None):
         raise AuthenticationError("bad key")
 
     with pytest.raises(AuthenticationError):
@@ -654,7 +846,7 @@ def test_the_call_s_model_usage_and_latency_are_recorded(pdf):
         usage = {"prompt_tokens": 1200, "completion_tokens": 30}
 
     overlay = decisions.decide_roles(
-        lambda p, s, i: Reply({str(listed(p)[0]["id"]): "text"}),
+        lambda p, s, i, deadline=None: Reply({str(listed(p)[0]["id"]): "text"}),
         document,
         pdf,
         [1],

@@ -16,6 +16,7 @@ from .messages import (
     EXTRACTION_REUSED_OTHER_RUNTIME,
     PDF_OPTIONS_INERT,
     STAGE_COMPLETE,
+    STRUCTURE_NOT_REUSED,
 )
 from .pdf_settings import ExtractionSettings
 
@@ -112,12 +113,34 @@ def already_prepared(bundle, input_path, parser, pages, settings=None, device=No
         ):
             return False
         # Asked for a structure pass that never ran (the endpoint could not
-        # see a page then): that bundle holds the detector's labels, not
-        # what this run asks for, so it is extracted again (ruling 260923).
-        if settings.structure and extraction.get("structure_applied") is False:
+        # see a page then) or did not finish: that bundle holds the
+        # detector's labels, in part or whole, not what this run asks for,
+        # so it is extracted again (rulings 260923). Only `complete` counts.
+        if settings.structure and not _structure_complete(extraction):
+            print(
+                STRUCTURE_NOT_REUSED.format(
+                    status=_structure_status(extraction), model=settings.structure
+                )
+            )
             return False
         _report_other_runtime(extraction, device_for(device))
     return done[0]
+
+
+def _structure_status(extraction):
+    """The recorded pass outcome; a manifest from before the key says less."""
+    status = extraction.get("structure_status")
+    if status:
+        return status
+    if extraction.get("structure_applied") is False:
+        return "not_run"
+    return "unrecorded"
+
+
+def _structure_complete(extraction):
+    from .decisions import STATUS_COMPLETE
+
+    return _structure_status(extraction) == STATUS_COMPLETE
 
 
 def _report_other_runtime(extraction, device):
