@@ -193,6 +193,31 @@ class TestTheKeyRule:
         )
         assert resolve_image_endpoint(_opts(), _run(), own).key == "sk-var"
 
+    def test_a_gateway_entry_naming_the_jev_variable_is_an_explicit_binding(
+        self, monkeypatch
+    ):
+        """PIN (lead 260924, Codex re-verify of packet F): the reserved
+        names are read implicitly only at typesafe.ai; a provider entry
+        that names `JEV_API_KEY` as its own gateway's key variable has
+        named it explicitly for that address, and it is sent there -- the
+        same rule as any other `*_env_key` at the entry's own address."""
+        monkeypatch.setenv("JEV_API_KEY", "sk-gateway")
+        gateway = _provider(
+            classify_model="typesafe-ai/jev",
+            classify_base_url="https://ai-gateway.example/typesafe",
+            classify_env_key="JEV_API_KEY",
+        )
+        choice = resolve_classify_endpoint(_opts(), _run(), gateway)
+        assert choice.api_format == "jev"
+        assert choice.key == "sk-gateway"
+        # without the entry's binding the same variable is not sent there
+        unbound = _provider(
+            classify_model="typesafe-ai/jev",
+            classify_base_url="https://ai-gateway.example/typesafe",
+        )
+        with pytest.raises(SystemExit, match="not a typesafe.ai address"):
+            resolve_classify_endpoint(_opts(), _run(), unbound)
+
     @pytest.mark.parametrize("chain", ["img", "classify"])
     def test_an_api_base_override_never_carries_the_entry_s_key(
         self, monkeypatch, chain

@@ -202,8 +202,12 @@ def _key(explicit, bound, choice, run, with_key, flag):
     any `--api_base`); else the provider entry's key variable when the
     choice calls the address that variable belongs to (`bound`); else what
     the choice's format reads from the environment. For jev (finding 2):
-    `JEV_API_KEY` / `TYPESAFE_API_KEY` only at a typesafe.ai host, and
-    never the run's key; anywhere else the key is named explicitly.
+    `JEV_API_KEY` / `TYPESAFE_API_KEY` are read *implicitly* only at a
+    typesafe.ai host, and never the run's key; anywhere else the key is
+    named explicitly -- by the flag, or by a provider entry whose
+    `*_env_key` names the variable for the entry's own address (a gateway
+    entry naming `JEV_API_KEY` for its gateway is that explicit naming, and
+    is honoured: lead 260924, Codex re-verify).
     """
     if not with_key:
         return None
