@@ -906,8 +906,8 @@ def resolve_classify_mode(options, book_type=None):
 
     Pure: it resolves what the command asked for and refuses nothing.
     Naming a classifier on an epub is naming the mode it belongs to, unless
-    the command chose one (`agent` asks that model's session, `all` asks
-    nothing). On another book the classifier serves whatever that route
+    the command chose one (`agent` hands the rows to the operator's agent,
+    `all` asks nothing). On another book the classifier serves whatever that route
     classifies, and plan mode, which is epub-only, is not asked for.
     """
     mode = options.plan_classify
@@ -1768,16 +1768,17 @@ def normalize_options(options, given=None):
     options.context_flag, options.context_mode = resolve_context_mode(options)
     given = given or SimpleNamespace()
     # `--plan-classify-model` is the old name of `--classify-model`; typed
-    # together, the old spelling wins (packet F's test list), and the
-    # message that names the flag names the one that was typed.
+    # together, the current name wins (lead 260923: the alias is kept for
+    # old command lines, not to override new ones), and the message that
+    # names the flag names the one that was typed.
     old_name = getattr(options, "plan_classify_model", "") or ""
     new_name = getattr(options, "classify_model", "") or ""
-    if old_name:
+    if old_name and not new_name:
         options.classify_model = old_name
     options.classify_model_flag = (
-        "--plan-classify-model"
-        if old_name
-        else ("--classify-model" if new_name else "")
+        "--classify-model"
+        if new_name
+        else ("--plan-classify-model" if old_name else "")
     )
     given.accumulated_num = options.accumulated_num is not None
     given.batch_units = options.batch_units is not None

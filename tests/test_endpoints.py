@@ -378,14 +378,19 @@ def _parsed(*argv):
     return options
 
 
-def test_the_old_flag_name_is_the_same_option_and_wins():
-    """PIN (owner 260923 22:40, packet F): --plan-classify-model is the old
-    name of --classify-model; typed together, the old spelling wins (the
-    packet's test list), and messages name the flag that was typed."""
+def test_the_old_flag_name_is_the_same_option_and_the_new_one_wins():
+    """PIN (owner 260923 22:40, packet F; lead 260923 on precedence):
+    --plan-classify-model is the old name of --classify-model, kept for old
+    command lines; typed together, the current name wins, and messages name
+    the flag that was typed."""
     assert _parsed("--plan-classify-model", "old").classify_model == "old"
+    assert (
+        _parsed("--plan-classify-model", "old").classify_model_flag
+        == "--plan-classify-model"
+    )
     both = _parsed("--classify-model", "new", "--plan-classify-model", "old")
-    assert both.classify_model == "old"
-    assert both.classify_model_flag == "--plan-classify-model"
+    assert both.classify_model == "new"
+    assert both.classify_model_flag == "--classify-model"
     assert _parsed("--classify-model", "new").classify_model_flag == "--classify-model"
 
 

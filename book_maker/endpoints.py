@@ -50,7 +50,7 @@ SOURCE_OFF = "off"
 HELP_IMG_MODEL = "Vision model for the steps that look at a page image (today: correcting the layout detector's region roles on the PDF route). Resolution: this flag, else the provider entry's img_model, else off; 'none' turns a provider entry's image model off. The run's own model is never used for images unless named here."
 HELP_IMG_BASE_URL = "Endpoint for --img-model when it is not the run's endpoint (OpenAI-compatible only)."
 HELP_IMG_KEY = "API key for --img-base-url; defaults to the run's key when the endpoint is the same, else the key the endpoint's format reads from the environment."
-HELP_CLASSIFY_MODEL = "Model for every classification step: plan mode's unit classifier and the PDF route's text-only structure decisions. Resolution: this flag, else the provider entry's classify_model, else the run's own model. --plan-classify-model is the old name of this flag. With --plan-classify agent the questions go over that model's session instead of a JSON schema."
+HELP_CLASSIFY_MODEL = "Model for every classification step: plan mode's unit classifier and the PDF route's text-only structure decisions. Resolution: this flag, else the provider entry's classify_model, else the run's own model. --plan-classify-model is the old name of this flag. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation."
 HELP_CLASSIFY_BASE_URL = "Endpoint for --classify-model when it is not the run's endpoint (OpenAI-compatible only)."
 HELP_CLASSIFY_KEY = "API key for --classify-base-url; same default rule as --img-key."
 

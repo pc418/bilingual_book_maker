@@ -505,7 +505,9 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   **Inline** mathematics inside a paragraph is not a formula region and is not
   covered: on a scan it arrives as whatever OCR made of it.
 - **A vision model can correct the layout detector's region roles**
-  (`--img-model MODEL`, off by default). Docling sometimes calls an
+  (`--img-model MODEL`, or the provider entry's `img_model`; off unless one
+  is named, and never the run's own model by fallback; `--img-model none`
+  turns a provider's image model off). Docling sometimes calls an
   author line a heading, a listing's lines footnotes, or a figure's label a
   section; with the flag, each page is shown to the named model with the
   detector's boxes drawn on it, and the model answers one role per region
