@@ -11,7 +11,6 @@ theme:
   name: material
   features:
     - navigation.sections
-    - navigation.expand
     - navigation.indexes
     - navigation.top
     - navigation.footer
@@ -67,10 +66,11 @@ nav:
       - Session mode: features/session-mode.md
       - PDF to bilingual EPUB: features/pdf-to-epub.md
   - Evaluation:
-      - Overview: evaluation/index.md
+      - evaluation/index.md
       - Why 16 units per request: evaluation/grouping-batch-size.md
       - Why the session compacts at 8192: evaluation/session-compact-budget.md
       - Why the tool probes the endpoint: evaluation/structured-output-ladder.md
+  - "Evaluation: PDF route":
       - Why heading levels come from the page: evaluation/pdf-heading-levels.md
       - Why formulas are pictures: evaluation/pdf-formulas-as-images.md
       - Why a vision model reads scans better: evaluation/pdf-ocr-llm-vs-local.md
