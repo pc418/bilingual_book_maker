@@ -267,6 +267,9 @@ _PICTURE_BYTES = {
         "field_regions",
         "field_items",
         "pages",
+        # A code item is a FloatingItem too; this pipeline gives it no
+        # image, but the exclusion costs nothing and outlives that.
+        "texts",
     )
 }
 
