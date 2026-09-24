@@ -43,6 +43,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     DEVICE_SELECTED,
     DEVICE_UNAVAILABLE,
     EXTRACTION_EMPTY,
+    INVISIBLE_TEXT_LAYER,
     JBIG2_MASK_RENDER,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
@@ -117,13 +118,15 @@ def text_layer(monkeypatch):
     The real reader needs pypdfium2 and a real PDF; it has its own tests
     further down, which skip where pdfium is not installed. Every other
     test here is about what the route *does* with the answer, so the
-    answer is given: by default every page carries text.
+    answer is given: by default every page carries text, visibly.
     """
-    state = {"missing": [], "examined": 2}
+    state = {"missing": [], "examined": 2, "invisible": []}
 
     def report(pdf_path, page_range=None):
         state["asked"] = (Path(pdf_path), page_range)
-        return list(state["missing"]), state["examined"]
+        return pdf_common.TextLayerReport(
+            list(state["missing"]), state["examined"], state["invisible"]
+        )
 
     monkeypatch.setattr(docling_parser, "text_layer_report", report)
     return state
@@ -959,6 +962,86 @@ def test_an_empty_language_list_is_refused_before_the_models_start(
     assert convert.calls == []
 
 
+INVISIBLE_LINE = INVISIBLE_TEXT_LAYER.format(count=1, total=2)
+
+
+def test_an_invisible_layer_is_said_and_recorded_without_ocr(
+    bundle, pdf, pandoc, device, text_layer, capsys
+):
+    # PIN (lead, 260923, packet D follow-up): the OCR_REQUIRED gate is
+    # unchanged -- an invisible layer is usable text -- but the operator is
+    # told, because with OCR on the models would replace it.
+    text_layer["invisible"] = [1]
+    docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, convert=fake_convert())
+    out = capsys.readouterr().out
+    assert INVISIBLE_LINE in out
+    assert OCR_LANG_DEFAULT not in out  # no OCR, no languages to name
+    assert bundle.stage_status("extract") == "completed"
+    manifest = bundle.read_manifest()
+    assert INVISIBLE_LINE in manifest["limitations"]
+    assert INVISIBLE_LINE in manifest["extraction"]["limitations"]
+
+
+def test_an_invisible_layer_read_by_ocr_without_languages_gets_the_hint(
+    bundle, pdf, pandoc, device, text_layer, capsys
+):
+    # The zh_hans scan (260923): OCR read the page in the engine's default
+    # languages and replaced a better layer; the hint had never printed,
+    # because no page lacked a text layer.
+    text_layer["invisible"] = [1]
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, ocr=True, convert=fake_convert()
+    )
+    out = capsys.readouterr().out
+    assert INVISIBLE_LINE in out
+    assert out.count(OCR_LANG_DEFAULT) == 1
+    assert INVISIBLE_LINE in bundle.read_manifest()["limitations"]
+
+
+def test_languages_given_silence_the_hint_but_not_the_layer_line(
+    bundle, pdf, pandoc, device, text_layer, capsys
+):
+    text_layer["invisible"] = [1]
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, ocr=True, ocr_lang="ch", convert=fake_convert()
+    )
+    out = capsys.readouterr().out
+    assert INVISIBLE_LINE in out
+    assert OCR_LANG_DEFAULT not in out
+
+
+def test_visible_text_layers_say_nothing_about_invisible_ones(
+    bundle, pdf, pandoc, device, capsys
+):
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, ocr=True, convert=fake_convert()
+    )
+    out = capsys.readouterr().out
+    assert "invisible OCR text layer" not in out
+    assert OCR_LANG_DEFAULT not in out
+    assert not [
+        n for n in bundle.read_manifest()["limitations"] if "invisible OCR" in n
+    ]
+
+
+def test_scanned_and_invisible_pages_print_the_hint_once(
+    bundle, pdf, pandoc, device, text_layer, capsys
+):
+    text_layer["missing"] = [2]
+    text_layer["invisible"] = [1]
+    docling_parser.extract_pdf(
+        bundle,
+        pdf,
+        pandoc=pandoc,
+        ocr=True,
+        convert=fake_convert(markdown=f"Layer text.\n{BREAK}\nOCR text.\n"),
+    )
+    out = capsys.readouterr().out
+    assert SCANNED_PAGES.format(count=1, total=2) in out
+    assert INVISIBLE_LINE in out
+    assert out.count(OCR_LANG_DEFAULT) == 1
+
+
 def test_ocr_that_returned_nothing_is_a_failure_not_an_empty_book(
     bundle, pdf, pandoc, device, text_layer
 ):
@@ -1547,6 +1630,66 @@ def test_a_scan_drawn_from_inside_a_form_is_still_a_scan(tmp_path):
         scan_nested=True,
     )
     assert real_text_layer_report(path) == ([1], 2)
+
+
+def test_a_page_with_only_an_invisible_text_layer_is_told_apart(tmp_path):
+    # The scanned-book shape (Internet Archive, 260923): the recognised text
+    # sits under the picture in render mode 3. It is usable text, so the
+    # page is not missing; it is reported as invisible.
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "layer.pdf",
+        ["Recognised text under a scan.", "Page two is typed and says so."],
+        render_mode={1: 3},
+    )
+    report = real_text_layer_report(path)
+    assert report == ([], 2)
+    assert report.invisible == [1]
+
+
+def test_clip_only_text_counts_as_invisible_too(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "clip.pdf", ["Clip-only text paints nothing."], render_mode={1: 7}
+    )
+    assert real_text_layer_report(path).invisible == [1]
+
+
+@pytest.mark.parametrize(
+    "visible,invisible",
+    [("124 Innerspace", [1]), ("x" * 20, [1]), ("x" * 21, [])],
+)
+def test_a_handful_of_visible_characters_does_not_hide_an_invisible_layer(
+    tmp_path, visible, invisible
+):
+    # PIN (lead, 260923, packet D follow-up): "all but a handful" is at most
+    # INVISIBLE_MAX_VISIBLE_CHARS (20) visible non-space characters, and
+    # more invisible than visible ones. A visible page number or running
+    # header over the layer is allowed; a typed page is not.
+    pdfium_or_skip()
+    body = "Recognised text under the scan, long enough to outweigh a header."
+    path = write_pdf(
+        tmp_path / "layer.pdf", [f"{body}\n{visible}"], render_mode={1: (3, 0)}
+    )
+    assert real_text_layer_report(path).invisible == invisible
+
+
+def test_more_visible_than_invisible_text_is_a_typed_page(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "typed.pdf", ["hidden\nTyped page."], render_mode={1: (3, 0)}
+    )
+    assert real_text_layer_report(path).invisible == []
+
+
+def test_typed_pages_and_scans_are_never_invisible(tmp_path):
+    pdfium_or_skip()
+    path = write_pdf(
+        tmp_path / "mixed.pdf", ["Page one is typed.", None, "17"], scan=(3,)
+    )
+    report = real_text_layer_report(path)
+    assert report == ([2, 3], 3)
+    assert report.invisible == []
 
 
 def test_a_file_that_is_not_a_pdf_is_refused_before_the_models_start(tmp_path):

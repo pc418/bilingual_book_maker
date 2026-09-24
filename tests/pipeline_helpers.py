@@ -137,6 +137,7 @@ def write_pdf(
     scan_nested=False,
     text_clip=None,
     cropbox=None,
+    render_mode=None,
 ):
     """A real PDF, one page per entry; `None` writes a page with no text.
 
@@ -162,6 +163,10 @@ def write_pdf(
     under that clip window, the page-level shape of clipped-away text.
     `cropbox=(left, bottom, right, top)` is written on the page tree, so
     every page inherits it rather than carrying its own.
+    `render_mode={page number: mode}` sets that page's text render mode
+    (`3 Tr` is invisible, the way a scanned book's OCR layer is written);
+    a tuple sets it line by line. The mode is graphics state and outlives
+    `ET`, so a visible line after an invisible one needs its own `0`.
     """
     objects = []
     figure_page, figure_lines = figure if figure else (None, ())
@@ -195,9 +200,18 @@ def write_pdf(
         else:
             # One line per newline, so a test can put more on a page than
             # one line holds; text past the right edge is not "on" the page.
+            lines = str(text).split("\n")
+            modes = (render_mode or {}).get(number)
+            if not isinstance(modes, (tuple, list)):
+                modes = [modes] * len(lines)
+
+            def tr(mode):
+                return b"" if mode is None else b"%d Tr " % mode
+
             stream = b" ".join(
-                b"BT /F1 18 Tf 72 %d Td (%s) Tj ET" % (700 - 24 * i, escape(line))
-                for i, line in enumerate(str(text).split("\n"))
+                b"BT %s/F1 18 Tf 72 %d Td (%s) Tj ET"
+                % (tr(modes[i]), 700 - 24 * i, escape(line))
+                for i, line in enumerate(lines)
             )
             if text_clip is not None:
                 stream = (

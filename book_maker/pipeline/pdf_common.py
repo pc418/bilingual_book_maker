@@ -43,6 +43,54 @@ PAGE_CHARS_LIMIT = 12000
 SCAN_IMAGE_AREA = 0.6
 SCAN_MAX_CHARS = 200
 
+# A page carries only an invisible text layer -- a scanned book with the
+# recognised text laid under the picture in render mode 3 (or 7, clip
+# only, which paints nothing either) -- when it has more invisible
+# characters than visible ones and at most this many visible ones, so a
+# visible page number or running header does not hide it. Measured 260923
+# on pages 1-2 of 60 fixtures: the Internet Archive and hekate scans are
+# all mode 3, every born-digital page has no invisible character at all
+# (ABBYY's layer on innerspace is mode 0, drawn under the picture, and is
+# not reported). Guards, not measurements.
+INVISIBLE_MAX_VISIBLE_CHARS = 20
+
+
+class TextLayerReport(tuple):
+    """`(missing, examined)`, as `text_layer_report` always returned it,
+    with the pages that carry only an invisible text layer as `invisible`.
+
+    A tuple, so every caller that unpacks or compares the pair is
+    unchanged; the third answer is read by name.
+    """
+
+    def __new__(cls, missing, examined, invisible=()):
+        report = super().__new__(cls, (missing, examined))
+        report.invisible = list(invisible)
+        return report
+
+
+def _invisible_only(raw, textpage):
+    """Whether the page's text is all but a handful of characters invisible.
+
+    Counted character by character from the text page: each character's
+    text object says its render mode. Whitespace is skipped, and the count
+    stops as soon as the visible characters exceed the allowance, so a
+    typed page costs a few dozen calls.
+    """
+    hidden_modes = (raw.FPDF_TEXTRENDERMODE_INVISIBLE, raw.FPDF_TEXTRENDERMODE_CLIP)
+    visible = invisible = 0
+    for index in range(raw.FPDFText_CountChars(textpage)):
+        if chr(raw.FPDFText_GetUnicode(textpage, index)).isspace():
+            continue
+        obj = raw.FPDFText_GetTextObject(textpage, index)
+        if obj and raw.FPDFTextObj_GetTextRenderMode(obj) in hidden_modes:
+            invisible += 1
+        else:
+            visible += 1
+            if visible > INVISIBLE_MAX_VISIBLE_CHARS:
+                return False
+    return invisible > visible
+
 
 def _pdfium():
     try:
@@ -168,6 +216,11 @@ def picture_share(page):
 def text_layer_report(pdf_path, page_range=None):
     """`(pages the text layer does not spell out, pages examined)`, from 1.
 
+    Returned as a `TextLayerReport`, whose `invisible` lists the pages
+    that do carry a text layer, but only an invisible one: a scanned book
+    with its recognised text underneath. Those count as typed here -- the
+    layer is usable text -- and are told apart so the operator can be told.
+
     pypdfium2 comes with the pdf extra for exactly this, and reading what
     the page itself says is the only honest way to know whether the models
     will find anything: a page with no characters, or a page that is one
@@ -176,6 +229,7 @@ def text_layer_report(pdf_path, page_range=None):
     """
     try:
         import pypdfium2 as pdfium
+        import pypdfium2.raw as raw
     except ImportError as err:
         raise PipelineError(PDF_ROUTE_NOT_INSTALLED.format(err=err), stage=STAGE)
     if not hasattr(pdfium, "PdfDocument"):
@@ -185,6 +239,7 @@ def text_layer_report(pdf_path, page_range=None):
         raise PipelineError(PDFIUM_UNUSABLE, stage=STAGE)
     ranges = parse_pages(page_range)
     missing = []
+    invisible = []
     examined = 0
     try:
         document = pdfium.PdfDocument(str(pdf_path))
@@ -203,13 +258,15 @@ def text_layer_report(pdf_path, page_range=None):
             textpage = page.get_textpage()
             try:
                 text = textpage.get_text_bounded()
+                chars = len(text.strip())
+                if not chars or (
+                    chars < SCAN_MAX_CHARS and picture_share(page) >= SCAN_IMAGE_AREA
+                ):
+                    missing.append(number)
+                elif _invisible_only(raw, textpage):
+                    invisible.append(number)
             finally:
                 textpage.close()
-            chars = len(text.strip())
-            if not chars or (
-                chars < SCAN_MAX_CHARS and picture_share(page) >= SCAN_IMAGE_AREA
-            ):
-                missing.append(number)
             page.close()
     except Exception as err:
         raise PipelineError(
@@ -219,7 +276,7 @@ def text_layer_report(pdf_path, page_range=None):
         )
     finally:
         document.close()
-    return missing, examined
+    return TextLayerReport(missing, examined, invisible)
 
 
 def _prose(chunk):

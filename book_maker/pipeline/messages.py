@@ -81,6 +81,11 @@ SCANNED_PAGES = (
     "{count} of {total} selected pages have no text layer; they are read by "
     "the OCR models."
 )
+INVISIBLE_TEXT_LAYER = (
+    "{count} of {total} selected pages carry only an invisible OCR text layer "
+    "(a scanned book with recognised text underneath); with OCR on, the "
+    "models read the page image and their text replaces that layer."
+)
 OCR_REQUIRED = (
     "{count} of {total} selected pages have no text layer (page(s) {pages}); "
     "rerun with --pdf-ocr on to read them with the OCR models."

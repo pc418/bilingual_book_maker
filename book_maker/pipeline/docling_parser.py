@@ -39,6 +39,7 @@ from .importer import import_markdown
 from .messages import (
     FORMULA_IMAGES,
     BACKEND_FAILED,
+    INVISIBLE_TEXT_LAYER,
     JBIG2_MASK_RENDER,
     DEVICE_CPU_FALLBACK,
     DEVICE_NO_CUDA_BUILD,
@@ -435,7 +436,12 @@ def extract_pdf(
         # Asked before the models are started, because it decides how they
         # are used: a page the PDF cannot spell out has to be read by the
         # OCR models -- and without them, refused rather than skipped.
-        missing, examined = text_layer_report(pdf, page_range)
+        report = text_layer_report(pdf, page_range)
+        missing, examined = report
+        # Pages whose only text is an invisible layer under a scan: usable
+        # text, so not refused, but the operator is told, because with
+        # OCR on the models read the picture and replace that layer.
+        invisible = list(getattr(report, "invisible", ()))
         if missing and not ocr:
             raise PipelineError(
                 OCR_REQUIRED.format(
@@ -451,10 +457,18 @@ def extract_pdf(
 
     if missing:
         print(SCANNED_PAGES.format(count=len(missing), total=examined))
-        # The models are about to read these pages in whatever languages
-        # they were given; an operator who gave none is told which.
-        if not languages:
-            print(OCR_LANG_DEFAULT)
+    invisible_note = None
+    if invisible:
+        invisible_note = INVISIBLE_TEXT_LAYER.format(
+            count=len(invisible), total=examined
+        )
+        print(invisible_note)
+    # The models are about to read these pages in whatever languages they
+    # were given; an operator who gave none is told which. An invisible
+    # layer is read again too when OCR is on (measured 260923: the Chinese
+    # scan read in the engine's default languages lost half its text).
+    if ocr and (missing or invisible) and not languages:
+        print(OCR_LANG_DEFAULT)
 
     # A converter reads one run of pages. A selection with a gap in it is
     # read as the run that covers it and trimmed afterwards, so the flag
@@ -634,6 +648,8 @@ def extract_pdf(
         )
     if engine_line is not None and not languages:
         limitations.append(engine_line)
+    if invisible_note is not None:
+        limitations.append(invisible_note)
     if render == RENDER_PDFIUM_PAGE_IMAGE:
         limitations.append(JBIG2_MASK_RENDER)
     if heading_note is not None:
