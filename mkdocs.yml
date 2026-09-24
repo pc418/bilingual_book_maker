@@ -1,7 +1,11 @@
 site_name: bilingual book maker
-site_url: https://yihong0618.github.io/bilingual_book_maker/
-repo_url: https://github.com/yihong0618/bilingual_book_maker
-repo_name: yihong0618/bilingual_book_maker
+# Path-independent: the same tree publishes from upstream and from any fork.
+# The publish workflow sets these three from the repository it runs in; a
+# local `mkdocs serve` or `mkdocs build` falls back to upstream's values.
+site_url: !ENV [DOCS_SITE_URL, "https://yihong0618.github.io/bilingual_book_maker/"]
+repo_url: !ENV [DOCS_REPO_URL, "https://github.com/yihong0618/bilingual_book_maker"]
+repo_name: !ENV [DOCS_REPO_NAME, "yihong0618/bilingual_book_maker"]
+edit_uri: edit/main/docs/
 
 theme:
   name: material
