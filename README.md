@@ -469,15 +469,19 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   **CPU is fully supported and produces the same text**; it is slower, and
   that is the only difference. `--device cuda` on a machine or a PyTorch build
   that cannot provide it is refused by name, with the two cases distinguished.
-- `--ocr-lang` names the languages the OCR models read on pages with no
-  text layer, as [EasyOCR codes](https://www.jaided.ai/easyocr/), comma
-  separated: `ch_sim,en` for simplified Chinese with English, `ch_tra` for
-  traditional, `ja`, `ko`. Without it the models read English, Spanish,
-  French and German, and a scan in another script comes back empty or as
-  the wrong characters; the run says so when it meets a scanned page
-  without the flag. The first use of a language downloads its model (tens
-  of megabytes). On a typed PDF the flag changes nothing; rerunning a scan
-  with other languages reads it again.
+- `--ocr-lang` names the languages the OCR engine reads on pages with no
+  text layer, comma separated, as portable `iso:` tags (`iso:zh-Hans`,
+  `iso:zh-Hant`, `iso:ja`, `iso:ko`, `iso:en`) or in the engine's own codes.
+  The engine is the one docling selects on your install (rapidocr with the
+  shipped requirements; ocrmac or easyocr if you installed them), and every
+  OCR run prints the engine and languages it used. rapidocr's default reads
+  Chinese and English and takes one language per run (the first code), so
+  a Japanese, Korean, Cyrillic or Arabic scan needs the flag, and without
+  it comes back empty or as the wrong characters; the run says so when it
+  meets a scanned page without the flag. The first use of a language
+  downloads its model (tens of megabytes). On a typed PDF the flag changes
+  nothing; rerunning a scan with other languages, or with `--pdf-ocr`
+  toggled, reads it again.
 - `--pages` reads only the pages named, numbered from 1 (`12-30`, or
   `1,3,5-7`); the rest of the PDF is left out of the book, and nothing else
   is extracted or paid for. The selection goes into the names, so a chapter

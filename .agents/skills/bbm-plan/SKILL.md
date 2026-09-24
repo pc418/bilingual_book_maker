@@ -326,10 +326,15 @@ opened, naming the missing one, so nothing is paid):
    silently skipped, so the run tells you when it is needed. Layout,
    headings and tables are detected either way; OCR is not what makes the
    extraction good. A scan in a script other than Latin also needs
-   `--ocr-lang` (EasyOCR codes: `ch_sim,en`, `ch_tra`, `ja`, `ko`): the
-   models' default is en, es, fr, de, and a Chinese scan without it comes
-   back empty or as wrong characters. Ask what language the book is in; a
-   mixed book lists both. The first use of a language downloads its model.
+   `--ocr-lang` (portable `iso:` tags: `iso:zh-Hans`, `iso:zh-Hant`,
+   `iso:ja`, `iso:ko`; or the engine's own codes). The engine is whatever
+   docling selects on the install (rapidocr with the shipped requirements),
+   and the run prints `OCR engine: ..., languages: ...` after extraction.
+   rapidocr's default reads Chinese and English, one language per run, so a
+   Japanese, Korean, Cyrillic or Arabic scan needs the flag and comes back
+   empty or as wrong characters without it. Ask what language the book is
+   in; rapidocr takes the first code. The first use of a language downloads
+   its model.
 4. `--device` only if the default misbehaves: `auto` detects CUDA or MPS
    and falls back to the CPU. `--device cpu` is fully supported and gives
    the same text, only slower — it is never a downgrade in quality.
@@ -361,7 +366,7 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-ep
 | `--use_context session` | the default on the openai/anthropic routes here too (§1d); `--parallel-workers` is refused with it |
 | `--pdf-ocr` | a **scanned** PDF only (the run refuses without it and says so). Not for tables — those are detected either way |
 | `--device cpu` | when the detected accelerator misbehaves; same output, slower |
-| `--ocr-lang ch_sim,en` | with `--pdf-ocr`, a scan in Chinese, Japanese, Korean or any other non-Latin script; EasyOCR codes (`ch_sim`/`ch_tra`, not `zh`); a typed PDF ignores it |
+| `--ocr-lang iso:ja` | with `--pdf-ocr`, a scan in a script the engine's default does not read (rapidocr's default reads Chinese and English); portable `iso:` tags (`iso:zh-Hant`, `iso:ja`, `iso:ko`) or the engine's own codes; a typed PDF ignores it |
 | `--pages 12-30` | the user wants one chapter or a range, or the paper's bibliography and appendix are not worth paying for; numbered from 1. The book is `<name>_pages-12-30_bilingual.epub` beside the whole-book one, never over it. A selection starting mid-section gets a `Page 12` heading in `source.md`; rename it there before the full run if the user wants a real title |
 | `--glossary` | the same file contract as on an EPUB; worth it on a paper with recurring terms |
 
@@ -681,8 +686,8 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `Pandoc is required for --to-epub …` | install it (§1e); it is checked before the PDF is opened. There is no Java check any more |
 | `pandoc 3.x is too old for EPUB export; Pandoc 3.1.12 or newer is required …` | apt's Pandoc (Ubuntu 24.04: 3.1.3, Debian 13: 3.1.11); install the release from pandoc.org (§1e). Nothing was paid |
 | `N of M selected pages have no text layer …; rerun with --pdf-ocr` | a scanned PDF; the flag, not a different tool |
-| `The parser produced no text for a document whose pages have no text layer …`, or `no text was recognised on page(s) …`, on a non-Latin scan | the models read en, es, fr, de by default: rerun with `--ocr-lang` (`ch_sim,en`, `ja`, `ko`); the bundle is read again |
-| `… EasyOcr has no model for the OCR language 'xx'. Supported: …` | a code the engine does not know (Chinese is `ch_sim`/`ch_tra`); the message carries the engine's list; nothing was read or paid |
+| `The parser produced no text for a document whose pages have no text layer …`, or `no text was recognised on page(s) …`, on a scan in a script the engine's default does not read | check the `OCR engine: …, languages: …` line; rerun with `--ocr-lang` (`iso:ja`, `iso:ko`, `iso:zh-Hant`); the bundle is read again |
+| an OCR language the engine has no model for (the message names the engine and carries its list) | a code the engine does not know; use an `iso:` tag or a code from the list; nothing was read or paid |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
 | codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints; rerun with `--resume` after the time it names |
