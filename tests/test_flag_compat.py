@@ -210,9 +210,10 @@ class TestStops:
         assert proc.returncode == 1
         assert "no --classify-model was given" in _flat(proc)
 
-    def test_agent_mode_with_a_classify_model_is_not_warned_about(self):
-        # owner 260923: agent asks the classify endpoint's session, so the
-        # pair is a choice, not a contradiction
+    def test_agent_mode_with_a_classify_model_is_warned_about(self):
+        # PIN (owner 260924): agent mode never pre-fills, so a classifier
+        # named beside it is ignored, and C32 says so (lead 260924; it had
+        # been exempt while the lead thought agent mode asked a session)
         f = facts(
             [
                 "--book_name",
@@ -223,7 +224,7 @@ class TestStops:
                 "m",
             ]
         )
-        assert "C32" not in tripped(f)
+        assert "C32" in tripped(f)
 
     def test_a10_reads_the_resolved_classifier(self):
         """PIN (lead ruling 260923, Codex finding 4): a fixed-engine run is
@@ -770,11 +771,18 @@ WARN_FIXTURES = [
     ),
     (
         # C32: a classifier named beside --plan-classify all, which asks
-        # nothing (owner 260923: not with agent, which asks its session)
+        # nothing
         "C32",
         ["--plan-classify", "all", "--classify-model", "gpt-5.6-luna"],
         {},
         "--classify-model names a classifier, and --plan-classify all",
+    ),
+    (
+        # C32 for agent mode too (owner 260924: agent mode never pre-fills)
+        "C32:agent",
+        ["--plan-classify", "agent", "--classify-model", "gpt-5.6-luna"],
+        {},
+        "--plan-classify agent leaves every row to your agent and asks no model",
     ),
     (
         # C33: nothing but plan mode classifies yet (lead ruling 260923,

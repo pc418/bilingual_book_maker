@@ -1583,15 +1583,22 @@ COMPAT_RULES = (
         "C32",
         "warn",
         lambda f: f.book_type == "epub"
-        and f.classify_mode == "all"
+        and f.classify_mode in NEVER_CLASSIFIES
         and any(
             getattr(f.options, dest, None)
             for dest in ("classify_model", "classify_base_url", "classify_key")
         ),
         lambda f: (
-            f"{_typed_classify_flag(f.options)} names a "
-            f"classifier, and --plan-classify all translates the whole "
-            f"partition without classifying anything; it is ignored this run."
+            f"{_typed_classify_flag(f.options)} names a classifier, and "
+            f"--plan-classify {f.classify_mode} "
+            + (
+                "translates the whole partition without classifying anything"
+                if f.classify_mode == "all"
+                # owner 260924: agent mode never pre-fills; a pre-filled plan
+                # makes the agent less accurate
+                else "leaves every row to your agent and asks no model"
+            )
+            + "; it is ignored this run."
         ),
     ),
     CompatRule(
