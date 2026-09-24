@@ -25,13 +25,17 @@ A choice with no address of its own is the run's endpoint with another
 model: the same format, base and key. A choice with its own address speaks
 the format that address resolves to (`infer_api_format`); anything but the
 OpenAI shape is refused before anything is paid for, because the image and
-schema channels exist only there. The key is `--img-key` / `--classify-key`,
-else the entry's key variable, else the run's key when the address is the
-run's, else what that address's format reads from the environment.
+schema channels exist only there. A key is bound to an address (lead ruling
+260923, Codex review): `--img-key` / `--classify-key`; else the run's key
+when the choice calls the run's effective address (after any `--api_base`);
+else the entry's key variable when the choice calls the address that entry
+names; else what that address's format reads from the environment.
 
 `jev` (TypeSafe's System One classifier) is a classify endpoint of its own
 kind: `--classify-model jev` (or a `jev-*` model id, or a TypeSafe address)
-selects it, with its own default address and key variables.
+selects it, with its own default address. Its key variables
+(`JEV_API_KEY`, `TYPESAFE_API_KEY`) are read only for a typesafe.ai host;
+at any other address (a gateway) the key is passed explicitly.
 
 Nothing here builds a network client at import, and nothing imports the CLI
 at module level (the CLI imports this module).
@@ -154,37 +158,93 @@ def _address(api_base, api_format):
     return _entry_address(api_base, api_format)
 
 
-def _key(explicit, env_key, choice, run, with_key):
-    """The key rule shared by both chains (see the module docstring)."""
+def _same_address(base_a, format_a, base_b, format_b):
+    """Whether two (base, format) pairs call one host (see `_entry_address`).
+
+    A written base is compared as the OpenAI shape normalises it (the
+    `/chat/completions` tail is noise); an empty one stands for its
+    format's own host."""
+    from book_maker.cli import normalize_api_base
+
+    def where(base, api_format):
+        return _address(normalize_api_base(base, "openai") if base else "", api_format)
+
+    return where(base_a, format_a) == where(base_b, format_b)
+
+
+def _is_typesafe_host(api_base):
+    host = (urlparse(api_base or "").hostname or "").lower()
+    return host == JEV_HOST_SUFFIX or host.endswith("." + JEV_HOST_SUFFIX)
+
+
+def _bound_env_key(provider, model, sidecar_base, env_key):
+    """`(env_key, base, format)`: the entry's key variable and the address
+    it belongs to, read from the entry alone -- its own `*_base_url`, else
+    the address its model resolves to without one (jev's default host),
+    else the entry's `base_url` (lead ruling 260923, Codex review: a key is
+    bound to an address, and a run's `--api_base` does not move it)."""
+    if not env_key or provider is None:
+        return None
+    from book_maker.cli import infer_api_format
+
+    if sidecar_base:
+        return env_key, sidecar_base, infer_api_format(sidecar_base, model)
+    if is_jev(model, ""):
+        return env_key, JEV_DEFAULT_BASE, JEV_FORMAT
+    return env_key, provider.api_base, provider.api_format
+
+
+def _key(explicit, bound, choice, run, with_key, flag):
+    """The key for `choice`; never one resolved for another host.
+
+    Lead ruling 260923 (Codex review, finding 1): the flag's key; else the
+    run's key when the choice calls the run's *effective* address (after
+    any `--api_base`); else the provider entry's key variable when the
+    choice calls the address that variable belongs to (`bound`); else what
+    the choice's format reads from the environment. For jev (finding 2):
+    `JEV_API_KEY` / `TYPESAFE_API_KEY` only at a typesafe.ai host, and
+    never the run's key; anywhere else the key is named explicitly.
+    """
     if not with_key:
         return None
     if explicit:
         return explicit
-    if env_key and env.get(env_key):
-        return env[env_key]
+    bound_here = bound is not None and _same_address(
+        choice.api_base, choice.api_format, bound[1], bound[2]
+    )
     if choice.api_format == JEV_FORMAT:
-        found = next((env[n] for n in JEV_ENV_KEYS if env.get(n)), "")
+        if bound_here and env.get(bound[0]):
+            return env[bound[0]]
+        names = ((bound[0],) if bound_here else ()) + (
+            JEV_ENV_KEYS if _is_typesafe_host(choice.api_base) else ()
+        )
+        found = next((env[n] for n in names if env.get(n)), "")
         if found:
             return found
-        raise SystemExit(
-            f"No API key for the jev classifier. Pass --classify-key, or set "
-            f"one of: {', '.join(((env_key,) if env_key else ()) + JEV_ENV_KEYS)}."
+        where = (
+            f"set one of: {', '.join(names)}"
+            if names
+            else f"{choice.api_base} is not a typesafe.ai address, so "
+            f"{' and '.join(JEV_ENV_KEYS)} are not sent there"
         )
-    same_endpoint = not choice.own_base or (
-        choice.api_format == run.api_format
-        and _address(choice.api_base, choice.api_format)
-        == _address(run.api_base, run.api_format)
-    )
-    if same_endpoint and run.key:
+        raise SystemExit(
+            f"No API key for the jev classifier at {choice.api_base}. Pass "
+            f"{flag}, or {where}."
+        )
+    if run.key and _same_address(
+        choice.api_base, choice.api_format, run.api_base, run.api_format
+    ):
         return run.key
+    if bound_here and env.get(bound[0]):
+        return env[bound[0]]
     from book_maker.cli import resolve_api_key
 
-    return resolve_api_key(
-        choice.api_format,
-        None,
-        choice.api_base,
-        (env_key,) if env_key else (),
-    )
+    try:
+        return resolve_api_key(choice.api_format, None, choice.api_base, ())
+    except SystemExit as err:
+        raise SystemExit(
+            f"{err} For {choice.model} at {choice.where()}, pass {flag}."
+        ) from None
 
 
 def _choose(model, base, run, source, *, image):
@@ -192,6 +252,12 @@ def _choose(model, base, run, source, *, image):
     from book_maker.cli import infer_api_format, normalize_api_base
 
     unsupported = IMG_ENDPOINT_UNSUPPORTED if image else CLASSIFY_ENDPOINT_UNSUPPORTED
+    # An address of its own speaks the format it resolves to, jev included
+    # (lead ruling 260923, Codex finding 2): a jev id at an Anthropic-shaped
+    # address is refused like any other model there.
+    api_format = infer_api_format(base, model) if base else None
+    if base and api_format != "openai":
+        raise SystemExit(unsupported.format(base=base, api_format=api_format))
     if is_jev(model, base):
         if image:
             raise SystemExit(
@@ -207,9 +273,6 @@ def _choose(model, base, run, source, *, image):
             own_base=True,
         )
     if base:
-        api_format = infer_api_format(base, model)
-        if api_format != "openai":
-            raise SystemExit(unsupported.format(base=base, api_format=api_format))
         return EndpointChoice(
             model=model,
             api_base=normalize_api_base(base, api_format),
@@ -256,16 +319,18 @@ def resolve_image_endpoint(options, run, provider, *, with_key=True):
         return None
     if base and not model:
         raise SystemExit(IMG_BASE_WITHOUT_MODEL)
-    env_key = ""
+    bound = None
     if model:
         source = SOURCE_CLI
     elif provider is not None and provider.img_model:
         model, base = provider.img_model, provider.img_base_url
-        env_key, source = provider.img_env_key, SOURCE_PROVIDER
+        bound = _bound_env_key(provider, model, base, provider.img_env_key)
+        source = SOURCE_PROVIDER
     else:
         return None
     choice = _choose(model, base, run, source, image=True)
-    return replace(choice, key=_key(explicit_key, env_key, choice, run, with_key))
+    key = _key(explicit_key, bound, choice, run, with_key, "--img-key")
+    return replace(choice, key=key)
 
 
 def resolve_classify_endpoint(options, run, provider, *, with_key=True):
@@ -280,16 +345,18 @@ def resolve_classify_endpoint(options, run, provider, *, with_key=True):
     explicit_key = getattr(options, "classify_key", None) or ""
     if base and not model:
         raise SystemExit(CLASSIFY_BASE_WITHOUT_MODEL)
-    env_key = ""
+    bound = None
     if model:
         source = SOURCE_CLI
     elif provider is not None and provider.classify_model:
         model, base = provider.classify_model, provider.classify_base_url
-        env_key, source = provider.classify_env_key, SOURCE_PROVIDER
+        bound = _bound_env_key(provider, model, base, provider.classify_env_key)
+        source = SOURCE_PROVIDER
     else:
         return run
     choice = _choose(model, base, run, source, image=False)
-    return replace(choice, key=_key(explicit_key, env_key, choice, run, with_key))
+    key = _key(explicit_key, bound, choice, run, with_key, "--classify-key")
+    return replace(choice, key=key)
 
 
 def build_translator(choice, options, language, prompt_config=None):

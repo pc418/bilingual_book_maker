@@ -179,14 +179,46 @@ class TestTheKeyRule:
         )
         assert choice.key == "sk-f"
 
-    def test_the_provider_s_key_variable_comes_before_the_rule(self, monkeypatch):
+    def test_the_provider_s_key_variable_at_the_entry_s_own_address(self, monkeypatch):
+        # the run's key on the run's address first; the entry's variable
+        # where the choice calls the address the entry names
         monkeypatch.setenv("IMG_KEY_VAR", "sk-var")
-        choice = resolve_image_endpoint(
-            _opts(),
-            _run(),
-            _provider(img_model="v", img_env_key="IMG_KEY_VAR"),
+        entry = _provider(img_model="v", img_env_key="IMG_KEY_VAR")
+        assert resolve_image_endpoint(_opts(), _run(), entry).key == "sk-run"
+        assert resolve_image_endpoint(_opts(), _run(key=""), entry).key == "sk-var"
+        own = _provider(
+            img_model="v",
+            img_base_url="https://vision.example/v1",
+            img_env_key="IMG_KEY_VAR",
         )
-        assert choice.key == "sk-var"
+        assert resolve_image_endpoint(_opts(), _run(), own).key == "sk-var"
+
+    @pytest.mark.parametrize("chain", ["img", "classify"])
+    def test_an_api_base_override_never_carries_the_entry_s_key(
+        self, monkeypatch, chain
+    ):
+        """PIN (lead ruling 260923, Codex review finding 1): a key is bound
+        to an address. The entry names RUN_BASE; `--api_base` moved the run
+        to another host; the sidecar inherits that host, so the entry's
+        variable must not be sent there."""
+        monkeypatch.setenv("IMG_KEY_VAR", "sk-entry")
+        entry = _provider(**{f"{chain}_model": "m", f"{chain}_env_key": "IMG_KEY_VAR"})
+        resolve = (
+            resolve_image_endpoint if chain == "img" else resolve_classify_endpoint
+        )
+        moved = "https://other-host.example/v1"
+        # the run's own key belongs to the run's effective address
+        choice = resolve(_opts(), _run(base=moved, key="sk-moved"), entry)
+        assert (choice.api_base, choice.key) == (moved, "sk-moved")
+        # with no run key there, the format's variable, never the entry's
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-format")
+        choice = resolve(_opts(), _run(base=moved, key=""), entry)
+        assert choice.key == "sk-format"
+        monkeypatch.delenv("OPENAI_API_KEY")
+        flag = "--img-key" if chain == "img" else "--classify-key"
+        with pytest.raises(SystemExit, match=flag) as refused:
+            resolve(_opts(), _run(base=moved, key=""), entry)
+        assert "sk-entry" not in str(refused.value)
 
     def test_a_dry_run_resolves_no_key(self):
         choice = resolve_image_endpoint(
@@ -282,31 +314,60 @@ class TestJevIsAClassifyEndpoint:
         )
         assert (choice.api_format, choice.model) == ("jev", "jev-1.13.0")
 
-    def test_a_gateway_s_namespaced_id_is_jev_and_passed_through(self, monkeypatch):
-        # Vercel's AI Gateway serves the classifier as `typesafe-ai/jev`
-        monkeypatch.setenv("JEV_API_KEY", "k")
-        choice = resolve_classify_endpoint(
-            _opts(
-                classify_model="typesafe-ai/jev",
-                classify_base_url="https://ai-gateway.vercel.sh/typesafe",
-            ),
-            _run(),
-            None,
+    def test_a_gateway_s_namespaced_id_needs_its_key_named(self, monkeypatch):
+        """PIN (lead ruling 260923, Codex finding 2): JEV_API_KEY is sent
+        only to a typesafe.ai host. Vercel's AI Gateway serves the
+        classifier as `typesafe-ai/jev`; there the key is passed."""
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
+        gateway = dict(
+            classify_model="typesafe-ai/jev",
+            classify_base_url="https://ai-gateway.vercel.sh/typesafe",
         )
-        assert (choice.api_format, choice.model, choice.api_base) == (
+        with pytest.raises(SystemExit, match="--classify-key") as refused:
+            resolve_classify_endpoint(_opts(**gateway), _run(), None)
+        assert "jev-secret" not in str(refused.value)
+        choice = resolve_classify_endpoint(
+            _opts(**gateway, classify_key="vck-flag"), _run(), None
+        )
+        assert (choice.api_format, choice.model, choice.api_base, choice.key) == (
             "jev",
             "typesafe-ai/jev",
             "https://ai-gateway.vercel.sh/typesafe",
+            "vck-flag",
         )
 
     def test_another_host(self, monkeypatch):
         monkeypatch.setenv("JEV_API_KEY", "k")
+        options = _opts(classify_model="jev", classify_base_url="https://jev.example/")
+        with pytest.raises(SystemExit, match="not a typesafe.ai address"):
+            resolve_classify_endpoint(options, _run(), None)
+        options.classify_key = "k-flag"
+        choice = resolve_classify_endpoint(options, _run(), None)
+        assert (choice.api_base, choice.key) == ("https://jev.example", "k-flag")
+
+    def test_a_typesafe_host_reads_the_jev_variable(self, monkeypatch):
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
         choice = resolve_classify_endpoint(
-            _opts(classify_model="jev", classify_base_url="https://jev.example/"),
+            _opts(classify_model="jev", classify_base_url="https://eu.api.typesafe.ai"),
             _run(),
             None,
         )
-        assert choice.api_base == "https://jev.example"
+        assert choice.key == "jev-secret"
+
+    def test_a_jev_id_at_an_anthropic_address_is_refused(self, monkeypatch):
+        """PIN (Codex finding 2): the address's format is inferred first."""
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
+        with pytest.raises(SystemExit) as refused:
+            resolve_classify_endpoint(
+                _opts(
+                    classify_model="jev", classify_base_url="https://api.anthropic.com"
+                ),
+                _run(),
+                None,
+            )
+        assert str(refused.value) == CLASSIFY_ENDPOINT_UNSUPPORTED.format(
+            base="https://api.anthropic.com", api_format="anthropic"
+        )
 
     def test_the_translation_key_is_never_sent_to_typesafe(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
