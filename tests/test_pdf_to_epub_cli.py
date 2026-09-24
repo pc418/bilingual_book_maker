@@ -91,12 +91,14 @@ class TestRouting:
             ocr_lang,
             pages,
             formula_images,
+            ocr_replace_layer,
             img_model,
             img_base_url,
             img_key,
             quiet,
         ):
             seen.update(
+                ocr_replace_layer=ocr_replace_layer,
                 path=Path(path),
                 argv=list(argv),
                 device=device,
@@ -126,6 +128,8 @@ class TestRouting:
         assert seen["pdf_ocr"] is False
         assert seen["ocr_lang"] is None
         assert seen["pages"] is None
+        # an embedded layer is kept unless replacing it is asked for
+        assert seen["ocr_replace_layer"] is False
         assert seen["img_model"] is None
         assert seen["quiet"] is False
         # every other option is the translation's, and is handed on as typed
@@ -178,6 +182,7 @@ class TestRouting:
             # Display formulas are kept as pictures unless asked otherwise:
             # without them the equations are missing from the book.
             "formula_images": True,
+            "ocr_replace_layer": False,
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -212,6 +217,7 @@ class TestRouting:
             "ocr_lang": None,
             "pages": "6-7",
             "formula_images": True,
+            "ocr_replace_layer": False,
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -241,6 +247,7 @@ class TestRouting:
             "ocr_lang": "ch_sim,en",
             "pages": None,
             "formula_images": True,
+            "ocr_replace_layer": False,
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -260,6 +267,7 @@ class TestRouting:
             "ocr_lang": None,
             "pages": None,
             "formula_images": True,
+            "ocr_replace_layer": False,
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -293,6 +301,7 @@ class TestRouting:
             "ocr_lang": None,
             "pages": None,
             "formula_images": True,
+            "ocr_replace_layer": False,
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -540,6 +549,8 @@ class TestTheStages:
         (["--pages=6-7", "--key", "k"], ["--key", "k"]),
         (["--ocr-lang", "ch_sim,en", "--key", "k"], ["--key", "k"]),
         (["--ocr-lang=ja", "--key", "k"], ["--key", "k"]),
+        # route-owned: the inner run would warn (C34) and fingerprint it
+        (["--ocr-replace-layer", "--key", "k"], ["--key", "k"]),
         # route-owned: the image endpoint is the extraction's, and must
         # not reach the translation run (row C31 would warn) or its
         # fingerprint
@@ -700,3 +711,73 @@ class TestWhatTheParserSaysReachesTheLine:
         # A parser that asks would draw its own progress bar into a stream
         # that is being read line by line.
         assert docling_parser._Sink(lambda text: None).isatty() is False
+
+
+# --------------------------------------------------------------------------
+# --ocr-replace-layer (packet G; owner ruling 260923, section 6 of
+# docs/260923-docs-OWNER_RULINGS_OCR_PROMPT_LAYER_WIKI.md)
+# --------------------------------------------------------------------------
+class TestOcrReplaceLayer:
+    def _route(self, pdf, monkeypatch, *flags):
+        seen = {}
+
+        def fake(path, argv, **kwargs):
+            seen.update(kwargs)
+
+        monkeypatch.setattr(to_epub, "pdf_to_epub", fake)
+        cli.main(["--book_name", str(pdf), "--to-epub", *flags, *TRANSLATION])
+        return seen
+
+    def test_without_ocr_the_route_refuses_before_anything_is_read(
+        self, pdf, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(
+            to_epub,
+            "pdf_to_epub",
+            lambda *a, **k: pytest.fail("the route ran without OCR to replace with"),
+        )
+        with pytest.raises(SystemExit) as stopped:
+            cli.main(
+                ["--book_name", str(pdf), "--to-epub", "--ocr-replace-layer"]
+                + TRANSLATION
+            )
+        assert stopped.value.code == 1
+        out = " ".join(capsys.readouterr().out.split())
+        assert messages.OCR_REPLACE_NEEDS_OCR in out
+
+    def test_with_ocr_the_route_is_handed_the_flag(self, pdf, monkeypatch):
+        seen = self._route(pdf, monkeypatch, "--pdf-ocr", "--ocr-replace-layer")
+        assert seen["ocr_replace_layer"] is True
+        assert seen["pdf_ocr"] is True
+
+    def test_the_retired_ocr_spelling_satisfies_it(self, pdf, monkeypatch):
+        seen = self._route(pdf, monkeypatch, "--with-ocr", "--ocr-replace-layer")
+        assert seen["ocr_replace_layer"] is True
+
+    def test_an_image_model_does_not_imply_it(self, pdf, monkeypatch):
+        # PIN (owner 260923): neither --pdf-ocr nor an image model is
+        # permission to overwrite an existing layer
+        seen = self._route(pdf, monkeypatch, "--pdf-ocr", "--img-model", "m")
+        assert seen["ocr_replace_layer"] is False
+
+    def test_the_route_hands_it_to_the_extraction(
+        self, pdf, monkeypatch, no_pandoc_lookup
+    ):
+        handed = []
+
+        def prepare_stage(bundle, source, **kwargs):
+            handed.append(kwargs.get("ocr_replace_layer", False))
+            bundle.source.write_text("# Title\n\nProse.\n", encoding="utf-8")
+
+        recorder = []
+        fakes = stages(recorder)
+        fakes["prepare_stage"] = prepare_stage
+        for flag in (True, False):
+            to_epub.pdf_to_epub(
+                pdf,
+                ["--book_name", str(pdf), "--to-epub", *TRANSLATION],
+                pdf_ocr=True,
+                ocr_replace_layer=flag,
+                **fakes,
+            )
+        assert handed == [True, False]

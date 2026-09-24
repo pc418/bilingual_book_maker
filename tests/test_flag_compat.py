@@ -197,6 +197,34 @@ class TestStops:
         assert proc.returncode == 1
         assert "no --img-model was given" in _flat(proc)
 
+    def test_replacing_the_layer_without_ocr_is_refused_on_the_route(self, tmp_path):
+        # A16 (packet G; owner ruling 260923): --ocr-replace-layer replaces
+        # the layer with what the OCR engine reads, so it needs --pdf-ocr.
+        # The route strips the flag from its inner run, so the route asks
+        # the row itself before a page is read (`pdf_route_stops`).
+        pdf = tmp_path / "scan.pdf"
+        pdf.write_bytes(b"%PDF-1.7\n%fake\n")
+        proc = _cli(
+            "--book_name",
+            str(pdf),
+            "--api_format",
+            "google",
+            "--to-epub",
+            "--ocr-replace-layer",
+        )
+        assert proc.returncode == 1
+        assert "re-reads pages that already carry a text layer" in _flat(proc)
+        assert "so it needs --pdf-ocr." in _flat(proc)
+        # stopped before the bundle was made
+        assert not (tmp_path / "scan_book").exists()
+
+    def test_replacing_the_layer_with_ocr_is_not_refused(self):
+        f = facts(
+            ["--book_name", "b.pdf", "--to-epub", "--pdf-ocr", "--ocr-replace-layer"],
+            book_type="pdf",
+        )
+        assert tripped(f) == []
+
     def test_a_classify_base_without_its_model(self, tmp_path):
         # A15: the same for the classify endpoint
         proc = _cli(
@@ -754,6 +782,14 @@ WARN_FIXTURES = [
         ["--no-formula-images"],
         {},
         "only runs with --to-epub",
+    ),
+    (
+        # C34: --ocr-replace-layer re-reads pages on the PDF route, which
+        # only runs with --to-epub (packet G, 260923)
+        "C34",
+        ["--pdf-ocr", "--ocr-replace-layer"],
+        {},
+        "--ocr-replace-layer has the PDF route's OCR engine re-read pages",
     ),
     (
         # C31: the image model serves the PDF route's page-image steps, and

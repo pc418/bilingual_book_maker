@@ -41,6 +41,7 @@ OWNED_OPTIONS = (
     "--with-ocr",
     "--no-gpu",
     "--no-formula-images",
+    "--ocr-replace-layer",
 )
 OWNED_VALUE_OPTIONS = (
     "--book_name",
@@ -130,6 +131,7 @@ def pdf_to_epub(
     ocr_lang=None,
     pages=None,
     formula_images=True,
+    ocr_replace_layer=False,
     img_model=None,
     img_base_url=None,
     img_key=None,
@@ -185,6 +187,8 @@ def pdf_to_epub(
         formula_images=formula_images,
         progress=not quiet,
         structure=structure,
+        # Handed on only when asked for, as the stage's seams take it.
+        **({"ocr_replace_layer": True} if ocr_replace_layer else {}),
     )
     if structure is not None and structure.translator is not None:
         _print_image_usage(structure)

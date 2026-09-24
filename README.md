@@ -485,6 +485,10 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   downloads its model (tens of megabytes). On a typed PDF the flag changes
   nothing; rerunning a scan with other languages, or with `--pdf-ocr`
   toggled, reads it again.
+- `--ocr-replace-layer` (with `--pdf-ocr`) has the OCR engine read every
+  page and drop the PDF's own text layer. Off by default: an existing layer
+  is kept. It measured worse than a sound layer; use it for a layer that is
+  wrong. A page it reads nothing on stays empty and is named on the terminal.
 - `--pages` reads only the pages named, numbered from 1 (`12-30`, or
   `1,3,5-7`); the rest of the PDF is left out of the book, and nothing else
   is extracted or paid for. The selection goes into the names, so a chapter

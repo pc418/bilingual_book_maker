@@ -28,6 +28,7 @@ from book_maker.endpoints import (
     HELP_IMG_MODEL,
     IMG_BASE_WITHOUT_MODEL,
 )
+from book_maker.pipeline.messages import HELP_OCR_REPLACE_LAYER, OCR_REPLACE_NEEDS_OCR
 from book_maker.prompt_file import parse_prompt_markdown
 from book_maker.provider_loader import resolve_provider
 from book_maker.session_context import DEFAULT_COMPACT_BUDGET, compact_budget_notice
@@ -1148,6 +1149,17 @@ COMPAT_RULES = (
         and not getattr(f.options, "classify_model", None),
         lambda f: CLASSIFY_BASE_WITHOUT_MODEL,
     ),
+    # The PDF route's own flag, so it is checked by the route before a page
+    # is read (`pdf_route_stops`, from `run_to_epub`): the flag is stripped
+    # from the inner translation run, whose table never sees it.
+    CompatRule(
+        "A16",
+        "stop",
+        lambda f: getattr(f.options, "ocr_replace_layer", False)
+        and f.options.to_epub
+        and not f.options.pdf_ocr,
+        lambda f: OCR_REPLACE_NEEDS_OCR,
+    ),
     CompatRule(
         "A10",
         "stop",
@@ -1562,6 +1574,17 @@ COMPAT_RULES = (
         lambda f: (
             "--no-formula-images turns off the pictures the PDF route keeps "
             "of display formulas, and that route only runs with --to-epub; "
+            "this run reads it and does nothing with it."
+        ),
+    ),
+    CompatRule(
+        "C34",
+        "warn",
+        lambda f: getattr(f.options, "ocr_replace_layer", False)
+        and not f.options.to_epub,
+        lambda f: (
+            "--ocr-replace-layer has the PDF route's OCR engine re-read pages "
+            "that carry a text layer, and that route only runs with --to-epub; "
             "this run reads it and does nothing with it."
         ),
     ),
@@ -1981,6 +2004,22 @@ def check_compatibility(facts, rules=COMPAT_RULES):
         print(f"[bold yellow]Warning:[/bold yellow] {rule.say(facts)}")
 
 
+# Stop rows about the PDF route's own flags. They read the options alone,
+# and `translation_argv` strips those flags from the inner run, so the
+# route asks these itself (`run_to_epub`), before anything is extracted.
+PDF_ROUTE_STOP_ROWS = ("A16",)
+
+
+def pdf_route_stops(options):
+    """The route-owned stop rows' sentences for a `--to-epub` PDF run."""
+    facts = SimpleNamespace(options=options, book_type="pdf")
+    return [
+        rule.say(facts)
+        for rule in COMPAT_RULES
+        if rule.id in PDF_ROUTE_STOP_ROWS and rule.level == "stop" and rule.when(facts)
+    ]
+
+
 def compat_stops(options, book_type):
     """The stop rows' sentences for a parsed command line, without running it.
 
@@ -2354,6 +2393,12 @@ off. Minimum 1.
         "default -- a born-digital PDF is already readable, and OCR costs "
         "several times the time without changing what is read. Layout and "
         "table detection run either way.",
+    )
+    parser.add_argument(
+        "--ocr-replace-layer",
+        dest="ocr_replace_layer",
+        action="store_true",
+        help=HELP_OCR_REPLACE_LAYER,
     )
     parser.add_argument(
         "--no-formula-images",
@@ -2732,6 +2777,12 @@ def run_to_epub(options, argv):
     from book_maker.pipeline.messages import STAGE_FAILED
     from book_maker.pipeline.to_epub import pdf_to_epub
 
+    # The route's own stop rows, which the inner run cannot see (A16).
+    stops = pdf_route_stops(options)
+    if stops:
+        for sentence in stops:
+            print(f"[bold red]Error: {escape(sentence)}[/bold red]")
+        raise SystemExit(1)
     try:
         pdf_to_epub(
             options.book_name,
@@ -2741,6 +2792,7 @@ def run_to_epub(options, argv):
             ocr_lang=options.ocr_lang,
             pages=options.pages,
             formula_images=options.formula_images,
+            ocr_replace_layer=options.ocr_replace_layer,
             img_model=options.img_model,
             img_base_url=options.img_base_url,
             img_key=options.img_key,
