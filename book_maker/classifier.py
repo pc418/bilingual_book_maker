@@ -498,3 +498,196 @@ class Classifier:
         # Never probes: a dry run describes the classifier without spending.
         via = backend or "/".join(self.prefer) or "nothing"
         return f"{self.model} at {self.where()} via {via} ({self.source})"
+
+
+# --------------------------------------------------------------------------
+# jev: TypeSafe's System One classifier
+# --------------------------------------------------------------------------
+
+# Below this probability for the top option the answer is the question's
+# `abstain` value rather than the option. A starting guess, not a
+# measurement: nothing has been tuned against a corpus yet, and with two
+# options (the plan classifier's translate/skip) the top one is never below
+# it but on an exact tie.
+JEV_ABSTAIN_BELOW = 0.5
+
+# docs.typesafe.ai/api (read 260923): one POST per request, a map of typed
+# questions evaluated in parallel against one `state`, one answer per
+# question id. 429 and 529 are "back off and retry"; 401 and 422 are the
+# request's own fault.
+JEV_PATH = "/v1/systemone"
+# Per-request timeout in seconds; a request that times out is retried.
+JEV_TIMEOUT = 120
+# Retries wait 2, 4, 8 ... seconds, at most this long each, for as long as
+# the errors stay non-fatal (owner ruling 260907: patient waits, capped per
+# wait, never in attempts). A `retry-after` header is honoured up to it.
+JEV_WAIT_CAP = 120
+# Statuses that are the request's own fault: asking again sends the same
+# thing and gets the same answer.
+JEV_FATAL_STATUSES = frozenset({400, 401, 403, 404, 405, 413, 422})
+
+
+class JevFatal(Exception):
+    """TypeSafe refused the request itself (a key, a malformed question)."""
+
+
+def _requests_post(url, json, headers, timeout):
+    import requests
+
+    return requests.post(url, json=json, headers=headers, timeout=timeout)
+
+
+class JevBackend:
+    """One TypeSafe Choice question per candidate, one request per question.
+
+    `state` is the caller's prompt for the whole question (verbatim); each
+    candidate's Choice carries the caller's prompt for that candidate alone
+    as its instructions, and its allowed answers but `abstain` as the
+    options. The top option answers, unless its probability is below
+    `JEV_ABSTAIN_BELOW`, when the answer is `abstain`: a flat distribution is
+    what abstaining means here. Text only.
+    """
+
+    name = "jev"
+
+    def __init__(
+        self,
+        model,
+        key,
+        base,
+        *,
+        post=None,
+        sleep=time.sleep,
+        log=None,
+        wait_cap=JEV_WAIT_CAP,
+    ):
+        from .redaction import remember
+        from .translator.base_translator import UsageMeter
+
+        remember(key)  # a 401 body may quote it back
+        self.model = model
+        self.key = key
+        self.base = (base or "").rstrip("/")
+        self._post = post or _requests_post
+        self._sleep = sleep
+        self._log = log
+        self.wait_cap = wait_cap
+        self.usage = UsageMeter()
+
+    def can(self, question):
+        return question.image_png is None and question.per_candidate is not None
+
+    def why_not(self, question):
+        if question.image_png is not None:
+            return "jev reads text only"
+        return "jev asks one question per candidate, and this one has no per-candidate prompt"
+
+    def options(self, question, cid):
+        return [
+            answer for answer in question.candidates[cid] if answer != question.abstain
+        ]
+
+    def request_body(self, question):
+        """The JSON sent for `question`, and `{id: option}` for any id with
+        a single option (answered without asking)."""
+        questions, settled = {}, {}
+        for cid in question.candidates:
+            options = self.options(question, cid)
+            if len(options) == 1:
+                settled[cid] = options[0]
+                continue
+            if not options:
+                continue
+            questions[str(cid)] = {
+                "type": "choice",
+                "instructions": question.per_candidate.get(cid, question.prompt),
+                "criteria": {option: None for option in options},
+            }
+        body = {"model": self.model, "state": question.prompt, "questions": questions}
+        return body, settled
+
+    def ask(self, question):
+        body, settled = self.request_body(question)
+        reply = Reply(settled)
+        reply.confidence = {cid: 1.0 for cid in settled}
+        if not body["questions"]:
+            return reply
+        data = self._send(body)
+        usage = data.get("usage") or {}
+        prompt = int(usage.get("input_tokens") or 0)
+        completion = int(usage.get("output_tokens") or 0)
+        self.usage.note(prompt=prompt, completion=completion, model="jev")
+        reply.usage = {"prompt_tokens": prompt, "completion_tokens": completion}
+        by_key = {str(cid): cid for cid in question.candidates}
+        for key, answer in (data.get("answers") or {}).items():
+            cid = by_key.get(key, key)
+            if not isinstance(answer, dict):
+                reply[cid] = answer
+                continue
+            choice = answer.get("choice")
+            probability = (answer.get("probabilities") or {}).get(choice)
+            if probability is None:
+                probability = answer.get("confidence") or 0.0
+            reply.confidence[cid] = float(probability)
+            if question.abstain is not None and probability < JEV_ABSTAIN_BELOW:
+                reply[cid] = question.abstain
+            else:
+                reply[cid] = choice
+        reply.text = data
+        return reply
+
+    def _say(self, line):
+        if self._log is not None:
+            self._log(line)
+            return
+        from rich import print as rich_print
+        from rich.markup import escape
+
+        rich_print(f"[yellow]{escape(line)}[/yellow]", flush=True)
+
+    def _send(self, body):
+        """POST `body`, patient on weather, fatal on the request's own fault."""
+        from .redaction import redact
+
+        url = self.base + JEV_PATH
+        headers = {
+            "Authorization": f"Bearer {self.key}",
+            "Content-Type": "application/json",
+        }
+        attempt = 0
+        while True:
+            retry_after = None
+            try:
+                response = self._post(url, body, headers, JEV_TIMEOUT)
+            except Exception as err:  # transport: refused, reset, timed out
+                if isinstance(err, (KeyboardInterrupt, SystemExit)):
+                    raise
+                why = f"{type(err).__name__}: {redact(err)}"
+            else:
+                status = response.status_code
+                if status == 200:
+                    return response.json()
+                detail = redact((getattr(response, "text", "") or "")[:300])
+                if status in JEV_FATAL_STATUSES:
+                    raise JevFatal(f"jev answered {status}: {detail}")
+                why = f"HTTP {status}: {detail}"
+                retry_after = _retry_after(getattr(response, "headers", None))
+            attempt += 1
+            wait = min(self.wait_cap, 2**attempt)
+            if retry_after is not None:
+                wait = min(self.wait_cap, max(wait, retry_after))
+            self._say(
+                f"jev: retrying after {why} -- attempt {attempt}, waiting {wait:.0f}s"
+            )
+            self._sleep(wait)
+
+
+def _retry_after(headers):
+    """Seconds from a `retry-after` header, or None."""
+    if not headers:
+        return None
+    value = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return None

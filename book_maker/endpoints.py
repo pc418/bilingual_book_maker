@@ -75,7 +75,8 @@ IMG_OFF = "none"
 # TypeSafe's System One models (docs.typesafe.ai/models, read 260923): the
 # aliases `jev-latest` (-> jev-1.13.0) and `jev-preview`, and versioned ids
 # such as `jev-1.13.0`, all at one endpoint. The literal `jev` means the
-# default alias; any `jev-*` id is passed through.
+# default alias; any `jev-*` id, or a gateway's namespaced id whose last
+# segment is one (`typesafe-ai/jev`), is passed through verbatim.
 JEV_FORMAT = "jev"
 JEV_ALIAS = "jev"
 JEV_DEFAULT_MODEL = "jev-latest"
@@ -125,7 +126,9 @@ def run_choice(model, api_base, key, api_format):
 
 def is_jev(model, api_base=""):
     """Whether (model, base) names TypeSafe's classifier."""
-    name = (model or "").strip().lower()
+    # The id's last segment: a gateway that namespaces its models
+    # (`typesafe-ai/jev` on Vercel's AI Gateway) serves the same classifier.
+    name = (model or "").strip().lower().rsplit("/", 1)[-1]
     if name == JEV_ALIAS or name.startswith(JEV_ALIAS + "-"):
         return True
     host = (urlparse(api_base or "").hostname or "").lower()
@@ -329,3 +332,45 @@ def build_translator(choice, options, language, prompt_config=None):
     if choice.model:
         translator.set_model_list([choice.model])
     return translator
+
+
+def build_classifier(
+    choice, run_translator, options, language, prompt_config=None, *, prefer=None
+):
+    """The run's `Classifier`, from its classify choice.
+
+    The run's own choice asks the run's translator, as plan mode always did.
+    A named model gets a translator of its own (`build_translator`), so its
+    requests are metered apart and reported on their own line. `jev` has
+    only its own backend. `prefer` is the backend order (the session first
+    under `--plan-classify agent|all`).
+    """
+    from book_maker.classifier import DEFAULT_PREFER, Classifier, JevBackend
+
+    prefer = prefer or DEFAULT_PREFER
+    if choice is None or choice.source == SOURCE_RUN:
+        return Classifier(
+            run_translator,
+            None,
+            prefer=prefer,
+            source=SOURCE_RUN,
+            base=getattr(choice, "api_base", None) or None,
+        )
+    if choice.api_format == JEV_FORMAT:
+        return Classifier(
+            None,
+            choice.model,
+            backends=[JevBackend(choice.model, choice.key, choice.api_base)],
+            source=choice.source,
+            base=choice.api_base,
+            separate=True,
+        )
+    translator = build_translator(choice, options, language, prompt_config)
+    return Classifier(
+        translator,
+        None,
+        prefer=prefer,
+        source=choice.source,
+        base=choice.api_base or None,
+        separate=True,
+    )

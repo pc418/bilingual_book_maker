@@ -282,6 +282,23 @@ class TestJevIsAClassifyEndpoint:
         )
         assert (choice.api_format, choice.model) == ("jev", "jev-1.13.0")
 
+    def test_a_gateway_s_namespaced_id_is_jev_and_passed_through(self, monkeypatch):
+        # Vercel's AI Gateway serves the classifier as `typesafe-ai/jev`
+        monkeypatch.setenv("JEV_API_KEY", "k")
+        choice = resolve_classify_endpoint(
+            _opts(
+                classify_model="typesafe-ai/jev",
+                classify_base_url="https://ai-gateway.vercel.sh/typesafe",
+            ),
+            _run(),
+            None,
+        )
+        assert (choice.api_format, choice.model, choice.api_base) == (
+            "jev",
+            "typesafe-ai/jev",
+            "https://ai-gateway.vercel.sh/typesafe",
+        )
+
     def test_another_host(self, monkeypatch):
         monkeypatch.setenv("JEV_API_KEY", "k")
         choice = resolve_classify_endpoint(

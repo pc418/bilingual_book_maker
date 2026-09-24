@@ -1,0 +1,245 @@
+"""The jev backend: TypeSafe's System One classifier behind `Classifier`.
+
+Packet F (260923, owner 22:50 "build the Jev backend now"; 23:10: selected
+by the classify flags only, no --jev-* flag). Request and answer shapes are
+docs.typesafe.ai/api as read 260923. No network: the transport is injected.
+"""
+
+import pytest
+
+from book_maker.classifier import (
+    JEV_ABSTAIN_BELOW,
+    JEV_PATH,
+    Classifier,
+    JevBackend,
+    JevFatal,
+    NoBackend,
+    Question,
+)
+from book_maker.endpoints import (
+    EndpointChoice,
+    build_classifier,
+    resolve_classify_endpoint,
+    run_choice,
+)
+
+
+class Response:
+    def __init__(self, status, payload=None, headers=None, text=""):
+        self.status_code = status
+        self._payload = payload
+        self.headers = headers or {}
+        self.text = text
+
+    def json(self):
+        return self._payload
+
+
+def _answer(choice, probabilities):
+    return {
+        "type": "choice",
+        "choice": choice,
+        "probabilities": probabilities,
+        "confidence": 0.5,
+    }
+
+
+class Transport:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.sent = []
+
+    def __call__(self, url, json, headers, timeout):
+        self.sent.append((url, json, headers))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def _question(**kw):
+    kw.setdefault("prompt", "PAGE PROMPT")
+    kw.setdefault(
+        "candidates",
+        {"a": ("translate", "skip", "unsure"), "b": ("translate", "skip", "unsure")},
+    )
+    kw.setdefault("abstain", "unsure")
+    kw.setdefault("per_candidate", {"a": "PROMPT A", "b": "PROMPT B"})
+    return Question(**kw)
+
+
+def _ok(answers, usage=None):
+    return Response(
+        200,
+        {
+            "model": "jev-1.13.0",
+            "answers": answers,
+            "usage": usage or {"input_tokens": 120, "output_tokens": 8},
+        },
+    )
+
+
+def _backend(transport, sleeps=None, lines=None):
+    return JevBackend(
+        "jev-latest",
+        "jev-test-key-000",
+        "https://api.typesafe.ai",
+        post=transport,
+        sleep=(sleeps.append if sleeps is not None else lambda s: None),
+        log=(lines.append if lines is not None else lambda line: None),
+    )
+
+
+class TestTheRequest:
+    def test_one_choice_per_candidate_with_the_caller_s_text(self):
+        transport = Transport(
+            _ok(
+                {
+                    "a": _answer("skip", {"translate": 0.1, "skip": 0.9}),
+                    "b": _answer("translate", {"translate": 0.7, "skip": 0.3}),
+                }
+            )
+        )
+        c = Classifier(None, "jev-latest", backends=[_backend(transport)])
+        answer = c.ask(_question())
+        ((url, body, headers),) = transport.sent
+        assert url == "https://api.typesafe.ai" + JEV_PATH
+        assert headers["Authorization"] == "Bearer jev-test-key-000"
+        assert body["model"] == "jev-latest"
+        assert body["state"] == "PAGE PROMPT"
+        assert body["questions"]["a"] == {
+            "type": "choice",
+            "instructions": "PROMPT A",
+            # no abstain option: abstaining is what a flat distribution means
+            "criteria": {"translate": None, "skip": None},
+        }
+        assert answer.backend == "jev"
+        assert answer.values == {"a": "skip", "b": "translate"}
+        assert answer.confidence == {"a": 0.9, "b": 0.7}
+
+    def test_a_flat_distribution_is_the_abstain_answer(self):
+        assert JEV_ABSTAIN_BELOW == 0.5
+        transport = Transport(
+            _ok(
+                {
+                    "a": _answer("skip", {"translate": 0.3, "skip": 0.4, "x": 0.3}),
+                    "b": _answer("skip", {"translate": 0.5, "skip": 0.5}),
+                }
+            )
+        )
+        c = Classifier(None, "jev-latest", backends=[_backend(transport)])
+        answer = c.ask(_question())
+        assert answer.values["a"] == "unsure"  # 0.4 < 0.5
+        assert answer.values["b"] == "skip"  # 0.5 is not below
+
+    def test_usage_is_metered_as_jev(self):
+        transport = Transport(
+            _ok({"a": _answer("skip", {"skip": 1.0, "translate": 0.0})}),
+        )
+        backend = _backend(transport)
+        c = Classifier(None, "jev-latest", backends=[backend])
+        answer = c.ask(_question(candidates={"a": ("translate", "skip")}))
+        assert backend.usage.requests == 1
+        assert (backend.usage.prompt, backend.usage.completion) == (120, 8)
+        assert answer.usage["prompt_tokens"] == 120
+        assert c.usage is backend.usage
+
+    def test_a_single_option_is_answered_without_asking(self):
+        transport = Transport()
+        c = Classifier(None, "jev-latest", backends=[_backend(transport)])
+        answer = c.ask(_question(candidates={"a": ("keep", "unsure")}))
+        assert answer.values == {"a": "keep"}
+        assert transport.sent == []
+
+
+class TestPatience:
+    def test_a_429_is_waited_out_honouring_retry_after(self):
+        sleeps, lines = [], []
+        transport = Transport(
+            Response(429, headers={"retry-after": "7"}, text="slow down"),
+            Response(529, text="overloaded"),
+            ConnectionError("reset"),
+            _ok({"a": _answer("skip", {"skip": 0.9, "translate": 0.1})}),
+        )
+        backend = _backend(transport, sleeps, lines)
+        answer = Classifier(None, "j", backends=[backend]).ask(
+            _question(candidates={"a": ("translate", "skip")})
+        )
+        assert answer.values == {"a": "skip"}
+        assert sleeps == [7.0, 4, 8]
+        assert len(lines) == 3 and "HTTP 429" in lines[0]
+
+    def test_no_attempt_cap(self):
+        # PIN (owner ruling 260907, AGENTS.md "Retry philosophy"): patient
+        # waits capped per wait, never in attempts.
+        sleeps = []
+        transport = Transport(
+            *[Response(503, text="down")] * 40,
+            _ok({"a": _answer("skip", {"skip": 0.9, "translate": 0.1})}),
+        )
+        backend = _backend(transport, sleeps)
+        Classifier(None, "j", backends=[backend]).ask(
+            _question(candidates={"a": ("translate", "skip")})
+        )
+        assert len(sleeps) == 40
+        assert max(sleeps) == backend.wait_cap
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 422])
+    def test_the_request_s_own_fault_is_fatal_at_once(self, status):
+        sleeps = []
+        transport = Transport(
+            Response(status, text="Invalid API key jev-test-key-000"),
+        )
+        with pytest.raises(JevFatal) as err:
+            Classifier(None, "j", backends=[_backend(transport, sleeps)]).ask(
+                _question()
+            )
+        assert sleeps == []
+        assert str(status) in str(err.value)
+        assert "jev-test-key-000" not in str(err.value)
+
+
+class TestDispatch:
+    def test_an_image_question_is_no_backend(self):
+        c = Classifier(None, "j", backends=[_backend(Transport())])
+        with pytest.raises(NoBackend, match="jev reads text only"):
+            c.ask(_question(image_png=b"png"))
+
+    def test_classify_model_jev_builds_a_jev_only_classifier(self, monkeypatch):
+        monkeypatch.setenv("JEV_API_KEY", "jev-test-key-000")
+        options = type(
+            "O",
+            (),
+            {"classify_model": "jev", "classify_base_url": None, "classify_key": None},
+        )()
+        run = run_choice("gpt-run", "https://api.openai.com/v1", "sk", "openai")
+        choice = resolve_classify_endpoint(options, run, None)
+        c = build_classifier(choice, object(), options, "Simplified Chinese")
+        assert list(c.backends) == ["jev"]
+        assert c.separate and c.source == "cli"
+        assert c.describe("jev") == (
+            "jev-latest at https://api.typesafe.ai via jev (cli)"
+        )
+
+    def test_the_run_s_own_choice_asks_the_run_s_translator(self):
+        class T:
+            model = "m"
+
+            def supports_structured_json(self):
+                return True
+
+            def structured_json(self, *a, **k):
+                return {}
+
+        run = run_choice("m", "", "sk", "openai")
+        translator = T()
+        c = build_classifier(run, translator, None, "English")
+        assert c.translator is translator and not c.separate
+
+    def test_a_named_model_gets_a_translator_of_its_own(self):
+        choice = EndpointChoice(
+            "gpt-5.6-luna", "https://api.openai.com/v1", "sk-x", "openai", "cli"
+        )
+        c = build_classifier(choice, object(), None, "English")
+        assert c.separate
+        assert c.translator.model == "gpt-5.6-luna"
