@@ -108,6 +108,12 @@ EXTRACTION_REUSED_OTHER_RUNTIME = (
     "bundle directory to extract again."
 )
 OCR_LANG_EMPTY = "--ocr-lang needs at least one language code, for example ch_sim,en"
+# docling issue #4329: docling-parse paints a JBIG2-masked image unmasked.
+JBIG2_MASK_RENDER = (
+    "The PDF carries JBIG2 image masks, which docling-parse renders wrongly "
+    "(docling issue #4329); page images are rendered by pypdfium2 instead, "
+    "the text layer still by docling-parse."
+)
 OCR_EMPTY_PAGES = (
     "Warning: no text was recognised on page(s) {pages}; check source.md "
     "before translating."

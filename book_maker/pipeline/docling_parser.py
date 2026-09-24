@@ -33,12 +33,13 @@ from .bundle import (
     parse_pages,
     sha256_file,
 )
-from . import pdf_formula, pdf_headings
+from . import pdf_formula, pdf_headings, pdf_render
 from .errors import PipelineError
 from .importer import import_markdown
 from .messages import (
     FORMULA_IMAGES,
     BACKEND_FAILED,
+    JBIG2_MASK_RENDER,
     DEVICE_CPU_FALLBACK,
     DEVICE_NO_CUDA_BUILD,
     DEVICE_SELECTED,
@@ -101,6 +102,11 @@ SNAPSHOT = "docling.json"
 AUTO_OCR_SELECTED = re.compile(r"Auto OCR model selected (\w+)")
 IMAGE_REF = re.compile(r"(!\[[^\]]*\]\()([^)]*)(\))")
 
+# Which renderer painted the page images the models read, as the manifest
+# records it (`extraction.render_backend`).
+RENDER_DOCLING_PARSE = "docling-parse"
+RENDER_PDFIUM_PAGE_IMAGE = "pypdfium2-page-image"
+
 
 def resolve_device(requested):
     """`(resolved, message)` for the device the models will actually use.
@@ -151,12 +157,17 @@ def _unavailable(requested):
     return DEVICE_UNAVAILABLE.format(device=requested)
 
 
-def _converter(device, settings):
+def _converter(device, settings, pdfium_page_images=False):
     """docling's `DocumentConverter`, configured for one conversion.
 
     Every field is set from `settings`, including the ones that match
     docling's defaults today: what the pipeline asked for is then written
     down here rather than inherited from whatever a docling release ships.
+
+    `pdfium_page_images` keeps docling-parse for the text and takes the
+    page images from pypdfium2 (`pdf_render`), for a PDF docling-parse
+    renders wrongly. It is decided from the file, not asked for, so it is
+    not part of `settings`.
     """
     try:
         from docling.datamodel.base_models import InputFormat
@@ -200,9 +211,14 @@ def _converter(device, settings):
             fields["lang"] = list(settings.ocr_lang)
         options.ocr_options = engine(**fields)
     options.accelerator_options.device = device
-    return DocumentConverter(
-        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
+    format_option = (
+        PdfFormatOption(
+            pipeline_options=options, backend=pdf_render.pdfium_image_backend()
+        )
+        if pdfium_page_images
+        else PdfFormatOption(pipeline_options=options)
     )
+    return DocumentConverter(format_options={InputFormat.PDF: format_option})
 
 
 def _convert(pdf, *, out_dir, span, device, settings, formulas=True, report=None):
@@ -216,12 +232,18 @@ def _convert(pdf, *, out_dir, span, device, settings, formulas=True, report=None
     Returns `(markdown, formula count, warnings)`. A stub may return the
     Markdown alone; `extract_pdf` accepts either. `report` is the caller's
     dict for what the conversion found out: the path of docling's own
-    snapshot of the document, under `snapshot`.
+    snapshot of the document, under `snapshot`, and which renderer painted
+    the page images, under `render`.
     """
     from docling_core.types.doc.base import ImageRefMode
 
     report = {} if report is None else report
-    converter = _converter(device, settings)
+    # docling-parse paints a JBIG2-masked image unmasked (docling issue
+    # #4329), and the models then read a smear; such a file's page images
+    # come from pypdfium2 instead. Decided per document, from the bytes.
+    jbig2 = pdf_render.has_jbig2_mask(pdf)
+    report["render"] = RENDER_PDFIUM_PAGE_IMAGE if jbig2 else RENDER_DOCLING_PARSE
+    converter = _converter(device, settings, pdfium_page_images=jbig2)
     result = converter.convert(str(pdf), page_range=span)
     # docling's document as it came back, before the formula markers and
     # the heading levels below change it.
@@ -530,6 +552,9 @@ def extract_pdf(
         )
         print(engine_line)
     snapshot = found.get("snapshot")
+    render = found.get("render")
+    if render == RENDER_PDFIUM_PAGE_IMAGE:
+        print(JBIG2_MASK_RENDER)
 
     try:
         # Asked of what the parser returned, before the page markers are
@@ -595,6 +620,7 @@ def extract_pdf(
             else None
         ),
         formulas=formulas,
+        render=render,
     )
     limitations = [
         "Extraction reading order, headings and diacritics are not verified "
@@ -608,6 +634,8 @@ def extract_pdf(
         )
     if engine_line is not None and not languages:
         limitations.append(engine_line)
+    if render == RENDER_PDFIUM_PAGE_IMAGE:
+        limitations.append(JBIG2_MASK_RENDER)
     if heading_note is not None:
         limitations.append(heading_note)
     for number, chars in dense:
@@ -711,6 +739,7 @@ def _write_provenance(
     ocr_engine=None,
     raw_document=None,
     formulas=0,
+    render=None,
 ):
     settings = settings or ExtractionSettings()
     ocr = settings.ocr
@@ -773,6 +802,10 @@ def _write_provenance(
             **engine,
             # docling's document before our changes, bundle-relative.
             "raw_document": raw_document,
+            # Which renderer painted the page images the models read:
+            # docling-parse, or pypdfium2 for a PDF with JBIG2 image masks.
+            # Derived from the file, so provenance, not a setting.
+            "render_backend": render,
             "pdf": pdf.name,
             "pdf_sha256": sha256_file(pdf),
             "page_range": page_range,

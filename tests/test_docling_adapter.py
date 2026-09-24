@@ -43,6 +43,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     DEVICE_SELECTED,
     DEVICE_UNAVAILABLE,
     EXTRACTION_EMPTY,
+    JBIG2_MASK_RENDER,
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
     OCR_LANG_DEFAULT,
@@ -1802,8 +1803,8 @@ def test_the_raw_document_is_written_before_anything_of_ours_touches_it(
 
     seen = {}
 
-    def converter(device, settings):
-        seen.update(device=device, settings=settings)
+    def converter(device, settings, pdfium_page_images=False):
+        seen.update(device=device, settings=settings, pdfium=pdfium_page_images)
         return Converter()
 
     monkeypatch.setattr(docling_parser, "_converter", converter)
@@ -1842,7 +1843,127 @@ def test_the_raw_document_is_written_before_anything_of_ours_touches_it(
     pictures = list((out_dir / docling_parser.IMAGE_DIR).iterdir())
     assert len(pictures) == 1
     assert f"({docling_parser.IMAGE_DIR}/{pictures[0].name})" in markdown
-    assert seen == {"device": "cpu", "settings": ExtractionSettings()}
+    assert seen == {"device": "cpu", "settings": ExtractionSettings(), "pdfium": False}
+
+
+# --------------------------------------------------------------------------
+# The page image: pypdfium2 for a PDF with JBIG2 image masks (docling #4329)
+# --------------------------------------------------------------------------
+def test_the_converter_takes_the_pdfium_page_image_backend_only_when_asked():
+    pytest.importorskip("docling.document_converter")
+    from docling.backend.docling_parse_backend import (
+        ThreadedDoclingParseDocumentBackend,
+    )
+    from docling.datamodel.base_models import InputFormat
+
+    from book_maker.pipeline import pdf_render
+
+    def backend(**kw):
+        converter = docling_parser._converter("cpu", ExtractionSettings(), **kw)
+        return converter.format_to_options[InputFormat.PDF].backend
+
+    assert backend() is ThreadedDoclingParseDocumentBackend
+    assert backend(pdfium_page_images=False) is ThreadedDoclingParseDocumentBackend
+    assert backend(pdfium_page_images=True) is pdf_render.pdfium_image_backend()
+
+
+@pytest.mark.parametrize(
+    "masked,render",
+    [(True, "pypdfium2-page-image"), (False, "docling-parse")],
+)
+def test_the_conversion_takes_pypdfium2_page_images_exactly_when_the_scan_fires(
+    tmp_path, pdf, monkeypatch, masked, render
+):
+    pytest.importorskip("docling_core")
+    from docling_core.types.doc import DocItemLabel
+    from docling_core.types.doc.document import DoclingDocument
+
+    document = DoclingDocument(name="scan")
+    document.add_text(label=DocItemLabel.TEXT, text="A paragraph.")
+    scanned = []
+    seen = {}
+
+    def scan(path):
+        scanned.append(Path(path))
+        return masked
+
+    class Converter:
+        def convert(self, source, page_range=None):
+            return types.SimpleNamespace(document=document)
+
+    def converter(device, settings, pdfium_page_images=False):
+        seen["pdfium"] = pdfium_page_images
+        return Converter()
+
+    monkeypatch.setattr(docling_parser.pdf_render, "has_jbig2_mask", scan)
+    monkeypatch.setattr(docling_parser, "_converter", converter)
+    report = {}
+    out_dir = tmp_path / "staging"
+    out_dir.mkdir()
+    docling_parser._convert(
+        pdf,
+        out_dir=out_dir,
+        span=None,
+        device="cpu",
+        settings=ExtractionSettings(),
+        formulas=False,
+        report=report,
+    )
+    assert scanned == [pdf]
+    assert seen == {"pdfium": masked}
+    assert report["render"] == render
+
+
+def _rendering_convert(render):
+    inner = fake_convert()
+
+    def convert(pdf_path, **kwargs):
+        kwargs["report"]["render"] = render
+        return inner(pdf_path, **kwargs)
+
+    return convert
+
+
+def test_pypdfium2_page_images_are_said_and_recorded(
+    bundle, pdf, pandoc, device, capsys
+):
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, convert=_rendering_convert("pypdfium2-page-image")
+    )
+    assert JBIG2_MASK_RENDER in capsys.readouterr().out
+    manifest = bundle.read_manifest()
+    assert manifest["extraction"]["render_backend"] == "pypdfium2-page-image"
+    assert JBIG2_MASK_RENDER in manifest["limitations"]
+    assert JBIG2_MASK_RENDER in manifest["extraction"]["limitations"]
+
+
+def test_docling_parse_page_images_are_recorded_and_not_said(
+    bundle, pdf, pandoc, device, capsys
+):
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, convert=_rendering_convert("docling-parse")
+    )
+    assert JBIG2_MASK_RENDER not in capsys.readouterr().out
+    manifest = bundle.read_manifest()
+    assert manifest["extraction"]["render_backend"] == "docling-parse"
+    assert JBIG2_MASK_RENDER not in manifest["limitations"]
+
+
+def test_the_renderer_is_provenance_not_a_setting(tmp_path, pdf, pandoc, device):
+    # PIN (lead, 260923, packet D): the renderer is derived from the file,
+    # so it is not part of ExtractionSettings and a bundle made with either
+    # is reused by a rerun that asks for the same settings.
+    bundle = Bundle(tmp_path / "b").create()
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, convert=_rendering_convert("pypdfium2-page-image")
+    )
+    assert "render_backend" not in ExtractionSettings().identity()
+    assert stages.already_prepared(bundle, pdf, "docling", None, ExtractionSettings())
+    # an extraction that renders with docling-parse takes the line back
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, convert=_rendering_convert("docling-parse")
+    )
+    assert JBIG2_MASK_RENDER not in bundle.read_manifest()["limitations"]
 
 
 def test_the_raw_document_is_named_in_the_manifest(tmp_path, pdf, pandoc, device):
