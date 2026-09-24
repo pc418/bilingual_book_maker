@@ -499,6 +499,13 @@ class CapabilityLedger:
         # postponed by an outage (tracked only to keep the log to one line).
         self.failures = {}
         self.deferred = set()
+        # Image support, a separate question: "verified" | "unsupported".
+        # Its own dict and no streak — a schema demotion says nothing about
+        # images, and an image refusal never touches `verdicts`.
+        self.vision = {}
+        # Optional image-request fields (`vision.VISION_REQUEST_PARAMS`) a
+        # model refused once, so later requests stop sending them.
+        self.vision_unsent = {}
 
     def ensure_verdict(self, model, probe=None):
         """The model's graded schema support, probed at most once.
@@ -517,6 +524,33 @@ class CapabilityLedger:
                     except ProbeDeferred as e:
                         self.defer(model, e)
             return self.verdicts.get(model, False)
+
+    def ensure_vision(self, model, probe=None):
+        """Whether the model reads images here: 'verified', 'unsupported', 'deferred'.
+
+        Probed at most once per model, under the same lock as the schema
+        verdict so parallel workers issue one probe. `probe` takes the model
+        name (`vision.probe_image` bound to a client); None records
+        'unsupported' without a request. An outage records nothing and
+        answers 'deferred', so the next call asks again.
+        """
+        with self.lock:
+            if model not in self.vision:
+                if probe is None:
+                    self.vision[model] = "unsupported"
+                else:
+                    try:
+                        verdict = probe(model)
+                    except ProbeDeferred as e:
+                        print(
+                            f"[yellow]ℹ could not ask '{model}' about images "
+                            f"right now ({e}); asking again next time[/yellow]"
+                        )
+                        return "deferred"
+                    self.vision[model] = (
+                        "verified" if verdict == "verified" else "unsupported"
+                    )
+            return self.vision[model]
 
     def record(self, model, verdict):
         """Store the verdict string; False means no schema support at all."""

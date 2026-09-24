@@ -24,7 +24,9 @@ from pydantic import ConfigDict, Field, ValidationError, create_model
 from rich import print
 from rich.markup import escape
 from tenacity import (
+    Retrying,
     retry,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
@@ -49,6 +51,16 @@ from .capabilities import (
     describe_listing,
     probe_structured_output,
     verify_model_routes,
+)
+from .vision import (
+    VISION_REQUEST_PARAMS,
+    VisionRequestFailed,
+    image_part,
+    names_image_refusal,
+    parts_with_schema,
+    probe_image,
+    refused_optional_param,
+    text_part,
 )
 from ..redaction import redact, remember
 from ..structured import (
@@ -720,6 +732,133 @@ class ChatGPTAPI(Base):
 
     def _chat_completion(self, prompt, model=None):
         return self._completion_text(model or self.model, prompt)
+
+    # ---- image evidence ---------------------------------------------------
+
+    def vision_verdict(self, model=None):
+        """Whether `model` reads images here: 'verified', 'unsupported', 'deferred'.
+
+        Its own probe and its own ledger entry, never the schema verdict's.
+        A subclass that does not route through `self.openai_client` is not
+        probed and answers 'unsupported'.
+        """
+        self._ensure_models_routable()
+        model = model or self.model
+        probe = self._probe_vision if self.SUPPORTS_STRUCTURED_OUTPUTS else None
+        return self.capabilities.ensure_vision(model, probe)
+
+    def _probe_vision(self, model):
+        return probe_image(
+            self.openai_client,
+            model,
+            extra_body=self.extra_body or None,
+            on_usage=lambda completion: self._note_usage(completion, model),
+        )
+
+    def structured_json_with_image(
+        self, prompt, schema, image_png, model=None, accept=None
+    ):
+        """`structured_json` with a PNG shown beside the prompt.
+
+        The same ladder, entered where the schema verdict says; the evidence
+        never changes while it descends: every rung sends the one image part,
+        and the lower rungs add the described schema as another text part.
+        Whether the model reads images at all is the caller's question
+        (`vision_verdict`), asked before this.
+
+        Raises `VisionRequestFailed` when the endpoint refuses the image,
+        without counting it against any rung or the schema verdict.
+        """
+        entry = ENTRY_RUNG.get(self._probe_verdict(model), "prompt")
+        target = model or self.model
+        parts = [text_part(prompt), image_part(image_png)]
+
+        def ask(content, **kwargs):
+            text = self._vision_completion_text(target, content, **kwargs)
+            return unwrap_schema_echo(
+                extract_json_object(text, schema_required_keys(schema))
+            )
+
+        described = parts_with_schema(parts, schema)
+        ladder = [
+            (
+                "json_schema",
+                lambda: ask(
+                    parts,
+                    response_format={"type": "json_schema", "json_schema": schema},
+                ),
+            ),
+            (
+                "json_object",
+                lambda: ask(described, response_format={"type": "json_object"}),
+            ),
+            ("prompt", lambda: ask(described)),
+        ]
+        start = next(i for i, (name, _) in enumerate(ladder) if name == entry)
+        return self._descend(ladder[start:], target, accept)
+
+    def _vision_completion_text(self, model, parts, **kwargs):
+        """One image request: patient on weather, image refusals kept apart.
+
+        A 400 naming an optional field is asked again without it (and the
+        field is not sent to this model again); one naming the image raises
+        `VisionRequestFailed`; one about the schema, or anything else, is a
+        rung refusal exactly as `_completion_text` makes it.
+        """
+        kwargs.setdefault("extra_body", self.extra_body or None)
+        messages = [{"role": "user", "content": parts}]
+        while True:
+            unsent = self.capabilities.vision_unsent.get(model, set())
+            optional = {
+                k: v for k, v in VISION_REQUEST_PARAMS.items() if k not in unsent
+            }
+            try:
+                completion = self._patiently(
+                    lambda: self.openai_client.chat.completions.create(
+                        model=model, messages=messages, **optional, **kwargs
+                    )
+                )
+            except RUNG_REFUSAL_ERRORS as e:
+                field = refused_optional_param(e, optional)
+                if field is not None:
+                    with self.capabilities.lock:
+                        self.capabilities.vision_unsent.setdefault(model, set()).add(
+                            field
+                        )
+                    print(
+                        f"[yellow]ℹ '{model}' refused {field} on an image "
+                        f"request; asking without it[/yellow]"
+                    )
+                    continue
+                if classify_bad_request(e) != "schema" and names_image_refusal(e):
+                    raise VisionRequestFailed(
+                        f"'{model}' refused the image: {redact(e)}"
+                    ) from e
+                self.warn_if_extras_refused(e)
+                raise RungRejected(e) from e
+            self._note_usage(completion, model)
+            return completion.choices[0].message.content
+
+    @staticmethod
+    def _patiently(call):
+        """`call()`, waited out on weather exactly as the translate path is.
+
+        The loader's `translate_with_backoff` rules (owner ruling 260907, in
+        book_maker/loader/helper.py): no attempt cap, waits growing to
+        RETRY_WAIT_CAP, a line per retry, and only the fatal errors (auth, a
+        400, no such model) propagate at once. Imported here rather than at
+        module level: the loader package imports the translators.
+        """
+        from ..loader.helper import RETRY_WAIT_CAP, _is_retryable, _say_retrying
+
+        for attempt in Retrying(
+            retry=retry_if_exception(_is_retryable),
+            wait=wait_exponential(multiplier=1, min=1, max=RETRY_WAIT_CAP),
+            before_sleep=_say_retrying,
+            reraise=True,
+        ):
+            with attempt:
+                return call()
 
     def classify_session(self, model=None):
         """See `Base.classify_session`. One conversation, held in messages."""

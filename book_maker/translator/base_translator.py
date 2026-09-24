@@ -1128,6 +1128,10 @@ class Base(ABC):
         """
         target = model or getattr(self, "model", None)
         rungs = self.structured_rungs(prompt, schema, model)
+        return self._descend(rungs, target, accept)
+
+    def _descend(self, rungs, target, accept=None):
+        """`run_rungs` over the rungs `target` has not retired, floor always kept."""
         refusals = self._rung_refusals.get(target, {})
         live = [
             (name, rung)
