@@ -2057,6 +2057,61 @@ def test_the_conversion_takes_pypdfium2_page_images_exactly_when_the_scan_fires(
     assert report["render"] == render
 
 
+@pytest.mark.parametrize("masked", [True, False])
+def test_the_real_scan_decides_the_backend_docling_is_handed(
+    tmp_path, monkeypatch, masked
+):
+    # Only the converter's construction is stubbed: `has_jbig2_mask` reads
+    # the real file -- docling issue #4329's reproducer, or a typed page.
+    pytest.importorskip("docling.document_converter")
+    import docling.document_converter as dc
+    from docling.datamodel.base_models import InputFormat
+    from docling_core.types.doc import DocItemLabel
+    from docling_core.types.doc.document import DoclingDocument
+
+    from test_pdf_render import write_mask_repro
+
+    from book_maker.pipeline import pdf_render
+
+    pdf = (
+        write_mask_repro(tmp_path / "repro.pdf")
+        if masked
+        else write_pdf(tmp_path / "typed.pdf", ["A typed page."])
+    )
+    document = DoclingDocument(name="page")
+    document.add_text(label=DocItemLabel.TEXT, text="A paragraph.")
+    handed = []
+
+    class Converter:
+        def __init__(self, format_options):
+            handed.append(format_options[InputFormat.PDF])
+
+        def convert(self, source, page_range=None):
+            return types.SimpleNamespace(document=document)
+
+    monkeypatch.setattr(dc, "DocumentConverter", Converter)
+    report = {}
+    out_dir = tmp_path / "staging"
+    out_dir.mkdir()
+    docling_parser._convert(
+        pdf,
+        out_dir=out_dir,
+        span=None,
+        device="cpu",
+        settings=ExtractionSettings(),
+        formulas=False,
+        report=report,
+    )
+    [option] = handed
+    if masked:
+        assert option.backend is pdf_render.pdfium_image_backend()
+        assert report["render"] == "pypdfium2-page-image"
+    else:
+        assert option.backend is dc.PdfFormatOption().backend  # docling's default
+        assert option.backend is not pdf_render.pdfium_image_backend()
+        assert report["render"] == "docling-parse"
+
+
 def _rendering_convert(render):
     inner = fake_convert()
 
