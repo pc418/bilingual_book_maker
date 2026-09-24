@@ -773,11 +773,17 @@ class ChatGPTAPI(Base):
         return self.capabilities.ensure_vision(model, probe)
 
     def _probe_vision(self, model):
-        return probe_image(
-            self.openai_client,
-            model,
-            extra_body=self.extra_body or None,
-            on_usage=lambda completion: self._note_usage(completion, model),
+        # Graded on the request the run will make, --no-thinking control
+        # included (probe_image lets a 400 about any other field propagate,
+        # so a refused spelling reaches `_negotiating`, not the verdict).
+        return self._negotiating(
+            lambda: probe_image(
+                self.openai_client,
+                model,
+                extra_body=self.request_extra_body(model),
+                on_usage=lambda completion: self._note_usage(completion, model),
+            ),
+            model=model,
         )
 
     def structured_json_with_image(
@@ -841,18 +847,22 @@ class ChatGPTAPI(Base):
         without the SDK's own retries, so a stalled call ends at the
         deadline as a timeout rather than running on past it.
         """
-        kwargs.setdefault("extra_body", self.extra_body or None)
+        # As in `_completion_text`: a caller that built its own body owns it;
+        # otherwise the body (and so the --no-thinking spelling) is read
+        # fresh on every attempt, and a refusal of that spelling moves the
+        # ladder on and asks again.
+        owned = "extra_body" in kwargs
         messages = [{"role": "user", "content": parts}]
         client = self.openai_client
         if deadline is not None and hasattr(client, "with_options"):
             client = client.with_options(max_retries=0)
 
-        def send(optional):
+        def send(optional, call):
             bounded = {}
             if deadline is not None:
                 bounded["timeout"] = max(1.0, deadline - time.monotonic())
             return client.chat.completions.create(
-                model=model, messages=messages, **optional, **kwargs, **bounded
+                model=model, messages=messages, **optional, **call, **bounded
             )
 
         while True:
@@ -860,9 +870,20 @@ class ChatGPTAPI(Base):
             optional = {
                 k: v for k, v in VISION_REQUEST_PARAMS.items() if k not in unsent
             }
+            call = dict(kwargs)
+            if not owned:
+                call["extra_body"] = self.request_extra_body(model)
             try:
-                completion = self._patiently(lambda: send(optional), deadline=deadline)
+                completion = self._patiently(
+                    lambda: send(optional, call), deadline=deadline
+                )
             except RUNG_REFUSAL_ERRORS as e:
+                if (
+                    not owned
+                    and self._no_thinking_control(model)
+                    and reasoning.CONTROLS.rejected(self.api_base, model, e)
+                ):
+                    continue
                 field = refused_optional_param(e, optional)
                 if field is not None:
                     with self.capabilities.lock:

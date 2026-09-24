@@ -352,6 +352,50 @@ class TestEveryRequestCarriesIt:
 
         assert endpoint.controls == [LADDER[0], LADDER[1]]
 
+    # Port 260923 (port/260920-batch): the image path (`_probe_vision`,
+    # `_vision_completion_text`) arrived on the PDF feature branch after
+    # --no-thinking was built, reading `self.extra_body` directly; these pin
+    # that it is one of "every request" too.
+    def test_the_image_probe_carries_the_control(self):
+        endpoint = Endpoint()
+        t = _translator(endpoint)
+
+        t._probe_vision("test-model")
+
+        assert endpoint.controls == [LADDER[0]]
+
+    def test_the_image_probe_negotiates_rather_than_grading_the_refusal(self):
+        endpoint = Endpoint(_rejects("reasoning_effort"))
+        t = _translator(endpoint)
+
+        t._probe_vision("test-model")
+
+        assert endpoint.controls == [LADDER[0], LADDER[1]]
+
+    def test_an_image_request_carries_the_control(self):
+        endpoint = Endpoint()
+        t = _translator(endpoint)
+
+        t._vision_completion_text("test-model", [{"type": "text", "text": "q"}])
+
+        assert endpoint.controls == [LADDER[0]]
+
+    def test_an_image_request_negotiates_too(self):
+        endpoint = Endpoint(_rejects("reasoning_effort"))
+        t = _translator(endpoint)
+
+        t._vision_completion_text("test-model", [{"type": "text", "text": "q"}])
+
+        assert endpoint.controls == [LADDER[0], LADDER[1]]
+
+    def test_an_image_request_keeps_the_operator_body_over_the_flag(self):
+        endpoint = Endpoint()
+        t = _translator(endpoint, extra_body={"reasoning_effort": "low"})
+
+        t._vision_completion_text("test-model", [{"type": "text", "text": "q"}])
+
+        assert endpoint.controls == [{"reasoning_effort": "low"}]
+
 
 class TestTheAnthropicRoute:
     """One spelling, part of the wire format; nothing to negotiate."""
