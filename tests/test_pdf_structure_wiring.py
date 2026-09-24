@@ -463,3 +463,51 @@ def test_the_harness_hands_the_structure_request_to_the_stage(
     assert "structure" not in seen and made == []
     assert harness.main([*base, "--structure-model", "gpt-5.6-luna"]) == 1
     assert seen["structure"] == "request" and made == ["gpt-5.6-luna"]
+
+
+def test_a_page_where_most_items_changed_is_called_out_and_recorded(
+    tmp_path, real_pdf, stub_docling, device, capsys
+):
+    """PIN (lead ruling 260923): the changes stand, the page is named."""
+    from book_maker.pipeline.messages import STRUCTURE_HIGH_CHANGE
+
+    pandoc = pandoc_or_skip()
+    bundle = Bundle(tmp_path / "b").create()
+    answers = {**ANSWERS, "Prose one.": "footnote", "Prose two.": "footnote"}
+    stages.prepare(
+        bundle,
+        real_pdf,
+        pandoc=pandoc,
+        structure=request(FakeVisionTranslator(answers)),
+        progress=False,
+    )
+    line = STRUCTURE_HIGH_CHANGE.format(changed=4, asked=5, page=1)
+    assert line in capsys.readouterr().out.replace("\n", "")
+    manifest = bundle.read_manifest()
+    assert line in manifest["limitations"]
+    assert manifest["extraction"]["structure_totals"]["applied"] == 4
+    assert "```\nimport os\n```" in bundle.source.read_text(encoding="utf-8")
+
+
+def test_a_bundle_whose_pass_never_ran_is_not_reused_for_one_that_asks(
+    tmp_path, real_pdf, stub_docling, device
+):
+    """PIN (lead ruling 260923): `structure_applied: false` holds the
+    detector's labels, so a run asking for the pass extracts again."""
+    pandoc = pandoc_or_skip()
+    bundle = Bundle(tmp_path / "b").create()
+    blind = FakeVisionTranslator(ANSWERS, verdict="unsupported")
+    stages.prepare(
+        bundle, real_pdf, pandoc=pandoc, structure=request(blind), progress=False
+    )
+    assert bundle.read_manifest()["extraction"]["structure_applied"] is False
+    luna = ExtractionSettings(structure="gpt-5.6-luna", structure_rev=REV)
+    assert not stages.already_prepared(bundle, real_pdf, "docling", None, luna)
+    # and the next run does extract, and runs the pass
+    seeing = FakeVisionTranslator(ANSWERS)
+    stages.prepare(
+        bundle, real_pdf, pandoc=pandoc, structure=request(seeing), progress=False
+    )
+    assert seeing.calls == ["gpt-5.6-luna"]
+    assert bundle.read_manifest()["extraction"]["structure_applied"] is True
+    assert stages.already_prepared(bundle, real_pdf, "docling", None, luna)

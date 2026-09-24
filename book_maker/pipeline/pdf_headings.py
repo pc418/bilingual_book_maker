@@ -23,7 +23,10 @@ can tell us:
    level 1 (the title), and anything else is level 2. The numbered
    sibling is asked first so that, when docling has already taken the
    title out as a title item, `Abstract` in the section font does not
-   become a second title.
+   become a second title. When the document has a title item, the
+   largest-style rule does not fire at all (260923): with no numbered
+   sibling to anchor it, the section style would otherwise be the
+   largest left and every section would stand level with the title.
 
 docling 2.129 ships its own `HeadingHierarchyModel` (off by default:
 bookmarks, then numbering, then cell style). Measured on the same corpus
@@ -157,10 +160,17 @@ def _vouched(headings):
     return vouched
 
 
-def levels(headings):
+def levels(headings, title_present=False):
     """Levels for `[(text, style or None), ...]`, in that order.
 
-    A style is `(size, bold)`. The rule is the module docstring's.
+    A style is `(size, bold)`. The rule is the module docstring's, with one
+    exception: when the document already has its title as a title item
+    (`title_present`: docling's own, or one the region-role pass made),
+    no section header is promoted to level 1 for being the largest style
+    left -- that style is the sections', and the title would otherwise
+    sit level with them (measured 260923 on arxiv_2010_03667 and
+    web_en_chrome_1, docs/260923-feat-PDF_ROLE_DECISIONS.md). Numbering
+    and the numbered-sibling rule are unchanged.
     """
     vouched = _vouched(headings)
     numbers = [
@@ -179,7 +189,7 @@ def levels(headings):
             out.append(number)
         elif style in by_style:
             out.append(by_style[style])
-        elif style is not None and style == top:
+        elif style is not None and style == top and not title_present:
             out.append(1)
         else:
             out.append(2)
@@ -285,10 +295,18 @@ def styles(pdf_path, boxes):
 
 
 def assign(document, pdf_path):
-    """Set every section header's level. Returns `(headings, with a style)`."""
+    """Set every section header's level. Returns `(headings, with a style)`.
+
+    A title item anywhere in the document holds level 1 by itself, so no
+    section header is made a second title (see `levels`).
+    """
     items = []
+    title_present = False
     for item, _level in document.iterate_items():
-        if str(getattr(item, "label", "")).lower() != "section_header":
+        label = str(getattr(item, "label", "")).lower()
+        if label.endswith("title"):
+            title_present = True
+        if label != "section_header":
             continue
         items.append(item)
     boxes = {}
@@ -302,7 +320,7 @@ def assign(document, pdf_path):
             )
     found = styles(pdf_path, boxes) if boxes else {}
     headings = [(item.text or "", found.get(index)) for index, item in enumerate(items)]
-    for item, level in zip(items, levels(headings)):
+    for item, level in zip(items, levels(headings, title_present)):
         item.level = level
     return len(items), sum(style is not None for _text, style in headings)
 

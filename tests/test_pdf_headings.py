@@ -10,6 +10,13 @@ opendataloader-pdf's (Apache-2.0), written afresh; its heading detector
 is not used. docling's own heading model (off by default) measured 24.6%
 on the same corpus and puts the title level with its sections on 15 of
 the 20 papers, so it is not switched on.
+
+PIN (lead 260923, docs/260923-feat-PDF_ROLE_DECISIONS.md): when the
+document carries a title item (docling's own, or one the region-role pass
+made from a heading), the largest-style rule does not fire; unnumbered
+headings with no numbered sibling are level 2. Measured on arxiv_2010_03667
+and web_en_chrome_1: once the title left the section headers, the section
+style became the largest left and every section stood at `#` beside it.
 """
 
 import pytest
@@ -252,3 +259,66 @@ def test_promote_leaves_the_serializer_s_own_code_fence_alone():
     assert pdf_headings.promote(document.export_to_markdown()) == (
         "# Top\n\n```\n## not a heading\n```python\n## preserve this\n```\n\n## 1 Intro"
     )
+
+
+def test_with_a_title_item_the_largest_style_is_not_a_second_title():
+    section = (10.0, True)
+    headings = [
+        ("ABSTRACT", section),
+        ("INTRODUCTION", section),
+        ("Aside", (9.0, True)),
+    ]
+    # today's rule without a title item: the largest style is the title
+    assert pdf_headings.levels(headings) == [1, 1, 2]
+    # with one, every unnumbered heading is a section
+    assert pdf_headings.levels(headings, title_present=True) == [2, 2, 2]
+    # numbering and the numbered sibling still decide
+    numbered = [("1 Introduction", section), ("2 Method", section), ("Notes", section)]
+    assert pdf_headings.levels(numbered, title_present=True) == [2, 2, 2]
+    dotted = [("2.1 Setup", section), ("Remarks", section)]
+    assert pdf_headings.levels(dotted, title_present=True) == [3, 3]
+
+
+def acm_paper(with_title):
+    docling = pytest.importorskip("docling_core.types.doc")
+    d = docling
+    document = d.DoclingDocument(name="acm")
+    document.add_page(page_no=1, size=d.Size(width=612.0, height=792.0))
+
+    def prov(top):
+        return d.ProvenanceItem(
+            page_no=1,
+            bbox=d.BoundingBox(
+                l=60, t=top, r=320, b=top - 30, coord_origin=d.CoordOrigin.BOTTOMLEFT
+            ),
+            charspan=(0, 1),
+        )
+
+    if with_title:
+        document.add_title(text="Rescribe", prov=prov(760))
+    for text, top in (("ABSTRACT", 720), ("INTRODUCTION", 500), ("BACKGROUND", 300)):
+        document.add_heading(text=text, prov=prov(top))
+        document.add_text(label=d.DocItemLabel.TEXT, text="Prose.", prov=prov(top - 40))
+    return document
+
+
+@pytest.mark.parametrize("with_title", [True, False])
+def test_an_acm_paper_s_sections_sit_under_its_title(tmp_path, monkeypatch, with_title):
+    """ACM style: unnumbered ABSTRACT/INTRODUCTION in one section style."""
+    pytest.importorskip("pypdfium2")
+    pdf = write_pdf(tmp_path / "book.pdf", ["A heading line"])
+    # every section header is set in the same (bold, 10pt) section style
+    monkeypatch.setattr(
+        pdf_headings, "styles", lambda path, boxes: {i: (10.0, True) for i in boxes}
+    )
+    document = acm_paper(with_title)
+    pdf_headings.assign(document, pdf)
+    markdown = pdf_headings.promote(document.export_to_markdown())
+    tops = [line for line in markdown.splitlines() if line.startswith("# ")]
+    if with_title:
+        assert tops == ["# Rescribe"]
+        assert "## ABSTRACT" in markdown.splitlines()
+        assert "## INTRODUCTION" in markdown.splitlines()
+    else:
+        # unchanged: without a title item the largest style is level 1
+        assert tops == ["# ABSTRACT", "# INTRODUCTION", "# BACKGROUND"]

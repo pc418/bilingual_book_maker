@@ -43,8 +43,7 @@ from pathlib import Path
 from .messages import STRUCTURE_DETAIL_BUDGET, STRUCTURE_PARTIAL
 
 # Bump PROMPT_REV when the prompt text or the region list's shape changes,
-# POLICY_REV when ELIGIBLE_SOURCE, TARGETS, ALLOWED or the quarantine rule
-# change. Both enter the extraction identity: a rerun under another
+# POLICY_REV when ELIGIBLE_SOURCE, TARGETS or ALLOWED change. Both enter the extraction identity: a rerun under another
 # revision extracts again.
 PROMPT_REV = "260923a"
 POLICY_REV = "260923a"
@@ -97,12 +96,14 @@ ALLOWED = {
     "title": {"text", "section_header"},
 }
 
-# A page on which more than this share of the candidates would change is
-# quarantined: its decisions are recorded and none is applied. A guess, not
-# a measurement -- the 260923 evaluation saw no page relabelled wholesale
-# by mistake, and the number is here to stop the case nobody has measured
-# (a model answering a plausible full relabel), not to pick a best N.
-QUARANTINE_FRACTION = 0.6
+# A page on which more than this share of the asked items changed is
+# called out (terminal and manifest) for the operator to read before
+# translating; its changes stand. A guess, not a measurement. It was a
+# quarantine that applied nothing until the 260923 real runs: on the one
+# page where it fired (mixed_photo_code_1_p3031 p1) Luna was right on 9 of
+# 10 and the quarantine withheld the listing's repair, and it helped on no
+# page (lead ruling 260923, docs/260923-feat-PDF_ROLE_DECISIONS.md).
+CHANGE_RATE_WARN = 0.6
 
 # Per-page budget for the pass, multiplied by the pages asked. Guesses, not
 # measurements: the 260923 evaluation spent at most 7,860 prompt tokens and
@@ -198,10 +199,13 @@ class Overlay:
     """Every question the pass asked, the answers, and what became of them.
 
     `pages[page_no]` holds `decisions` (`{id, ref, from, to, status}`),
-    `calls` (one entry per `ask`), `quarantined` and a page `status`:
-    `asked`, `unasked` (the budget ran out first), `no_candidates` or
-    `failed_apply`. A decision's status is one of kept, accepted, invalid,
-    protocol_violation, unanswered, quarantined, disallowed.
+    `calls` (one entry per `ask`) and a page `status`: `asked`, `unasked`
+    (the budget ran out first), `no_candidates` or `failed_apply`. A
+    decision's status is one of kept, accepted, invalid,
+    protocol_violation, unanswered, disallowed. `recount` adds each page's
+    `asked`, `changed`, change `histogram` (`{"from->to": n}`) and
+    `high_change` (more than `CHANGE_RATE_WARN` of its asked items
+    changed).
     """
 
     prompt_rev: str = PROMPT_REV
@@ -234,20 +238,20 @@ class Overlay:
                 "invalid",
                 "protocol_violation",
                 "unanswered",
-                "quarantined",
                 "disallowed",
             )
         }
         asked = calls = prompt = completion = 0
         seconds = 0.0
-        quarantined = unasked = failed = 0
+        high = unasked = failed = 0
         for entry in self.pages.values():
             if entry.get("status") == "unasked":
                 unasked += 1
             if entry.get("status") == "failed_apply":
                 failed += 1
-            if entry.get("quarantined"):
-                quarantined += 1
+            _page_counts(entry)
+            if entry["high_change"]:
+                high += 1
             for decision in entry.get("decisions", []):
                 counts[decision["status"]] = counts.get(decision["status"], 0) + 1
                 if decision["status"] != "protocol_violation":
@@ -266,7 +270,7 @@ class Overlay:
             + counts["protocol_violation"]
             + counts["disallowed"],
             "pages": len(self.pages),
-            "quarantined_pages": quarantined,
+            "high_change_pages": high,
             "unasked_pages": unasked,
             "failed_apply_pages": failed,
             "calls": calls,
@@ -276,6 +280,23 @@ class Overlay:
             "budget_exhausted": budget,
         }
         return self.totals
+
+
+def _page_counts(entry):
+    """A page's asked items, the changes that stand, and their histogram."""
+    decisions = entry.get("decisions", [])
+    asked = sum(1 for d in decisions if d["status"] != "protocol_violation")
+    histogram = {}
+    if entry.get("status") != "failed_apply":
+        for d in decisions:
+            if d["status"] == "accepted":
+                key = f"{d['from']}->{d['to']}"
+                histogram[key] = histogram.get(key, 0) + 1
+    changed = sum(histogram.values())
+    entry["asked"] = asked
+    entry["changed"] = changed
+    entry["histogram"] = histogram
+    entry["high_change"] = bool(asked) and changed > CHANGE_RATE_WARN * asked
 
 
 @dataclass
@@ -662,8 +683,8 @@ def decide_roles(
     when it is spent, the pass stops with one warning line and the pages
     not yet asked are recorded `unasked`, their detector labels standing.
 
-    A page on which more than `QUARANTINE_FRACTION` of the candidates
-    would change is `quarantined`: its answers are recorded, none applied.
+    A page on which more than `CHANGE_RATE_WARN` of the asked items would
+    change is marked `high_change` for the operator; its changes stand.
 
     `ask(prompt, schema, image_png)` returns the parsed dict; it may carry
     `raw` (the reply text), `usage` and `model` as attributes. It raises
@@ -679,7 +700,7 @@ def decide_roles(
     exhausted = None
     for position, page_no in enumerate(pages):
         candidates, drawn = _page_regions(document, page_no)
-        entry = {"status": "asked", "decisions": [], "calls": [], "quarantined": False}
+        entry = {"status": "asked", "decisions": [], "calls": []}
         overlay.pages[page_no] = entry
         if not candidates:
             entry["status"] = "no_candidates"
@@ -720,7 +741,6 @@ def decide_roles(
                 entry["decisions"].extend(
                     _unanswered(batch, call["error"], status="invalid")
                 )
-        _quarantine(entry, len(candidates))
     if exhausted is not None:
         overlay.totals["budget_exhausted"] = exhausted
         left = [
@@ -752,14 +772,6 @@ def _unanswered(batch, reason, status="unanswered"):
         }
         for c in batch
     ]
-
-
-def _quarantine(entry, candidates):
-    changed = [d for d in entry["decisions"] if d["status"] == "accepted"]
-    if candidates and len(changed) > QUARANTINE_FRACTION * candidates:
-        entry["quarantined"] = True
-        for decision in changed:
-            decision["status"] = "quarantined"
 
 
 # --------------------------------------------------------------------------
@@ -840,11 +852,11 @@ def apply(document, overlay):
     page's changes are then made together, as typed replacements at the
     same `texts` slot: if any replacement raises or the document's tree no
     longer validates, the original items go back into their slots and the
-    page is marked `failed_apply`. Quarantined pages are not touched.
+    page is marked `failed_apply`.
     """
     result = Applied()
     for page_no, entry in overlay.pages.items():
-        if entry.get("quarantined") or entry.get("status") != "asked":
+        if entry.get("status") != "asked":
             continue
         patches = []
         for decision in entry.get("decisions", []):

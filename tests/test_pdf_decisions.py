@@ -7,8 +7,10 @@ never a bare `.label` write -- docling-core's Markdown serializer
 dispatches on the class, so a label-only change exports differently fresh
 and after a JSON round trip. Answers are validated one by one, a
 duplicate key rejects the reply, an unknown id is a protocol violation, a
-page's accepted changes go in atomically, and a page on which most
-candidates would change is quarantined.
+page's accepted changes go in atomically, and a page on which most asked
+items change keeps its changes and is called out (lead ruling 260923,
+docs/260923-feat-PDF_ROLE_DECISIONS.md: the quarantine that stood here
+withheld the one right repair it ever met, and helped nowhere).
 
 Every document here is a real `DoclingDocument`; the model is a fake
 `ask`. No network, no models.
@@ -398,12 +400,7 @@ def test_a_title_is_a_title_item_and_a_demoted_title_is_prose(pdf):
         pdf,
         [1],
     )
-    # 2 of 2 would change: more than the quarantine share
-    assert overlay.pages[1]["quarantined"] is True
-    overlay.pages[1]["quarantined"] = False
-    for decision in overlay.pages[1]["decisions"]:
-        decision["status"] = "accepted"
-    decisions.apply(document, overlay)
+    assert decisions.apply(document, overlay).count == 2
     assert type(by_text(document, "The Paper")) is TitleItem
     assert type(by_text(document, "Not the title")) is SectionHeaderItem
     assert document.export_to_markdown().startswith("# The Paper")
@@ -466,7 +463,6 @@ def test_apply_checks_the_policy_again_even_on_an_edited_overlay(pdf):
         pages={
             1: {
                 "status": "asked",
-                "quarantined": False,
                 "calls": [],
                 "decisions": [
                     {
@@ -486,29 +482,55 @@ def test_apply_checks_the_policy_again_even_on_an_edited_overlay(pdf):
     assert document.texts[0].label == DocItemLabel.CAPTION
 
 
-def test_a_page_where_most_regions_would_change_is_quarantined(pdf):
+def test_a_page_where_most_regions_change_keeps_them_and_is_called_out(pdf):
+    """PIN (lead ruling 260923): no quarantine; the changes stand and the
+    page is marked `high_change` above `CHANGE_RATE_WARN` (0.6, a guess)."""
     document = new_document()
     for text, top in (("a", 760), ("b", 740), ("c", 720), ("d", 700)):
         document.add_text(label=DocItemLabel.TEXT, text=text, prov=prov(top=top))
-    before = snapshot(document), [t.label for t in document.texts]
     overlay = decisions.decide_roles(
         fake_ask({"a": "footnote", "b": "footnote", "c": "caption", "d": "text"}),
         document,
         pdf,
         [1],
     )
-    page = overlay.pages[1]
-    assert page["quarantined"] is True
-    assert sorted(d["status"] for d in page["decisions"]) == [
-        "kept",
-        "quarantined",
-        "quarantined",
-        "quarantined",
-    ]
     applied = decisions.apply(document, overlay)
-    assert applied.count == 0
-    assert (snapshot(document), [t.label for t in document.texts]) == before
-    assert overlay.totals["quarantined_pages"] == 1
+    assert applied.count == 3
+    assert [t.label for t in document.texts] == [
+        DocItemLabel.FOOTNOTE,
+        DocItemLabel.FOOTNOTE,
+        DocItemLabel.CAPTION,
+        DocItemLabel.TEXT,
+    ]
+    page = overlay.pages[1]
+    assert sorted(d["status"] for d in page["decisions"]) == [
+        "accepted",
+        "accepted",
+        "accepted",
+        "kept",
+    ]
+    assert (page["asked"], page["changed"], page["high_change"]) == (4, 3, True)
+    assert page["histogram"] == {"text->footnote": 2, "text->caption": 1}
+    assert overlay.totals["high_change_pages"] == 1
+    assert "quarantined" not in overlay.totals
+
+
+def test_a_page_at_the_warning_share_is_not_called_out(pdf):
+    document = new_document()
+    for index in range(5):
+        document.add_text(
+            label=DocItemLabel.TEXT, text=f"t{index}", prov=prov(top=760 - 20 * index)
+        )
+    overlay = decisions.decide_roles(
+        fake_ask({"t0": "footnote", "t1": "footnote", "t2": "code"}),
+        document,
+        pdf,
+        [1],
+    )
+    decisions.apply(document, overlay)
+    page = overlay.pages[1]
+    # 3 of 5 is exactly 0.6: not more than it
+    assert (page["asked"], page["changed"], page["high_change"]) == (5, 3, False)
 
 
 def test_a_replacement_that_fails_leaves_the_page_as_it_was(pdf, monkeypatch):

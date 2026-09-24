@@ -183,6 +183,12 @@ STRUCTURE_VISION_UNVERIFIED = (
     "--structure-model {model} cannot read a page image on this endpoint "
     "(probe: {verdict}); the extraction keeps the detector's labels."
 )
+# The lead's text, verbatim (ruling 260923): a page on which most asked
+# items changed keeps its changes and is called out instead.
+STRUCTURE_HIGH_CHANGE = (
+    "Region roles: {changed} of {asked} asked items on page {page} changed; "
+    "read that page in source.md before translating."
+)
 STRUCTURE_ROUTE_UNSUPPORTED = (
     "--structure-model needs an OpenAI-compatible endpoint (api_format "
     "openai); this run uses {api_format}."
@@ -190,10 +196,6 @@ STRUCTURE_ROUTE_UNSUPPORTED = (
 # The `{detail}` of STRUCTURE_PARTIAL, one clause per kind, joined by "; ".
 STRUCTURE_DETAIL_BUDGET = (
     "the {bound} budget ran out, so page(s) {pages} were not asked"
-)
-STRUCTURE_DETAIL_QUARANTINED = (
-    "page(s) {pages} quarantined, more than {share}% of their regions would "
-    "have changed"
 )
 STRUCTURE_DETAIL_REJECTED = "{count} answer(s) rejected"
 STRUCTURE_DETAIL_UNANSWERED = "{count} region(s) not answered"

@@ -66,10 +66,10 @@ from .messages import (
     STRUCTURE_APPLIED,
     STRUCTURE_DETAIL_BUDGET,
     STRUCTURE_DETAIL_FAILED,
-    STRUCTURE_DETAIL_QUARANTINED,
     STRUCTURE_DETAIL_REJECTED,
     STRUCTURE_DETAIL_UNANSWERED,
     STRUCTURE_FAILED,
+    STRUCTURE_HIGH_CHANGE,
     STRUCTURE_PARTIAL,
     STRUCTURE_ROUTE_UNSUPPORTED,
     STRUCTURE_VISION_UNVERIFIED,
@@ -337,7 +337,11 @@ def _decide_structure(document, pdf, out_dir, structure):
         **overlay.totals,
         "applied": applied.count,
         "transitions": dict(applied.transitions),
-        "quarantined_page_numbers": numbers(lambda e: e.get("quarantined")),
+        "high_change": [
+            {"page": page, "changed": entry["changed"], "asked": entry["asked"]}
+            for page, entry in sorted(overlay.pages.items())
+            if entry.get("high_change")
+        ],
         "unasked_page_numbers": numbers(lambda e: e.get("status") == "unasked"),
         "failed_page_numbers": numbers(lambda e: e.get("status") == "failed_apply"),
         "overlay": path,
@@ -482,7 +486,11 @@ def _structure_ask(options, model, *, translator=None):
 
 
 def _structure_lines(model, summary, bundle):
-    """`(applied line, partial line or None)` for the terminal and manifest."""
+    """`(applied line, partial line or None, high-change lines)`.
+
+    All of them go to the terminal; the partial and high-change lines are
+    also the manifest's limitations.
+    """
     overlay = Path(summary["overlay"])
     try:
         shown = overlay.resolve().relative_to(bundle.root.resolve()).as_posix()
@@ -494,7 +502,9 @@ def _structure_lines(model, summary, bundle):
         model=model,
         kept=summary["kept"],
         rejected=summary["rejected"],
-        quarantined=summary["quarantined_pages"],
+        # Nothing is quarantined any more (ruling 260923); the lead's
+        # sentence keeps the slot until it is reworded.
+        quarantined=0,
         path=shown,
     )
     detail = []
@@ -509,15 +519,6 @@ def _structure_lines(model, summary, bundle):
                 pages=pages(summary["unasked_page_numbers"]),
             )
         )
-    if summary["quarantined_page_numbers"]:
-        from .decisions import QUARANTINE_FRACTION
-
-        detail.append(
-            STRUCTURE_DETAIL_QUARANTINED.format(
-                pages=pages(summary["quarantined_page_numbers"]),
-                share=round(QUARANTINE_FRACTION * 100),
-            )
-        )
     if summary["failed_page_numbers"]:
         detail.append(
             STRUCTURE_DETAIL_FAILED.format(pages=pages(summary["failed_page_numbers"]))
@@ -527,7 +528,8 @@ def _structure_lines(model, summary, bundle):
     if summary["unanswered"]:
         detail.append(STRUCTURE_DETAIL_UNANSWERED.format(count=summary["unanswered"]))
     partial = STRUCTURE_PARTIAL.format(detail="; ".join(detail)) if detail else None
-    return applied, partial
+    high = [STRUCTURE_HIGH_CHANGE.format(**page) for page in summary["high_change"]]
+    return applied, partial, high
 
 
 # Every collection whose items can carry a picture (`FloatingItem.image`),
@@ -866,13 +868,16 @@ def extract_pdf(
         print(JBIG2_MASK_RENDER)
     structure_summary = found.get("structure")
     structure_partial = None
+    structure_high = []
     if structure_summary is not None:
-        applied_line, structure_partial = _structure_lines(
+        applied_line, structure_partial, structure_high = _structure_lines(
             active.model, structure_summary, bundle
         )
         print(applied_line)
         if structure_partial is not None:
             print(structure_partial)
+        for line in structure_high:
+            print(line)
 
     try:
         # Asked of what the parser returned, before the page markers are
@@ -965,7 +970,7 @@ def extract_pdf(
     # terminal line scrolls away; the manifest keeps it.
     limitations.extend(formula_warnings)
     # So is a structure pass that did not run, or ran only in part.
-    for line in (structure_note, structure_partial):
+    for line in (structure_note, structure_partial, *structure_high):
         if line is not None:
             limitations.append(line)
     bundle.add_limitations(limitations)

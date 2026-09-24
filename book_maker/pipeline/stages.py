@@ -111,6 +111,11 @@ def already_prepared(bundle, input_path, parser, pages, settings=None, device=No
             settings.identity()
         ):
             return False
+        # Asked for a structure pass that never ran (the endpoint could not
+        # see a page then): that bundle holds the detector's labels, not
+        # what this run asks for, so it is extracted again (ruling 260923).
+        if settings.structure and extraction.get("structure_applied") is False:
+            return False
         _report_other_runtime(extraction, device_for(device))
     return done[0]
 
