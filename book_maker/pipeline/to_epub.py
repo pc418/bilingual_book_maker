@@ -25,7 +25,7 @@ from .errors import PipelineError
 from .messages import PANDOC_ON_PATH, PANDOC_REQUIRED, TO_EPUB_BUNDLE, TO_EPUB_COPY
 from .preflight import find_pandoc
 from .stages import device_for, prepare
-from .translate import check_options, translate_bundle
+from .translate import check_options, parse_bbm_options, translate_bundle
 
 BUNDLE_SUFFIX = "_book"
 EPUB_SUFFIX = "_bilingual.epub"
@@ -41,7 +41,13 @@ OWNED_OPTIONS = (
     "--no-gpu",
     "--no-formula-images",
 )
-OWNED_VALUE_OPTIONS = ("--book_name", "--ocr-lang", "--pages", "--device")
+OWNED_VALUE_OPTIONS = (
+    "--book_name",
+    "--ocr-lang",
+    "--pages",
+    "--device",
+    "--structure-model",
+)
 
 
 def translation_argv(argv):
@@ -100,6 +106,7 @@ def pdf_to_epub(
     ocr_lang=None,
     pages=None,
     formula_images=True,
+    structure_model=None,
     quiet=False,
     pandoc=None,
     prepare_stage=prepare,
@@ -125,6 +132,16 @@ def pdf_to_epub(
     options = check_options(translation_argv(argv))
     parse_pages(pages)  # a selection that does not parse is refused here too
     parse_ocr_lang(ocr_lang)  # and an empty language list
+    # The structure model runs on the translation's own endpoint and key; an
+    # endpoint that cannot take it is refused here, before a page is read.
+    # Nothing of the pass is imported, built or probed without the flag.
+    structure = None
+    if structure_model:
+        from .docling_parser import _structure_ask
+
+        structure = _structure_ask(
+            parse_bbm_options(translation_argv(argv)), structure_model
+        )
 
     bundle = Bundle(bundle_path(pdf, pages)).create()
     print(TO_EPUB_BUNDLE.format(path=bundle.root))
@@ -138,6 +155,7 @@ def pdf_to_epub(
         ocr_lang=ocr_lang,
         formula_images=formula_images,
         progress=not quiet,
+        structure=structure,
     )
     translate_stage(bundle, options, pandoc=executable)
     built = export_stage(bundle, pandoc=executable)

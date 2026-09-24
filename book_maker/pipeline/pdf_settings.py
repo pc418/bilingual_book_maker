@@ -29,6 +29,13 @@ class ExtractionSettings:
     ocr_lang: tuple = ()
     table_mode: str = "accurate"
     formula_images: bool = True
+    # `--structure-model`: the vision model that re-names the detector's
+    # regions, and the prompt/policy revision it was asked under
+    # (`decisions.PROMPT_REV/POLICY_REV`). Both decide the text, so both are
+    # identity: replaying an overlay onto a stored document is a later
+    # stage (Codex consult 260923), until then another model extracts again.
+    structure: str = None
+    structure_rev: str = None
 
     def __post_init__(self):
         # Frozen, so the normalising goes through object.__setattr__: a
@@ -64,6 +71,8 @@ class ExtractionSettings:
             "ocr_lang": list(self.ocr_lang) if self.ocr and self.ocr_lang else None,
             "table_mode": self.table_mode,
             "formula_images": self.formula_images,
+            "structure": self.structure or None,
+            "structure_rev": (self.structure_rev or None) if self.structure else None,
         }
 
     @classmethod
@@ -82,4 +91,6 @@ class ExtractionSettings:
             ocr_lang=tuple(extraction.get("ocr_lang") or ()),
             table_mode=extraction.get("table_mode") or "accurate",
             formula_images=bool(extraction.get("formula_images", True)),
+            structure=extraction.get("structure") or None,
+            structure_rev=extraction.get("structure_rev") or None,
         )

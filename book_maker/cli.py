@@ -18,6 +18,7 @@ from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.classify import can_session_classify
 from book_maker.loader.ledger import PlanLedgerError
 from book_maker.loader.plan import GENERAL_GROUP_MAX_UNITS
+from book_maker.pipeline.messages import HELP_STRUCTURE_MODEL
 from book_maker.prompt_file import parse_prompt_markdown
 from book_maker.provider_loader import resolve_provider
 from book_maker.session_context import DEFAULT_COMPACT_BUDGET, compact_budget_notice
@@ -1507,6 +1508,17 @@ COMPAT_RULES = (
             "this run reads it and does nothing with it."
         ),
     ),
+    CompatRule(
+        "C31",
+        "warn",
+        lambda f: bool(getattr(f.options, "structure_model", None))
+        and not f.options.to_epub,
+        lambda f: (
+            "--structure-model corrects the region roles the PDF route's "
+            "layout detector assigns, and that route only runs with "
+            "--to-epub; this run reads it and does nothing with it."
+        ),
+    ),
 )
 
 
@@ -2116,6 +2128,13 @@ off. Minimum 1.
         "so a chapter never overwrites the whole book.",
     )
     parser.add_argument(
+        "--structure-model",
+        dest="structure_model",
+        default=None,
+        metavar="MODEL",
+        help=HELP_STRUCTURE_MODEL,
+    )
+    parser.add_argument(
         "--retranslate",
         dest="retranslate",
         nargs=4,
@@ -2415,6 +2434,7 @@ def run_to_epub(options, argv):
             ocr_lang=options.ocr_lang,
             pages=options.pages,
             formula_images=options.formula_images,
+            structure_model=options.structure_model,
             quiet=options.quiet,
         )
     except PipelineError as err:

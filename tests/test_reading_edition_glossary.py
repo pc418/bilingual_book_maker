@@ -159,6 +159,7 @@ def test_the_translate_stage_is_handed_both_flags(tmp_path, monkeypatch):
         ocr_lang=None,
         formula_images=True,
         progress=True,
+        structure=None,
     ):
         bundle.source.write_text(SOURCE, encoding="utf-8")
 

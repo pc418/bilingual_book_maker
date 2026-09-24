@@ -125,6 +125,29 @@ def _add_pdf_options(parser):
         action="store_false",
         help=messages.HELP_FORMULA_IMAGES,
     )
+    parser.add_argument(
+        "--structure-model",
+        dest="structure_model",
+        default=None,
+        metavar="MODEL",
+        help=messages.HELP_STRUCTURE_MODEL,
+    )
+
+
+def structure_request(options, trailing):
+    """`{"structure": request}` for `--structure-model`, else `{}`.
+
+    The model runs on the endpoint and key the translation options name
+    (`run`'s trailing options; `extract` has none, so the default endpoint
+    and its key variable). Nothing of the pass is loaded without the flag.
+    """
+    model = getattr(options, "structure_model", None)
+    if not model:
+        return {}
+    from book_maker.pipeline.docling_parser import _structure_ask
+    from book_maker.pipeline.translate import parse_bbm_options
+
+    return {"structure": _structure_ask(parse_bbm_options(trailing), model)}
 
 
 def main(argv=None):
@@ -161,6 +184,7 @@ def main(argv=None):
                     stage="extract",
                 )
             device = check_pdf_options("pdf", options)
+            structure = structure_request(options, [])
             bundle = Bundle(options.output).create()
             prepare(
                 bundle,
@@ -171,6 +195,7 @@ def main(argv=None):
                 ocr=options.pdf_ocr,
                 ocr_lang=options.ocr_lang,
                 formula_images=options.formula_images,
+                **structure,
             )
         elif command == "translate":
             bundle = Bundle(options.bundle)
@@ -190,6 +215,7 @@ def main(argv=None):
             # were going to translate it.
             bbm_options = check_options(trailing)
             device = check_pdf_options(source_kind(options.input), options)
+            structure = structure_request(options, trailing)
             bundle = Bundle(options.output).create()
             prepare(
                 bundle,
@@ -200,6 +226,7 @@ def main(argv=None):
                 ocr=options.pdf_ocr,
                 ocr_lang=options.ocr_lang,
                 formula_images=options.formula_images,
+                **structure,
             )
             translate_bundle(bundle, bbm_options, pandoc=pandoc)
             export_epub(

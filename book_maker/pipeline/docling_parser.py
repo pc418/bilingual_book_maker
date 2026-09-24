@@ -63,6 +63,16 @@ from .messages import (
     PDF_ROUTE_NOT_INSTALLED,
     SCANNED_PAGES,
     SELECTION_HEADING_ADDED,
+    STRUCTURE_APPLIED,
+    STRUCTURE_DETAIL_BUDGET,
+    STRUCTURE_DETAIL_FAILED,
+    STRUCTURE_DETAIL_QUARANTINED,
+    STRUCTURE_DETAIL_REJECTED,
+    STRUCTURE_DETAIL_UNANSWERED,
+    STRUCTURE_FAILED,
+    STRUCTURE_PARTIAL,
+    STRUCTURE_ROUTE_UNSUPPORTED,
+    STRUCTURE_VISION_UNVERIFIED,
     TITLE_HEADING_ADDED,
 )
 from .pdf_common import (
@@ -222,7 +232,17 @@ def _converter(device, settings, pdfium_page_images=False):
     return DocumentConverter(format_options={InputFormat.PDF: format_option})
 
 
-def _convert(pdf, *, out_dir, span, device, settings, formulas=True, report=None):
+def _convert(
+    pdf,
+    *,
+    out_dir,
+    span,
+    device,
+    settings,
+    formulas=True,
+    report=None,
+    structure=None,
+):
     """Markdown for `span` of `pdf`, with its pictures written to `out_dir`.
 
     The default seam: `extract_pdf(convert=...)` replaces this whole call,
@@ -233,8 +253,9 @@ def _convert(pdf, *, out_dir, span, device, settings, formulas=True, report=None
     Returns `(markdown, formula count, warnings)`. A stub may return the
     Markdown alone; `extract_pdf` accepts either. `report` is the caller's
     dict for what the conversion found out: the path of docling's own
-    snapshot of the document, under `snapshot`, and which renderer painted
-    the page images, under `render`.
+    snapshot of the document, under `snapshot`, which renderer painted the
+    page images, under `render`, and with `structure` (a `StructureRequest`)
+    what the region-role pass did, under `structure`.
     """
     from docling_core.types.doc.base import ImageRefMode
 
@@ -251,6 +272,14 @@ def _convert(pdf, *, out_dir, span, device, settings, formulas=True, report=None
     snapshot = Path(out_dir) / SNAPSHOT
     _write_snapshot(result.document, snapshot)
     report["snapshot"] = snapshot
+    # The region roles, after the snapshot (which stays docling's own) and
+    # before anything reads a label: the formula markers and the heading
+    # levels below must see the corrected items, and a heading the model
+    # made gets its level from `pdf_headings` like any other.
+    if structure is not None:
+        report["structure"] = _decide_structure(
+            result.document, pdf, out_dir, structure
+        )
     # Before the export: each undecoded formula is given a marker as its
     # text, so the serializer writes the marker where the equation stands
     # and the picture can only land at its own item.
@@ -274,6 +303,231 @@ def _convert(pdf, *, out_dir, span, device, settings, formulas=True, report=None
         out_dir,
         neighbours=pdf_formula.neighbours(result.document),
     )
+
+
+def _decide_structure(document, pdf, out_dir, structure):
+    """Run the region-role pass on `document` in place; return its summary.
+
+    The overlay is written before the changes are applied and again after,
+    so a failure in between still leaves the answers on disk.
+    """
+    from . import decisions
+
+    pages = sorted(int(number) for number in (document.pages or {}))
+    wanted = getattr(structure, "pages", None)
+    if wanted:
+        pages = [page for page in pages if page in wanted]
+    overlay = decisions.decide_roles(
+        structure.ask,
+        document,
+        pdf,
+        pages,
+        budget=decisions.Budget.for_pages(len(pages)),
+        model=structure.model,
+    )
+    path = Path(out_dir) / decisions.OVERLAY_FILE
+    overlay.write(path)
+    applied = decisions.apply(document, overlay)
+    overlay.write(path)
+
+    def numbers(test):
+        return [page for page, entry in sorted(overlay.pages.items()) if test(entry)]
+
+    return {
+        **overlay.totals,
+        "applied": applied.count,
+        "transitions": dict(applied.transitions),
+        "quarantined_page_numbers": numbers(lambda e: e.get("quarantined")),
+        "unasked_page_numbers": numbers(lambda e: e.get("status") == "unasked"),
+        "failed_page_numbers": numbers(lambda e: e.get("status") == "failed_apply"),
+        "overlay": path,
+    }
+
+
+class StructureRequest:
+    """The `--structure-model` pass as the extraction sees it.
+
+    `ask(prompt, schema, image_png)` is the model call (the parsed answer,
+    carrying `model` and `usage`); `vision()` is the endpoint's verdict on
+    image input ('verified', 'unsupported', 'deferred'), asked only when an
+    extraction is about to run, so a reused bundle pays for no probe.
+    `rev` is the prompt/policy revision the answers are asked under.
+    """
+
+    def __init__(self, model, ask, vision, rev):
+        self.model = model
+        self.ask = ask
+        self.vision = vision
+        self.rev = rev
+        self.pages = None
+
+
+class _Answer(dict):
+    """A structured answer, with the call's model and usage beside it."""
+
+    model = None
+    usage = None
+
+
+def _structure_translator(options, model):
+    """An OpenAI-shaped translator on the translation run's own endpoint.
+
+    The `--plan-classify-model` pattern: the same api_base, key, extras and
+    prices the run resolves, with the model id swapped. `options` is the
+    translation command line as the CLI parses it, and is not changed.
+    """
+    import argparse
+
+    from book_maker import cli
+
+    options = argparse.Namespace(**vars(options))
+    try:
+        _names, api_format, env_keys = cli.resolve_endpoint(options)
+    except SystemExit as err:
+        raise PipelineError(str(err), stage=STAGE)
+    if api_format != "openai":
+        raise PipelineError(
+            STRUCTURE_ROUTE_UNSUPPORTED.format(api_format=api_format), stage=STAGE
+        )
+    try:
+        key = cli.resolve_api_key(api_format, options.key, options.api_base, env_keys)
+    except SystemExit as err:
+        raise PipelineError(str(err), stage=STAGE)
+    translator = cli.FORMAT_DICT[api_format](
+        key, "English", api_base=options.api_base or None
+    )
+    extras = {}
+    for dest in ("extra_body", "extra_headers"):
+        raw = getattr(options, dest, None)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as err:
+            raise PipelineError(f"invalid JSON in --{dest}: {err}", stage=STAGE)
+        if isinstance(parsed, dict):
+            extras[dest] = parsed
+    if extras and hasattr(translator, "set_request_extras"):
+        translator.set_request_extras(**extras)
+    prices = getattr(options, "price_table", None)
+    if prices is not None and hasattr(translator, "usage"):
+        translator.usage.prices = prices
+    translator.set_model_list([model])
+    return translator
+
+
+def _soft_failures():
+    """The model call's failures that are about one request, not the run."""
+    from book_maker.structured import StructuredJSONFailed
+
+    soft = [StructuredJSONFailed]
+    try:
+        from book_maker.translator.vision import VisionRequestFailed
+
+        soft.append(VisionRequestFailed)
+    except ImportError:
+        pass
+    return tuple(soft)
+
+
+def _structure_ask(options, model, *, translator=None):
+    """The `StructureRequest` for `--structure-model MODEL`, or a refusal.
+
+    Refused here, before anything is extracted, when the endpoint is not
+    OpenAI-shaped or the translator has no image channel
+    (`structured_json_with_image`) to ask through. The image verdict is
+    the translator's `vision_verdict(model)` where it has one, else its
+    ledger's `capabilities.ensure_vision(model)`.
+    """
+    from . import decisions
+
+    if translator is None:
+        translator = _structure_translator(options, model)
+    image = getattr(translator, "structured_json_with_image", None)
+    verdict = getattr(translator, "vision_verdict", None)
+    ledger = getattr(translator, "capabilities", None)
+    if image is None or (verdict is None and not hasattr(ledger, "ensure_vision")):
+        api_format = getattr(options, "api_format", None) or "openai"
+        raise PipelineError(
+            STRUCTURE_ROUTE_UNSUPPORTED.format(api_format=api_format), stage=STAGE
+        )
+    soft = _soft_failures()
+    usage = getattr(translator, "usage", None)
+
+    def ask(prompt, schema, image_png):
+        before = (usage.prompt, usage.completion) if usage is not None else None
+        try:
+            answer = image(prompt, schema, image_png, model=model)
+        except soft as err:
+            raise decisions.AskFailed(f"{type(err).__name__}: {err}")
+        if not isinstance(answer, dict):
+            raise decisions.ReplyRejected("the reply is not a JSON object")
+        reply = _Answer(answer)
+        reply.model = model
+        if before is not None:
+            reply.usage = {
+                "prompt_tokens": usage.prompt - before[0],
+                "completion_tokens": usage.completion - before[1],
+            }
+        return reply
+
+    def vision():
+        if verdict is not None:
+            return verdict(model)
+        return ledger.ensure_vision(model)
+
+    return StructureRequest(
+        model, ask, vision, f"{decisions.PROMPT_REV}/{decisions.POLICY_REV}"
+    )
+
+
+def _structure_lines(model, summary, bundle):
+    """`(applied line, partial line or None)` for the terminal and manifest."""
+    overlay = Path(summary["overlay"])
+    try:
+        shown = overlay.resolve().relative_to(bundle.root.resolve()).as_posix()
+    except ValueError:
+        shown = str(overlay)
+    applied = STRUCTURE_APPLIED.format(
+        accepted=summary["applied"],
+        asked=summary["asked"],
+        model=model,
+        kept=summary["kept"],
+        rejected=summary["rejected"],
+        quarantined=summary["quarantined_pages"],
+        path=shown,
+    )
+    detail = []
+
+    def pages(numbers):
+        return ", ".join(str(n) for n in numbers)
+
+    if summary["unasked_page_numbers"]:
+        detail.append(
+            STRUCTURE_DETAIL_BUDGET.format(
+                bound=summary.get("budget_exhausted") or "call",
+                pages=pages(summary["unasked_page_numbers"]),
+            )
+        )
+    if summary["quarantined_page_numbers"]:
+        from .decisions import QUARANTINE_FRACTION
+
+        detail.append(
+            STRUCTURE_DETAIL_QUARANTINED.format(
+                pages=pages(summary["quarantined_page_numbers"]),
+                share=round(QUARANTINE_FRACTION * 100),
+            )
+        )
+    if summary["failed_page_numbers"]:
+        detail.append(
+            STRUCTURE_DETAIL_FAILED.format(pages=pages(summary["failed_page_numbers"]))
+        )
+    if summary["rejected"]:
+        detail.append(STRUCTURE_DETAIL_REJECTED.format(count=summary["rejected"]))
+    if summary["unanswered"]:
+        detail.append(STRUCTURE_DETAIL_UNANSWERED.format(count=summary["unanswered"]))
+    partial = STRUCTURE_PARTIAL.format(detail="; ".join(detail)) if detail else None
+    return applied, partial
 
 
 # Every collection whose items can carry a picture (`FloatingItem.image`),
@@ -386,6 +640,7 @@ def extract_pdf(
     settings=None,
     convert=None,
     progress=True,
+    structure=None,
 ):
     """Convert one PDF to Markdown in `bundle`, locally.
 
@@ -397,6 +652,11 @@ def extract_pdf(
     `settings` (an `ExtractionSettings`) replaces `ocr`, `ocr_lang` and
     `formula_images` when given; the stage passes the one it compared the
     bundle against, so what runs is what was checked.
+
+    `structure` (a `StructureRequest`, from `--structure-model`) runs the
+    region-role pass inside the conversion when the endpoint can see a
+    page image; when it cannot, the extraction goes on with the
+    detector's labels and says so.
     """
     pdf = Path(pdf_path)
     if not pdf.is_file():
@@ -455,6 +715,37 @@ def extract_pdf(
         bundle.set_stage(STAGE, "failed", parser=PARSER, device=resolved)
         raise
 
+    # Whether the structure model can see a page, asked before the models
+    # start: an endpoint that cannot is told about once, up front, and the
+    # extraction goes on without the pass rather than failing after it.
+    active = None
+    structure_note = None
+    if structure is not None:
+        try:
+            verdict = structure.vision()
+        except (PipelineError, KeyboardInterrupt):
+            bundle.set_stage(STAGE, "failed", parser=PARSER, device=resolved)
+            raise
+        except Exception as err:
+            bundle.set_stage(STAGE, "failed", parser=PARSER, device=resolved)
+            raise PipelineError(
+                STRUCTURE_FAILED.format(
+                    model=structure.model, detail=f"{type(err).__name__}: {err}"
+                ),
+                stage=STAGE,
+            )
+        if verdict == "verified":
+            active = structure
+            if len(ranges or ()) > 1:
+                active.pages = {
+                    page for start, end in ranges for page in range(start, end + 1)
+                }
+        else:
+            structure_note = STRUCTURE_VISION_UNVERIFIED.format(
+                model=structure.model, verdict=verdict
+            )
+            print(structure_note)
+
     if missing:
         print(SCANNED_PAGES.format(count=len(missing), total=examined))
     invisible_note = None
@@ -510,6 +801,9 @@ def extract_pdf(
     try:
         with ticking(line):
             try:
+                # Only a pass that will run is handed on: a converter
+                # without the pass is called exactly as before.
+                extra = {"structure": active} if active is not None else {}
                 with contextlib.redirect_stdout(_Sink(note)), _docling_log(note):
                     produced = converter(
                         pdf,
@@ -519,6 +813,7 @@ def extract_pdf(
                         settings=settings,
                         formulas=settings.formula_images,
                         report=found,
+                        **extra,
                     )
                 # A stub seam returns the Markdown alone; the real
                 # converter also reports what it did with the formulas.
@@ -569,6 +864,15 @@ def extract_pdf(
     render = found.get("render")
     if render == RENDER_PDFIUM_PAGE_IMAGE:
         print(JBIG2_MASK_RENDER)
+    structure_summary = found.get("structure")
+    structure_partial = None
+    if structure_summary is not None:
+        applied_line, structure_partial = _structure_lines(
+            active.model, structure_summary, bundle
+        )
+        print(applied_line)
+        if structure_partial is not None:
+            print(structure_partial)
 
     try:
         # Asked of what the parser returned, before the page markers are
@@ -635,6 +939,7 @@ def extract_pdf(
         ),
         formulas=formulas,
         render=render,
+        structure=structure_summary,
     )
     limitations = [
         "Extraction reading order, headings and diacritics are not verified "
@@ -659,6 +964,10 @@ def extract_pdf(
     # A formula that could not be placed is a gap in the book, and the
     # terminal line scrolls away; the manifest keeps it.
     limitations.extend(formula_warnings)
+    # So is a structure pass that did not run, or ran only in part.
+    for line in (structure_note, structure_partial):
+        if line is not None:
+            limitations.append(line)
     bundle.add_limitations(limitations)
     # What this extraction added, so the next one can take it back.
     bundle.update_manifest(extraction={"limitations": limitations})
@@ -756,6 +1065,7 @@ def _write_provenance(
     raw_document=None,
     formulas=0,
     render=None,
+    structure=None,
 ):
     settings = settings or ExtractionSettings()
     ocr = settings.ocr
@@ -768,6 +1078,18 @@ def _write_provenance(
         "ocr_engine": ocr_engine,
         "ocr_mode": settings.ocr_mode,
         "table_mode": settings.table_mode,
+    }
+    # The structure model asked for (identity, read back by
+    # `from_manifest`), and whether its pass ran; the pass's counts beside.
+    roles = {
+        "structure": settings.structure,
+        "structure_rev": settings.structure_rev if settings.structure else None,
+        "structure_applied": structure is not None,
+        "structure_totals": (
+            {key: value for key, value in structure.items() if key != "overlay"}
+            if structure is not None
+            else None
+        ),
     }
     version = _installed_version()
     bundle.work.mkdir(parents=True, exist_ok=True)
@@ -784,6 +1106,7 @@ def _write_provenance(
                 "ocr_lang": ocr_lang,
                 "formula_images": formula_images,
                 **engine,
+                **roles,
                 "raw_document": raw_document,
                 "version": version,
                 "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -816,6 +1139,9 @@ def _write_provenance(
             # The OCR engine asked for, the one that ran (docling's choice
             # under `auto`; None without OCR), and the OCR and table modes.
             **engine,
+            # The region-role pass: the model asked for, its revision,
+            # whether it ran, and what it did (overlay: decisions.json).
+            **roles,
             # docling's document before our changes, bundle-relative.
             "raw_document": raw_document,
             # Which renderer painted the page images the models read:

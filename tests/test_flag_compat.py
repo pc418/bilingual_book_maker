@@ -664,6 +664,14 @@ WARN_FIXTURES = [
         {},
         "only runs with --to-epub",
     ),
+    (
+        # C31: --structure-model re-names the PDF route's detector regions,
+        # and that route needs --to-epub
+        "C31",
+        ["--structure-model", "gpt-5.6-luna"],
+        {},
+        "only runs with --to-epub",
+    ),
 ]
 
 

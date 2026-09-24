@@ -24,6 +24,8 @@ DEFAULT_IDENTITY = {
     "ocr_lang": None,
     "table_mode": "accurate",
     "formula_images": True,
+    "structure": None,
+    "structure_rev": None,
 }
 
 

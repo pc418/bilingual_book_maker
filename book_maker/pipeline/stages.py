@@ -6,6 +6,7 @@ the main CLI. A second copy would be a second set of resume rules, and the
 one that drifted would silently re-extract a book somebody had edited.
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 from .bundle import parse_ocr_lang, sha256_file
@@ -55,7 +56,8 @@ def check_pdf_options(kind, options):
     pdf_ocr = getattr(options, "pdf_ocr", False)
     pages = getattr(options, "pages", None)
     ocr_lang = getattr(options, "ocr_lang", None)
-    if kind != "pdf" and (device or pdf_ocr or pages or ocr_lang):
+    structure_model = getattr(options, "structure_model", None)
+    if kind != "pdf" and (device or pdf_ocr or pages or ocr_lang or structure_model):
         raise PipelineError(PDF_OPTIONS_INERT)
     return device_for(device)
 
@@ -153,6 +155,7 @@ def prepare(
     formula_images=True,
     progress=True,
     settings=None,
+    structure=None,
 ):
     """Import or extract, chosen by the input's suffix alone.
 
@@ -163,6 +166,10 @@ def prepare(
     The adapter is imported here rather than at the top of the file so a
     Markdown import never pulls in the PDF parser, its models or its
     process management for a file it is not going to read.
+
+    `structure` (a `docling_parser.StructureRequest`) puts its model and
+    revision into the settings, so a bundle made by another model, or by
+    none, is not reused for this one.
     """
     kind = source_kind(input_path)
     if settings is None:
@@ -170,6 +177,10 @@ def prepare(
             ocr=bool(ocr),
             ocr_lang=tuple(parse_ocr_lang(ocr_lang) or ()),
             formula_images=bool(formula_images),
+        )
+    if structure is not None:
+        settings = replace(
+            settings, structure=structure.model, structure_rev=structure.rev
         )
     finished = already_prepared(
         bundle,
@@ -194,4 +205,5 @@ def prepare(
         page_range=pages,
         settings=settings,
         progress=progress,
+        **({"structure": structure} if structure is not None else {}),
     )
