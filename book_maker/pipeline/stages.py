@@ -14,11 +14,12 @@ from .errors import PipelineError
 from .importer import import_markdown
 from .messages import (
     EXTRACTION_REUSED_OTHER_RUNTIME,
+    OCR_REPLACE_NEEDS_OCR,
     PDF_OPTIONS_INERT,
     STAGE_COMPLETE,
     STRUCTURE_NOT_REUSED,
 )
-from .pdf_settings import ExtractionSettings
+from .pdf_settings import OCR_MODE_REPLACE_LAYER, ExtractionSettings
 
 MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown"}
 PDF_SUFFIXES = {".pdf"}
@@ -52,14 +53,22 @@ def check_pdf_options(kind, options):
     set of OCR languages was honoured when the file they handed in never
     went near the parser, so typing any of them with Markdown is an error
     rather than a no-op.
+
+    `--ocr-replace-layer` replaces what the OCR engine reads, so without
+    `--pdf-ocr` there is nothing to replace the layer with: refused too.
     """
     device = getattr(options, "device", None)
     pdf_ocr = getattr(options, "pdf_ocr", False)
     pages = getattr(options, "pages", None)
     ocr_lang = getattr(options, "ocr_lang", None)
     img_model = getattr(options, "img_model", None)
-    if kind != "pdf" and (device or pdf_ocr or pages or ocr_lang or img_model):
+    replace_layer = getattr(options, "ocr_replace_layer", False)
+    if kind != "pdf" and (
+        device or pdf_ocr or pages or ocr_lang or img_model or replace_layer
+    ):
         raise PipelineError(PDF_OPTIONS_INERT)
+    if replace_layer and not pdf_ocr:
+        raise PipelineError(OCR_REPLACE_NEEDS_OCR)
     return device_for(device)
 
 
@@ -184,12 +193,14 @@ def prepare(
     progress=True,
     settings=None,
     structure=None,
+    ocr_replace_layer=False,
 ):
     """Import or extract, chosen by the input's suffix alone.
 
-    The extraction settings are built from `ocr`, `ocr_lang` and
-    `formula_images` unless `settings` is given, and the same value is
-    what the bundle is compared against and what the extraction runs with.
+    The extraction settings are built from `ocr`, `ocr_lang`,
+    `formula_images` and `ocr_replace_layer` unless `settings` is given,
+    and the same value is what the bundle is compared against and what the
+    extraction runs with.
 
     The adapter is imported here rather than at the top of the file so a
     Markdown import never pulls in the PDF parser, its models or its
@@ -203,6 +214,7 @@ def prepare(
     if settings is None:
         settings = ExtractionSettings(
             ocr=bool(ocr),
+            ocr_mode=OCR_MODE_REPLACE_LAYER if ocr_replace_layer else "default",
             ocr_lang=tuple(parse_ocr_lang(ocr_lang) or ()),
             formula_images=bool(formula_images),
         )

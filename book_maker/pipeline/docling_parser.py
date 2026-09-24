@@ -55,6 +55,10 @@ from .messages import (
     OCR_LANG_DEFAULT,
     OCR_LANGUAGES_DEFAULT,
     OCR_LANGUAGES_GIVEN,
+    OCR_REPLACE_ALL_EMPTY,
+    OCR_REPLACE_EMPTY,
+    OCR_REPLACE_EMPTY_MORE,
+    OCR_REPLACING_LAYER,
     OCR_REQUIRED,
     PAGE_TOO_DENSE,
     PAGES_SCOPE,
@@ -77,6 +81,7 @@ from .messages import (
 from .pdf_common import (
     PAGE_MARKER,
     _prose,
+    blank_pages,
     check_recognised_text,
     dense_pages,
     first_selected_page,
@@ -271,6 +276,11 @@ def _convert(
     snapshot = Path(out_dir) / SNAPSHOT
     _write_snapshot(result.document, snapshot)
     report["snapshot"] = snapshot
+    # Which pages came back with any text, read from the document rather
+    # than from the Markdown's page markers: docling writes no page break
+    # for a page that has no item at all, so after an empty page the
+    # markers count one short and would name the wrong page.
+    report["text_pages"] = _text_pages(result.document)
     # The region roles, after the snapshot (which stays docling's own) and
     # before anything reads a label: the formula markers and the heading
     # levels below must see the corrected items, and a heading the model
@@ -309,6 +319,58 @@ def _convert(
         out_dir,
         neighbours=pdf_formula.neighbours(result.document),
     )
+
+
+def _text_pages(document):
+    """The page numbers on which the document holds any text, from 1."""
+    from docling_core.types.doc import TableItem, TextItem
+
+    pages = set()
+    for item, _level in document.iterate_items():
+        if not getattr(item, "prov", None):
+            continue
+        if isinstance(item, TextItem):
+            has_text = bool((item.text or "").strip())
+        elif isinstance(item, TableItem):
+            has_text = any((cell.text or "").strip() for cell in item.data.table_cells)
+        else:
+            continue
+        if has_text:
+            pages.update(prov.page_no for prov in item.prov)
+    return sorted(pages)
+
+
+def _selected_pages(ranges, examined):
+    """The page numbers `text_layer_report` examined, from 1.
+
+    It walks the document in page order and counts the pages inside the
+    selection, so they are the first `examined` pages of the selection in
+    ascending order (a selection reaching past the end counts short).
+    """
+    if not ranges:
+        return list(range(1, examined + 1))
+    wanted = sorted({page for start, end in ranges for page in range(start, end + 1)})
+    return wanted[:examined]
+
+
+def _pages_read(text_pages, text):
+    """The pages that came back with any text, as a set.
+
+    `text_pages` is the document's own answer (`_convert`); a converter
+    that does not give it is answered from the Markdown's page markers.
+    """
+    if text_pages is not None:
+        return set(text_pages)
+    blank, _any = blank_pages(text)
+    return {int(n) for n in PAGE_MARKER.findall(text)} - set(blank)
+
+
+def _replaced_layer_lines(empty):
+    """One OCR_REPLACE_EMPTY line per page, the first ten, then a count."""
+    lines = [OCR_REPLACE_EMPTY.format(page=page) for page in empty[:10]]
+    if len(empty) > 10:
+        lines.append(OCR_REPLACE_EMPTY_MORE.format(count=len(empty) - 10))
+    return lines
 
 
 def _decide_structure(document, pdf, out_dir, structure):
@@ -806,11 +868,18 @@ def extract_pdf(
             count=len(invisible), total=examined
         )
         print(invisible_note)
+    # Replacing the embedded layer is the operator's explicit choice
+    # (--ocr-replace-layer), said once before the models start.
+    replace_layer = settings.ocr_replace_layer
+    if replace_layer:
+        print(OCR_REPLACING_LAYER)
     # The models are about to read these pages in whatever languages they
     # were given; an operator who gave none is told which. An invisible
     # layer is read again too when OCR is on (measured 260923: the Chinese
-    # scan read in the engine's default languages lost half its text).
-    if ocr and (missing or invisible) and not languages:
+    # scan read in the engine's default languages lost half its text), and
+    # every page is when the layer is replaced (ocrmac's default on
+    # Chinese: Han CER 0.291 -> 0.494).
+    if ocr and (missing or invisible or replace_layer) and not languages:
         print(OCR_LANG_DEFAULT)
 
     # A converter reads one run of pages. A selection with a gap in it is
@@ -946,11 +1015,26 @@ def extract_pdf(
         # OCR pass itself came back with pictures only. Saying "rerun with
         # --pdf-ocr" to somebody who just ran it would be worse than saying
         # nothing.
-        if not missing and not _prose(markdown):
-            raise PipelineError(EXTRACTION_EMPTY, stage=STAGE)
         text = _number_pages(markdown, first_selected_page(page_range))
         if gapped:
             text = _selected_only(text, ranges)
+        # With --ocr-replace-layer a page that carried a layer and came
+        # back empty is empty: the layer is not used in its place (owner
+        # ruling 260923, no silent fallback). Said page by page; nothing
+        # read anywhere stops the run here, before a translation is paid.
+        replaced_empty = []
+        if replace_layer:
+            selected = _selected_pages(ranges, examined)
+            read = _pages_read(found.get("text_pages"), text)
+            replaced_empty = [
+                page for page in selected if page not in missing and page not in read
+            ]
+            for warning in _replaced_layer_lines(replaced_empty):
+                print(warning)
+            if not read & set(selected):
+                raise PipelineError(OCR_REPLACE_ALL_EMPTY, stage=STAGE)
+        if not missing and not _prose(markdown):
+            raise PipelineError(EXTRACTION_EMPTY, stage=STAGE)
         source = staging / "source.md"
         source.write_text(text, encoding="utf-8")
         silent = check_recognised_text(source, missing)
@@ -989,6 +1073,7 @@ def extract_pdf(
         page_range,
         scanned=missing,
         examined=examined,
+        selected=_selected_pages(ranges, examined),
         settings=settings,
         ocr_engine=ocr_engine,
         raw_document=(
@@ -1011,6 +1096,8 @@ def extract_pdf(
         limitations.append(
             OCR_EMPTY_PAGES.format(pages=", ".join(str(n) for n in silent))
         )
+    # Every page, not the capped terminal list: the manifest is the record.
+    limitations.extend(OCR_REPLACE_EMPTY.format(page=page) for page in replaced_empty)
     if engine_line is not None and not languages:
         limitations.append(engine_line)
     if invisible_note is not None:
@@ -1120,6 +1207,7 @@ def _write_provenance(
     *,
     scanned=(),
     examined=0,
+    selected=None,
     settings=None,
     ocr_engine=None,
     raw_document=None,
@@ -1138,6 +1226,9 @@ def _write_provenance(
         "ocr_engine_requested": settings.ocr_engine,
         "ocr_engine": ocr_engine,
         "ocr_mode": settings.ocr_mode,
+        # `ocr_mode` full_page, said plainly for a reader of the manifest;
+        # derived, so not read back as a setting.
+        "ocr_replace_layer": settings.ocr_replace_layer,
         "table_mode": settings.table_mode,
     }
     # The structure model asked for (identity, read back by
@@ -1206,7 +1297,12 @@ def _write_provenance(
             "pages_without_text_layer": list(scanned),
             "pages_examined": examined,
             "ocr": ocr,
-            "pages_read_by_ocr": list(scanned) if ocr else [],
+            # Every selected page when the layer was replaced.
+            "pages_read_by_ocr": (
+                list(selected or [])
+                if settings.ocr_replace_layer
+                else (list(scanned) if ocr else [])
+            ),
             # The languages the models were told to read, as given
             # (`--ocr-lang`); None means the engine's own default.
             "ocr_lang": ocr_lang,

@@ -20,6 +20,12 @@ OCR_ENGINES = ("auto", "rapidocr", "easyocr", "ocrmac", "tesseract")
 OCR_MODES = ("default", "full_page", "layout_regions", "pdf_aware_layout_regions")
 TABLE_MODES = ("accurate", "fast", "v2")
 
+# `--ocr-replace-layer`: docling's full-page OCR skips the PDF's own text
+# cells and keeps only what the engine read, so an embedded layer is
+# replaced rather than kept (owner ruling 260923: an explicit setting, off
+# by default). `ocr_mode` is already identity, so toggling it re-extracts.
+OCR_MODE_REPLACE_LAYER = "full_page"
+
 
 @dataclass(frozen=True)
 class ExtractionSettings:
@@ -59,6 +65,11 @@ class ExtractionSettings:
                     f"{field} {value!r} is not one of {', '.join(allowed)}",
                     stage="extract",
                 )
+
+    @property
+    def ocr_replace_layer(self):
+        """Whether OCR replaces the PDF's own text layer (derived, for readers)."""
+        return self.ocr and self.ocr_mode == OCR_MODE_REPLACE_LAYER
 
     def identity(self):
         """The fields that decide the extracted text, as the manifest keeps them.

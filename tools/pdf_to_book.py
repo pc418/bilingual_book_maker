@@ -112,6 +112,11 @@ def _add_pdf_options(parser):
     """
     parser.add_argument("--pdf-ocr", action="store_true", help=messages.HELP_PDF_OCR)
     parser.add_argument(
+        "--ocr-replace-layer",
+        action="store_true",
+        help=messages.HELP_OCR_REPLACE_LAYER,
+    )
+    parser.add_argument(
         "--device",
         default=None,
         choices=("auto", "cpu", "cuda", "mps", "xpu"),
@@ -212,6 +217,7 @@ def main(argv=None):
                 ocr=options.pdf_ocr,
                 ocr_lang=options.ocr_lang,
                 formula_images=options.formula_images,
+                ocr_replace_layer=options.ocr_replace_layer,
                 **structure,
             )
         elif command == "translate":
@@ -243,6 +249,7 @@ def main(argv=None):
                 ocr=options.pdf_ocr,
                 ocr_lang=options.ocr_lang,
                 formula_images=options.formula_images,
+                ocr_replace_layer=options.ocr_replace_layer,
                 **structure,
             )
             translate_bundle(bundle, bbm_options, pandoc=pandoc)

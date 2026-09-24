@@ -40,8 +40,8 @@ PANDOC_TOO_OLD = (
 )
 NAV_INVALID = "EPUB navigation is invalid: "
 PDF_OPTIONS_INERT = (
-    "--pdf-ocr, --device, --ocr-lang, --pages and --img-model apply "
-    "only to PDF input."
+    "--pdf-ocr, --ocr-replace-layer, --device, --ocr-lang, --pages and "
+    "--img-model apply only to PDF input."
 )
 DEVICE_SELECTED = "PDF extraction device: {device}."
 DEVICE_CPU_FALLBACK = "PDF extraction device: cpu (no supported accelerator detected)."
@@ -84,8 +84,10 @@ SCANNED_PAGES = (
 )
 INVISIBLE_TEXT_LAYER = (
     "{count} of {total} selected pages carry only an invisible OCR text layer "
-    "(a scanned book with recognised text underneath); with OCR on, the "
-    "models read the page image and their text replaces that layer."
+    "(a scanned book with recognised text underneath); that layer is kept as "
+    "the page's text (with --pdf-ocr, possibly mixed with what the OCR engine "
+    "reads), and --ocr-replace-layer with --pdf-ocr replaces it with a fresh "
+    "OCR reading of the page image."
 )
 OCR_REQUIRED = (
     "{count} of {total} selected pages have no text layer (page(s) {pages}); "
@@ -103,6 +105,34 @@ OCR_LANG_DEFAULT = (
     "No --ocr-lang given: the OCR engine reads its own default languages, "
     "which may not be the pages'; the line after extraction names the engine "
     "and languages it used. Check source.md before translating."
+)
+# `--ocr-replace-layer` (packet G; owner ruling 260923, docs/260923-docs-
+# OWNER_RULINGS_OCR_PROMPT_LAYER_WIKI.md section 6): replacing an embedded
+# text layer with fresh OCR is explicit, and a replacement that read nothing
+# is said page by page, never papered over with the layer. The lead's text,
+# verbatim, except `--with-ocr` (a retired spelling since 260921) is
+# written as the current `--pdf-ocr`.
+OCR_REPLACE_NEEDS_OCR = (
+    "--ocr-replace-layer re-reads pages that already carry a text layer with "
+    "the OCR engine, so it needs --pdf-ocr."
+)
+OCR_REPLACING_LAYER = (
+    "OCR: replacing the embedded text layer on every page (--ocr-replace-layer)"
+)
+OCR_REPLACE_EMPTY = (
+    "page {page}: the OCR engine read nothing where the PDF carried a text "
+    "layer; with --ocr-replace-layer the layer is not used, so the page is "
+    "empty. Rerun without the flag to keep the layer, or with --ocr-lang for "
+    "the page's language."
+)
+# Not the lead's text: the tail of a long list of empty pages, and the stop
+# when nothing selected was read (the lead asked for one sentence, same advice).
+OCR_REPLACE_EMPTY_MORE = "... and {count} more"
+OCR_REPLACE_ALL_EMPTY = (
+    "The OCR engine read nothing on any selected page, and with "
+    "--ocr-replace-layer the PDF's text layer is not used, so there is nothing "
+    "to translate; rerun without the flag to keep the layer, or with "
+    "--ocr-lang for the pages' language."
 )
 OCR_ENGINE_USED = "OCR engine: {engine}{chosen}, languages: {languages}."
 OCR_ENGINE_CHOSEN = " (docling's choice on this install)"
@@ -248,6 +278,15 @@ HELP_PDF_OCR = (
     "refused without it. Off by default: a born-digital PDF is already "
     "readable, and OCR costs several times the time without changing what is "
     "read. Layout and table detection run either way."
+)
+# The lead's text (packet G), verbatim but for `--with-ocr` -> `--pdf-ocr`.
+HELP_OCR_REPLACE_LAYER = (
+    "With --pdf-ocr: run the OCR engine over every page, replacing an existing "
+    "text layer instead of keeping it. Off by default: an embedded layer is "
+    "kept and only pages without one are read. Measured worse than the layer "
+    "on clean scans with the local engines; for a layer that is wrong "
+    "(invisible garbage, the wrong language). Part of the extraction "
+    "identity: toggling it extracts again."
 )
 HELP_DEVICE = (
     "Which processor the extraction models run on: auto (detect, falling back "
