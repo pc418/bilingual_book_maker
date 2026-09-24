@@ -1,24 +1,88 @@
 site_name: bilingual book maker
+site_url: https://yihong0618.github.io/bilingual_book_maker/
+repo_url: https://github.com/yihong0618/bilingual_book_maker
+repo_name: yihong0618/bilingual_book_maker
+
 theme:
   name: material
   features:
-    - navigation.tabs
-    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
     - content.code.copy
+    - content.tabs.link
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
 
-nav: 
-  - Home : index.md
-  - Getting started: 
-    - Installation: installation.md
-    - QuickStart: quickstart.md
-  - Usage:
-    - Model and languages: model_lang.md
-    - Language tags and names: languages.md
-    - Command line options: cmd.md
-    - Migrating from the old flags: migration.md
-    - Translate from different source: book_source.md
-    - Environment setting: env_settings.md
-    - Tweak the prompt: prompt.md
-    - Session grouping evaluation: session_grouping_eval.md
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Quick start: quickstart.md
+  - Installation:
+      - Python: installation.md
+      - PDF extra: installation-pdf.md
+      - Docker: docker.md
+  - Translating with an LLM: llm-args.md
+  - Machine translation: machine-args.md
+  - Formats:
+      - EPUB: formats/epub.md
+      - TXT: formats/txt.md
+      - SRT: formats/srt.md
+      - Markdown: formats/md.md
+      - PDF: formats/pdf.md
+  - Features:
+      - Plan mode: features/plan-mode.md
+      - Session mode: features/session-mode.md
+      - PDF to bilingual EPUB: features/pdf-to-epub.md
+  - Evaluation:
+      - Overview: evaluation/index.md
+      - Why 16 units per request: evaluation/grouping-batch-size.md
+      - Why the session compacts at 8192: evaluation/session-compact-budget.md
+      - Why the tool probes the endpoint: evaluation/structured-output-ladder.md
+      - Why heading levels come from the page: evaluation/pdf-heading-levels.md
+      - Why formulas are pictures: evaluation/pdf-formulas-as-images.md
+      - Why a vision model reads scans better: evaluation/pdf-ocr-llm-vs-local.md
+      - Why docling-parse stays: evaluation/pdf-page-render-backend.md
+      - Where an LLM fixes layout: evaluation/pdf-structure-llm-roles.md
+      - How extraction was checked: evaluation/pdf-extraction-corpus.md
+      - Why docling: evaluation/pdf-parser-choice.md
+  - Reference:
+      - Command line options: cmd.md
+      - Language tags: languages.md
+      - Model and language notes: model_lang.md
+      - Environment variables: env_settings.md
+      - Prompt files: prompt.md
+      - Migrating from old flags: migration.md
+      - Translate from other sources: book_source.md
   - Disclaimer: disclaimer.md
-    
+
+not_in_nav: |
+  /session_grouping_eval.md

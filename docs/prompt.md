@@ -18,7 +18,7 @@ To tweak the prompt, use the `--prompt` parameter. The placeholders the `user` t
             "style": ""
         }
 
-- A third key, `style`, is a standing instruction about how to write. It is said once where a window starts — with the system message on the API routes, with the thread instructions on codex — not repeated on every request. The shipped [`prompt_template.json`](../prompt_template.json) carries all three keys with `style` left empty: write your own voice in, or leave it blank.
+- A third key, `style`, is a standing instruction about how to write. It is said once where a window starts — with the system message on the API routes, with the thread instructions on codex — not repeated on every request. The shipped [`prompt_template.json`](https://github.com/yihong0618/bilingual_book_maker/blob/main/prompt_template.json) carries all three keys with `style` left empty: write your own voice in, or leave it blank.
 
 - `--prompt` reaches every LLM route, srt books included: there its sections sit on top of the subtitle loader's own prompt, section by section, and replacing the `user` template means saying yourself that the block number and timeline must come back unchanged.
 

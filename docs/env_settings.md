@@ -42,7 +42,7 @@ right one. It is consulted only while the run still calls that endpoint: an
 `--api_base` elsewhere, or an `--api_format` override on an entry that names
 no `base_url`, moves the request to another host, and the entry's key is not
 sent there. The run says so; pass `--key` when you meant to reuse it. The file holds the address and the variable name, never a secret.
-See [Endpoints, models and languages](./model_lang.md#named-endpoints---provider).
+See [Endpoints, models and languages](./model_lang.md#named-endpoints-provider).
 `--model orcarouter` reads `BBM_ORCAROUTER_API_KEY` the same way.
 
 ## Old per-vendor variables
