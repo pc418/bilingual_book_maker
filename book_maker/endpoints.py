@@ -57,8 +57,8 @@ SOURCE_OFF = "off"
 # The lead's text, verbatim (packet F, 260923): the six flags' help.
 HELP_IMG_MODEL = "Vision model for the steps that look at a page image (today: correcting the layout detector's region roles on the PDF route). Resolution: this flag, else the provider entry's img_model, else off; 'none' turns a provider entry's image model off. The run's own model is never used for images unless named here."
 HELP_IMG_BASE_URL = "Endpoint for --img-model when it is not the run's endpoint (OpenAI-compatible only)."
-HELP_IMG_KEY = "API key for --img-base-url; defaults to the run's key when the endpoint is the same, else the key the endpoint's format reads from the environment."
-HELP_CLASSIFY_MODEL = "Model for every classification step: plan mode's unit classifier and the PDF route's text-only structure decisions. Resolution: this flag, else the provider entry's classify_model, else the run's own model. --plan-classify-model is the old name of this flag. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation."
+HELP_IMG_KEY = "API key for --img-base-url. Default: the run's key when the endpoint is the run's own; else the provider entry's img_env_key when the endpoint is the entry's own; else the key the endpoint's format reads from the environment. A key is never sent to an address it was not given for."
+HELP_CLASSIFY_MODEL = "Model for every classification step: plan mode's unit classifier (the PDF route has no classification step yet). Resolution: this flag, else the provider entry's classify_model, else the run's own model. --plan-classify-model is the old name of this flag. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation. 'jev' asks TypeSafe's Jev classifier (default host api.typesafe.ai, key JEV_API_KEY); a Jev-compatible server such as Simple Jev is reached by its URL in --classify-base-url."
 HELP_CLASSIFY_BASE_URL = "Endpoint for --classify-model when it is not the run's endpoint (OpenAI-compatible only)."
 HELP_CLASSIFY_KEY = "API key for --classify-base-url; same default rule as --img-key."
 

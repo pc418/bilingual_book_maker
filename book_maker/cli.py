@@ -2297,7 +2297,8 @@ def build_parser():
         help=HELP_CLASSIFY_KEY,
     )
     # The old name of --classify-model (owner 260923): still accepted,
-    # hidden from the help, merged by `normalize_options`, where it wins.
+    # hidden from the help, merged by `normalize_options`, where the new
+    # name wins when both are typed (4f82d36).
     parser.add_argument(
         "--plan-classify-model",
         dest="plan_classify_model",

@@ -707,12 +707,36 @@ def test_the_old_flag_name_is_the_same_option_and_the_new_one_wins():
 def test_the_old_flag_is_hidden_from_the_help():
     from book_maker.cli import build_parser
 
-    text = build_parser().format_help()
+    parser = build_parser()
+    text = parser.format_help()
     options = [line.split()[0] for line in text.splitlines() if line.startswith("  -")]
     assert "--classify-model" in options
     assert "--plan-classify-model" not in options
-    # the help of the new flag names the old one (HELP_CLASSIFY_MODEL)
-    assert "--plan-classify-model is the old name" in " ".join(text.split())
+    # the help of the new flag names the old one (HELP_CLASSIFY_MODEL); read
+    # off the action, because argparse wraps at a hyphen ("--plan-" /
+    # "classify-model") wherever the terminal width puts the line break
+    help_text = next(a.help for a in parser._actions if a.dest == "classify_model")
+    assert "--plan-classify-model is the old name" in help_text
+
+
+def test_the_endpoint_help_says_what_the_resolution_does():
+    # PIN (packet H items 7-8, 260924; the lead's text, from the wiki's
+    # second pass, docs/260923-docs-WIKI_MODERNIZE.md): no classification
+    # step exists on the PDF route yet, Jev is named, and the key rule has
+    # the provider entry's step and the address binding
+    from book_maker.endpoints import (
+        HELP_CLASSIFY_KEY,
+        HELP_CLASSIFY_MODEL,
+        HELP_IMG_KEY,
+    )
+
+    assert "structure decisions" not in HELP_CLASSIFY_MODEL
+    assert "(the PDF route has no classification step yet)" in HELP_CLASSIFY_MODEL
+    assert "'jev' asks TypeSafe's Jev classifier" in HELP_CLASSIFY_MODEL
+    assert "by its URL in --classify-base-url." in HELP_CLASSIFY_MODEL
+    assert "the provider entry's img_env_key" in HELP_IMG_KEY
+    assert "never sent to an address it was not given for" in HELP_IMG_KEY
+    assert "same default rule as --img-key" in HELP_CLASSIFY_KEY
 
 
 def test_a_classifier_implies_model_mode_on_an_epub_only():
