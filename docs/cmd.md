@@ -41,7 +41,7 @@ sections after it provide additional notes for selected workflows.
 |---|---|
 | `--plan-dry-run` | Build and print the EPUB plan, write `<book>_plan.json` with every `action` still `null`, and exit. No credentials needed. |
 | `--plan-classify {auto,none,all,model,agent}` | No plan, the whole partition, model triage, or coding-agent triage. Default `auto`: model triage on any epub endpoint that can answer — over structured output where a strict JSON schema is verified, over a plain conversation (exact `skip`/`translate` replies; anything else translates) elsewhere, codex included; tag mode only where no conversation exists. |
-| `--classify-model MODEL` | Model for every classification step (old name `--plan-classify-model`); implies model mode on an epub. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation. Default: the provider entry's `classify_model`, else the run's model. |
+| `--classify-model MODEL` | Model for every classification step (old name `--plan-classify-model`), or a Jev-compatible classifier (TypeSafe's Jev by default; Simple Jev at its URL); implies model mode on an epub. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation. Default: the provider entry's `classify_model`, else the run's model. |
 | `--classify-base-url URL` | Endpoint for `--classify-model` when it is not the run's (OpenAI-compatible only). |
 | `--classify-key KEY` | Key for `--classify-base-url`; same default rule as `--img-key`. |
 | `--plan-min-coverage FRACTION` | Fail if selected planned text is below this fraction; default `0.5`, must be between 0 and 1 (`0` disables the guard, values above `0.9` usually abort — both warn). |

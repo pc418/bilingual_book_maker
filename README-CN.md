@@ -278,7 +278,7 @@ python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify all
 python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
 ```
 
-- `--plan-classify` 决定计划怎么判定：`auto`（默认：由翻译模型判定，在能验证接口严格执行 JSON schema 时走结构化输出，否则走普通对话，要求精确回答 `skip`/`translate`/`unsure`；unsure 和解析不了的行一律翻译）、`none`、`all`、`model`（同 auto，但有未判定的行时停止而不是回退）、`agent`。`--classify-model X` 用另一个模型分类（旧名 `--plan-classify-model`）；显式指定后，分类失败会中止而不是回退。`--classify-base-url URL` 与 `--classify-key KEY` 让它在另一个 OpenAI 兼容端点上判定。
+- `--plan-classify` 决定计划怎么判定：`auto`（默认：由翻译模型判定，在能验证接口严格执行 JSON schema 时走结构化输出，否则走普通对话，要求精确回答 `skip`/`translate`/`unsure`；unsure 和解析不了的行一律翻译）、`none`、`all`、`model`（同 auto，但有未判定的行时停止而不是回退）、`agent`。`--classify-model X` 用另一个模型分类（旧名 `--plan-classify-model`），或用一个 Jev 兼容的分类器（默认 TypeSafe 的 Jev；Simple Jev 用它的 URL）；显式指定后，分类失败会中止而不是回退。`--classify-base-url URL` 与 `--classify-key KEY` 让它在另一个 OpenAI 兼容端点上判定。
 - `--plan-min-coverage`（默认 0.5）：计划覆盖的正文比例低于该值时中止。`0` 关闭该闸门；高于 0.9 的值多半会在分类已付费之后才中止。
 - `<book>_plan.json` 会被同一本书之后的每次运行复用，`--test` 也一样；想重新分类先删掉它。`--test` 分类的是整本书而不是那一小段，运行时会说明。
 
