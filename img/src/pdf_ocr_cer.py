@@ -30,8 +30,24 @@ def main():
     fig, ax = plt.subplots(figsize=(11, 7))
     y = np.arange(len(ROWS))
     h = 0.38
-    ax.barh(y - h / 2, [r[1] for r in ROWS], h, color=PALETTE["neutral"], edgecolor="black", linewidth=1.2, label="docling auto OCR")
-    ax.barh(y + h / 2, [r[2] for r in ROWS], h, color=PALETTE["blue_main"], edgecolor="black", linewidth=1.2, label="gpt-5.6-luna")
+    ax.barh(
+        y - h / 2,
+        [r[1] for r in ROWS],
+        h,
+        color=PALETTE["neutral"],
+        edgecolor="black",
+        linewidth=1.2,
+        label="docling auto OCR",
+    )
+    ax.barh(
+        y + h / 2,
+        [r[2] for r in ROWS],
+        h,
+        color=PALETTE["blue_main"],
+        edgecolor="black",
+        linewidth=1.2,
+        label="gpt-5.6-luna",
+    )
     ax.set_yticks(y)
     ax.set_yticklabels([r[0] for r in ROWS], fontsize=13)
     ax.invert_yaxis()

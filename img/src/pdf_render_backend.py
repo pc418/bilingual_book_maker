@@ -21,9 +21,33 @@ def main():
     fig, ax = plt.subplots(figsize=(12, 5))
     x = np.arange(len(PAGES))
     w = 0.27
-    ax.bar(x - w, PARSE, w, color=PALETTE["neutral"], edgecolor="black", linewidth=1.2, label="docling-parse")
-    ax.bar(x, PDFIUM, w, color=PALETTE["red_soft"], edgecolor="black", linewidth=1.2, label="pypdfium2")
-    ax.bar(x + w, HYBRID, w, color=PALETTE["blue_main"], edgecolor="black", linewidth=1.2, label="hybrid")
+    ax.bar(
+        x - w,
+        PARSE,
+        w,
+        color=PALETTE["neutral"],
+        edgecolor="black",
+        linewidth=1.2,
+        label="docling-parse",
+    )
+    ax.bar(
+        x,
+        PDFIUM,
+        w,
+        color=PALETTE["red_soft"],
+        edgecolor="black",
+        linewidth=1.2,
+        label="pypdfium2",
+    )
+    ax.bar(
+        x + w,
+        HYBRID,
+        w,
+        color=PALETTE["blue_main"],
+        edgecolor="black",
+        linewidth=1.2,
+        label="hybrid",
+    )
     ax.set_xticks(x)
     ax.set_xticklabels(PAGES)
     ax.set_ylabel("character error rate")
