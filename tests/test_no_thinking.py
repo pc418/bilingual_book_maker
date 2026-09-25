@@ -357,6 +357,7 @@ class TestEveryRequestCarriesIt:
     # --no-thinking was built, reading `self.extra_body` directly; these pin
     # that it is one of "every request" too.
     def test_the_image_probe_carries_the_control(self):
+        pytest.importorskip("PIL")  # the probe draws its challenge with Pillow
         endpoint = Endpoint()
         t = _translator(endpoint)
 
@@ -365,6 +366,7 @@ class TestEveryRequestCarriesIt:
         assert endpoint.controls == [LADDER[0]]
 
     def test_the_image_probe_negotiates_rather_than_grading_the_refusal(self):
+        pytest.importorskip("PIL")  # the probe draws its challenge with Pillow
         endpoint = Endpoint(_rejects("reasoning_effort"))
         t = _translator(endpoint)
 

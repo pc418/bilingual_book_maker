@@ -1842,6 +1842,7 @@ def test_the_converter_fixes_what_is_never_a_setting(settings):
 
 
 def test_the_table_mode_reaches_the_converter():
+    pytest.importorskip("docling.datamodel.pipeline_options")
     from docling.datamodel.pipeline_options import (
         TableFormerMode,
         TableStructureOptions,
@@ -1935,6 +1936,7 @@ def test_a_bundle_with_import_and_extract_both_done_is_still_checked(extracted, 
 def test_another_docling_or_device_reuses_and_says_so_once(
     extracted, pdf, edit, capsys
 ):
+    pytest.importorskip("docling")  # the message names the installed version
     from book_maker.pipeline.messages import EXTRACTION_REUSED_OTHER_RUNTIME
 
     manifest = extracted.read_manifest()
