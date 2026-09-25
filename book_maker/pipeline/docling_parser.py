@@ -367,7 +367,10 @@ def _export_pages(document, images, span):
     first = span[0] if span else 1
     last = min(span[1], numbers[-1]) if span else numbers[-1]
     referenced = document._with_pictures_refs(image_dir=Path(images), page_no=None)
-    return PAGE_BREAK.join(
+    # On a line of its own, as docling writes its own breaks: a page that
+    # opens with a heading must still start its line with `#` for
+    # `pdf_headings.promote`, which runs before the pages are numbered.
+    return f"\n\n{PAGE_BREAK}\n\n".join(
         referenced.export_to_markdown(
             image_mode=ImageRefMode.REFERENCED, page_no=number
         )

@@ -177,7 +177,7 @@ def test_the_converter_asks_docling_for_full_page_ocr_only_with_the_flag(
     assert all(options.do_ocr for options in built)
 
 
-def real_document(texts, pages=None, picture_on=None):
+def real_document(texts, pages=None, picture_on=None, headings=None):
     """A real `DoclingDocument`: `texts` is `{page: text}`, `pages` the
     page numbers it has (docling keeps an empty page in `pages`), and
     `picture_on` a page that also carries a picture. Built the way
@@ -195,6 +195,8 @@ def real_document(texts, pages=None, picture_on=None):
         return d.ProvenanceItem(page_no=page, bbox=box, charspan=(0, len(text)))
 
     for page, text in sorted(texts.items()):
+        for heading in (headings or {}).get(page, ()):
+            document.add_heading(text=heading, level=1, prov=prov(page, heading))
         document.add_text(label=d.DocItemLabel.TEXT, text=text, prov=prov(page, text))
     if picture_on is not None:
         document.add_picture(
@@ -285,6 +287,23 @@ def test_a_gapped_selection_keeps_page_three_and_drops_page_two(
     assert "Text on page three." in bodies[3]
     source = bundle.source.read_text(encoding="utf-8")
     assert "Text on page two." not in source
+
+
+def test_a_heading_that_opens_a_page_is_promoted_like_any_other(
+    bundle, tmp_path, pandoc
+):
+    # smoke 260924 (zh_hans scan): the pages were joined with the break
+    # alone, so a heading opening page 2 did not start a line and
+    # `pdf_headings.promote` left it one level too deep
+    pdf = _pdf(tmp_path, 2)
+    document = real_document(
+        {1: "Text on page one.", 2: "Text on page two."},
+        headings={2: ["Section Two"]},
+    )
+    _extract(bundle, pdf, pandoc, exporting(document), settings=KEEP)
+    lines = page_bodies(bundle)[2].splitlines()
+    assert "# Section Two" in lines
+    assert "## Section Two" not in lines
 
 
 def test_a_picture_is_written_once_and_placed_on_its_own_page(bundle, tmp_path, pandoc):
