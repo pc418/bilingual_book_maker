@@ -2119,13 +2119,13 @@
 <tbody>
 <tr>
 <td>A Mac, and you do not want to download anything</td>
-<td><code>ocrmac</code> (<code>pip install ocrmac</code>)</td>
+<td><code>ocrmac</code> (already there with the <code>pdf</code> extra)</td>
 <td>Apple's own engine, part of macOS: no model download. The fastest in the measurement (6 s per two pages) and second-best on English, tied with the best on typewriter and clean pages. Weaker than rapidocr on simplified Chinese.</td>
 </tr>
 <tr>
 <td>You have not chosen</td>
 <td><code>auto</code> (the default)</td>
-<td>Takes the first installed of ocrmac, rapidocr, easyocr, and names it. On a Mac with ocrmac installed that is ocrmac.</td>
+<td>Takes the first installed of ocrmac, rapidocr, easyocr, and names it. With the <code>pdf</code> extra that is ocrmac on a Mac and rapidocr elsewhere.</td>
 </tr>
 <tr>
 <td>Simplified Chinese</td>
@@ -2177,13 +2177,13 @@
 <tbody>
 <tr>
 <td><code>rapidocr</code></td>
-<td>Comes with the <code>pdf</code> extra. Also <code>pip install onnxruntime</code>: the extra does not install it, and <code>--ocr-engine rapidocr</code> is refused without it.</td>
-<td>Nothing with onnxruntime: its models are inside the package. Without onnxruntime, <code>auto</code> runs rapidocr on PyTorch instead, which downloads about 31 MB of models from modelscope.cn.</td>
+<td>Comes with the <code>pdf</code> extra, with onnxruntime.</td>
+<td>Nothing: its models are inside the package.</td>
 <td>rapidocr 31 MB, onnxruntime 62 MB</td>
 </tr>
 <tr>
 <td><code>ocrmac</code></td>
-<td><code>pip install ocrmac</code> (macOS only)</td>
+<td>Comes with the <code>pdf</code> extra on macOS (macOS only).</td>
 <td>Nothing.</td>
 <td>28 MB</td>
 </tr>

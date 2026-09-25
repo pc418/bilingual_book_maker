@@ -2135,26 +2135,26 @@
 <td><a href="../pdf-to-epub/#setup">OCR flags</a></td>
 </tr>
 <tr>
-<td>a scan in Japanese, Korean or another script outside Chinese and English</td>
+<td>a scan in Chinese, Japanese, Korean or another script outside the Latin alphabet</td>
 <td><code>--pdf-ocr --ocr-lang iso:ja</code> (or <code>iso:ko</code>, …)</td>
-<td>the default OCR engine reads Chinese and English only</td>
+<td>the default OCR engine reads only its own languages: on a Mac (ocrmac) English, Spanish, French and German, elsewhere (rapidocr) Chinese and English</td>
 <td><a href="../pdf-to-epub/#setup">OCR language</a></td>
 </tr>
 <tr>
 <td>a Chinese scan</td>
 <td><code>--pdf-ocr --ocr-lang iso:zh</code> (<code>iso:zh-Hant</code> for traditional)</td>
-<td>not <code>ch_sim</code>: the default engine refuses it</td>
+<td>not <code>ch_sim</code>: rapidocr refuses it</td>
 <td><a href="#by-document-type">Chinese scan</a></td>
 </tr>
 <tr>
 <td>a simplified-Chinese scan</td>
 <td><code>--pdf-ocr --ocr-engine rapidocr --ocr-lang iso:zh</code></td>
-<td>lowest Han error in the measurement; needs onnxruntime (<code>pip install onnxruntime</code>) or the run refuses the engine</td>
+<td>lowest Han error in the measurement</td>
 <td><a href="../pdf-ocr-engines/">Which OCR engine</a></td>
 </tr>
 <tr>
 <td>on a Mac, and you want no download</td>
-<td><code>--pdf-ocr --ocr-engine ocrmac</code> (pip install ocrmac; auto picks it once installed)</td>
+<td><code>--pdf-ocr</code> (auto picks ocrmac, which the pdf extra installs on a Mac; <code>--ocr-engine ocrmac</code> names it)</td>
 <td>Apple's Vision framework, nothing to download; within a hair of the best on English and traditional Chinese, rapidocr better on simplified-Chinese scans</td>
 <td><a href="../pdf-ocr-engines/">Which OCR engine</a></td>
 </tr>
@@ -2248,7 +2248,7 @@
 <span class="w">  </span>--language<span class="w"> </span>zh-hans<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--use_context<span class="w"> </span>session
 </code></pre></div>
-<p>The default OCR engine reads Chinese and English. A scan in another script needs <code>--ocr-lang</code>; the first use of a language downloads its model.</p>
+<p>Without <code>--ocr-lang</code> the OCR engine reads its own default languages: on a Mac (ocrmac) English, Spanish, French and German, elsewhere (rapidocr) Chinese and English. A scan in another language needs <code>--ocr-lang</code>.</p>
 <p><strong>If the scan already carries an OCR layer</strong> (Internet Archive and ABBYY FineReader files often do), try it without <code>--pdf-ocr</code> first: the run prints <code>… selected pages carry only an invisible OCR text layer …</code> and uses that layer, which usually reads better than a fresh local OCR. If the layer turns out to be garbage, see the next tab.</p>
 <p><code>--img-model</code> does little on a scan: it cannot rebuild a page the layout detector shattered into fragments.</p>
 </div>
@@ -2266,7 +2266,7 @@
 <p>Put the scan's own language in <code>--ocr-lang</code> (<code>iso:zh</code> here, for a Chinese scan): in the wrong language the engine reads nothing. Try two pages first. A page the engine read nothing on is named and left empty; if no page was read, the run stops before any translation is paid for. Do not use it on a scan whose layer reads well: the fresh OCR reads worse than a good layer.</p>
 </div>
 <div class="tabbed-block">
-<p>Name the language the OCR engine should read. An <code>iso:</code> tag works whichever engine runs: <code>iso:zh</code> for simplified characters, <code>iso:zh-Hant</code> for traditional. Not <code>ch_sim</code>: the default engine refuses it before reading a page.</p>
+<p>Name the language the OCR engine should read. An <code>iso:</code> tag works whichever engine runs: <code>iso:zh</code> for simplified characters, <code>iso:zh-Hant</code> for traditional. Not <code>ch_sim</code>: rapidocr refuses it before reading a page.</p>
 <div class="highlight"><pre><span></span><code>python<span class="w"> </span>make_book.py<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--book_name<span class="w"> </span>scan.pdf<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--to-epub<span class="w"> </span><span class="se">\</span>
