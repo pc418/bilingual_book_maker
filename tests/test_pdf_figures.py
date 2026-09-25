@@ -617,7 +617,7 @@ def test_another_policy_redraws_the_figures_and_nothing_else(
     # <img alt=""> in a paragraph -- docling's "Image" had become a hidden
     # <figcaption>Image</figcaption> under every figure.
     assert "<figcaption" not in body and 'alt="Image"' not in body
-    assert body.count('style="width:49.0%" alt=""') == 1
+    assert body.count('class="bbm-figure" style="width:49.0%" alt=""') == 1
 
     book, out = run(FigurePolicy("dpi", 216))
     assert convert.calls == 1  # the extraction was reused
@@ -824,3 +824,56 @@ def test_the_image_dpi_help_is_the_owner_s_text():
     )
     assert HELP_PDF_IMAGE_DPI_CLI.format(default=200) == text
     assert text in " ".join(build_parser().format_help().split())
+
+
+# --------------------------------------------------------------------------
+# Centring: a figure alone in its paragraph, never an image in a sentence
+# --------------------------------------------------------------------------
+def test_an_image_alone_in_its_paragraph_is_centred_and_one_in_prose_is_not(
+    tmp_path, monkeypatch
+):
+    """PIN (packet Q, 260925): figures lost their <figure> wrapper, and its
+    centring, when their alt text went; the export's Lua filter classes an
+    image that is its paragraph's only content and the shipped CSS centres
+    that class. CSS alone cannot tell: `p > img:only-child` ignores text
+    nodes, so it would also pull an image out of a sentence."""
+    import re
+
+    from pipeline_helpers import write_fixture
+
+    from book_maker.pipeline.epub_export import export_epub
+    from book_maker.pipeline.importer import import_markdown
+    from book_maker.pipeline.translate import translate_bundle
+
+    pandoc = pandoc_or_skip()
+    register_fake_format(monkeypatch)
+    book = write_fixture(
+        tmp_path / "src",
+        "# Chapter\n\n"
+        "![](assets/plate.png){width=60%}\n\n"
+        "A sentence with ![](assets/plate.png) inside it.\n",
+    )
+    bundle = Bundle(tmp_path / "bundle").create()
+    import_markdown(bundle, book, pandoc=pandoc)
+    translate_bundle(bundle, list(OPTIONS), pandoc=pandoc)
+    export_epub(bundle, pandoc=pandoc)
+
+    with zipfile.ZipFile(bundle.epub) as archive:
+        names = archive.namelist()
+        body = "".join(
+            archive.read(n).decode("utf-8") for n in names if n.endswith(".xhtml")
+        )
+        css = "".join(
+            archive.read(n).decode("utf-8") for n in names if n.endswith(".css")
+        )
+    rule = re.search(r"img\.bbm-figure\s*\{([^}]*)\}", css)
+    assert rule, css
+    declarations = " ".join(rule.group(1).split())
+    for part in ("display: block;", "margin-left: auto;", "margin-right: auto;"):
+        assert part in declarations
+    # No width in the rule: the figure's own style decides its size.
+    assert "width" not in declarations
+    standalone = re.findall(r"<img[^>]*bbm-figure[^>]*>", body)
+    assert len(standalone) == 1 and 'style="width:60.0%"' in standalone[0]
+    inline = re.search(r"A sentence with (<img[^>]*>) inside it", body)
+    assert inline and "bbm-figure" not in inline.group(1)

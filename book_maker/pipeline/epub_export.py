@@ -29,6 +29,10 @@ from .preflight import (
 STAGE = "export"
 
 CSS_SOURCE = Path(__file__).with_name("epub.css")
+# Marks an image standing alone in its paragraph as a figure, for the CSS
+# above to centre (figures lost their <figure> wrapper, and its centring,
+# when their alt text went: packet Q, 260925).
+FIGURE_FILTER = Path(__file__).with_name("epub_figures.lua")
 
 # Markdown's deepest heading, and therefore the depth the table of contents
 # has to carry.
@@ -105,6 +109,8 @@ def export_epub(bundle, *, pandoc=None, title=None, language=None, author=None):
         f"--split-level={split_level}",
         "--css",
         str(css),
+        "--lua-filter",
+        str(FIGURE_FILTER),
         "--resource-path",
         str(bundle.root),
         "--metadata",

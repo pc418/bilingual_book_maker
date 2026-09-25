@@ -40,6 +40,16 @@ img {
   height: auto;
 }
 
+/* An image alone in its paragraph (a PDF figure, a display formula): the
+   export's filter gives it this class, and it is centred. Its width, when
+   the PDF route set one (`style="width:76%"`), still decides its size. An
+   image inside a sentence has no class and stays inline. */
+img.bbm-figure {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 figure {
   margin: 1em 0;
   text-align: center;
