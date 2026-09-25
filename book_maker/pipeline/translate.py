@@ -82,7 +82,23 @@ FILE_FIELDS = ("prompt_arg", "glossary_path")
 # glossary flag was typed. `--glossary` and `--terminology` are one flag
 # under two names, so a bundle finished under one word must be reused under
 # the other rather than translated -- and paid for -- a second time.
-IGNORED_FIELDS = ("book_name", "resume", "glossary_flag")
+# The sidecar endpoints say nothing about the translation either: the image
+# model shapes the extraction (whose settings have their own identity, and
+# whose output is hashed above as `source`), and the Markdown run has no
+# classification step. Left in, every new parser field re-fingerprints every
+# finished bundle (Codex, packet H 260924: `classify_min_confidence` alone
+# would have re-translated or refused every pre-flag bundle).
+SIDECAR_FIELDS = (
+    "img_model",
+    "img_base_url",
+    "img_key",
+    "classify_model",
+    "classify_base_url",
+    "classify_key",
+    "classify_min_confidence",
+    "plan_classify_model",
+)
+IGNORED_FIELDS = ("book_name", "resume", "glossary_flag") + SIDECAR_FIELDS
 
 
 def parse_bbm_options(bbm_options):
