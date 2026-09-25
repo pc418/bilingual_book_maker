@@ -53,19 +53,18 @@ ROOT = Path(__file__).resolve().parent.parent
 TRANSLATION = ["--api_format", "google", "--language", "zh-hans"]
 
 # The lead's text (packet K; the rapidocr sentence revised in packet N,
-# 260925: rapidocr's models are in its package and onnxruntime runs them;
-# without onnxruntime it runs on torch and downloads about 31 MB), verbatim:
+# 260925; revised again in packet P: onnxruntime and ocrmac (darwin) in the
+# extra, owner 250925, docs/250925-feat-PDF_EXTRA_OCR_RUNTIMES.md), verbatim:
 # not to be reworded.
 LEAD_HELP = (
     "PDF only, with --to-epub --pdf-ocr: the OCR engine for pages with no text "
     "layer (every page with --ocr-replace-layer). auto (default) takes the "
-    "first installed of ocrmac, rapidocr, easyocr. rapidocr comes with the pdf "
-    "extra; without onnxruntime it runs on torch and downloads about 31 MB of "
-    "models on first use (pip install onnxruntime avoids that). ocrmac is "
-    "Apple's Vision framework on macOS: "
-    "nothing to download (pip install ocrmac). easyocr downloads its models on "
-    "first use (pip install easyocr). tesseract uses the tesseract program and "
-    "its language data from PATH. Language codes differ by engine; see "
+    "first installed of ocrmac, rapidocr, easyocr. The pdf extra installs "
+    "rapidocr with onnxruntime, models included, and on macOS also ocrmac "
+    "(Apple's Vision framework); neither downloads anything, so auto reads "
+    "with ocrmac on a Mac and rapidocr elsewhere. easyocr downloads its models "
+    "on first use (pip install easyocr). tesseract uses the tesseract program "
+    "and its language data from PATH. Language codes differ by engine; see "
     "--ocr-lang. The run names the engine it used."
 )
 
@@ -200,10 +199,22 @@ def test_a_missing_engine_is_refused_with_its_install_line(
 
 def test_the_rapidocr_install_line_is_the_lead_s_text_verbatim():
     # PIN (lead, packet N, 260925): the extra brings rapidocr; the line names
-    # onnxruntime too, because a named rapidocr runs on it.
+    # onnxruntime too, because a named rapidocr runs on it. Packet P:
+    # onnxruntime and ocrmac (darwin) in the extra, owner 250925,
+    # docs/250925-feat-PDF_EXTRA_OCR_RUNTIMES.md.
     assert OCR_ENGINE_INSTALL["rapidocr"] == (
-        "The pdf extra brings it; if it is missing here: pip install "
-        "rapidocr onnxruntime."
+        "The pdf extra brings it with onnxruntime; if it is missing here, "
+        'reinstall the extra (pip install ".[pdf]") or pip install rapidocr '
+        "onnxruntime."
+    )
+
+
+def test_the_ocrmac_install_line_is_the_lead_s_text_verbatim():
+    # PIN (lead, packet P): onnxruntime and ocrmac (darwin) in the extra,
+    # owner 250925, docs/250925-feat-PDF_EXTRA_OCR_RUNTIMES.md.
+    assert OCR_ENGINE_INSTALL["ocrmac"] == (
+        "The pdf extra brings it on macOS; if it is missing here: pip install "
+        "ocrmac (nothing to download)."
     )
 
 

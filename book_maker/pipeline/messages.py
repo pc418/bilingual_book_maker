@@ -150,18 +150,22 @@ OCR_ENGINE_MISSING = (
     "{install} Or leave out --ocr-engine: auto takes the first engine "
     "installed."
 )
-# rapidocr runs on onnxruntime when named (docling's default backend for
-# it), and the pdf extra carries rapidocr without onnxruntime (docling-slim
-# [standard] names rapidocr only), so the line names both.
+# The pdf extra carries rapidocr with onnxruntime, and ocrmac on macOS (owner
+# 250925), so a fresh install has both; the lines name the packages for an
+# install that lost them.
 OCR_ENGINE_INSTALL = {
     "rapidocr": (
-        "The pdf extra brings it; if it is missing here: pip install "
-        "rapidocr onnxruntime."
+        "The pdf extra brings it with onnxruntime; if it is missing here, "
+        'reinstall the extra (pip install ".[pdf]") or pip install rapidocr '
+        "onnxruntime."
     ),
     "easyocr": (
         "Install it with pip install easyocr (it downloads its models on first " "use)."
     ),
-    "ocrmac": "Install it with pip install ocrmac (nothing to download).",
+    "ocrmac": (
+        "The pdf extra brings it on macOS; if it is missing here: pip install "
+        "ocrmac (nothing to download)."
+    ),
     "tesseract": "Install tesseract and its language data, then put it on PATH.",
 }
 OCR_ENGINE_NOT_MACOS = (
@@ -340,12 +344,11 @@ HELP_OCR_LANG = (
 _OCR_ENGINE_BODY = (
     "the OCR engine for pages with no text layer (every page with "
     "--ocr-replace-layer). auto (default) takes the first installed of "
-    "ocrmac, rapidocr, easyocr. rapidocr comes with the pdf extra; without "
-    "onnxruntime it runs on torch and downloads about 31 MB of models on "
-    "first use (pip install onnxruntime avoids that). ocrmac is "
-    "Apple's Vision framework on macOS: nothing to "
-    "download (pip install ocrmac). easyocr downloads its models on first "
-    "use (pip install easyocr). tesseract uses the tesseract program and its "
+    "ocrmac, rapidocr, easyocr. The pdf extra installs rapidocr with "
+    "onnxruntime, models included, and on macOS also ocrmac (Apple's Vision "
+    "framework); neither downloads anything, so auto reads with ocrmac on a "
+    "Mac and rapidocr elsewhere. easyocr downloads its models on first use "
+    "(pip install easyocr). tesseract uses the tesseract program and its "
     "language data from PATH. Language codes differ by engine; see "
     "--ocr-lang. The run names the engine it used."
 )
