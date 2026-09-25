@@ -2128,11 +2128,11 @@
 <tbody>
 <tr>
 <td><code>--classify-model MODEL</code></td>
-<td>The model that decides an EPUB's plan. Default: the entry's <code>classify_model</code>, else the translating model. <code>--plan-classify-model</code> is its old name.</td>
+<td>The model that decides an EPUB's plan, or a Jev-compatible classifier (<code>jev</code> for TypeSafe's). Default: the entry's <code>classify_model</code>, else the translating model. <code>--plan-classify-model</code> is its old name.</td>
 </tr>
 <tr>
 <td><code>--classify-base-url URL</code>, <code>--classify-key KEY</code></td>
-<td>Where that model is served and its key, when it is not the run's endpoint (OpenAI-compatible only).</td>
+<td>Where that model is served and its key, when it is not the run's endpoint: an OpenAI-compatible address, or a Jev-compatible classifier's URL.</td>
 </tr>
 <tr>
 <td><code>--img-model MODEL</code></td>
@@ -2144,7 +2144,7 @@
 </tr>
 </tbody>
 </table>
-<p>The fields, the shipped entries, which key is sent where, and the Jev classifier are on <a href="../providers/">Provider file and extra models</a>. Note that the shipped <code>openai</code> entry names an image model, so <code>--provider openai</code> turns the PDF route's image step on.</p>
+<p>The fields, the shipped entries, which key is sent where, and Jev and Jev-compatible classifiers are on <a href="../providers/">Provider file and extra models</a>. Note that the shipped <code>openai</code> entry names an image model, so <code>--provider openai</code> turns the PDF route's image step on.</p>
 <h2 id="language">Language<a class="headerlink" href="#language" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

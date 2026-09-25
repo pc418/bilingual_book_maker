@@ -2032,11 +2032,11 @@
 </tr>
 <tr>
 <td><code>--classify-model MODEL</code></td>
-<td>Classify with another model. Named on the command line, it puts the run in <code>model</code> mode, so a classification failure stops the run. <code>--plan-classify-model</code> is the old name and still works.</td>
+<td>Classify with another model, or with a Jev-compatible classifier (<code>jev</code>). Named on the command line, it puts the run in <code>model</code> mode, so a classification failure stops the run. <code>--plan-classify-model</code> is the old name and still works.</td>
 </tr>
 <tr>
 <td><code>--classify-base-url URL</code></td>
-<td>Where that model is served, when it is not the run's endpoint (OpenAI-compatible only).</td>
+<td>Where that model is served, when it is not the run's endpoint: an OpenAI-compatible address, or a Jev-compatible classifier's URL.</td>
 </tr>
 <tr>
 <td><code>--classify-key KEY</code></td>
@@ -2076,9 +2076,10 @@
 <li><strong>A classifier of its own</strong> (named by flag or provider entry) plans the book whatever the translating route can do. The run prints <code>plan mode: on (classified by …)</code>. This is how a machine-translation route gets a plan. Google Translate with gpt-5.6-luna as the classifier was run end to end on the test book: all 31 signatures decided, coverage 99.8%.</li>
 <li><strong>Agent mode asks no model.</strong> <code>--plan-classify agent</code> hands every undecided row to you or your coding agent. A named classifier does not pre-fill the plan (owner ruling: an agent judges worse from pre-filled answers), and the run warns that it is ignored. <code>--plan-classify all</code> ignores it too.</li>
 <li><strong>Where it is asked and with which key</strong> is on <a href="../../providers/#where-each-model-is-asked">Provider file and extra models</a>. A classifier on its own address prints its own usage line at the end of the run.</li>
-<li><strong>Jev</strong>, TypeSafe's dedicated classifier, can be the classify model: <code>--classify-model jev</code>. It answers one question per signature and says <code>unsure</code> below 0.5 confidence; with <code>--classify-model</code> typed, an <code>unsure</code> row stops the run. On the test book it agreed with gpt-5.6-luna on 27 of 31 signatures at about twice the prompt tokens (<a href="../../evaluation/plan-classifier-jev/">Jev as the plan classifier</a>).</li>
+<li><strong>Jev</strong>, TypeSafe's classifier, is built for exactly this question: translate or skip, a page of signatures per request, in one cheap round trip. <code>--classify-model jev</code> uses it; a Jev-compatible server such as Featherless's Simple Jev works too. Which key goes where, and the URL rules, are on <a href="../../providers/#jev-and-jev-compatible-classifiers">Provider file and extra models</a>.</li>
+<li><strong>Jev's gate.</strong> A doubtful <code>skip</code> becomes <code>translate</code>, so no content is lost to it. The gate is 0.95 on the probability of Jev's chosen answer, measured over 662 plan signatures from 45 EPUBs against gpt-5.6-luna. At that value about nine of ten of Jev's skips fall back to <code>translate</code>; what it still skips is apparatus (copyright lines, line numbers, note marks, index locators). On that corpus Jev saves little over translating everything. The plan file marks each fallback on its row (<code>… below the gate: translate</code>). <code>--classify-min-confidence P</code> moves the gate for a run (<code>BBM_JEV_MIN_CONFIDENCE</code> does the same without the flag); lower keeps more of Jev's skips, at your risk. See <a href="../../evaluation/plan-classifier-jev/">Jev as the plan classifier</a>.</li>
 </ul>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">A machine-translation route with an LLM classifier</label><label for="__tabbed_1_2">Jev at TypeSafe</label><label for="__tabbed_1_3">Jev through a gateway</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:4"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">A machine-translation route with an LLM classifier</label><label for="__tabbed_1_2">Jev at TypeSafe</label><label for="__tabbed_1_3">Jev through a gateway</label><label for="__tabbed_1_4">Simple Jev</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <div class="highlight"><pre><span></span><code>bbook_maker<span class="w"> </span><span class="se">\</span>
@@ -2104,10 +2105,19 @@
 <span class="w">  </span>--model<span class="w"> </span>gpt-5.6-luna<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--classify-model<span class="w"> </span>typesafe-ai/jev<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--classify-base-url<span class="w"> </span>https://ai-gateway.vercel.sh/typesafe<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--classify-key<span class="w"> </span><span class="s2">"</span><span class="nv">$JEV_API_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--classify-key<span class="w"> </span><span class="s2">"</span><span class="nv">$GATEWAY_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--use_context<span class="w"> </span>session
 </code></pre></div>
 <p>The key must be named: the Jev variables are sent on their own only to a typesafe.ai address.</p>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code>bbook_maker<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--book_name<span class="w"> </span>novel.epub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model<span class="w"> </span>gpt-5.6-luna<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--classify-model<span class="w"> </span>featherless-ai/Qwen3.8-27B-classifier<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--use_context<span class="w"> </span>session
+</code></pre></div>
+<p>Asks Featherless's classifier endpoint and reads <code>FEATHERLESS_API_KEY</code>. For the keyless demo, add <code>--classify-base-url https://simple-jev-demo-api.featherless.ai/v1/classifier</code>.</p>
 </div>
 </div>
 </div>
@@ -2152,7 +2162,7 @@
 <p>A scan is a PDF, and plan mode is EPUB only. Use <a href="../pdf-to-epub/">PDF to bilingual EPUB</a> with <code>--pdf-ocr</code>.</p>
 </div>
 <div class="tabbed-block">
-<p>A scan is a PDF, and plan mode is EPUB only. Use <a href="../pdf-to-epub/">PDF to bilingual EPUB</a> with <code>--pdf-ocr</code> and <code>--ocr-lang iso:zh-Hans</code>. For a Chinese EPUB translated to English, plan mode works as for a novel:</p>
+<p>A scan is a PDF, and plan mode is EPUB only. Use <a href="../pdf-to-epub/">PDF to bilingual EPUB</a> with <code>--pdf-ocr</code> and <code>--ocr-lang iso:zh</code>. For a Chinese EPUB translated to English, plan mode works as for a novel:</p>
 <div class="highlight"><pre><span></span><code>bbook_maker<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--book_name<span class="w"> </span>chinese_novel.epub<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--language<span class="w"> </span>en<span class="w"> </span><span class="se">\</span>
@@ -2216,7 +2226,9 @@
 <li><strong><code>--classify-model names a classifier, and --plan-classify agent leaves every row to your agent and asks no model; it is ignored this run.</code></strong> (or <code>… all translates the whole partition …</code>). As it says; drop the flag or the mode.</li>
 <li><strong><code>--plan-classify model asks an LLM to rule on every plan signature, and the google format translates through one fixed engine with no model to ask. …</code></strong> A fixed-engine run in <code>model</code> mode with no classifier of its own. Add <code>--classify-model</code>, or use <code>agent</code> or <code>all</code>.</li>
 <li><strong><code>--classify-model needs an OpenAI-compatible endpoint; … resolves to the … format.</code></strong> A <code>--classify-base-url</code> that is not OpenAI-shaped. <strong><code>--classify-base-url names where --classify-model is served, and no --classify-model was given. …</code></strong> Name the model too.</li>
-<li><strong><code>No API key for the jev classifier at … Pass --classify-key, …</code></strong> Jev through a gateway needs its key named.</li>
+<li><strong><code>No API key for the jev classifier at … Pass --classify-key, …</code></strong> The Jev variables are read only for a typesafe.ai address and <code>FEATHERLESS_API_KEY</code> only for a featherless.ai one. Through a gateway, name the key with <code>--classify-key</code>.</li>
+<li><strong><code>… is a Jev-compatible classifier with no known default address; name its endpoint with --classify-base-url.</code></strong> An id ending in <code>-classifier</code> that is not Featherless's. Add its URL.</li>
+<li><strong><code>BBM_JEV_MIN_CONFIDENCE must be a number from 0 to 1; got …</code></strong> Fix or unset the variable.</li>
 <li><strong><code>&lt;book&gt;_plan.json has N undecided signature(s) …</code></strong>. After <code>--plan-classify agent</code>, some rows still have no decision. Fill every <code>action</code> with <code>translate</code> or <code>skip</code>, then rerun.</li>
 <li><strong><code>…: invalid action '…' — use …</code></strong>. A typo in a hand-edited plan. Fix the JSON and rerun.</li>
 <li><strong>A resume refused with a fingerprint message.</strong> The book or the plan changed since the checkpoint was written. Rerun with the original flags, or delete the checkpoint and start over, knowing what gets paid again.</li>

@@ -1229,6 +1229,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#second-round-lean-requests-and-the-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Second round: lean requests and the gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1895,6 +1912,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#second-round-lean-requests-and-the-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Second round: lean requests and the gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1941,13 +1975,13 @@
 
 <h1 id="can-a-dedicated-classifier-decide-the-plan-jev-against-gpt-56-luna">Can a dedicated classifier decide the plan? Jev against gpt-5.6-luna<a class="headerlink" href="#can-a-dedicated-classifier-decide-the-plan-jev-against-gpt-56-luna" title="Permanent link">&para;</a></h1>
 <h2 id="abstract">Abstract<a class="headerlink" href="#abstract" title="Permanent link">&para;</a></h2>
-<p>Plan mode asks a model, for each kind of block in an EPUB, whether it is worth translating. That is a labeling job, not a writing job, so a dedicated classifier could do it. Jev, TypeSafe's System One classifier, answers typed multiple-choice questions with a confidence. The same 31 signatures of the test book were classified by Jev and by gpt-5.6-luna. They agreed on 27. All 4 disagreements were Jev choosing <code>skip</code> where luna chose <code>translate</code>, each at low confidence. Jev used about twice luna's prompt tokens. Verdict: Jev works as a classify model; the default stays the translating model.</p>
+<p>Plan mode asks a model, for each kind of block in an EPUB, whether it is worth translating. That is a labeling job, not a writing job, so a dedicated classifier could do it. Jev, TypeSafe's System One classifier, answers typed multiple-choice questions with a confidence. The same 31 signatures of the test book were classified by Jev and by gpt-5.6-luna. They agreed on 27. All 4 disagreements were Jev choosing <code>skip</code> where luna chose <code>translate</code>, each at low confidence. Jev used about twice luna's prompt tokens. A second round sent each page's shared text once: Jev's prompt tokens halved, and its agreement with luna moved no more than between two Jev runs of the same code. The same round found that a gate at 0.5 on Jev's probability could never fire on a two-option question; the gate was then measured on a 45-EPUB corpus and set to 0.95. Verdict: Jev works as a classify model; the default stays the translating model.</p>
 <h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Book:</strong> <code>test_books/animal_farm.epub</code>, the repository's test book. Its plan has 31 tag signatures.</li>
 <li><strong>Run:</strong> <code>--test --test_num 8 --quiet --language zh-hans</code>, translating with gpt-5.6-luna, under a 1500 MB memory cap.</li>
 <li><strong>Luna arm:</strong> <code>--model gpt-5.6-luna --classify-model gpt-5.6-luna</code>. The endpoint verifies a strict JSON schema, so the signatures go in pages of several per request.</li>
-<li><strong>Jev arm:</strong> <code>--model gpt-5.6-luna --classify-model typesafe-ai/jev --classify-base-url https://ai-gateway.vercel.sh/typesafe</code>. One Choice question per signature. Below 0.5 confidence in its top answer, Jev answers <code>unsure</code>.</li>
+<li><strong>Jev arm:</strong> <code>--model gpt-5.6-luna --classify-model typesafe-ai/jev --classify-base-url https://ai-gateway.vercel.sh/typesafe</code>. One Choice question per signature. In this first round, below 0.5 confidence in its top answer, Jev answered <code>unsure</code>.</li>
 <li><strong>Fixed-engine cell:</strong> <code>--api_format google --classify-model gpt-5.6-luna</code>, to check that a machine-translation route gets a plan from an LLM classifier.</li>
 <li><strong>Compared:</strong> each signature's verdict between the two arms. Nobody judged which verdict was right.</li>
 </ul>
@@ -2004,22 +2038,88 @@
 <p>Where the two agree, Jev's confidence is mostly above 0.9. It used about twice luna's prompt tokens (14.4k vs 7.6k), since each signature is sent as its own question.</p>
 <p><strong>Fixed engine with an LLM classifier.</strong> Google Translate with gpt-5.6-luna as the classifier: <code>llm classification: 31 verdict(s), 4 skip(s)</code>, <code>Translation plan: … coverage 99.8%</code>, and the classifier's line <code>Classifier (gpt-5.6-luna …): tokens: in 7.6k, out 1.6k (3 requests)</code>. The translations sat beside their originals and matched them (George Orwell → 乔治·奥威尔).</p>
 <p>A second Jev run, after the key-routing fixes, retried three 503s and ended with <code>llm classification: 31 verdict(s), 8 skip(s)</code> and <code>Translation plan: 20 documents, 202560 chars, coverage 99.7%</code>.</p>
+<h3 id="second-round-lean-requests-and-the-gate">Second round: lean requests and the gate<a class="headerlink" href="#second-round-lean-requests-and-the-gate" title="Permanent link">&para;</a></h3>
+<p>Each Jev question used to repeat the whole per-signature prompt. The lean mapping sends the page's shared text once as the state, and each question carries only its own instruction. A doubtful <code>skip</code> now falls back to <code>translate</code> instead of <code>unsure</code>. Same book, same flags, plus the Simple Jev demo. Copied from the record:</p>
+<table>
+<thead>
+<tr>
+<th>arm</th>
+<th>classifier tokens in / out</th>
+<th>requests, latency each</th>
+<th>non-translate verdicts</th>
+<th>agreement with c_final (luna)</th>
+<th>agreement with c_before (luna)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>(a) before, F's mapping, gateway</td>
+<td>14.4k / 1.1k</td>
+<td>3, after four 503 retries (wall 36 s)</td>
+<td>7</td>
+<td>27/31</td>
+<td>26/31</td>
+</tr>
+<tr>
+<td>(a) after lean mapping only (<code>a_lean</code>)</td>
+<td>7.8k / 1.1k</td>
+<td>3 (wall 14 s)</td>
+<td>9</td>
+<td>25/31</td>
+<td>not computed</td>
+</tr>
+<tr>
+<td>(a) final, lean + gate</td>
+<td>7.8k / 1.1k</td>
+<td>3: 0.87, 0.37, 0.67 s</td>
+<td>9</td>
+<td>25/31</td>
+<td>26/31</td>
+</tr>
+<tr>
+<td>(b) Simple Jev keyless demo</td>
+<td>16.7k / 31</td>
+<td>3: 2.26, 2.05, 0.90 s</td>
+<td>4</td>
+<td>30/31</td>
+<td>29/31</td>
+</tr>
+<tr>
+<td>(c) luna schema (<code>c_final</code>)</td>
+<td>7.6k / ~1.4k</td>
+<td>3: 5.07, 6.03, 4.15 s</td>
+<td>5</td>
+<td>—</td>
+<td>30/31</td>
+</tr>
+</tbody>
+</table>
+<p>The two luna runs agree 30/31 with each other, and the two Jev runs on the same code (<code>a_lean</code>, <code>a_final</code>) agree 29/31.</p>
+<p><strong>The lean mapping halves Jev's prompt tokens (14.4k → 7.8k) and cuts wall time (36 s → 14 s incl. no retries); agreement did not move beyond Jev's own run-to-run variation.</strong></p>
+<p><strong>The gate finding</strong>, copied from the record:</p>
+<blockquote>
+<p>The official Jev's <code>confidence</code> field is not the chosen option's probability. On two options it is about <code>2p − 1</code> (0.51 → 0.02, 0.61 → 0.22, 0.76 → 0.53). Simple Jev's is <code>max p</code>. The code keeps F's choice and reads <code>probabilities[choice]</code> first. That is the same measure on both servers, but on two options it never falls below 0.5, so a 0.5 gate does nothing.</p>
+<p>Replaying <code>a_final</code> offline: a gate at 0.75 on the probability, which is the same as 0.5 on Jev's own <code>confidence</code>, would turn all 5 low-confidence skips into translate and keep the 4 confident ones. Agreement with luna would go to 30/31. That is one book and 31 signatures.</p>
+</blockquote>
+<p>That was one book and 31 signatures, so 0.75 was a hint, not a setting. The gate was then measured on a corpus: 0.95 on the chosen option's probability, over the 662 plan signatures of the 45-EPUB corpus against gpt-5.6-luna, with a lost skip costing 10 and an extra translate 1. At that value about nine of ten of Jev's skips fall back to <code>translate</code>, and what survives is apparatus: copyright lines, line numbers, note marks, index locators. Never skipping would cost 140 against 115 gated, so Jev's saving over translating everything is modest on this corpus.</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Jev is available as a classify model: <code>--classify-model jev</code> at TypeSafe's own address, or a gateway's id with <code>--classify-base-url</code> and <code>--classify-key</code>. See <a href="../../providers/#jev-a-dedicated-classifier">Provider file and extra models</a>.</li>
+<li>Jev is available as a classify model: <code>--classify-model jev</code> at TypeSafe's own address, a gateway's id with <code>--classify-base-url</code> and <code>--classify-key</code>, or a Jev-compatible server such as Simple Jev. See <a href="../../providers/#jev-and-jev-compatible-classifiers">Provider file and extra models</a>.</li>
 <li>The default classifier stays the translating model.</li>
-<li>The abstain threshold stays at 0.5. With two options it fires only on a tie. At 0.62 the four disagreements above would become <code>unsure</code>, which stops a run in <code>model</code> mode. The four skips were recorded, not judged: two URLs, a single letter and a bare author name, which a reading edition could keep or translate.</li>
-<li>The doubled prompt tokens come from each question repeating the whole per-signature prompt. Sending the shared instructions once is a later optimization.</li>
+<li>First round: the abstain threshold stayed at 0.5; the four low-confidence skips were recorded, not judged (two URLs, a single letter and a bare author name, which a reading edition could keep or translate).</li>
+<li>Second round: the requests are lean (the shared text sent once), and the threshold became an asymmetric gate. A <code>skip</code> below it becomes <code>translate</code>; a <code>translate</code> is taken at any probability. Content is never lost to a doubtful skip.</li>
+<li>The gate is 0.95 on the chosen option's probability, from the corpus measurement above. <code>--classify-min-confidence P</code> moves it for a run (<code>BBM_JEV_MIN_CONFIDENCE</code> does the same without the flag; the flag wins) for a run.</li>
 </ul>
 <p>What would change it: a comparison on more books, with verdicts judged against what a reader wants, and a price for both arms.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
-<li>One book, 31 signatures, one run per arm.</li>
+<li>One book, 31 signatures, one run per arm in each round. Both rounds' agreement numbers, the lean mapping's token halving and the 0.75 replay rest on that one book.</li>
+<li>Only the gate value comes from the 45-EPUB corpus, and agreement there is still agreement with luna. The Simple Jev demo used about twice luna's prompt tokens (16.7k); it was run once.</li>
 <li>The key was a gateway key, so TypeSafe's own address was not exercised live (it answered 401 to that key).</li>
 <li>Token counts only; no money comparison.</li>
 <li>Agreement with luna is not correctness: luna's verdicts were not judged either.</li>
 </ul>
-<p>Source: docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md (repository, dated records)</p>
+<p>Source: docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md (first round); docs/260924-feat-JEV_LEAN_REQUESTS_GATE_COMPATIBLE_ENDPOINTS.md (second round, the gate finding); docs/260924-eval-JEV_CONFIDENCE_THRESHOLD.md (the gate's value) (repository, dated records)</p>
 
 
 

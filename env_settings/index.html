@@ -1679,6 +1679,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#classifier-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Classifier variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#old-per-vendor-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1876,6 +1887,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#classifier-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Classifier variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#old-per-vendor-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1987,6 +2009,28 @@ no <code>base_url</code>, moves the request to another host, and the entry's key
 sent there. The run says so; pass <code>--key</code> when you meant to reuse it. The file holds the address and the variable name, never a secret.
 See <a href="../model_lang/#named-endpoints-provider">Endpoints, models and languages</a>.
 <code>--model orcarouter</code> reads <code>BBM_ORCAROUTER_API_KEY</code> the same way.</p>
+<h2 id="classifier-variables">Classifier variables<a class="headerlink" href="#classifier-variables" title="Permanent link">&para;</a></h2>
+<p>A <a href="../providers/#jev-and-jev-compatible-classifiers">Jev-compatible classifier</a> reads its key only for its own host:</p>
+<table>
+<thead>
+<tr>
+<th>variable</th>
+<th>read for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>JEV_API_KEY</code>, <code>TYPESAFE_API_KEY</code></td>
+<td>TypeSafe's Jev at a typesafe.ai address</td>
+</tr>
+<tr>
+<td><code>FEATHERLESS_API_KEY</code></td>
+<td>Simple Jev at a featherless.ai address</td>
+</tr>
+</tbody>
+</table>
+<p>Through a gateway, name the key with <code>--classify-key</code> or a provider entry's <code>classify_env_key</code>.</p>
+<p><code>BBM_JEV_MIN_CONFIDENCE</code>, a number from 0 to 1, sets Jev's gate for a run without <code>--classify-min-confidence</code> (the flag wins): a <code>skip</code> below it is translated. The default is 0.95. A value that is not a number from 0 to 1 stops the run.</p>
 <h2 id="old-per-vendor-variables">Old per-vendor variables<a class="headerlink" href="#old-per-vendor-variables" title="Permanent link">&para;</a></h2>
 <p>The four vendor variables above are also read when an old-style command
 implies that route — <code>--model gemini</code> consults <code>BBM_GOOGLE_GEMINI_KEY</code> even

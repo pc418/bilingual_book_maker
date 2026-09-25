@@ -2216,12 +2216,13 @@
 <li><strong>Variant characters:</strong> when a vision OCR step is built, its prompt tells the model to keep printed variants (爲/為, 卽/即 and others) rather than modernize them. Exact-character CER is the primary score; a variant-folded CER is only a diagnostic.</li>
 <li><strong>Running heads and page numbers</strong> stay in the transcription; the reading edition drops them through structure classification, not through the OCR prompt.</li>
 <li><strong>Vertical CJK:</strong> when detected, such a page is to be marked unsupported for unattended OCR and stop before translation, rather than produce reversed prose. Not built yet.</li>
-<li><strong>A page with an OCR layer:</strong> keep the layer by default; replacing it with fresh OCR becomes an explicit option. Not built yet: today <code>--pdf-ocr</code> replaces the layer, and the run says so.</li>
+<li><strong>A page with an OCR layer:</strong> keep the layer by default; replacing it with fresh OCR becomes an explicit option. Built: <code>--ocr-replace-layer</code>, off by default, only with <code>--pdf-ocr</code>. A visible layer is now kept under <code>--pdf-ocr</code>. An invisible layer is still read by the OCR engine too (docling's default OCR mode does that), so keeping it untouched while OCR is on is a follow-up.</li>
 </ul>
 <p>What this means for you today:</p>
 <ul>
 <li>For a scan in a script other than Chinese or English, pass <code>--ocr-lang</code> with the engine's codes or an <code>iso:</code> tag (the run prints which engine it chose).</li>
 <li>For a scan that already has an OCR layer, try the run without <code>--pdf-ocr</code> first: the layer is read as text, and on 3 of 3 pages it beat a fresh local OCR pass.</li>
+<li>Only when that layer is garbage (the wrong language, a poor OCR) add <code>--pdf-ocr --ocr-replace-layer</code> and the scan's language in <code>--ocr-lang</code>.</li>
 <li>An Internet Archive or ABBYY scan with JBIG2 masks is now rendered correctly; the run prints a line when it does so. Still read <code>source.md</code> before you pay for a translation.</li>
 <li>Vertical Chinese comes back in the wrong column order. Do not translate it unreviewed.</li>
 </ul>
@@ -2233,7 +2234,7 @@
 <li>One CPU cell; no CUDA machine.</li>
 <li>No price table for gpt-5.6-luna, so token counts were not converted to money.</li>
 </ul>
-<p>Source: docs/260923-eval-PDF_OCR_LUNA_VS_LOCAL_BASELINE.md; docs/260923-docs-OWNER_RULINGS_OCR_PROMPT_LAYER_WIKI.md for the rulings on its open questions; docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md for the image-model flags (repository, dated records)</p>
+<p>Source: docs/260923-eval-PDF_OCR_LUNA_VS_LOCAL_BASELINE.md; docs/260923-docs-OWNER_RULINGS_OCR_PROMPT_LAYER_WIKI.md for the rulings on its open questions; docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md for the image-model flags; docs/260924-feat-PDF_OCR_REPLACE_LAYER.md for <code>--ocr-replace-layer</code> (repository, dated records)</p>
 
 
 

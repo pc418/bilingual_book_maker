@@ -715,13 +715,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#jev-a-dedicated-classifier" class="md-nav__link">
+  <a href="#jev-and-jev-compatible-classifiers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Jev, a dedicated classifier
+        Jev and Jev-compatible classifiers
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Jev and Jev-compatible classifiers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The commands
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-gate-a-doubtful-skip-is-translated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gate: a doubtful skip is translated
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#in-a-provider-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In a provider entry
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2032,13 +2082,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#jev-a-dedicated-classifier" class="md-nav__link">
+  <a href="#jev-and-jev-compatible-classifiers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Jev, a dedicated classifier
+        Jev and Jev-compatible classifiers
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Jev and Jev-compatible classifiers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The commands
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-gate-a-doubtful-skip-is-translated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gate: a doubtful skip is translated
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#in-a-provider-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In a provider entry
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2167,7 +2267,7 @@
 <tr>
 <td><code>classify_base_url</code></td>
 <td>no</td>
-<td>where <code>classify_model</code> is served, when it is not this entry's own address. OpenAI-compatible only</td>
+<td>where <code>classify_model</code> is served, when it is not this entry's own address. OpenAI-compatible, or a <a href="#jev-and-jev-compatible-classifiers">Jev-compatible</a> classifier's URL</td>
 </tr>
 <tr>
 <td><code>classify_env_key</code></td>
@@ -2216,7 +2316,7 @@
 <li>On a <a href="../machine-args/">machine-translation</a> run there is no model to share an endpoint with. A classify model named without a base is then asked at the host its id implies: <code>--classify-model gpt-5.6-luna</code> goes to OpenAI.</li>
 </ul>
 </li>
-<li><strong>With <code>--img-base-url</code> or <code>--classify-base-url</code></strong>, the model is asked there. The address must speak the OpenAI shape; anything else is refused before anything is paid for.</li>
+<li><strong>With <code>--img-base-url</code> or <code>--classify-base-url</code></strong>, the model is asked there. The address must speak the OpenAI shape, or, for a classifier, the <a href="#jev-and-jev-compatible-classifiers">Jev protocol</a>; anything else is refused before anything is paid for.</li>
 <li>A base URL without its model stops the run: <code>--img-base-url names where --img-model is served, and no --img-model was given.</code> (and the same for <code>--classify-base-url</code>).</li>
 </ul>
 <p>A named classify model always gets its own client, even on the run's address, so its tokens are counted apart from the translation's.</p>
@@ -2260,24 +2360,72 @@
 <span class="w">  </span>--use_context<span class="w"> </span>session
 </code></pre></div>
 <p>A local server needs no key, so the run's key is empty here; the classifier's key must be named.</p>
-<h2 id="jev-a-dedicated-classifier">Jev, a dedicated classifier<a class="headerlink" href="#jev-a-dedicated-classifier" title="Permanent link">&para;</a></h2>
-<p>Jev is TypeSafe's System One classifier. It answers typed questions and translates nothing, so it can only be the classify model. Each signature is one multiple-choice question. When Jev's confidence in its top answer is below 0.5, it answers <code>unsure</code>.</p>
-<p>At TypeSafe's own address (<code>api.typesafe.ai</code>, the default), the key comes from <code>JEV_API_KEY</code> or <code>TYPESAFE_API_KEY</code>:</p>
+<h2 id="jev-and-jev-compatible-classifiers">Jev and Jev-compatible classifiers<a class="headerlink" href="#jev-and-jev-compatible-classifiers" title="Permanent link">&para;</a></h2>
+<p>Jev is TypeSafe's classifier: a model built to answer typed questions, not to write. Plan mode's question for each kind of block, translate it or keep it, is that kind of question, and Jev answers a page of them in one cheap round trip. It translates nothing, so it can only be the classify model. Jev-compatible servers speak the same protocol; Featherless's Simple Jev, an open reimplementation on open models, is one.</p>
+<h3 id="the-commands">The commands<a class="headerlink" href="#the-commands" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>classifier</th>
+<th>flags</th>
+<th>key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TypeSafe's Jev</td>
+<td><code>--classify-model jev</code></td>
+<td><code>JEV_API_KEY</code> or <code>TYPESAFE_API_KEY</code>, sent only to <code>api.typesafe.ai</code></td>
+</tr>
+<tr>
+<td>Jev through a gateway</td>
+<td><code>--classify-model typesafe-ai/jev --classify-base-url https://ai-gateway.vercel.sh/typesafe --classify-key "$GATEWAY_KEY"</code></td>
+<td>named with <code>--classify-key</code></td>
+</tr>
+<tr>
+<td>Simple Jev at Featherless</td>
+<td><code>--classify-model featherless-ai/Qwen3.8-27B-classifier</code></td>
+<td><code>FEATHERLESS_API_KEY</code>; the address defaults to <code>https://api.featherless.ai/v1/classifier</code></td>
+</tr>
+<tr>
+<td>Simple Jev's keyless demo</td>
+<td><code>--classify-model featherless-ai/Qwen3.8-27B-classifier --classify-base-url https://simple-jev-demo-api.featherless.ai/v1/classifier</code></td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<p>For example, translating with gpt-5.6-luna and classifying with Jev:</p>
 <div class="highlight"><pre><span></span><code>bbook_maker<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--book_name<span class="w"> </span>my_book.epub<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--model<span class="w"> </span>gpt-5.6-luna<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--classify-model<span class="w"> </span>jev
 </code></pre></div>
-<p>Through a gateway, name the gateway's model id and address, and pass the key yourself. <code>JEV_API_KEY</code> and <code>TYPESAFE_API_KEY</code> are read on their own only for a typesafe.ai address:</p>
-<div class="highlight"><pre><span></span><code>bbook_maker<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--book_name<span class="w"> </span>my_book.epub<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--model<span class="w"> </span>gpt-5.6-luna<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--classify-model<span class="w"> </span>typesafe-ai/jev<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--classify-base-url<span class="w"> </span>https://ai-gateway.vercel.sh/typesafe<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--classify-key<span class="w"> </span><span class="s2">"</span><span class="nv">$JEV_API_KEY</span><span class="s2">"</span>
+<h3 id="the-rules">The rules<a class="headerlink" href="#the-rules" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>A key is read from the environment only for its own host.</strong> <code>JEV_API_KEY</code> and <code>TYPESAFE_API_KEY</code> go only to a typesafe.ai address, <code>FEATHERLESS_API_KEY</code> only to a featherless.ai one. Anywhere else, a gateway included, name the key with <code>--classify-key</code> or the entry's <code>classify_env_key</code>.</li>
+<li><strong>A base URL that already ends in <code>/systemone</code> or <code>/classifier</code> is used as it is.</strong> Any other base gets the server's own path added: <code>/classifier</code> on featherless.ai, <code>/systemone</code> elsewhere, after a <code>/v1</code>.</li>
+<li><strong>Any other id ending in <code>-classifier</code> needs <code>--classify-base-url</code>.</strong> Only Featherless's ids have a known address; for another the run stops and asks for one.</li>
+<li><code>jev</code> alone asks for TypeSafe's current model, <code>jev-latest</code>.</li>
+</ul>
+<h3 id="the-gate-a-doubtful-skip-is-translated">The gate: a doubtful skip is translated<a class="headerlink" href="#the-gate-a-doubtful-skip-is-translated" title="Permanent link">&para;</a></h3>
+<p>Jev returns a probability with each answer. A <code>skip</code> below the gate is recorded as <code>translate</code>, so no content is lost to a skip Jev was unsure of. A <code>translate</code> is taken at any probability. The gate is 0.95 on the probability of the chosen answer, measured over 662 plan signatures from 45 EPUBs against gpt-5.6-luna. At that value about nine of ten of Jev's skips become <code>translate</code>, and what Jev still skips is apparatus: copyright lines, line numbers, note marks, index locators. So on that corpus Jev saves little over translating everything; see <a href="../evaluation/plan-classifier-jev/">Jev as the plan classifier</a>. The plan file shows each fallback on its row: <code>unnamed (jev verdict skip at confidence 0.61, below the gate: translate)</code>. <code>--classify-min-confidence P</code> (0 to 1) moves the gate for a run; <code>BBM_JEV_MIN_CONFIDENCE</code> does the same without the flag, and the flag wins. A lower value keeps more of Jev's skips: on the measured corpus those below 0.9 agreed with the reference 7–55% of the time, so the risk is yours.</p>
+<h3 id="in-a-provider-entry">In a provider entry<a class="headerlink" href="#in-a-provider-entry" title="Permanent link">&para;</a></h3>
+<p><code>classify_model</code>, <code>classify_base_url</code> and <code>classify_env_key</code> name a Jev classifier the same way the flags do:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"providers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"openai-with-jev"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"api_style"</span><span class="p">:</span><span class="w"> </span><span class="s2">"openai"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"default_models"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-5.6-luna"</span><span class="p">],</span>
+<span class="w">      </span><span class="nt">"env_key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"OPENAI_API_KEY"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"classify_model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"typesafe-ai/jev"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"classify_base_url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://ai-gateway.vercel.sh/typesafe"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"classify_env_key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"JEV_API_KEY"</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
 </code></pre></div>
-<p>A provider entry whose <code>classify_env_key</code> names <code>JEV_API_KEY</code> for its own gateway address counts as naming the key, and is honored.</p>
-<p>Measured on one book: Jev agreed with gpt-5.6-luna on 27 of 31 signatures and used about twice the prompt tokens. See <a href="../evaluation/plan-classifier-jev/">Jev as the plan classifier</a>.</p>
+<p>An entry that names <code>JEV_API_KEY</code> for its own gateway address has named the key for that address, and it is honored. Without such an entry, the Jev variables are never sent to a gateway.</p>
+<p>On the test book, Jev's requests take half the prompt tokens they used to, and its agreement with gpt-5.6-luna moved no more than between two Jev runs of the same code. See <a href="../evaluation/plan-classifier-jev/">Jev as the plan classifier</a>.</p>
 <h2 id="what-the-run-prints">What the run prints<a class="headerlink" href="#what-the-run-prints" title="Permanent link">&para;</a></h2>
 <p>A <code>--plan-dry-run</code> shows where each model would be asked, without a key:</p>
 <div class="highlight"><pre><span></span><code>Classifier: gpt-5.6-luna at the openai endpoint's default host (cli)

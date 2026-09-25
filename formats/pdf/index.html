@@ -2103,7 +2103,7 @@
 <h3 id="how-the-file-is-read">How the file is read<a class="headerlink" href="#how-the-file-is-read" title="Permanent link">&para;</a></h3>
 <ol>
 <li><a href="https://github.com/docling-project/docling">docling</a> reads the PDF's text layer with its layout and table models and writes Markdown: <code>&lt;name&gt;_book/source.md</code> and the images.</li>
-<li>Pages with no text layer (a scan) are refused unless you pass <code>--pdf-ocr</code>; then the OCR models read them.</li>
+<li>Pages with no text layer (a scan) are refused unless you pass <code>--pdf-ocr</code>; then the OCR models read them. A page that has a text layer keeps it, unless you also pass <code>--ocr-replace-layer</code>: then every page is OCR'd and the PDF's own layer is not used.</li>
 <li>With <code>--img-model</code>, a vision model corrects the roles docling gave the page's regions (heading, caption, footnote, code) from the page image.</li>
 <li>Heading levels are read from the page (numbering first, then font size and weight). Display formulas are cropped from the page as pictures.</li>
 <li>The <a href="../md/">Markdown loader</a> translates <code>source.md</code> into <code>book_bilingual.md</code>.</li>
@@ -2114,6 +2114,7 @@
 <ul>
 <li><code>&lt;name&gt;_book/</code> beside the PDF: <code>source.md</code>, <code>images/</code>, <code>book_bilingual.md</code>, a manifest, and <code>.work/</code>.</li>
 <li><code>&lt;name&gt;_bilingual.epub</code> beside the PDF, a copy of the finished book.</li>
+<li>In <code>source.md</code>, a <code>&lt;!-- page N --&gt;</code> comment where each page starts, numbered as in the PDF file (from 1, as <code>--pages</code> counts), empty pages included. Items docling gave no page, which is rare, come last, under <code>&lt;!-- unplaced --&gt;</code>; the run says how many.</li>
 <li>With <code>--pages 12-30</code>: <code>&lt;name&gt;_pages-12-30_book/</code> and <code>&lt;name&gt;_pages-12-30_bilingual.epub</code>, so a chapter never overwrites the whole book.</li>
 </ul>
 <h3 id="flags-that-apply">Flags that apply<a class="headerlink" href="#flags-that-apply" title="Permanent link">&para;</a></h3>
@@ -2135,8 +2136,12 @@
 <td>Read pages with no text layer with the OCR models. Off by default; they are refused without it.</td>
 </tr>
 <tr>
+<td><code>--ocr-replace-layer</code></td>
+<td>With <code>--pdf-ocr</code>: OCR every page and use that text instead of the PDF's text layer. Off by default: a layer is kept and only pages without one are OCR'd. For a layer that is wrong (another language, garbage); on a clean scan the layer reads better. Toggling it reads the PDF again.</td>
+</tr>
+<tr>
 <td><code>--ocr-lang LANGS</code></td>
-<td>With <code>--pdf-ocr</code>: the languages the OCR engine reads, comma-separated, in the engine's own codes (rapidocr: <code>ch</code>, <code>en</code>, <code>latin</code>; easyocr: <code>ch_sim</code>, <code>ja</code>, <code>ko</code>; ocrmac: <code>zh-Hans</code>, <code>ja-JP</code>), or a BCP-47 tag behind <code>iso:</code> (<code>iso:ja</code>), which every engine accepts. rapidocr uses only the first language.</td>
+<td>With <code>--pdf-ocr</code>: the languages the OCR engine reads, comma-separated, in the engine's own codes (rapidocr: <code>ch</code>, <code>en</code>, <code>latin</code>; easyocr: <code>ch_sim</code>, <code>ja</code>, <code>ko</code>; ocrmac: <code>zh-Hans</code>, <code>ja-JP</code>), or a BCP-47 tag behind <code>iso:</code> (<code>iso:zh</code>, <code>iso:ja</code>), which every engine accepts. rapidocr, the engine the shipped requirements install, uses only the first language and refuses <code>ch_sim</code>: write <code>iso:zh</code> for Chinese.</td>
 </tr>
 <tr>
 <td><code>--device auto\|cpu\|cuda\|mps\|xpu</code></td>
@@ -2342,7 +2347,7 @@
 <li><code>--use_context</code>, <code>--context_paragraph_limit</code>, <code>--context-compact-at</code>, <code>--no-context-compact</code>: the PDF text loader carries no context. The run warns.</li>
 <li><code>--glossary</code>, <code>--glossary-auto</code>: not forwarded. The run warns.</li>
 <li><code>--parallel-workers</code>: the run stays serial. The run warns.</li>
-<li><code>--pdf-ocr</code>, <code>--device</code>, <code>--ocr-lang</code>, <code>--pages</code>, <code>--no-formula-images</code>: <code>--to-epub</code> only. The run warns and reads the whole file.</li>
+<li><code>--pdf-ocr</code>, <code>--ocr-replace-layer</code>, <code>--device</code>, <code>--ocr-lang</code>, <code>--pages</code>, <code>--no-formula-images</code>: <code>--to-epub</code> only. The run warns and reads the whole file.</li>
 <li><code>--img-model</code>, <code>--img-base-url</code>, <code>--img-key</code>: the image step belongs to <code>--to-epub</code>. The run warns.</li>
 <li><code>--classify-model</code> and its two companions: nothing classifies here. The run warns.</li>
 <li>Every EPUB-only flag listed for the <code>--to-epub</code> route above, and <code>--accumulated_num</code>, <code>--quiet</code>, <code>--no_disclosure</code>, <code>--translation-metadata</code>.</li>

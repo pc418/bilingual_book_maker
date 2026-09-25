@@ -2228,6 +2228,10 @@ sections after it provide additional notes for selected workflows.</p>
 <td>PDF only, with <code>--to-epub</code>: read pages that carry no text layer, which are refused without it. Off by default; OCR costs several times the time and changes nothing on a born-digital PDF. Layout, headings and tables are detected either way.</td>
 </tr>
 <tr>
+<td><code>--ocr-replace-layer</code></td>
+<td>PDF only, with <code>--to-epub --pdf-ocr</code>: OCR every page and replace the PDF's own text layer instead of keeping it. Off by default; measured worse than a sound layer, for a layer that is wrong. A page read empty stays empty and is named.</td>
+</tr>
+<tr>
 <td><code>--no-formula-images</code></td>
 <td>PDF only, with <code>--to-epub</code>: leave display formulas as <code>&lt;!-- formula-not-decoded --&gt;</code> placeholders instead of cropping each one from the page as an image. The parser finds equations but never reads them, so the pictures are the only reason the mathematics reaches the book at all; they cost no model and no measurable time. Inline mathematics inside a paragraph is not a formula region and is not covered either way.</td>
 </tr>
@@ -2241,7 +2245,7 @@ sections after it provide additional notes for selected workflows.</p>
 </tr>
 <tr>
 <td><code>--img-key KEY</code></td>
-<td>Key for <code>--img-base-url</code>; defaults to the run's key on the same endpoint, else the endpoint format's environment variable.</td>
+<td>Key for <code>--img-base-url</code>. Default: the run's key when the endpoint is the run's own; else the provider entry's <code>img_env_key</code> when the endpoint is the entry's own; else the key the endpoint's format reads from the environment. A key is never sent to an address it was not given for.</td>
 </tr>
 <tr>
 <td><code>--device DEVICE</code></td>
@@ -2249,7 +2253,7 @@ sections after it provide additional notes for selected workflows.</p>
 </tr>
 <tr>
 <td><code>--ocr-lang LANGS</code></td>
-<td>PDF only, with <code>--to-epub --pdf-ocr</code>: the languages the OCR engine reads on pages with no text layer, comma separated, in the engine's own codes (rapidocr: <code>ch</code>, <code>en</code>, <code>latin</code>; easyocr: <code>ch_sim</code>, <code>ja</code>, <code>ko</code>; ocrmac: <code>zh-Hans</code>, <code>ja-JP</code>), or portable BCP-47 tags behind <code>iso:</code> (<code>iso:zh-Hans</code>, <code>iso:zh-Hant</code>, <code>iso:ja</code>, <code>iso:ko</code>), which docling 2.129 maps onto whichever engine runs. rapidocr reads one language per run and uses the first. The engine is the one docling selects on the install (rapidocr with the shipped requirements, whose default reads Chinese and English), and the run prints the engine and languages it used. A scan in another script needs the flag; the run says so when it meets a scanned page without it. An unknown code is refused before any page is read.</td>
+<td>PDF only, with <code>--to-epub --pdf-ocr</code>: the languages the OCR engine reads on pages with no text layer (every page with <code>--ocr-replace-layer</code>), comma separated, in the engine's own codes (rapidocr: <code>ch</code>, <code>en</code>, <code>latin</code>; easyocr: <code>ch_sim</code>, <code>ja</code>, <code>ko</code>; ocrmac: <code>zh-Hans</code>, <code>ja-JP</code>), or portable BCP-47 tags behind <code>iso:</code> (<code>iso:zh-Hans</code>, <code>iso:zh-Hant</code>, <code>iso:ja</code>, <code>iso:ko</code>), which docling 2.129 maps onto whichever engine runs. rapidocr reads one language per run and uses the first. The engine is the one docling selects on the install (rapidocr with the shipped requirements, whose default reads Chinese and English), and the run prints the engine and languages it used. A scan in another script needs the flag; the run says so when it meets a scanned page without it. An unknown code is refused before any page is read.</td>
 </tr>
 <tr>
 <td><code>--pages PAGES</code></td>
@@ -2280,15 +2284,19 @@ sections after it provide additional notes for selected workflows.</p>
 </tr>
 <tr>
 <td><code>--classify-model MODEL</code></td>
-<td>Model for every classification step (old name <code>--plan-classify-model</code>); implies model mode on an epub. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation. Default: the provider entry's <code>classify_model</code>, else the run's model.</td>
+<td>Model for every classification step (old name <code>--plan-classify-model</code>), or a Jev-compatible classifier (TypeSafe's Jev by default; Simple Jev at its URL); implies model mode on an epub. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation. Default: the provider entry's <code>classify_model</code>, else the run's model.</td>
 </tr>
 <tr>
 <td><code>--classify-base-url URL</code></td>
-<td>Endpoint for <code>--classify-model</code> when it is not the run's (OpenAI-compatible only).</td>
+<td>Endpoint for <code>--classify-model</code> when it is not the run's: an OpenAI-compatible endpoint, or a Jev-compatible classifier's URL (a path ending in <code>/systemone</code> or <code>/classifier</code> is used as is).</td>
 </tr>
 <tr>
 <td><code>--classify-key KEY</code></td>
-<td>Key for <code>--classify-base-url</code>; same default rule as <code>--img-key</code>.</td>
+<td>Key for <code>--classify-base-url</code>; same default rule as <code>--img-key</code>. A Jev host's own variable (<code>JEV_API_KEY</code>/<code>TYPESAFE_API_KEY</code> at typesafe.ai, <code>FEATHERLESS_API_KEY</code> at featherless.ai) is read implicitly only at that host; a provider entry may still bind a variable to its own address.</td>
+</tr>
+<tr>
+<td><code>--classify-min-confidence P</code></td>
+<td>Confidence gate for a Jev-compatible classifier, 0 to 1: a <code>skip</code> whose probability is below it becomes <code>translate</code>; <code>translate</code> is never gated. Default <code>0.95</code>, measured; below <code>0.5</code> the gate is off. <code>BBM_JEV_MIN_CONFIDENCE</code> sets it without the flag.</td>
 </tr>
 <tr>
 <td><code>--plan-min-coverage FRACTION</code></td>
@@ -2463,7 +2471,7 @@ sections after it provide additional notes for selected workflows.</p>
 </tr>
 <tr>
 <td><code>--provider NAME</code></td>
-<td>A named endpoint from <code>bbm_providers.json</code> (this directory) or <code>~/.bbm/providers.json</code>; the project file wins on a shared name, and a name in neither falls back to the shipped <code>bbm_providers.example.json</code>, with a warning naming the address and key variable it used (its <code>FILL-ME</code> templates excluded). Its <code>base_url</code>, <code>api_style</code> (<code>openai</code>, <code>anthropic</code>, <code>gemini</code>, <code>qwen</code>, <code>groq</code>, <code>xai</code> or <code>litellm</code>), <code>default_models</code> and <code>env_key</code> stand in for <code>--api_base</code>, <code>--api_format</code>, <code>--model</code>/<code>--model_list</code> and the key; its <code>img_model</code>/<code>img_base_url</code>/<code>img_env_key</code> and <code>classify_model</code>/<code>classify_base_url</code>/<code>classify_env_key</code> stand in for the <code>--img-*</code> and <code>--classify-*</code> flags (see <a href="../providers/">Provider file and extra models</a>). Flags you pass yourself win.</td>
+<td>A named endpoint from <code>bbm_providers.json</code> (this directory) or <code>~/.bbm/providers.json</code>; the project file wins on a shared name, and a name in neither falls back to the shipped <code>bbm_providers.example.json</code>, with a warning naming the address and key variable it used (its <code>FILL-ME</code> templates excluded). Its <code>base_url</code>, <code>api_style</code> (<code>openai</code>, <code>anthropic</code>, <code>gemini</code>, <code>qwen</code>, <code>groq</code>, <code>xai</code> or <code>litellm</code>), <code>default_models</code> and <code>env_key</code> stand in for <code>--api_base</code>, <code>--api_format</code>, <code>--model</code>/<code>--model_list</code> and the key; its <code>img_model</code>/<code>img_base_url</code>/<code>img_env_key</code> and <code>classify_model</code>/<code>classify_base_url</code>/<code>classify_env_key</code> stand in for the the <code>--img-model</code>/<code>--img-base-url</code>/<code>--img-key</code> and <code>--classify-model</code>/<code>--classify-base-url</code>/<code>--classify-key</code> flags flags (see <a href="../providers/">Provider file and extra models</a>). Flags you pass yourself win.</td>
 </tr>
 </tbody>
 </table>
