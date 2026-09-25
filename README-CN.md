@@ -191,6 +191,7 @@ python3 make_book.py --book_name paper.pdf --to-epub --use_context session
 | `--pages` | 只处理这些页（`12-30`、`1,3,5-7`） |
 | `--device` | 提取模型运行的设备：`auto`、`cpu`、`cuda`、`mps`、`xpu` |
 | `--no-formula-images` | 独立公式保留占位符，不裁成图片 |
+| `--pdf-image-dpi N` | 配合 `--to-epub`：插图清晰度，按 PDF 自身页面尺寸计的 DPI；默认 200，标签很小的图用 300；换个值重跑只重绘插图 |
 | `--img-model` | 修正区域角色的视觉模型（`none` 关闭） |
 | `--img-base-url`、`--img-key` | 该模型的地址和 key |
 | `--pdf_layout` | 仅文本路由：同时输出双语 PDF（`top-bottom`、`side-by-side`、`all`） |

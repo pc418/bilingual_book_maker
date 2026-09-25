@@ -60,6 +60,7 @@ OWNED_VALUE_OPTIONS = (
     # No main-CLI flag yet (packet Q); owned here so that when it comes it
     # can never reach the inner run.
     "--figure-policy",
+    "--pdf-image-dpi",
 )
 
 

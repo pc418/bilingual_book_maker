@@ -338,6 +338,17 @@ class TestStops:
         )
         assert "C36" in tripped(f)
 
+    def test_image_dpi_beside_to_epub_is_not_warned_about(self):
+        f = facts(
+            ["--book_name", "b.pdf", "--to-epub", "--pdf-image-dpi", "300"],
+            book_type="pdf",
+        )
+        assert "C37" not in tripped(f)
+
+    def test_the_default_image_dpi_is_never_warned_about(self):
+        f = facts(["--book_name", "b.pdf"], book_type="pdf")
+        assert "C37" not in tripped(f)
+
     def test_device_without_the_route_is_inert(self):
         # --device chooses where the extraction models run, and they only
         # run on the --to-epub route
@@ -818,6 +829,16 @@ WARN_FIXTURES = [
         ["--no-formula-images"],
         {},
         "only runs with --to-epub",
+    ),
+    (
+        # C37: --pdf-image-dpi sets how sharp the PDF route draws figures,
+        # and that route needs --to-epub (packet Q, owner 260925)
+        "C37",
+        ["--pdf-image-dpi", "300"],
+        {},
+        "--pdf-image-dpi 300 sets how sharp a PDF's figures are drawn, and it "
+        "only runs on the --to-epub route; this run reads it and does nothing "
+        "with it.",
     ),
     (
         # C34: --ocr-replace-layer re-reads pages on the PDF route, which

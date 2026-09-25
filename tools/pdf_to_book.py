@@ -31,6 +31,7 @@ from book_maker.pipeline.importer import import_markdown  # noqa: E402
 from book_maker.pipeline.pdf_figures import (  # noqa: E402
     FIGURE_POLICY_DEFAULT,
     parse_figure_policy,
+    parse_pdf_image_dpi_policy,
     render_figures,
 )
 from book_maker.pipeline.pdf_settings import OCR_ENGINES  # noqa: E402
@@ -182,6 +183,15 @@ def _add_figure_policy(parser, *, default):
         metavar="KIND:VALUE",
         help="developer option: how sharp figures are drawn, one of "
         "dpi:N, page-width:PX, figure-px:PX",
+    )
+    # The main CLI's spelling, as a shorthand for dpi:N; the same value.
+    parser.add_argument(
+        "--pdf-image-dpi",
+        dest="figure_policy",
+        default=argparse.SUPPRESS,
+        type=parse_pdf_image_dpi_policy,
+        metavar="N",
+        help="shorthand for --figure-policy dpi:N (72 to 600)",
     )
 
 

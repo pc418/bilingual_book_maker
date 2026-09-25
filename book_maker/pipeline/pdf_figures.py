@@ -41,6 +41,7 @@ from .messages import (
     FIGURES_DRAWN,
     FIGURES_LEGACY,
     FIGURES_REDRAWN,
+    PDF_IMAGE_DPI_INVALID,
 )
 
 # Beside `source.md` in the extraction's staging directory, and under
@@ -115,7 +116,9 @@ class FigurePolicy:
         return cls(data["kind"], data["value"])
 
 
-# Provisional (packet R measures the candidates and the lead sets this).
+# Owner 260925: the PDF's real physical DPI, 200 (packet R measured the
+# candidates, docs/260925-eval-PDF_FIGURE_RESOLUTION_POLICIES.md). The
+# main CLI's `--pdf-image-dpi` defaults to its value.
 FIGURE_POLICY_DEFAULT = FigurePolicy("dpi", 200)
 
 
@@ -136,6 +139,29 @@ def parse_figure_policy(text):
             f"{', '.join(POLICY_KINDS)} and VALUE a positive number "
             f"(e.g. dpi:200, page-width:1654, figure-px:1600)"
         )
+
+
+# `--pdf-image-dpi`: the operator's knob, the `dpi` kind only (owner
+# 260925: the PDF's real physical DPI). 72 is docling's own picture; past
+# 600 a page-wide figure is a poster.
+PDF_IMAGE_DPI_MIN = 72
+PDF_IMAGE_DPI_MAX = 600
+
+
+def parse_pdf_image_dpi(text):
+    """`--pdf-image-dpi N` as an int, 72..600; an argparse `type=`."""
+    try:
+        value = int(str(text).strip())
+    except ValueError:
+        raise argparse.ArgumentTypeError(PDF_IMAGE_DPI_INVALID)
+    if not PDF_IMAGE_DPI_MIN <= value <= PDF_IMAGE_DPI_MAX:
+        raise argparse.ArgumentTypeError(PDF_IMAGE_DPI_INVALID)
+    return value
+
+
+def parse_pdf_image_dpi_policy(text):
+    """`--pdf-image-dpi N` as the `dpi` policy (the harness shorthand)."""
+    return FigurePolicy("dpi", parse_pdf_image_dpi(text))
 
 
 def figure_scale(box, page_size, policy):
@@ -252,18 +278,23 @@ def _reference(record):
 
 
 def add_widths(markdown, records):
-    """Each named figure's reference gets its Pandoc width attribute.
+    """Each named figure's reference, with its width and without alt text.
 
     By name, which is the item's identity: `![Image](figures/p0003-01.png)`
-    becomes `...{width=76%}`. So more pixels never change how large the
-    figure is shown, only how sharp.
+    becomes `![](figures/p0003-01.png){width=76%}`. So more pixels never
+    change how large the figure is shown, only how sharp. The alt text goes
+    because docling writes the word "Image" for every picture, and Pandoc
+    turns an image with alt text that stands alone in a paragraph into a
+    figure captioned with it (a hidden `<figcaption>Image</figcaption>`
+    under every figure); an empty one is a plain `<img>`, as the formula
+    pictures already are.
     """
     for record in records:
         pattern = re.compile(
-            r"(!\[[^\]\n]*\]\(" + re.escape(_reference(record)) + r"\))(?!\{)"
+            r"!\[[^\]\n]*\](\(" + re.escape(_reference(record)) + r"\))(?!\{)"
         )
         markdown = pattern.sub(
-            lambda match: f"{match.group(1)}{{width={record['width']}%}}", markdown
+            lambda match: f"![]{match.group(1)}{{width={record['width']}%}}", markdown
         )
     return markdown
 

@@ -192,6 +192,7 @@ Every flag in one line. The full text is in [Command line options](docs/cmd.md),
 | `--pages` | only these pages (`12-30`, `1,3,5-7`) |
 | `--device` | where the extraction models run: `auto`, `cpu`, `cuda`, `mps`, `xpu` |
 | `--no-formula-images` | leave display formulas as placeholders instead of pictures |
+| `--pdf-image-dpi N` | PDF, `--to-epub`: figure sharpness in DPI of the PDF's own page size; default 200, 300 for tiny labels; a rerun at another value redraws the figures only |
 | `--img-model` | a vision model that corrects region roles (`none` turns it off) |
 | `--img-base-url`, `--img-key` | where that model is served, and its key |
 | `--pdf_layout` | text route only: also write a bilingual PDF (`top-bottom`, `side-by-side`, `all`) |

@@ -244,6 +244,17 @@ FIGURE_RENDER_FAILED = (
     "Figure {id} on page {page} could not be drawn at {policy} ({err}); "
     "it keeps docling's 72 DPI picture."
 )
+# `--pdf-image-dpi` (owner 260925: the PDF's real physical DPI, default
+# 200; {default} is formatted from `pdf_figures.FIGURE_POLICY_DEFAULT`).
+FIGURE_DPI_BODY = (
+    "how sharp the figures are, in dots per inch of the PDF's own page "
+    "size. Default {default}: sharp on a tablet or a high-density "
+    "e-reader; 150 for a smaller book, 300 for figures with tiny labels. "
+    "Changing it on a rerun redraws the figures only; the extraction and "
+    "the translation are kept. Formulas keep their own resolution."
+)
+HELP_PDF_IMAGE_DPI_CLI = "PDF only, with --to-epub: " + FIGURE_DPI_BODY
+PDF_IMAGE_DPI_INVALID = "must be a whole number from 72 to 600"
 FIGURES_LEGACY = (
     "This bundle was made before figures were drawn by their own "
     "renderer, so its figures stay at 72 DPI. Delete the bundle directory "

@@ -37,7 +37,12 @@ from book_maker.endpoints import (
 from book_maker.pipeline.messages import (
     HELP_OCR_ENGINE_CLI,
     HELP_OCR_REPLACE_LAYER,
+    HELP_PDF_IMAGE_DPI_CLI,
     OCR_REPLACE_NEEDS_OCR,
+)
+from book_maker.pipeline.pdf_figures import (
+    FIGURE_POLICY_DEFAULT,
+    parse_pdf_image_dpi,
 )
 from book_maker.pipeline.pdf_settings import OCR_ENGINES
 from book_maker.prompt_file import parse_prompt_markdown
@@ -1652,6 +1657,18 @@ COMPAT_RULES = (
         ),
     ),
     CompatRule(
+        "C37",
+        "warn",
+        lambda f: getattr(f.options, "pdf_image_dpi", FIGURE_POLICY_DEFAULT.value)
+        != FIGURE_POLICY_DEFAULT.value
+        and not f.options.to_epub,
+        lambda f: (
+            f"--pdf-image-dpi {f.options.pdf_image_dpi} sets how sharp a PDF's "
+            f"figures are drawn, and it only runs on the --to-epub route; this "
+            f"run reads it and does nothing with it."
+        ),
+    ),
+    CompatRule(
         "C34",
         "warn",
         lambda f: getattr(f.options, "ocr_replace_layer", False)
@@ -2524,6 +2541,14 @@ off. Minimum 1.
         "text alone.",
     )
     parser.add_argument(
+        "--pdf-image-dpi",
+        dest="pdf_image_dpi",
+        type=parse_pdf_image_dpi,
+        default=FIGURE_POLICY_DEFAULT.value,
+        metavar="N",
+        help=HELP_PDF_IMAGE_DPI_CLI.format(default=FIGURE_POLICY_DEFAULT.value),
+    )
+    parser.add_argument(
         "--device",
         dest="device",
         default=None,
@@ -2896,6 +2921,7 @@ def run_to_epub(options, argv):
     """
     from book_maker.pipeline.errors import PipelineError
     from book_maker.pipeline.messages import STAGE_FAILED
+    from book_maker.pipeline.pdf_figures import FigurePolicy
     from book_maker.pipeline.to_epub import pdf_to_epub
 
     # The route's own stop rows, which the inner run cannot see (A16).
@@ -2919,6 +2945,7 @@ def run_to_epub(options, argv):
             img_base_url=options.img_base_url,
             img_key=options.img_key,
             quiet=options.quiet,
+            figure_policy=FigurePolicy("dpi", options.pdf_image_dpi),
         )
     except PipelineError as err:
         detail = (

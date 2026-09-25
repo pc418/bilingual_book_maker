@@ -99,7 +99,7 @@ SIDECAR_FIELDS = (
 # How sharp the PDF route draws its figures (`pdf_figures.FigurePolicy`):
 # the pixels only, never a word the model is asked, and a change redraws
 # the figures without translating again (packet Q, owner 260925).
-ROUTE_FIELDS = ("figure_policy",)
+ROUTE_FIELDS = ("figure_policy", "pdf_image_dpi")
 IGNORED_FIELDS = (
     ("book_name", "resume", "glossary_flag") + SIDECAR_FIELDS + ROUTE_FIELDS
 )

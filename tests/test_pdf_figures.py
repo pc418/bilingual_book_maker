@@ -356,8 +356,9 @@ def test_each_picture_is_named_by_its_page_and_order_with_its_width(
 
     bundle, _pdf = extracted(tmp_path, pandoc)
     source = bundle.source.read_text(encoding="utf-8")
-    first = "![Image](assets/figures/p0002-01.png){width=49%}"
-    second = "![Image](assets/figures/p0002-02.png){width=25%}"
+    # No alt text: docling's "Image" would become a caption (see below).
+    first = "![](assets/figures/p0002-01.png){width=49%}"
+    second = "![](assets/figures/p0002-02.png){width=25%}"
     assert first in source and second in source
     assert source.index(first) < source.index(second)
     # No hash-named docling picture reaches the Markdown or the assets.
@@ -612,6 +613,11 @@ def test_another_policy_redraws_the_figures_and_nothing_else(
     # Pandoc writes the width into the book; epub.css only caps it at 100%.
     assert body.count('style="width:49.0%"') == 1
     assert body.count('style="width:25.0%"') == 1
+    # PIN (packet Q, 260925): with an empty alt text Pandoc writes a plain
+    # <img alt=""> in a paragraph -- docling's "Image" had become a hidden
+    # <figcaption>Image</figcaption> under every figure.
+    assert "<figcaption" not in body and 'alt="Image"' not in body
+    assert body.count('style="width:49.0%" alt=""') == 1
 
     book, out = run(FigurePolicy("dpi", 216))
     assert convert.calls == 1  # the extraction was reused
@@ -689,7 +695,7 @@ def test_a_real_conversion_names_its_figures_whatever_the_policy(
         refs = [line for line in source.splitlines() if "](assets/figures/" in line]
         assert len(refs) == len(figures)
         for record, ref in zip(figures, refs):
-            assert ref == (f"![Image]({record['file']}){{width={record['width']}%}}")
+            assert ref == (f"![]({record['file']}){{width={record['width']}%}}")
         sources[policy] = bundle.source.read_bytes()
         with Image.open(bundle.root / figures[0]["file"]) as image:
             widths[policy] = image.width
@@ -721,3 +727,100 @@ def test_the_harness_export_redraws_only_when_asked(
     assert figure.read_bytes() != drawn
     media, _body = _epub_images(bundle.epub)
     assert figure.read_bytes() in media.values()
+
+
+# --------------------------------------------------------------------------
+# The main CLI's flag: --pdf-image-dpi N
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("value", ["71", "601", "0", "200.5", "many"])
+def test_the_image_dpi_is_refused_outside_72_to_600(value, capsys):
+    from book_maker.cli import parse_args
+
+    with pytest.raises(SystemExit) as stopped:
+        parse_args(["--book_name", "b.pdf", "--pdf-image-dpi", value])
+    assert stopped.value.code == 2
+    assert "must be a whole number from 72 to 600" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["72", "600"])
+def test_the_image_dpi_bounds_are_accepted(value):
+    from book_maker.cli import parse_args
+
+    options = parse_args(["--book_name", "b.pdf", "--pdf-image-dpi", value])
+    assert options.pdf_image_dpi == int(value)
+
+
+def test_the_image_dpi_default_is_the_policy_constant():
+    from book_maker.cli import parse_args
+
+    assert parse_args(["--book_name", "b.pdf"]).pdf_image_dpi == (
+        FIGURE_POLICY_DEFAULT.value
+    )
+    # PIN: owner 260925: physical PDF DPI, default 200;
+    # docs/260925-eval-PDF_FIGURE_RESOLUTION_POLICIES.md
+    assert FIGURE_POLICY_DEFAULT == FigurePolicy("dpi", 200)
+
+
+@pytest.mark.parametrize(
+    "typed, expected", [([], 200), (["--pdf-image-dpi", "300"], 300)]
+)
+def test_the_typed_dpi_reaches_the_route_as_a_dpi_policy(typed, expected, monkeypatch):
+    from book_maker import cli
+    from book_maker.pipeline import to_epub
+
+    seen = {}
+
+    def route(*args, **kwargs):
+        seen.update(kwargs)
+        return Path("x.epub")
+
+    monkeypatch.setattr(to_epub, "pdf_to_epub", route)
+    argv = ["--book_name", "b.pdf", "--to-epub"] + typed
+    cli.run_to_epub(cli.parse_args(argv), argv)
+    assert seen["figure_policy"] == FigurePolicy("dpi", expected)
+
+
+def test_the_image_dpi_never_reaches_the_inner_run_or_the_identity():
+    import dataclasses
+
+    from book_maker.pipeline.to_epub import translation_argv
+    from book_maker.pipeline.translate import option_identity, parse_bbm_options
+
+    assert translation_argv(
+        ["--pdf-image-dpi", "300", "--language", "ja", "--pdf-image-dpi=150"]
+    ) == ["--language", "ja"]
+    plain = parse_bbm_options(["--language", "ja"])
+    typed = parse_bbm_options(["--language", "ja", "--pdf-image-dpi", "300"])
+    assert typed.pdf_image_dpi == 300
+    assert option_identity(typed) == option_identity(plain)
+    fields = {field.name for field in dataclasses.fields(ExtractionSettings)}
+    assert not any("dpi" in name or "figure" in name for name in fields)
+
+
+def test_the_harness_takes_the_image_dpi_as_a_dpi_policy():
+    parser = load_harness().build_parser()
+    for command in (["extract", "x.pdf", "--output", "b"], ["export", "b"]):
+        options = parser.parse_args(command + ["--pdf-image-dpi", "300"])
+        assert options.figure_policy == FigurePolicy("dpi", 300)
+    options = parser.parse_args(["extract", "x.pdf", "--output", "b"])
+    assert options.figure_policy is FIGURE_POLICY_DEFAULT
+    with pytest.raises(SystemExit):
+        parser.parse_args(["export", "b", "--pdf-image-dpi", "601"])
+
+
+def test_the_image_dpi_help_is_the_owner_s_text():
+    # PIN: owner 260925: physical PDF DPI, default 200;
+    # docs/260925-eval-PDF_FIGURE_RESOLUTION_POLICIES.md
+    from book_maker.cli import build_parser
+    from book_maker.pipeline.messages import HELP_PDF_IMAGE_DPI_CLI
+
+    text = (
+        "PDF only, with --to-epub: how sharp the figures are, in dots per "
+        "inch of the PDF's own page size. Default 200: sharp on a tablet or "
+        "a high-density e-reader; 150 for a smaller book, 300 for figures "
+        "with tiny labels. Changing it on a rerun redraws the figures only; "
+        "the extraction and the translation are kept. Formulas keep their "
+        "own resolution."
+    )
+    assert HELP_PDF_IMAGE_DPI_CLI.format(default=200) == text
+    assert text in " ".join(build_parser().format_help().split())

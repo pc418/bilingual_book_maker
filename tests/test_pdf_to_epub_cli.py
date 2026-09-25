@@ -16,6 +16,7 @@ import pytest
 from book_maker import cli
 from book_maker.pipeline import docling_parser, messages, to_epub
 from book_maker.pipeline.errors import PipelineError
+from book_maker.pipeline.pdf_figures import FIGURE_POLICY_DEFAULT
 from book_maker.pipeline.progress import ProgressLine
 
 TRANSLATION = ["--api_format", "google", "--language", "zh-hans"]
@@ -97,6 +98,7 @@ class TestRouting:
             img_base_url,
             img_key,
             quiet,
+            figure_policy,
         ):
             seen.update(
                 ocr_replace_layer=ocr_replace_layer,
@@ -113,6 +115,7 @@ class TestRouting:
                 img_key=img_key,
                 quiet=quiet,
             )
+            assert figure_policy == FIGURE_POLICY_DEFAULT
 
         monkeypatch.setattr(to_epub, "pdf_to_epub", fake)
         monkeypatch.setitem(
@@ -192,6 +195,7 @@ class TestRouting:
             "img_model": None,
             "img_base_url": None,
             "img_key": None,
+            "figure_policy": FIGURE_POLICY_DEFAULT,
             "quiet": True,
         }
 
@@ -228,6 +232,7 @@ class TestRouting:
             "img_model": None,
             "img_base_url": None,
             "img_key": None,
+            "figure_policy": FIGURE_POLICY_DEFAULT,
             "quiet": False,
         }
 
@@ -259,6 +264,7 @@ class TestRouting:
             "img_model": None,
             "img_base_url": None,
             "img_key": None,
+            "figure_policy": FIGURE_POLICY_DEFAULT,
             "quiet": False,
         }
 
@@ -280,6 +286,7 @@ class TestRouting:
             "img_model": None,
             "img_base_url": None,
             "img_key": None,
+            "figure_policy": FIGURE_POLICY_DEFAULT,
             "quiet": False,
         }
 
@@ -315,6 +322,7 @@ class TestRouting:
             "img_model": None,
             "img_base_url": None,
             "img_key": None,
+            "figure_policy": FIGURE_POLICY_DEFAULT,
             "quiet": False,
             **expected,
         }
