@@ -38,6 +38,7 @@ from book_maker.pipeline.messages import (  # noqa: E402
     OCR_REPLACE_EMPTY_MORE,
     OCR_REPLACE_NEEDS_OCR,
     OCR_REPLACING_LAYER,
+    PAGE_MAP_UNPLACED,
     PDF_OPTIONS_INERT,
 )
 from book_maker.pipeline.pdf_settings import ExtractionSettings  # noqa: E402
@@ -355,16 +356,92 @@ def test_a_table_with_text_is_a_page_read(bundle, tmp_path, pandoc, capsys):
     assert isinstance(document.tables[0], d.TableItem)
 
 
-def test_a_picture_is_written_once_and_placed_on_its_own_page(bundle, tmp_path, pandoc):
+def test_a_picture_is_written_once_and_placed_on_its_own_page(
+    bundle, tmp_path, pandoc, monkeypatch
+):
     # pins docling-core's `_with_pictures_refs`, which `_export_pages`
     # calls once rather than deep-copying the document for every page
     pdf = _pdf(tmp_path, 2)
     document = real_document({1: "Text on page one."}, pages=[1, 2], picture_on=2)
+    original = type(document)._with_pictures_refs
+    calls = []
+
+    def counted(self, *args, **kwargs):
+        calls.append(kwargs.get("page_no"))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(document), "_with_pictures_refs", counted)
     _extract(bundle, pdf, pandoc, exporting(document), settings=KEEP)
+    assert calls == [None]  # once, for the whole document
     bodies = page_bodies(bundle)
     assert "![" in bodies[2] and "![" not in bodies[1]
     pictures = [p for p in bundle.assets.rglob("*.png")]
     assert len(pictures) == 1
+
+
+def test_an_item_over_two_pages_is_written_once_under_its_first(
+    bundle, tmp_path, pandoc
+):
+    # docling's page filter reads prov[0]: a paragraph that runs onto the
+    # next page is written once, on the page it starts on
+    pytest.importorskip("docling_core")
+    from docling_core.types.doc import document as d
+
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({2: "Text on page two."}, pages=[1, 2])
+    box = d.BoundingBox(l=72, t=700, r=540, b=680, coord_origin="BOTTOMLEFT")
+    document.add_text(
+        label=d.DocItemLabel.TEXT,
+        text="Runs over the page.",
+        prov=d.ProvenanceItem(page_no=1, bbox=box, charspan=(0, 19)),
+    ).prov.append(d.ProvenanceItem(page_no=2, bbox=box, charspan=(0, 19)))
+    _extract(bundle, pdf, pandoc, exporting(document), settings=KEEP)
+    source = bundle.source.read_text(encoding="utf-8")
+    assert source.count("Runs over the page.") == 1
+    assert "Runs over the page." in page_bodies(bundle)[1]
+
+
+# Codex re-verify 260924 (MEDIUM): one item without a page switched the
+# whole document back to docling's breaks, and the misnumbering with it.
+def test_an_item_with_no_page_goes_after_the_last_page_and_is_said(
+    bundle, tmp_path, pandoc, capsys
+):
+    pytest.importorskip("docling_core")
+    from docling_core.types.doc import document as d
+
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({2: "Text on page two."}, pages=[1, 2])
+    document.add_text(label=d.DocItemLabel.TEXT, text="A note with no page.")
+    _extract(bundle, pdf, pandoc, exporting(document))
+    bodies = page_bodies(bundle)
+    assert "Text on page two." in bodies[2]
+    assert "Text on page two." not in bodies[1]
+    assert "A note with no page." not in bodies[1]
+    unplaced = bodies[2].split(docling_parser.UNPLACED_MARKER)
+    assert len(unplaced) == 2
+    assert "Text on page two." in unplaced[0]
+    assert "A note with no page." in unplaced[1]
+    line = PAGE_MAP_UNPLACED.format(n=1)
+    assert line in capsys.readouterr().out
+    manifest = bundle.read_manifest()
+    assert line in manifest["limitations"]
+    assert line in manifest["extraction"]["limitations"]
+    # the empty page is still named
+    assert OCR_REPLACE_EMPTY.format(page=1) in " ".join(
+        manifest["extraction"]["limitations"]
+    )
+
+
+def test_a_document_with_every_item_placed_says_nothing_about_it(
+    bundle, tmp_path, pandoc, capsys
+):
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({1: "One.", 2: "Two."}, pages=[1, 2])
+    _extract(bundle, pdf, pandoc, exporting(document))
+    assert "carry no page number" not in capsys.readouterr().out
+    assert docling_parser.UNPLACED_MARKER not in bundle.source.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_nothing_read_on_a_real_document_stops_before_translation(

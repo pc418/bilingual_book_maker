@@ -59,6 +59,7 @@ from .messages import (
     OCR_REPLACE_EMPTY,
     OCR_REPLACE_EMPTY_MORE,
     OCR_REPLACING_LAYER,
+    PAGE_MAP_UNPLACED,
     OCR_REQUIRED,
     PAGE_TOO_DENSE,
     PAGES_SCOPE,
@@ -100,6 +101,10 @@ DEVICES = ("auto", "cpu", "cuda", "mps", "xpu")
 # between pages and never before the first, so the numbered markers the
 # rest of the pipeline reads are put in afterwards, by `_number_pages`.
 PAGE_BREAK = "\x00bbm-page-break\x00"
+
+# The line after the last page under which items with no page are written
+# (`_export_pages`); not a page marker, so no page claims them.
+UNPLACED_MARKER = "<!-- unplaced -->"
 
 # How many of the parser's log lines are kept for a failure message.
 LOG_TAIL_LINES = 20
@@ -321,9 +326,8 @@ def _document_markdown(
     # the glyphs under each heading decide them before the export.
     pdf_headings.assign(document, pdf)
     images = Path(out_dir) / IMAGE_DIR
-    markdown = pdf_headings.promote(
-        _relative_images(_export_pages(document, images, span), images)
-    )
+    exported, report["unplaced"] = _export_pages(document, images, span)
+    markdown = pdf_headings.promote(_relative_images(exported, images))
     if not formulas:
         return markdown, 0, []
     return pdf_formula.apply(
@@ -336,51 +340,73 @@ def _document_markdown(
 
 
 def _export_pages(document, images, span):
-    """The document's Markdown, one segment per page, joined by `PAGE_BREAK`.
+    """`(Markdown, unplaced item count)`: one segment per page, joined by
+    `PAGE_BREAK`.
 
     Page by page, from each item's own page (docling's `page_no` filter,
-    which reads `prov[0].page_no`), because docling's own page breaks are
-    written only between items: a page with no item at all gets none, and
-    every page after it was numbered one short (Codex review 260924). Here
-    every page of the converted run has a segment, empty or not, so
-    `_number_pages` counts right and `_selected_only` keeps the right
-    pages. The document is not changed, so the formula markers and the
-    heading levels are exactly as they were.
+    which reads `prov[0].page_no`, so an item whose provenance runs over
+    two pages is written once, under the first), because docling's own
+    page breaks are written only between items: a page with no item at
+    all gets none, and every page after it was numbered one short (Codex
+    review 260924). Here every page of the converted run has a segment,
+    empty or not, so `_number_pages` counts right and `_selected_only`
+    keeps the right pages. The document is not changed, so the formula
+    markers and the heading levels are exactly as they were.
+
+    An item with no page (none from a PDF conversion so far) would be
+    dropped by the page filter; such items are written once, after the
+    last page, under `UNPLACED_MARKER`, and counted for the operator
+    (Codex re-verify 260924: falling back to docling's breaks for them
+    brought the misnumbering back). Only a document with no pages at all
+    keeps docling's own breaks.
 
     The pictures are written once, by docling-core's `_with_pictures_refs`
     (the step `export_to_markdown(image_dir=...)` runs, private): calling
     the public export per page would deep-copy the whole document once per
     page. Pinned in tests/test_pdf_ocr_replace_layer.py.
     """
-    from docling_core.types.doc import DocItem
+    from docling_core.types.doc import BoundingBox, DocItem, ProvenanceItem
     from docling_core.types.doc.base import ImageRefMode
 
     numbers = sorted(int(number) for number in (document.pages or {}))
-    unplaced = any(
-        isinstance(item, DocItem) and not item.prov
-        for item, _level in document.iterate_items()
-    )
-    if not numbers or unplaced:
-        # Nothing to number by (a document without pages, or an item with
-        # no page, which a page filter would drop): docling's own breaks,
-        # as before. A PDF conversion gives every item its page.
-        return document.export_to_markdown(
+    if not numbers:
+        # Nothing to number by: docling's own breaks, as before.
+        markdown = document.export_to_markdown(
             page_break_placeholder=PAGE_BREAK,
             image_mode=ImageRefMode.REFERENCED,
             image_dir=images,
         )
+        return markdown, 0
     first = span[0] if span else 1
     last = min(span[1], numbers[-1]) if span else numbers[-1]
+    # A copy with the pictures written out; ours to change.
     referenced = document._with_pictures_refs(image_dir=Path(images), page_no=None)
     # On a line of its own, as docling writes its own breaks: a page that
     # opens with a heading must still start its line with `#` for
     # `pdf_headings.promote`, which runs before the pages are numbered.
-    return f"\n\n{PAGE_BREAK}\n\n".join(
+    markdown = f"\n\n{PAGE_BREAK}\n\n".join(
         referenced.export_to_markdown(
             image_mode=ImageRefMode.REFERENCED, page_no=number
         )
         for number in range(first, last + 1)
     )
+    unplaced = [
+        item
+        for item, _level in referenced.iterate_items()
+        if isinstance(item, DocItem) and not item.prov
+    ]
+    if unplaced:
+        # Given a page that is not in the document, on the copy, so the
+        # same serializer writes them, in reading order, in one segment.
+        beyond = max(numbers[-1], last) + 1
+        nowhere = BoundingBox(l=0, t=0, r=0, b=0)
+        for item in unplaced:
+            item.prov = [ProvenanceItem(page_no=beyond, bbox=nowhere, charspan=(0, 0))]
+        tail = referenced.export_to_markdown(
+            image_mode=ImageRefMode.REFERENCED, page_no=beyond
+        )
+        markdown = f"{markdown}\n\n{UNPLACED_MARKER}\n\n{tail}"
+    return markdown, len(unplaced)
 
 
 def _text_pages(document):
@@ -1089,6 +1115,11 @@ def extract_pdf(
     render = found.get("render")
     if render == RENDER_PDFIUM_PAGE_IMAGE:
         print(JBIG2_MASK_RENDER)
+    unplaced_note = (
+        PAGE_MAP_UNPLACED.format(n=found["unplaced"]) if found.get("unplaced") else None
+    )
+    if unplaced_note is not None:
+        print(unplaced_note)
     structure_summary = found.get("structure")
     structure_partial = None
     structure_high = []
@@ -1211,6 +1242,8 @@ def extract_pdf(
         limitations.append(invisible_note)
     if render == RENDER_PDFIUM_PAGE_IMAGE:
         limitations.append(JBIG2_MASK_RENDER)
+    if unplaced_note is not None:
+        limitations.append(unplaced_note)
     if heading_note is not None:
         limitations.append(heading_note)
     for number, chars in dense:

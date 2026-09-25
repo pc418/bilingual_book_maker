@@ -134,6 +134,11 @@ OCR_REPLACE_ALL_EMPTY = (
     "to translate; rerun without the flag to keep the layer, or with "
     "--ocr-lang for the pages' language."
 )
+# The lead's text (Codex re-verify 260924, finding 2), verbatim.
+PAGE_MAP_UNPLACED = (
+    "{n} item(s) carry no page number; they are placed after the last page "
+    "in source.md."
+)
 OCR_ENGINE_USED = "OCR engine: {engine}{chosen}, languages: {languages}."
 OCR_ENGINE_CHOSEN = " (docling's choice on this install)"
 OCR_LANGUAGES_GIVEN = "{languages}"  # comma-joined, as given
