@@ -1022,11 +1022,16 @@ def prompt_has_system(facts):
     return bool((facts.prompt_config or {}).get("system"))
 
 
-# Loaders that read the tag-selection flags. Markdown reads the exclusions
-# and nothing else; everything outside epub ignores the styling flags, the
-# worker count and the context switch.
+# Loaders that read the tag-selection flags: epub alone. Markdown reads
+# neither the selections nor the exclusions; everything outside epub ignores
+# the styling flags, and outside epub and Markdown the worker count and the
+# context switch.
 TAG_AWARE_BOOK_TYPES = ("epub",)
-EXCLUDE_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
+EXCLUDE_AWARE_BOOK_TYPES = ("epub",)
+# Loaders that group by `--accumulated_num`: epub (a token budget) and srt
+# (a character count). txt, Markdown and the legacy pdf loader group by
+# `--batch_size` and ignore it.
+ACCUMULATED_AWARE_BOOK_TYPES = ("epub", "srt")
 PARALLEL_AWARE_BOOK_TYPES = ("epub", "md", "markdown")
 
 # Engines that detect the source language themselves, so `--source_lang`
@@ -1056,6 +1061,23 @@ def _c7_ignored_tag_flags(f):
     if f.book_type not in EXCLUDE_AWARE_BOOK_TYPES and f.exclude_translate_tags_given:
         flags.append("--exclude-translate-tags")
     return flags
+
+
+def _a8_grouped_session(f):
+    """A8's premise: a history that grows, grouped by `--accumulated_num`.
+
+    The history is the flag on a loader that forwards it, or a route whose
+    thread is always one (codex); the grouping is the loader's, and only
+    epub and srt read `--accumulated_num` — a Markdown or txt run groups by
+    `--batch_size`, so neither half of the warning is true there.
+    """
+    if f.book_type not in ACCUMULATED_AWARE_BOOK_TYPES:
+        return False
+    if getattr(f.translate_model, "SESSION_CONTEXT_ALWAYS_ON", False):
+        return True
+    return (
+        f.options.context_mode == "session" and f.book_type in CONTEXT_AWARE_BOOK_TYPES
+    )
 
 
 def _c8_ignored_style_flags(f):
@@ -1097,8 +1119,7 @@ COMPAT_RULES = (
             "--batch / --batch-use are broken on epub: queueing lives on a "
             "path the epub loader never takes, so the run translates the "
             "whole book live at full price and then submits an empty batch "
-            "job — and --batch never writes the book at all. Drop the flag, "
-            "or batch a txt/srt book."
+            "job — and --batch never writes the book at all. Drop the flag."
         ),
     ),
     CompatRule(
@@ -1208,7 +1229,7 @@ COMPAT_RULES = (
     CompatRule(
         "A8",
         "warn",
-        lambda f: session_run_expected(f)
+        lambda f: _a8_grouped_session(f)
         and not f.plan_mode
         and (f.options.accumulated_num or 1) <= 1,
         lambda f: (
@@ -1330,9 +1351,10 @@ COMPAT_RULES = (
     CompatRule(
         "C2",
         "warn",
-        lambda f: f.book_type != "epub" and f.accumulated_num_given,
+        lambda f: f.book_type not in ACCUMULATED_AWARE_BOOK_TYPES
+        and f.accumulated_num_given,
         lambda f: (
-            f"--accumulated_num is read by the epub loader only; a "
+            f"--accumulated_num is read by the epub and srt loaders only; a "
             f"{f.book_type} run groups with --batch_size."
         ),
     ),

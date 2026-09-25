@@ -614,7 +614,7 @@ WARN_FIXTURES = [
         "C2",
         ["--accumulated_num", "1200"],
         {"book_type": "txt"},
-        "--accumulated_num is read by the epub loader only",
+        "--accumulated_num is read by the epub and srt loaders only",
     ),
     (
         "C3",
@@ -910,6 +910,96 @@ class TestNoiseGuard:
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "Warning:" not in proc.stdout
+
+
+class TestRowsFollowWhatTheLoadersRead:
+    """PIN (packet H, 260924; findings in docs/260923-docs-WIKI_MODERNIZE.md,
+    "Findings for the owner" item 2): four rows named flags or loaders the
+    code does not match. The code is right and the rows follow it: srt reads
+    --accumulated_num (C2), Markdown groups by --batch_size so A8's
+    grouping-off premise and its suggestion are both false there, no loader
+    implements --batch (A1 suggested a txt/srt book), and Markdown ignores
+    --exclude-translate-tags (C7)."""
+
+    def test_c2_is_quiet_on_srt_which_reads_the_flag(self):
+        f = facts(
+            ["--book_name", "b.srt", "--accumulated_num", "1200"], book_type="srt"
+        )
+        assert "C2" not in tripped(f)
+
+    def test_c2_still_warns_on_markdown_and_names_both_loaders(self, capsys):
+        f = facts(["--book_name", "b.md", "--accumulated_num", "1200"], book_type="md")
+        assert "C2" in tripped(f)
+        check_compatibility(f)
+        out = " ".join(capsys.readouterr().out.split())
+        assert "read by the epub and srt loaders only; a md run groups" in out
+
+    def test_a8_is_quiet_on_markdown_which_groups_by_batch_size(self):
+        f = facts(
+            [
+                "--book_name",
+                "b.md",
+                "--use_context",
+                "session",
+                "--plan-classify",
+                "none",
+            ],
+            book_type="md",
+        )
+        assert "A8" not in tripped(f)
+
+    def test_a8_is_quiet_on_txt_even_on_the_codex_thread(self):
+        f = facts(
+            ["--book_name", "b.txt", "--api_format", "codex"],
+            api_format="codex",
+            book_type="txt",
+        )
+        assert "A8" not in tripped(f)
+
+    def test_a8_still_warns_on_srt_on_the_codex_thread(self, capsys):
+        # srt groups by --accumulated_num and the codex thread is a session,
+        # so both halves of the warning hold there
+        f = facts(
+            ["--book_name", "b.srt", "--api_format", "codex"],
+            api_format="codex",
+            book_type="srt",
+        )
+        assert "A8" in tripped(f)
+
+    def test_a8_is_quiet_on_srt_with_the_flag_the_loader_ignores(self):
+        # txt, srt and pdf never forward --use_context session (the run says
+        # so itself), so there is no growing history to warn about
+        f = facts(["--book_name", "b.srt", "--use_context", "session"], book_type="srt")
+        assert "A8" not in tripped(f)
+
+    def test_a1_suggests_no_loader_that_does_not_batch(self, capsys):
+        f = facts(["--book_name", "b.epub", "--batch"])
+        assert "A1" in tripped(f)
+        with pytest.raises(SystemExit):
+            check_compatibility(f)
+        out = " ".join(capsys.readouterr().out.split())
+        assert "never writes the book at all. Drop the flag." in out
+        assert "txt" not in out and "srt" not in out
+
+    def test_c7_names_exclude_translate_tags_on_markdown(self, capsys):
+        f = facts(
+            ["--book_name", "b.md", "--exclude-translate-tags", "sup"],
+            book_type="md",
+        )
+        assert "C7" in tripped(f)
+        check_compatibility(f)
+        out = " ".join(capsys.readouterr().out.split())
+        assert "--exclude-translate-tags select markup inside an epub" in out
+
+    def test_c7_is_quiet_on_epub_which_reads_the_exclusions(self):
+        f = facts(["--book_name", "b.epub", "--exclude-translate-tags", "sup"])
+        assert "C7" not in tripped(f)
+
+    def test_a_plain_markdown_run_trips_nothing(self, capsys):
+        f = facts(["--book_name", "b.md", "--key", "sk-test"], book_type="md")
+        assert tripped(f) == []
+        check_compatibility(f)
+        assert capsys.readouterr().out == ""
 
 
 class TestTheLegacySystemVariableIsDeprecated:
