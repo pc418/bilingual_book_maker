@@ -74,4 +74,4 @@ These work the same on every format.
 - `--retranslate`: EPUB only; refused.
 - `--quiet`: EPUB only; the run warns.
 - `--batch`, `--batch-use`: the SRT loader does not implement the Batch API.
-- `--to-epub`, `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on this format stops the run; the others warn or do nothing (`--img-*`: the run warns that only the PDF route has an image step).
+- `--to-epub`, `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on this format stops the run; the others warn or do nothing (the three image flags: the run warns that only the PDF route has an image step).

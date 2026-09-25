@@ -36,7 +36,7 @@ The route's own flags:
 | `--to-epub` | Take this route. |
 | `--pdf-ocr` | Read pages with no text layer with the OCR models. Off by default; they are refused without it. |
 | `--ocr-replace-layer` | With `--pdf-ocr`: OCR every page and use that text instead of the PDF's text layer. Off by default: a layer is kept and only pages without one are OCR'd. For a layer that is wrong (another language, garbage); on a clean scan the layer reads better. Toggling it reads the PDF again. |
-| `--ocr-lang LANGS` | With `--pdf-ocr`: the languages the OCR engine reads, comma-separated, in the engine's own codes (rapidocr: `ch`, `en`, `latin`; easyocr: `ch_sim`, `ja`, `ko`; ocrmac: `zh-Hans`, `ja-JP`), or a BCP-47 tag behind `iso:` (`iso:zh`, `iso:ja`), which every engine accepts. rapidocr, the engine the shipped requirements install, uses only the first language and refuses `ch_sim`: write `iso:zh` for Chinese. |
+| `--ocr-lang LANGS` | With `--pdf-ocr`: the languages the OCR engine reads, comma-separated, in the engine's own codes (rapidocr: `ch`, `en`, `latin`; easyocr: `ch_sim`, `ja`, `ko`; ocrmac: `zh-Hans`, `ja-JP`), or a BCP-47 tag behind `iso:` (`iso:zh`, `iso:ja`), which every engine accepts. rapidocr, the engine the PDF extra installs, uses only the first language and refuses `ch_sim`: write `iso:zh` for Chinese. |
 | `--device auto\|cpu\|cuda\|mps\|xpu` | Where the extraction models run. `auto` (default) detects an accelerator and falls back to the CPU. The CPU gives the same output, slower. |
 | `--pages PAGES` | Only these pages, numbered from 1 (`12-30`, `1,3,5-7`). |
 | `--no-formula-images` | Leave display formulas as `<!-- formula-not-decoded -->` placeholders instead of pictures. |
@@ -85,7 +85,7 @@ Every other flag goes to the Markdown translation unchanged. These are the ones 
 - `--no_disclosure`: not honored yet; the credit line is always added.
 - `--translation-metadata`: Pandoc builds this EPUB, which carries no metadata file and no embedded glossary.
 - `--pdf_layout`: belongs to the text route.
-- `--accumulated_num`, `--max-batch-units` and every `--plan-*` flag: plan mode is EPUB only; the Markdown loader groups with `--batch_size`.
+- `--accumulated_num`, `--max-batch-units` and the plan flags (`--plan-classify`, `--plan-dry-run`, `--plan-min-coverage`): plan mode is EPUB only; the Markdown loader groups with `--batch_size`.
 - `--classify-model`, `--classify-base-url`, `--classify-key`: nothing on this route classifies yet. The run warns that the flag is ignored.
 - `--translate-tags`, `--exclude-translate-tags`, `--allow_navigable_strings`, `--only_filelist`, `--exclude_filelist`, `--block_size`, `--sentence_mode`, `--translation_style`, `--translation_color`, `--retranslate`: EPUB input only.
 - `--batch`, `--batch-use`: not implemented on this route.

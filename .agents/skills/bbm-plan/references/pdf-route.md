@@ -5,9 +5,10 @@ from `references/route-setup.md`.
 
 User pages, when you need more than this file says:
 `docs/features/pdf-to-epub.md` (what the route does, the vision-model pass,
-every terminal line and its fix), `docs/installation-pdf.md` (the install
+every terminal line and its fix), `docs/features/recommended-pdf.md`
+(the command per document type and per system), `docs/installation-pdf.md` (the install
 per system), `docs/formats/pdf.md` (every flag that applies, and the older
-text route), `docs/docker.md` (the `:pdf` image). Measurements behind the
+text route), `docs/docker.md` (building the `pdf` image). Measurements behind the
 advice: `docs/evaluation/pdf-*.md`.
 
 ## Recommend the bilingual EPUB, not the txt
@@ -111,7 +112,7 @@ translation; no `--resume` is needed on this route.
 | `--no-formula-images` | almost never: it replaces every display equation's picture with a bare placeholder |
 
 By document type (the full run; every one starts with the two-page first
-look; the user-facing version is `docs/features/pdf-to-epub.md`):
+look; the user-facing version is `docs/features/recommended-pdf.md`):
 
 | document | add to the full run | say to the user |
 |---|---|---|
@@ -132,7 +133,7 @@ text):
 | Linux, CPU only | `pip install ".[pdf]"` plus PyTorch's CPU index (the line is on `docs/installation-pdf.md`; the plain line would pull about 3 GB of CUDA) | `--device cpu`; one two-page OCR scan took 26.3 s on the CPU against 10.6 s on MPS, identical text |
 | Windows with NVIDIA | `pip install ".[pdf]"` plus PyTorch's `cu126` index (the line is on `docs/installation-pdf.md`), and the NVIDIA driver | `auto` finds CUDA |
 | Windows, CPU only | `pip install ".[pdf]"` (PyPI's Windows wheel is already the CPU build) | `--device cpu` |
-| Docker | image `ghcr.io/yihong0618/bilingual_book_maker:pdf` (Pandoc and the PDF packages inside); mount the book's folder and a models volume at `/root/.cache` | `--gpus all` on Linux or Windows (WSL2) with NVIDIA, amd64 image only (`docs/docker.md`) |
+| Docker | not published: build it from a clone, `docker build --target pdf -t bbook_maker:pdf .` (Pandoc and the PDF packages inside); mount the book's folder and a models volume at `/root/.cache` | `--gpus all` on Linux or Windows (WSL2) with NVIDIA, amd64 image only (`docs/docker.md`) |
 
 ## What to tell the user up front
 

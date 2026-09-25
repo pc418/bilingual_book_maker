@@ -1,20 +1,24 @@
 # Docker
 
-Use Docker if you do not want to set up Python yourself. Images are published to the GitHub Container Registry on every merge to `main` and on every release tag. The container runs `python make_book.py`, so every flag on this site works unchanged.
+Use Docker if you do not want to set up Python yourself. The container runs `python make_book.py`, so every flag on this site works unchanged.
 
-## Images and tags
+## Images
 
-There are two images, built from one Dockerfile on `python:3.12-slim`, for `linux/amd64` and `linux/arm64`.
+There are two images, built from one Dockerfile on `python:3.12-slim`.
 
-| tag | what is in it | use it for |
-|---|---|---|
-| `latest` (also `basic`) | the translator and its Python packages; a few hundred megabytes | EPUB, TXT, Markdown, SRT, and PDFs on the older text route |
-| `pdf` | `latest` plus Pandoc 3.11 and the PDF packages (docling and PyTorch; on amd64 the CUDA build, several gigabytes) | `--to-epub` |
-| `<version>`, `<version>-pdf` | the same two images at a release | pinning a release |
-| `sha-<commit>`, `sha-<commit>-pdf` | the same two images at one commit | pinning a build |
+| image | what is in it | how you get it | use it for |
+|---|---|---|---|
+| `ghcr.io/yihong0618/bilingual_book_maker:latest` | the translator and its Python packages; a few hundred megabytes | `docker pull`; published for `linux/amd64` and `linux/arm64` on every merge to `main`, with `<version>` and `sha-<commit>` tags for releases and single builds | EPUB, TXT, Markdown, SRT, and PDFs on the older text route |
+| `bbook_maker:pdf` | the same plus Pandoc 3.11 and the PDF packages (docling and PyTorch; on amd64 the CUDA build, several gigabytes) | **built on your machine** from the Dockerfile's `pdf` target; it is not published | `--to-epub` |
 
 ```bash
 docker pull ghcr.io/yihong0618/bilingual_book_maker:latest
+```
+
+If you want the PDF route, build its image from a clone of the repository:
+
+```bash
+docker build --target pdf -t bbook_maker:pdf .
 ```
 
 ## Mounts
@@ -67,7 +71,7 @@ docker run --rm \
 
 ## A PDF, per system
 
-The `latest` image has no Pandoc and no PDF packages, so it cannot run `--to-epub`. Use the `pdf` tag.
+The `latest` image has no Pandoc and no PDF packages, so it cannot run `--to-epub`. Build the `pdf` image first (above), then:
 
 === "Linux with NVIDIA"
 
@@ -78,7 +82,7 @@ The `latest` image has no Pandoc and no PDF packages, so it cannot run `--to-epu
       -v "$PWD":/book \
       -v bbm-models:/root/.cache \
       -e OPENAI_API_KEY \
-      ghcr.io/yihong0618/bilingual_book_maker:pdf \
+      bbook_maker:pdf \
       --book_name /book/paper.pdf \
       --to-epub \
       --use_context session
@@ -93,7 +97,7 @@ The `latest` image has no Pandoc and no PDF packages, so it cannot run `--to-epu
       -v "${PWD}:/book" `
       -v bbm-models:/root/.cache `
       -e OPENAI_API_KEY `
-      ghcr.io/yihong0618/bilingual_book_maker:pdf `
+      bbook_maker:pdf `
       --book_name /book/paper.pdf `
       --to-epub `
       --use_context session
@@ -108,7 +112,7 @@ The `latest` image has no Pandoc and no PDF packages, so it cannot run `--to-epu
       -v "$PWD":/book \
       -v bbm-models:/root/.cache \
       -e OPENAI_API_KEY \
-      ghcr.io/yihong0618/bilingual_book_maker:pdf \
+      bbook_maker:pdf \
       --book_name /book/paper.pdf \
       --to-epub \
       --device cpu \
@@ -117,14 +121,14 @@ The `latest` image has no Pandoc and no PDF packages, so it cannot run `--to-epu
 
 === "macOS"
 
-    The container is CPU-only whatever you pass: Docker runs a Linux VM that cannot see Metal. The image also ships the CUDA build of PyTorch. On Apple silicon the [native install](installation-pdf.md) is both faster (MPS) and much smaller.
+    The container is CPU-only whatever you pass: Docker runs a Linux VM that cannot see Metal. On Apple silicon the [native install](installation-pdf.md) is both faster (MPS) and much smaller, so prefer it.
 
     ```bash
     docker run --rm \
       -v "$PWD":/book \
       -v bbm-models:/root/.cache \
       -e OPENAI_API_KEY \
-      ghcr.io/yihong0618/bilingual_book_maker:pdf \
+      bbook_maker:pdf \
       --book_name /book/paper.pdf \
       --to-epub \
       --device cpu \
@@ -133,21 +137,25 @@ The `latest` image has no Pandoc and no PDF packages, so it cannot run `--to-epu
 
 ## GPU only on amd64
 
-The images are published for both architectures, but PyPI's PyTorch is a CUDA build only on x86_64:
+PyPI's PyTorch is a CUDA build only on x86_64:
 
 | torch 2.7.1, Linux | |
 |---|---|
 | `manylinux_2_28_x86_64` | 821.0 MB — the CUDA build |
 | `manylinux_2_28_aarch64` | 98.9 MB — no CUDA kernels |
 
-So an arm64 Linux host that *does* have a card (GH200, Jetson) pulls the arm64 image by default and runs on the processor, however many `--gpus` you pass. Pull the x86_64 image there:
+So on an arm64 Linux host that *does* have a card (GH200, Jetson), a plain build gives an arm64 image that runs on the processor, however many `--gpus` you pass. Build and run the x86_64 image there:
+
+```bash
+docker build --platform linux/amd64 --target pdf -t bbook_maker:pdf .
+```
 
 ```bash
 docker run --rm --platform linux/amd64 --gpus all \
   -v "$PWD":/book \
   -v bbm-models:/root/.cache \
   -e OPENAI_API_KEY \
-  ghcr.io/yihong0618/bilingual_book_maker:pdf \
+  bbook_maker:pdf \
   --book_name /book/paper.pdf \
   --to-epub
 ```
@@ -156,16 +164,10 @@ docker run --rm --platform linux/amd64 --gpus all \
 
 The Codex route (`--api_format codex`). It drives a `codex` binary signed in on your machine; neither the binary nor the login is in the container. Use an API route in Docker.
 
-## Build it yourself
+## Build the small image yourself
 
-A plain build gives the small image:
-
-```bash
-docker build --tag bilingual_book_maker .
-```
-
-The PDF image is the `pdf` stage:
+A plain build gives the `latest` image's contents:
 
 ```bash
-docker build --target pdf --tag bilingual_book_maker:pdf .
+docker build -t bbook_maker .
 ```

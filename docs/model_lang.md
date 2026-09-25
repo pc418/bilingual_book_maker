@@ -53,8 +53,7 @@ give the vendor's OpenAI-compatible `--api_base` and get the `openai` route.
 `codex` is not an endpoint at all: it drives a local `codex app-server`
 sidecar and bills the run to your ChatGPT plan, so it takes no `--key` and no
 `--api_base`, and `--model` is optional (default `gpt-5.6-luna`). It is never
-inferred; name it explicitly. See the Codex entry under "Translate Service"
-in the README.
+inferred; name it explicitly. See [Translating with an LLM](llm-args.md).
 
 Inference goes in this order: an explicit `--api_format` wins; then the
 `--api_base` host (`anthropic.com` means the anthropic shape, anything else

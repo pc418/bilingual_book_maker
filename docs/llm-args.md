@@ -1,5 +1,12 @@
 # Translating with an LLM
 
+If you have an OpenAI key, the default route needs nothing else:
+
+```bash
+export OPENAI_API_KEY=sk-...
+bbook_maker --book_name my_book.epub --use_context session
+```
+
 This page covers the flags that decide *where* the requests go and *what* they ask for. They work the same for every input format. What each format adds is on the [Formats](formats/epub.md) pages.
 
 ## The route: model, endpoint, format

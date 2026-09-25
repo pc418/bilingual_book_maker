@@ -1,5 +1,11 @@
 # TXT
 
+```bash
+bbook_maker --book_name my_book.txt --language zh-hans --batch_size 20
+```
+
+That writes `my_book_bilingual.txt` beside the input. SRT subtitles and Markdown have pages of their own below; a PDF has [its own section](../features/pdf-to-epub.md).
+
 A plain-text file is translated line group by line group. There is no structure to keep, so there are few options.
 
 ## How the file is read
@@ -77,4 +83,4 @@ These work the same on every format.
 - `--retranslate`: EPUB only; refused.
 - `--quiet`: EPUB only; the run warns.
 - `--batch`, `--batch-use`: the TXT loader does not implement the Batch API.
-- `--to-epub`, `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on this format stops the run; the others warn or do nothing (`--img-*`: the run warns that only the PDF route has an image step).
+- `--to-epub`, `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on this format stops the run; the others warn or do nothing (the three image flags: the run warns that only the PDF route has an image step).

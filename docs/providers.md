@@ -60,7 +60,7 @@ The spent amount is an estimate from the usage each request reports; the vendor'
 
 The example file's `openai` entry sets `"img_model": "gpt-5.6-luna"`. So `--provider openai` on a PDF with `--to-epub` runs the region-role pass on every page by default. That also holds when you have no `bbm_providers.json`, because the run then falls back to the example. The pass costs about 3,000 prompt tokens per page: 43,443 prompt and 4,319 completion tokens for 12 pages in the study behind it ([Where an LLM fixes layout](evaluation/pdf-structure-llm-roles.md)). To run without it, pass `--img-model none`, or copy the file and delete the line.
 
-No other entry in the example names an image model or a classify model.
+The `openai-jev` entry is the same `openai` entry plus `"classify_model": "jev"` with `JEV_API_KEY`, so `--provider openai-jev` translates with gpt-5.6-luna and classifies an EPUB's plan with [Jev](#jev-and-jev-compatible-classifiers). The `jev` entry is Jev on its own: it classifies and never translates, so `--provider jev` is refused with a hint to use `--classify-model`. No other entry names an image model or a classify model.
 
 ## The two extra models
 
@@ -173,6 +173,8 @@ Jev returns a probability with each answer. A `skip` below the gate is recorded 
 
 ### In a provider entry
 
+If you want OpenAI to translate and Jev to classify, the shipped `openai-jev` entry already does it: `--provider openai-jev`. For any other pairing, write your own entry.
+
 `classify_model`, `classify_base_url` and `classify_env_key` name a Jev classifier the same way the flags do:
 
 ```json
@@ -192,7 +194,7 @@ Jev returns a probability with each answer. A `skip` below the gate is recorded 
 
 An entry that names `JEV_API_KEY` for its own gateway address has named the key for that address, and it is honored. Without such an entry, the Jev variables are never sent to a gateway.
 
-On the test book, Jev's requests take half the prompt tokens they used to, and its agreement with gpt-5.6-luna moved no more than between two Jev runs of the same code. See [Jev as the plan classifier](evaluation/plan-classifier-jev.md).
+Each Jev request sends the page's candidate lines once, with one short question per signature. See [Jev as the plan classifier](evaluation/plan-classifier-jev.md).
 
 ## What the run prints
 

@@ -25,7 +25,7 @@ Per step: `--plan-classify agent` always; the full run adds `--quiet`, and
 `--resume` only once a cache exists (step 5); the optional smoke adds
 `--quiet --test --test_num 8`. Nothing from the "Never pass" list below.
 
-By kind of book (the user-facing version is on `docs/features/plan-mode.md`):
+By kind of book (the user-facing version, with the endpoint and system rows, is `docs/features/recommended-epub.md`):
 
 | book | what changes |
 |---|---|
