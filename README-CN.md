@@ -105,7 +105,7 @@ python3 make_book.py --book_name paper.pdf --to-epub --pages 1-2 --test
 python3 make_book.py --book_name paper.pdf --to-epub --use_context session
 ```
 
-扫描件需要 `--pdf-ocr`（中英文以外的语言再加 `--ocr-lang iso:ja` 之类）；论文加 `--img-model gpt-5.6-luna` 效果更好。不加 `--to-epub` 时，PDF 输出为双语 `.txt`，这条文本路由同样支持 `--use_context session` 和 `--glossary`。详见：[PDF 转双语 EPUB](docs/features/pdf-to-epub.md) 和 [PDF 推荐设置](docs/features/recommended-pdf.md)。
+扫描件需要 `--pdf-ocr`（非英文扫描件再加 `--ocr-lang iso:zh`、`iso:ja` 之类）；论文加 `--img-model gpt-5.6-luna` 效果更好。不加 `--to-epub` 时，PDF 输出为双语 `.txt`，这条文本路由同样支持 `--use_context session` 和 `--glossary`。详见：[PDF 转双语 EPUB](docs/features/pdf-to-epub.md) 和 [PDF 推荐设置](docs/features/recommended-pdf.md)。
 
 ![一篇 arXiv 论文做成的阅读版：由标题生成的目录、双语正文、保留为图片的插图](./docs/img/pdf_reading_edition.webp)
 

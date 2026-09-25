@@ -20,10 +20,10 @@ The route needs the [PDF extra](../installation-pdf.md) and Pandoc 3.1.12 or new
 |---|---|---|---|
 | any PDF you want as a book | `--to-epub --use_context session` | a reflowable EPUB with contents; a session gives each short block the text before it | [PDF to bilingual EPUB](pdf-to-epub.md) |
 | a scan (no text layer) | `--pdf-ocr` | pages without text are refused until you pass it, so you never need to guess | [OCR flags](pdf-to-epub.md#setup) |
-| a scan in Japanese, Korean or another script outside Chinese and English | `--pdf-ocr --ocr-lang iso:ja` (or `iso:ko`, …) | the default OCR engine reads Chinese and English only | [OCR language](pdf-to-epub.md#setup) |
-| a Chinese scan | `--pdf-ocr --ocr-lang iso:zh` (`iso:zh-Hant` for traditional) | not `ch_sim`: the default engine refuses it | [Chinese scan](#by-document-type) |
-| a simplified-Chinese scan | `--pdf-ocr --ocr-engine rapidocr --ocr-lang iso:zh` | lowest Han error in the measurement; needs onnxruntime (`pip install onnxruntime`) or the run refuses the engine | [Which OCR engine](pdf-ocr-engines.md) |
-| on a Mac, and you want no download | `--pdf-ocr --ocr-engine ocrmac` (pip install ocrmac; auto picks it once installed) | Apple's Vision framework, nothing to download; within a hair of the best on English and traditional Chinese, rapidocr better on simplified-Chinese scans | [Which OCR engine](pdf-ocr-engines.md) |
+| a scan in Chinese, Japanese, Korean or another script outside the Latin alphabet | `--pdf-ocr --ocr-lang iso:ja` (or `iso:ko`, …) | the default OCR engine reads only its own languages: on a Mac (ocrmac) English, Spanish, French and German, elsewhere (rapidocr) Chinese and English | [OCR language](pdf-to-epub.md#setup) |
+| a Chinese scan | `--pdf-ocr --ocr-lang iso:zh` (`iso:zh-Hant` for traditional) | not `ch_sim`: rapidocr refuses it | [Chinese scan](#by-document-type) |
+| a simplified-Chinese scan | `--pdf-ocr --ocr-engine rapidocr --ocr-lang iso:zh` | lowest Han error in the measurement | [Which OCR engine](pdf-ocr-engines.md) |
+| on a Mac, and you want no download | `--pdf-ocr` (auto picks ocrmac, which the pdf extra installs on a Mac; `--ocr-engine ocrmac` names it) | Apple's Vision framework, nothing to download; within a hair of the best on English and traditional Chinese, rapidocr better on simplified-Chinese scans | [Which OCR engine](pdf-ocr-engines.md) |
 | a scan that already has an OCR layer (Internet Archive, ABBYY) | nothing extra | the run uses the layer and says so | [Scanned book](#by-document-type) |
 | a scan whose text layer is garbage | `--pdf-ocr --ocr-replace-layer --ocr-lang <lang>` | every page is read again by the OCR engine | [Scan with a bad text layer](#by-document-type) |
 | a paper, or anything with code listings | `--img-model gpt-5.6-luna` | a vision model fixes author lines taken for headings and listings read as footnotes, about 3,000 prompt tokens a page | [Correcting region roles](pdf-to-epub.md#correcting-region-roles-with-a-vision-model) |
@@ -93,7 +93,7 @@ The route needs the [PDF extra](../installation-pdf.md) and Pandoc 3.1.12 or new
       --use_context session
     ```
 
-    The default OCR engine reads Chinese and English. A scan in another script needs `--ocr-lang`; the first use of a language downloads its model.
+    Without `--ocr-lang` the OCR engine reads its own default languages: on a Mac (ocrmac) English, Spanish, French and German, elsewhere (rapidocr) Chinese and English. A scan in another language needs `--ocr-lang`.
 
     **If the scan already carries an OCR layer** (Internet Archive and ABBYY FineReader files often do), try it without `--pdf-ocr` first: the run prints `… selected pages carry only an invisible OCR text layer …` and uses that layer, which usually reads better than a fresh local OCR. If the layer turns out to be garbage, see the next tab.
 
@@ -118,7 +118,7 @@ The route needs the [PDF extra](../installation-pdf.md) and Pandoc 3.1.12 or new
 
 === "Chinese scan"
 
-    Name the language the OCR engine should read. An `iso:` tag works whichever engine runs: `iso:zh` for simplified characters, `iso:zh-Hant` for traditional. Not `ch_sim`: the default engine refuses it before reading a page.
+    Name the language the OCR engine should read. An `iso:` tag works whichever engine runs: `iso:zh` for simplified characters, `iso:zh-Hant` for traditional. Not `ch_sim`: rapidocr refuses it before reading a page.
 
     ```bash
     python make_book.py \

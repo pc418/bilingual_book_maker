@@ -106,7 +106,7 @@ python3 make_book.py --book_name paper.pdf --to-epub --pages 1-2 --test
 python3 make_book.py --book_name paper.pdf --to-epub --use_context session
 ```
 
-A scan needs `--pdf-ocr` (and `--ocr-lang iso:ja` or the like outside Chinese and English); a paper gains from `--img-model gpt-5.6-luna`. Without `--to-epub` a PDF becomes a bilingual `.txt`, and that text route also takes `--use_context session` and `--glossary`. Read more: [PDF to bilingual EPUB](docs/features/pdf-to-epub.md) and [Recommended settings for PDF](docs/features/recommended-pdf.md).
+A scan needs `--pdf-ocr` (and `--ocr-lang iso:zh`, `iso:ja` or the like for a scan not in English); a paper gains from `--img-model gpt-5.6-luna`. Without `--to-epub` a PDF becomes a bilingual `.txt`, and that text route also takes `--use_context session` and `--glossary`. Read more: [PDF to bilingual EPUB](docs/features/pdf-to-epub.md) and [Recommended settings for PDF](docs/features/recommended-pdf.md).
 
 ![An arXiv paper as a reading edition: the table of contents built from the headings, the bilingual text, and a figure kept as a picture](./docs/img/pdf_reading_edition.webp)
 

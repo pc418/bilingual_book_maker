@@ -62,8 +62,8 @@ paid):
    it costs several times the time and changes nothing on a born-digital
    PDF, and a page with no text layer is refused without it, never silently
    skipped, so the run tells you when it is needed. Layout, headings and
-   tables are detected either way. A scan outside Chinese and English also
-   needs `--ocr-lang` (below). A scan that already carries an OCR layer
+   tables are detected either way. A scan not in English also needs
+   `--ocr-lang` (below). A scan that already carries an OCR layer
    (Internet Archive, ABBYY) is readable **without** `--pdf-ocr`: the run
    names such pages (`… carry only an invisible OCR text layer …`) and uses
    the layer. Run without the flag first; only when `source.md` shows the
@@ -106,7 +106,7 @@ translation; no `--resume` is needed on this route.
 | `--to-epub` | every PDF, unless the user asked for txt |
 | `--use_context session` | the default on the openai/anthropic routes here too (route-setup step 5); `--parallel-workers` is refused with it |
 | `--pdf-ocr` | a **scanned** PDF only (the run refuses without it and says so). Not for tables: those are detected either way |
-| `--ocr-lang iso:ja` | with `--pdf-ocr`, a scan in a script the engine's default does not read (rapidocr's default reads Chinese and English, one language per run). Portable `iso:` tags (`iso:zh`, `iso:zh-Hant`, `iso:ja`, `iso:ko`) work on every engine; not `ch_sim` on rapidocr, which refuses it before reading a page. Always name the language: on a Mac with ocrmac installed docling picks ocrmac, and with its default languages it read a Chinese scan as Latin. A typed PDF ignores it |
+| `--ocr-lang iso:ja` | with `--pdf-ocr`, a scan in a language the engine's default does not read (on a Mac `auto` is ocrmac, default English, Spanish, French, German; elsewhere rapidocr, default Chinese and English, one language per run). Portable `iso:` tags (`iso:zh`, `iso:zh-Hant`, `iso:ja`, `iso:ko`) work on every engine; not `ch_sim` on rapidocr, which refuses it before reading a page. Always name the language: the pdf extra installs ocrmac on a Mac, and with its default languages it read a Chinese scan as Latin. A typed PDF ignores it |
 | `--ocr-replace-layer` | only with `--pdf-ocr`; when the embedded text is wrong, not merely invisible. Every page is OCR'd and the layer dropped; always name `--ocr-lang`. Toggling it re-extracts |
 | `--device cpu` | when the detected accelerator misbehaves; same output, slower |
 | `--pages 12-30` | the user wants one chapter or a range, or the paper's bibliography and appendix are not worth paying for; numbered from 1. The book is `<name>_pages-12-30_bilingual.epub` beside the whole-book one, never over it. A selection starting mid-section gets a `Page 12` heading in `source.md`; rename it there before the full run if the user wants a real title |

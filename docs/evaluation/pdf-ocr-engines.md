@@ -1,5 +1,7 @@
 # Which local OCR engine reads a scan best: rapidocr, ocrmac, easyocr and tesseract
 
+Since this measurement, the `pdf` extra installs onnxruntime, and ocrmac on macOS, so rapidocr and ocrmac download nothing on a fresh install; the install notes below describe the install as it was measured.
+
 ## Abstract
 
 `--ocr-engine` picks the engine docling runs on pages with no text layer. The four engines docling can run locally were measured on the same 20 scanned pages (14 English, 6 Chinese), with the same scorer and the same language asked of each, all on the CPU. On English, tesseract had the lowest error (mean CER 0.104) and ocrmac came next (0.136); rapidocr (0.169) and easyocr (0.267) trailed. On simplified Chinese, rapidocr was best (mean Han CER 0.054 over five pages, against ocrmac 0.097 and tesseract 0.116); on the one traditional page ocrmac and rapidocr were close (0.043 and 0.060). easyocr was last almost everywhere, took three times as long and up to 6.6 GB of memory, and dropped text on Chinese pages. ocrmac, Apple's own engine, was the fastest (median 6 s per two pages) and needs nothing downloaded.
@@ -139,7 +141,7 @@ Extraction time is the run's own `PDF extracted: 2 pages, …, N s.` line: model
 
 - The default stays `auto`: docling takes the first installed of ocrmac, rapidocr and easyocr, and names the one it used. `--ocr-engine` names one explicitly; an engine that is not installed, or ocrmac off macOS, is refused before any page is read, with the line that installs it.
 - The recommendations on [Which OCR engine](../features/pdf-ocr-engines.md) follow the class table: tesseract or ocrmac for English (tesseract ahead on old print), rapidocr for simplified Chinese, ocrmac or rapidocr for traditional Chinese, easyocr only when nothing else reads the script.
-- Whether the `pdf` extra should install ocrmac on macOS (so `auto` picks it with nothing to download), and whether it should install onnxruntime (so `auto` runs rapidocr on its bundled models instead of downloading PyTorch ones), is left to the owner.
+- The `pdf` extra installs ocrmac on macOS, so `auto` picks it with nothing to download, and installs onnxruntime, so rapidocr runs on its bundled models instead of downloading PyTorch ones.
 
 ## Limits
 

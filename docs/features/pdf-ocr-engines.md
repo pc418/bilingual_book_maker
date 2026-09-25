@@ -13,8 +13,8 @@ Try two pages first (`--pages 1-2`) and read `source.md` in the bundle before yo
 
 | your situation | use | why |
 |---|---|---|
-| A Mac, and you do not want to download anything | `ocrmac` (`pip install ocrmac`) | Apple's own engine, part of macOS: no model download. The fastest in the measurement (6 s per two pages) and second-best on English, tied with the best on typewriter and clean pages. Weaker than rapidocr on simplified Chinese. |
-| You have not chosen | `auto` (the default) | Takes the first installed of ocrmac, rapidocr, easyocr, and names it. On a Mac with ocrmac installed that is ocrmac. |
+| A Mac, and you do not want to download anything | `ocrmac` (already there with the `pdf` extra) | Apple's own engine, part of macOS: no model download. The fastest in the measurement (6 s per two pages) and second-best on English, tied with the best on typewriter and clean pages. Weaker than rapidocr on simplified Chinese. |
+| You have not chosen | `auto` (the default) | Takes the first installed of ocrmac, rapidocr, easyocr, and names it. With the `pdf` extra that is ocrmac on a Mac and rapidocr elsewhere. |
 | Simplified Chinese | `rapidocr` | Best on simplified Chinese: mean Han-character error 0.054, against ocrmac 0.097 and tesseract 0.116. |
 | Traditional Chinese (horizontal) | `ocrmac` or `rapidocr` | Close on the one page measured (0.043 and 0.060). tesseract (0.350) and easyocr (0.724) were far behind. Vertical text comes out in the wrong column order with any engine: check `source.md`. |
 | Japanese or Korean | `ocrmac` or `rapidocr`, with `--ocr-lang iso:ja` or `iso:ko` | Not measured. Both engines have these languages; tesseract needs the `jpn` or `kor` language file installed. |
@@ -27,8 +27,8 @@ Try two pages first (`--pages 1-2`) and read `source.md` in the bundle before yo
 
 | engine | install | downloads on first use | size |
 |---|---|---|---|
-| `rapidocr` | Comes with the `pdf` extra. Also `pip install onnxruntime`: the extra does not install it, and `--ocr-engine rapidocr` is refused without it. | Nothing with onnxruntime: its models are inside the package. Without onnxruntime, `auto` runs rapidocr on PyTorch instead, which downloads about 31 MB of models from modelscope.cn. | rapidocr 31 MB, onnxruntime 62 MB |
-| `ocrmac` | `pip install ocrmac` (macOS only) | Nothing. | 28 MB |
+| `rapidocr` | Comes with the `pdf` extra, with onnxruntime. | Nothing: its models are inside the package. | rapidocr 31 MB, onnxruntime 62 MB |
+| `ocrmac` | Comes with the `pdf` extra on macOS (macOS only). | Nothing. | 28 MB |
 | `easyocr` | `pip install easyocr` | A detector (83 MB) and one model per script: English 15 MB, Latin 15 MB, simplified Chinese 22 MB, traditional Chinese 226 MB, into `~/.EasyOCR/model`. | about 150 MB of packages |
 | `tesseract` | The tesseract program and its language files, on PATH: `brew install tesseract` on macOS, `apt install tesseract-ocr tesseract-ocr-chi-sim` on Debian and Ubuntu, the installer from the tesseract project on Windows. | Nothing: add a language by installing its file (`eng` 4 MB, `chi_sim` 2.5 MB, `chi_tra` 2.4 MB in the fast set). | 25 MB program plus its libraries |
 
