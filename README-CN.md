@@ -333,7 +333,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --key ${key} --use
 # 只要一章：第 12 到 30 页，成书是 paper_pages-12-30_bilingual.epub
 python3 make_book.py --book_name paper.pdf --to-epub --pages 12-30 --key ${key} --use_context session
 # 中文扫描件：告诉 OCR 模型要认的文字
-python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,en --key ${key} --use_context session
+python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang iso:zh --key ${key} --use_context session
 ```
 
 - `--pdf-ocr` 读取**没有文字层**的页面，也就是扫描件。不加它时这样的页面会被拒绝，绝不会被悄悄跳过。默认关闭：原生数字版 PDF 本来就能读，OCR 会让耗时翻上几倍，读到的东西却没有变化。版面、标题和表格识别无论加不加它都会运行——OCR 并不是提取质量的来源。
@@ -531,7 +531,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   为 PDF 输入选择额外生成的双语 PDF 版式。默认 `none` 不额外生成 PDF；
   `all` 会同时尝试上下对照和左右对照。双语 TXT 和 EPUB 输出不受该参数影响。
 
-- `--to-epub`、`--pdf-ocr`、`--device`（仅限 PDF）：
+- `--to-epub`、`--pdf-ocr`、`--ocr-lang`、`--ocr-replace-layer`、`--pages`、`--device`（仅限 PDF）：
 
   PDF 阅读版：文字层变成 Markdown，Markdown 变成带导航的双语 EPUB。工作目录、OCR 以及 `source.md` 里该核对什么，见 [PDF 转双语 EPUB](#pdf-转-双语-epub-实验性)。
 

@@ -2419,7 +2419,7 @@ Untyped, every plan run derives a default from the run's own prompt overhead:
 {SESSION_BUDGET_FLOOR} with the stock prompts, up to {SESSION_BUDGET_CEILING} under a fat custom --prompt, and half
 that (floor {SUBSTRICT_BUDGET_FLOOR}) per request on an endpoint without a strict-schema verdict —
 the same margin that halves the unit cap there. Session runs (codex included)
-keep the un-halved value: {SESSION_BUDGET_FLOOR}-{SESSION_BUDGET_CEILING} is their measured default. The run
+keep the un-halved value: {SESSION_BUDGET_FLOOR}-{SESSION_BUDGET_CEILING} is their chosen default (an owner's margin, not a measurement). The run
 narrates the number and the route class it chose; pass 1 to turn grouping
 off. Minimum 1.
 """,

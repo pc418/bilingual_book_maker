@@ -300,11 +300,13 @@ HELP_DEVICE = (
     "the same output; it is slower."
 )
 HELP_OCR_LANG = (
-    "With --pdf-ocr on: the languages the OCR engine reads on pages with no "
-    "text layer, comma-separated, in that engine's own codes (rapidocr: ch, "
-    "en, latin; easyocr: ch_sim, ja, ko; ocrmac: zh-Hans, ja-JP); the run "
-    "names the engine and languages it used. Without it the engine reads its "
-    "own default languages."
+    "With --pdf-ocr: the languages the OCR engine reads on pages with no "
+    "text layer (every page with --ocr-replace-layer), comma-separated, in "
+    "that engine's own codes (rapidocr: ch, en, latin; easyocr: ch_sim, ja, "
+    "ko; ocrmac: zh-Hans, ja-JP) or as iso: tags (iso:zh; rapidocr takes "
+    "iso:zh, not ch_sim, and reads only the first language); the run names "
+    "the engine and languages it used. Without it the engine reads its own "
+    "default languages."
 )
 HELP_FORMULA_IMAGES = (
     "Keep display formulas as the bare placeholder instead of a picture "

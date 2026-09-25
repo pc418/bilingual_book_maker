@@ -56,7 +56,7 @@ A [Jev-compatible classifier](providers.md#jev-and-jev-compatible-classifiers) r
 
 Through a gateway, name the key with `--classify-key` or a provider entry's `classify_env_key`.
 
-`BBM_JEV_MIN_CONFIDENCE`, a number from 0 to 1, overrides Jev's gate for a run: a `skip` below it is translated. The default is 0.95. A value that is not a number from 0 to 1 stops the run.
+`BBM_JEV_MIN_CONFIDENCE`, a number from 0 to 1, sets Jev's gate for a run without `--classify-min-confidence` (the flag wins): a `skip` below it is translated. The default is 0.95. A value that is not a number from 0 to 1 stops the run.
 
 ## Old per-vendor variables
 

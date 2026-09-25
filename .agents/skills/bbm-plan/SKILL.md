@@ -618,6 +618,7 @@ so you can honour a request without guessing at legal values.
 |---|---|---|---|
 | `--plan-classify` | `auto`, `none`, `all`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
 | `--classify-model` (old name `--plan-classify-model`), `--classify-base-url`, `--classify-key` | a model id; `jev` (the cheapest classifier; needs its key or a Jev-compatible URL, e.g. Simple Jev's) | **never passed** | never, inside this skill: agent mode never pre-fills the plan (owner: an agent judges worse from pre-filled verdicts) and the run warns the flag is ignored. Outside the skill it gives `model`/`auto` a classifier of its own, a machine-translation route included (`docs/features/plan-mode.md`) |
+| `--classify-min-confidence P` | with a Jev-compatible classifier only: the gate below which a `skip` becomes `translate`; default 0.95 (measured on the epub3-samples corpus against luna at 10:1); on two options nothing sits below 0.5 | **never passed** unless the user asks Jev to skip more and accepts the risk | a lower value keeps more of Jev's skips, and on the measured corpus those below 0.9 agreed with luna 7–55% of the time |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
 | `--poetry-group-size` | integer, short lines per request | **leave unset — deprecated** | never set it fresh; general grouping covers verse and the units cap is `--max-batch-units`. It still works for old command lines, and warns |
 | `--exclude-translate-tags` | comma-separated tags; `""` excludes nothing | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
@@ -764,7 +765,7 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `… did not read the probe image (…); image steps are skipped this run` | the model cannot see pictures there; the run goes on with docling's labels. Informational |
 | `Region roles: C of D asked items on page N changed; read that page in source.md …` | most of a page was relabeled; read that page before translating |
 | `plan: this endpoint missed the reply format twice …` | only under `--plan-classify model`/`auto`, never in this skill: the plain-session classifier stepped down (5 → 3 → 1 per turn, then stops and translates the rest) |
-| `… names a classifier, and --plan-classify agent … it is ignored this run` | a `--classify-*` flag rode along; drop it (agent mode asks no model) |
+| `… names a classifier, and --plan-classify agent … it is ignored this run` | a `--classify-model`, `--classify-base-url` or `--classify-key` flag rode along; drop it (agent mode asks no model) |
 | codex: `… is at capacity … retrying in 60 s` | usually Codex rate-limiting the network, not a missing model; the run retries by itself. Suggest another network or account if it repeats |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |

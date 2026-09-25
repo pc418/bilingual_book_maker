@@ -459,7 +459,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --key ${key} --use
 # one chapter: pages 12 to 30 only, into paper_pages-12-30_bilingual.epub
 python3 make_book.py --book_name paper.pdf --to-epub --pages 12-30 --key ${key} --use_context session
 # a scanned Chinese book: name the script the OCR models read
-python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,en --key ${key} --use_context session
+python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang iso:zh --key ${key} --use_context session
 ```
 
 - `--pdf-ocr` reads pages that carry **no text layer** — a scan. Such a page
@@ -794,7 +794,7 @@ are a minute's edit in `source.md`.
   extra PDF; `all` attempts both top-bottom and side-by-side layouts. The bilingual TXT and
   EPUB outputs are unaffected.
 
-- `--to-epub`, `--pdf-ocr`, `--device` (PDF only):
+- `--to-epub`, `--pdf-ocr`, `--ocr-lang`, `--ocr-replace-layer`, `--pages`, `--device` (PDF only):
 
   The PDF reading edition: the text layer becomes Markdown, the Markdown becomes a bilingual EPUB with navigation. See [PDF to bilingual EPUB](#pdf-to-bilingual-epub-experimental) for the bundle, OCR and what to check in `source.md`.
 

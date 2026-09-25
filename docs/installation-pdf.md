@@ -210,7 +210,7 @@ These are the lines the tool prints, and what to do.
 
 - **`reading a PDF needs the pdf extra, which is not installed.`** Step 3 was not done. The message carries the install line. If you ran `pip install "bbook_maker[pdf]"` and it said it succeeded, that is the trap described above. Do step 3.
 - **`Pandoc is required for --to-epub. Install it and make sure pandoc is on PATH.`** Do step 2.
-- **`… is too old for EPUB export; Pandoc 3.1.12 or newer is required`** Your Pandoc came from apt. Install the release from pandoc.org (step 2). The message also mentions `--pandoc PATH`; that option belongs to the staged tool `tools/pdf_to_book.py`, not to `make_book.py`, so put the new Pandoc on PATH instead.
+- **`… is too old for EPUB export; Pandoc 3.1.12 or newer is required`** Your Pandoc came from apt. Install the release from pandoc.org (step 2) and put it first on PATH; the message names the harness `tools/pdf_to_book.py --pandoc PATH` as the other way.
 - **`--device cuda was asked for, but the installed PyTorch is a CPU-only build.`** Reinstall with `requirements-pdf-gpu.txt` (and the CUDA index on Windows).
 - **`--device cuda was asked for, but this machine has no cuda accelerator available.`** The build has CUDA; the machine or driver cannot provide it. Run `nvidia-smi`: no output means no driver; a CUDA version lower than your channel means the driver is too old. Otherwise use `--device cpu`.
 - **On Windows, `torch.version.cuda` is `None` although the machine has a card.** The plain install was used. Reinstall naming the `cu126` index (step 3).

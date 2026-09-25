@@ -6,8 +6,9 @@ A run has one endpoint of its own (`--api_base`, `--model`, `--key`, or a
 - the steps that look at a page image (today the PDF route's region-role
   pass) want a vision model, named by `--img-model` / `--img-base-url` /
   `--img-key` or the provider entry's `img_*` fields;
-- every classification step (plan mode's unit classifier, the PDF route's
-  text-only structure decisions) wants a JSON-schema-capable model, named by
+- every classification step (plan mode's unit classifier; the PDF route has
+  no classification step yet) wants a classifier -- a JSON-schema-capable
+  model, or a Jev-compatible one -- named by
   `--classify-model` / `--classify-base-url` / `--classify-key` or the entry's
   `classify_*` fields.
 

@@ -235,7 +235,7 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 ### Before extraction
 
 - **`Pandoc is required for --to-epub. Install it and make sure pandoc is on PATH.`** Install Pandoc 3.1.12 or newer from [pandoc.org](https://pandoc.org/installing.html).
-- **`pandoc 3.1.3 is too old for EPUB export; Pandoc 3.1.12 or newer is required …`** Your Pandoc came from apt (Ubuntu 24.04 ships 3.1.3, Debian 13 ships 3.1.11). Install the release. The line also mentions `--pandoc PATH`; that option belongs to `tools/pdf_to_book.py`, not to `make_book.py`.
+- **`pandoc 3.1.3 is too old for EPUB export; Pandoc 3.1.12 or newer is required …`** Your Pandoc came from apt (Ubuntu 24.04 ships 3.1.3, Debian 13 ships 3.1.11). Install the release and put it first on PATH; the line names the harness `tools/pdf_to_book.py --pandoc PATH` as the other way.
 - **`reading a PDF needs the pdf extra, which is not installed.`** Do step 3 of [PDF extra](../installation-pdf.md). Not `pip install "bbook_maker[pdf]"`.
 - **`--device cuda was asked for, but the installed PyTorch is a CPU-only build.`** Reinstall through the CUDA route. **`… but this machine has no cuda accelerator available.`** Use `--device cpu` or `--device auto`.
 - **`--parallel-workers is not supported with --use_context session …`** Choose one.
@@ -246,7 +246,7 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 
 ### During extraction
 
-- **`N of M selected pages have no text layer (page(s) …); rerun with --pdf-ocr on to read them with the OCR models.`** The PDF (or part of it) is a scan. Add `--pdf-ocr`.
+- **`N of M selected pages have no text layer (page(s) …); rerun with --pdf-ocr to read them with the OCR models.`** The PDF (or part of it) is a scan. Add `--pdf-ocr`.
 - **`No --ocr-lang given: the OCR engine reads its own default languages, which may not be the pages'; …`** Then **`OCR engine: rapidocr (docling's choice on this install), languages: the engine's defaults.`** Check `source.md`. If the scan is not in Chinese or English, rerun with `--ocr-lang`; the bundle is read again.
 - **`The parser produced no text for a document whose pages have no text layer; the OCR pass returned pictures only.`** or **`Warning: no text was recognised on page(s) …`** The engine could not read the script. Rerun with `--ocr-lang` for the page's language.
 - **`The parser returned no text for this PDF; there is nothing to translate. If its pages are scans, rerun with --pdf-ocr.`** As it says.
