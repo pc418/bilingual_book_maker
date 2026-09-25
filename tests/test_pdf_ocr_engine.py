@@ -53,14 +53,15 @@ ROOT = Path(__file__).resolve().parent.parent
 TRANSLATION = ["--api_format", "google", "--language", "zh-hans"]
 
 # The lead's text (packet K; the rapidocr sentence revised in packet N,
-# 260925: the pdf extra alone downloads models on first use), verbatim:
+# 260925: rapidocr's models are in its package and onnxruntime runs them;
+# without onnxruntime it runs on torch and downloads about 31 MB), verbatim:
 # not to be reworded.
 LEAD_HELP = (
     "PDF only, with --to-epub --pdf-ocr: the OCR engine for pages with no text "
     "layer (every page with --ocr-replace-layer). auto (default) takes the "
     "first installed of ocrmac, rapidocr, easyocr. rapidocr comes with the pdf "
-    "extra and downloads about 31 MB of models on first use unless onnxruntime "
-    "is installed (pip install onnxruntime), which carries them. ocrmac is "
+    "extra; without onnxruntime it runs on torch and downloads about 31 MB of "
+    "models on first use (pip install onnxruntime avoids that). ocrmac is "
     "Apple's Vision framework on macOS: "
     "nothing to download (pip install ocrmac). easyocr downloads its models on "
     "first use (pip install easyocr). tesseract uses the tesseract program and "

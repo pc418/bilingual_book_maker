@@ -340,9 +340,9 @@ HELP_OCR_LANG = (
 _OCR_ENGINE_BODY = (
     "the OCR engine for pages with no text layer (every page with "
     "--ocr-replace-layer). auto (default) takes the first installed of "
-    "ocrmac, rapidocr, easyocr. rapidocr comes with the pdf extra and "
-    "downloads about 31 MB of models on first use unless onnxruntime is "
-    "installed (pip install onnxruntime), which carries them. ocrmac is "
+    "ocrmac, rapidocr, easyocr. rapidocr comes with the pdf extra; without "
+    "onnxruntime it runs on torch and downloads about 31 MB of models on "
+    "first use (pip install onnxruntime avoids that). ocrmac is "
     "Apple's Vision framework on macOS: nothing to "
     "download (pip install ocrmac). easyocr downloads its models on first "
     "use (pip install easyocr). tesseract uses the tesseract program and its "
