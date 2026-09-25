@@ -1776,6 +1776,49 @@ def test_the_converter_is_built_from_the_ocr_settings(settings, ocr_class, mode,
         assert options.ocr_options.lang == type(options.ocr_options)().lang
 
 
+class _Stop(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    "span,expected", [(None, {}), ((1, 2), {"page_range": (1, 2)})]
+)
+def test_a_whole_pdf_is_converted_without_a_page_range(
+    tmp_path, pdf, monkeypatch, span, expected
+):
+    # docling 2.129 validates `convert` strictly and refuses
+    # page_range=None, so a run without --pages failed before any page was
+    # read (found running packet K, 260925); no selection is its default.
+    asked = []
+
+    class Converter:
+        def convert(self, source, **kwargs):
+            asked.append(kwargs)
+            raise _Stop
+
+    monkeypatch.setattr(docling_parser, "_converter", lambda *a, **k: Converter())
+    with pytest.raises(_Stop):
+        docling_parser._convert(
+            pdf,
+            out_dir=tmp_path,
+            span=span,
+            device="cpu",
+            settings=ExtractionSettings(),
+        )
+    assert asked == [expected]
+
+
+def test_docling_refuses_a_page_range_of_none():
+    # the reason for the test above, on the installed docling: validation
+    # runs before any model or file is touched
+    pytest.importorskip("docling.document_converter")
+    from docling.document_converter import DocumentConverter
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        DocumentConverter().convert("never-read.pdf", page_range=None)
+
+
 @pytest.mark.parametrize(
     "settings",
     [
