@@ -338,6 +338,8 @@ def page_question(page):
         },
         context=build_context(page),
         criteria=dict(CRITERIA),
+        # a wrong translate costs tokens, a wrong skip loses content
+        fallback="translate",
     )
 
 
@@ -345,6 +347,12 @@ def page_question(page):
 # with a label and a probability, no words): how the verdict was reached,
 # which is what the plan JSON is audited on.
 NAMED_BY_JEV = "unnamed (jev verdict {verdict}, confidence {confidence:.2f})"
+# The same, for an answer the backend's confidence gate replaced with the
+# question's fallback: what jev chose, how sure it was, what was recorded.
+NAMED_BY_JEV_FELL_BACK = (
+    "unnamed (jev verdict {choice} at confidence {confidence:.2f}, below the "
+    "gate: {verdict})"
+)
 
 
 def _named(answer):
@@ -356,16 +364,21 @@ def _named(answer):
     reply gave an out-of-enum verdict is still recorded as evidence.
     """
     entries = {**answer.values, **answer.invalid}
+    fell_back = getattr(answer.raw, "fell_back", None) or {}
+
+    def name(key, value):
+        confidence = answer.confidence.get(key, 0.0)
+        if key in fell_back:
+            return NAMED_BY_JEV_FELL_BACK.format(
+                choice=fell_back[key], confidence=confidence, verdict=value
+            )
+        return NAMED_BY_JEV.format(verdict=value, confidence=confidence)
+
     return {
         key: (
             value
             if isinstance(value, dict)
-            else {
-                "verdict": value,
-                "content_type": NAMED_BY_JEV.format(
-                    verdict=value, confidence=answer.confidence.get(key, 0.0)
-                ),
-            }
+            else {"verdict": value, "content_type": name(key, value)}
         )
         for key, value in entries.items()
     }

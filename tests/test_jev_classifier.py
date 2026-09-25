@@ -8,7 +8,7 @@ docs.typesafe.ai/api as read 260923. No network: the transport is injected.
 import pytest
 
 from book_maker.classifier import (
-    JEV_ABSTAIN_BELOW,
+    JEV_MIN_CONFIDENCE,
     JEV_PATH,
     Classifier,
     JevBackend,
@@ -142,8 +142,9 @@ class TestTheRequest:
             "criteria": {"translate": "book content", "skip": "apparatus"},
         }
 
-    def test_a_flat_distribution_is_the_abstain_answer(self):
-        assert JEV_ABSTAIN_BELOW == 0.5
+    def test_without_a_fallback_a_low_confidence_answer_is_the_abstain(self):
+        # a caller that sets no fallback (the role pass) keeps F's behaviour
+        assert JEV_MIN_CONFIDENCE == 0.5
         transport = Transport(
             _ok(
                 {
@@ -343,3 +344,112 @@ class TestThePlanClassifierIsLean:
         for label, words in model_entry.CRITERIA.items():
             assert f'Answer "{label}" for {words}.' in prompt
         assert body["questions"]["block:p.c0"]["criteria"] == model_entry.CRITERIA
+
+
+class TestTheAsymmetricGate:
+    """Packet J (owner 260924, "we need a best guess for everything"): the
+    fallback answer is accepted at any confidence; another answer below
+    the gate becomes the fallback, its confidence kept for the audit."""
+
+    def _ask(self, answers, **kw):
+        transport = Transport(_ok(answers))
+        classifier = Classifier(None, "jev-latest", backends=[_backend(transport)])
+        return classifier.ask(_question(fallback="translate", **kw))
+
+    def test_a_low_confidence_fallback_is_accepted(self):
+        answer = self._ask(
+            {
+                "a": _answer("translate", {"translate": 0.3, "skip": 0.2, "x": 0.5}),
+                "b": _answer("translate", {"translate": 0.9, "skip": 0.1}),
+            }
+        )
+        assert answer.values == {"a": "translate", "b": "translate"}
+        assert answer.confidence["a"] == 0.3
+        assert answer.raw.fell_back == {}
+
+    def test_a_low_confidence_skip_becomes_the_fallback_with_its_confidence(self):
+        answer = self._ask(
+            {
+                "a": _answer("skip", {"translate": 0.3, "skip": 0.4, "x": 0.3}),
+                "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+            }
+        )
+        assert answer.values == {"a": "translate", "b": "skip"}
+        assert answer.confidence == {"a": 0.4, "b": 0.8}
+        assert answer.raw.fell_back == {"a": "skip"}
+
+    def test_the_role_pass_s_fallback_is_its_abstain_label(self):
+        # the role pass sets `abstain` and no fallback (it never reaches jev
+        # today: it asks with an image); a text question shaped like it
+        # falls back to abstain, never to another role
+        roles = ("text", "title", "abstain")
+        transport = Transport(
+            _ok(
+                {
+                    "0": _answer("title", {"text": 0.6, "title": 0.4}),
+                    "1": _answer("title", {"text": 0.1, "title": 0.9}),
+                }
+            )
+        )
+        classifier = Classifier(None, "jev-latest", backends=[_backend(transport)])
+        answer = classifier.ask(
+            Question(
+                prompt="P",
+                candidates={"0": roles, "1": roles},
+                abstain="abstain",
+                per_candidate={"0": "zero", "1": "one"},
+            )
+        )
+        assert answer.values == {"0": "abstain", "1": "title"}
+
+    def test_the_environment_overrides_the_gate(self, monkeypatch):
+        monkeypatch.setenv("BBM_JEV_MIN_CONFIDENCE", "0.85")
+        answer = self._ask(
+            {
+                "a": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+                "b": _answer("skip", {"translate": 0.1, "skip": 0.9}),
+            }
+        )
+        assert answer.values == {"a": "translate", "b": "skip"}
+        monkeypatch.setenv("BBM_JEV_MIN_CONFIDENCE", " ")
+        assert _backend(Transport()).min_confidence == JEV_MIN_CONFIDENCE
+
+    @pytest.mark.parametrize("raw", ["abc", "1.5", "-0.1", "nan", "0,7"])
+    def test_a_malformed_override_stops_when_the_backend_is_built(
+        self, monkeypatch, raw
+    ):
+        monkeypatch.setenv("BBM_JEV_MIN_CONFIDENCE", raw)
+        with pytest.raises(SystemExit, match="BBM_JEV_MIN_CONFIDENCE must be"):
+            _backend(Transport())
+
+    def test_the_plan_classifier_records_what_jev_chose_below_the_gate(
+        self, monkeypatch
+    ):
+        from book_maker.loader.classify import classify_plan
+        from book_maker.loader.classify import model as model_entry
+
+        monkeypatch.setattr(model_entry, "gather_candidates", lambda ledger: ledger)
+        page = [
+            {"key": "block:p.a", "units": 1, "chars": 9, "samples": ["one"]},
+            {"key": "block:p.b", "units": 1, "chars": 9, "samples": ["12"]},
+        ]
+        assert model_entry.page_question(page).fallback == "translate"
+        transport = Transport(
+            _ok(
+                {
+                    "block:p.a": _answer("skip", {"translate": 0.45, "skip": 0.55}),
+                    "block:p.b": _answer("skip", {"translate": 0.05, "skip": 0.95}),
+                }
+            )
+        )
+        monkeypatch.setenv("BBM_JEV_MIN_CONFIDENCE", "0.6")
+        classifier = Classifier(None, "jev-latest", backends=[_backend(transport)])
+        decisions, _ = classify_plan(page, classifier)
+        assert decisions == {
+            "block:p.a": (
+                "translate",
+                "unnamed (jev verdict skip at confidence 0.55, below the gate: "
+                "translate)",
+            ),
+            "block:p.b": ("skip", "unnamed (jev verdict skip, confidence 0.95)"),
+        }

@@ -71,6 +71,11 @@ class Question:
     `per_candidate`  a short pointer per candidate id: what to decide, and
                      which of the context's candidates it is about
     `criteria`       `{answer: description}` in the caller's own words
+
+    `fallback` is the answer that costs nothing when wrong (the plan
+    classifier's `translate`). A backend that gates on its own confidence
+    (jev) accepts it at any confidence and turns any other answer below the
+    gate into it; a caller that sets none gets `abstain` there instead.
     """
 
     prompt: str
@@ -85,6 +90,7 @@ class Question:
     deadline: float = None
     context: str = None
     criteria: dict = None
+    fallback: str = None
 
 
 @dataclass
@@ -105,12 +111,15 @@ class Reply(dict):
     """A backend's raw answer (`{id: value}`), with what the call cost.
 
     `text` is the reply as the endpoint wrote it, where there was one;
-    `confidence` a backend's own probability for each chosen value.
+    `confidence` a backend's own probability for each chosen value;
+    `fell_back` `{id: the answer the backend chose}` for the ids its
+    confidence gate turned into the question's fallback.
     """
 
     usage = None
     text = None
     confidence = None
+    fell_back = None
 
 
 class NoBackend(Exception):
@@ -529,12 +538,18 @@ class Classifier:
 # jev: TypeSafe's System One classifier
 # --------------------------------------------------------------------------
 
-# Below this probability for the top option the answer is the question's
-# `abstain` value rather than the option. A starting guess, not a
-# measurement: nothing has been tuned against a corpus yet, and with two
-# options (the plan classifier's translate/skip) the top one is never below
-# it but on an exact tie.
-JEV_ABSTAIN_BELOW = 0.5
+# Below this probability for its chosen option, an answer other than the
+# question's `fallback` becomes the fallback (the question's `abstain` when
+# it sets none); the fallback itself is accepted at any confidence.
+# Placeholder until the eval (packet EJ, 260924) sets it from measured
+# agreement per confidence bin; the gate only guards non-fallback answers (a
+# wrong skip loses content, a wrong translate costs tokens).
+# The environment variable BBM_JEV_MIN_CONFIDENCE (a number from 0 to 1)
+# overrides it for a run, so the eval can sweep it without editing code; it
+# is read when a jev backend is built, and a value that is not such a
+# number stops the run there.
+JEV_MIN_CONFIDENCE = 0.5
+JEV_MIN_CONFIDENCE_ENV = "BBM_JEV_MIN_CONFIDENCE"
 
 # docs.typesafe.ai/api (read 260923): one POST per request, a map of typed
 # questions evaluated in parallel against one `state`, one answer per
@@ -550,6 +565,25 @@ JEV_WAIT_CAP = 120
 # Statuses that are the request's own fault: asking again sends the same
 # thing and gets the same answer.
 JEV_FATAL_STATUSES = frozenset({400, 401, 403, 404, 405, 413, 422})
+
+
+def jev_min_confidence():
+    """`JEV_MIN_CONFIDENCE`, or the environment's override of it."""
+    import math
+    import os
+
+    raw = os.environ.get(JEV_MIN_CONFIDENCE_ENV, "").strip()
+    if not raw:
+        return JEV_MIN_CONFIDENCE
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not 0.0 <= value <= 1.0:  # NaN fails too
+        raise SystemExit(
+            f"{JEV_MIN_CONFIDENCE_ENV} must be a number from 0 to 1; got {raw!r}."
+        )
+    return value
 
 
 class JevFatal(Exception):
@@ -571,10 +605,14 @@ class JevBackend:
     -- and each candidate's Choice carries only its short `per_candidate`
     pointer as instructions, with the caller's `criteria` describing each
     option (its allowed answers but `abstain`). A caller that gives no
-    context has its whole prompt sent as the state. The top option
-    answers, unless its probability is below `JEV_ABSTAIN_BELOW`, when the
-    answer is `abstain`: a flat distribution is what abstaining means here.
-    Text only.
+    context has its whole prompt sent as the state.
+
+    The top option answers. The gate is asymmetric (owner 260924, "we need
+    a best guess for everything"): the question's `fallback` is accepted at
+    any confidence, and any other option whose probability is below
+    `min_confidence` becomes the fallback (`abstain` when the question sets
+    none), its probability kept in `confidence` for the audit line. Text
+    only.
     """
 
     name = "jev"
@@ -601,6 +639,7 @@ class JevBackend:
         self._sleep = sleep
         self._log = log
         self.wait_cap = wait_cap
+        self.min_confidence = jev_min_confidence()
         self.usage = UsageMeter()
 
     def can(self, question):
@@ -654,6 +693,10 @@ class JevBackend:
         body, settled = self.request_body(question)
         reply = Reply(settled)
         reply.confidence = {cid: 1.0 for cid in settled}
+        reply.fell_back = {}
+        fallback = question.fallback
+        if fallback is None:
+            fallback = question.abstain
         if not body["questions"]:
             return reply
         data = self._send(body)
@@ -673,10 +716,15 @@ class JevBackend:
             if probability is None:
                 probability = answer.get("confidence") or 0.0
             reply.confidence[cid] = float(probability)
-            if question.abstain is not None and probability < JEV_ABSTAIN_BELOW:
-                reply[cid] = question.abstain
-            else:
+            if (
+                fallback is None
+                or choice == fallback
+                or probability >= self.min_confidence
+            ):
                 reply[cid] = choice
+            else:
+                reply[cid] = fallback
+                reply.fell_back[cid] = choice
         reply.text = data
         return reply
 
