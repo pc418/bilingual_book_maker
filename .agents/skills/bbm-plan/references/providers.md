@@ -85,8 +85,21 @@ which older files use for `anthropic`. Any other OpenAI-compatible host is
 with that entry printed. The shipped example file has an entry per vendor. `default_models` becomes `--model` when it holds one
 id and `--model_list` when it holds several. `env_key` is read for the key
 ahead of `BBM_API_KEY` and the format's own variables. **Explicit flags
-win**, so `--provider nvidia --model <id>` keeps the user's model. An
-unknown name is an error that names both files.
+win**, so `--provider nvidia --model <id>` keeps the user's model. A name
+in neither file falls back to the shipped example, with a warning naming
+the address and key variable it used.
+
+Optional fields name two more endpoints: `img_model`/`img_base_url`/
+`img_env_key` (the PDF route's image step; off unless named, never the
+run's model by fallback) and `classify_model`/`classify_base_url`/
+`classify_env_key` (plan classification; default the run's model, unused
+by this skill's agent mode). Both extra bases must speak the OpenAI shape.
+A key is bound to its address: `--img-key`/`--classify-key`; else the run's
+key only at the run's own address; else the entry's `*_env_key` only at the
+address the entry names; else the format's variable. `--extra_body` and
+`--extra_headers` never travel to another host. Jev (`--classify-model
+jev`) reads `JEV_API_KEY`/`TYPESAFE_API_KEY` only at a typesafe.ai
+address; through a gateway the key is named.
 
 ## `--model orcarouter`: a gateway with no address to type
 
@@ -244,7 +257,7 @@ it answers the shape question outright.
 | `openai` (any host) | schema when the probe says `strict`, else delimiter | yes |
 | `anthropic` | delimiter (no structured-output work was done for it) | yes, via the prompt rung |
 | `codex` | one turn per unit, on a thread that is itself the context window | yes, via the prompt rung — the sidecar compiles no schema |
-| `google`, `deepl`, `deeplfree`, `caiyun`, `tencent`, `customapi` | translation only | **no** |
+| `google`, `deepl`, `deeplfree`, `caiyun`, `tencent`, `customapi` | translation only | only with a classifier of its own (`--classify-model`, or an entry's `classify_model`) |
 
 Classification capability does not gate *this* skill — `--plan-classify
 agent` makes no API call, you are the classifier. It matters only if someone

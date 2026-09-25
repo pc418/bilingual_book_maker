@@ -107,6 +107,14 @@ Then tell them exactly what to edit and stop until they say it is done:
   both. The example carries gpt-5.6-luna's list price. Ask for the price
   when the user cares about the bill; a model without one puts the bar
   back on tokens, and the closing line names it.
+- The example's `openai` entry also sets `img_model: gpt-5.6-luna`. Only
+  the PDF route uses it (§1e: the region-role pass, ~3k prompt tokens a
+  page); leave it in unless the user wants to spend nothing on that. The
+  other optional fields, `img_base_url`/`img_env_key` and
+  `classify_model`/`classify_base_url`/`classify_env_key`, point those
+  steps at another endpoint; a key is sent only to the address it belongs
+  to (`docs/providers.md`). Never add a `classify_model` for this skill:
+  agent mode asks no model.
 - `.env`: the variable `env_key` names, with the key as its value.
 
 A bare key with no entry gets the same treatment: the example file's
@@ -363,7 +371,11 @@ opened, naming the missing one, so nothing is paid):
    Japanese, Korean, Cyrillic or Arabic scan needs the flag and comes back
    empty or as wrong characters without it. Ask what language the book is
    in; rapidocr takes the first code. The first use of a language downloads
-   its model.
+   its model. A scan that already carries an OCR layer (Internet Archive,
+   ABBYY) is readable **without** `--pdf-ocr`: the run names such pages
+   (`… carry only an invisible OCR text layer …`) and uses the layer. With
+   the flag the local engine's text replaces it, which measured worse on 3
+   of 3 pages: run without it first and add it only if the layer is poor.
 4. `--device` only if the default misbehaves: `auto` detects CUDA or MPS
    and falls back to the CPU. `--device cpu` is fully supported and gives
    the same text, only slower — it is never a downgrade in quality.
@@ -398,15 +410,16 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-ep
 | `--ocr-lang iso:ja` | with `--pdf-ocr`, a scan in a script the engine's default does not read (rapidocr's default reads Chinese and English); portable `iso:` tags (`iso:zh-Hant`, `iso:ja`, `iso:ko`) or the engine's own codes; a typed PDF ignores it |
 | `--pages 12-30` | the user wants one chapter or a range, or the paper's bibliography and appendix are not worth paying for; numbered from 1. The book is `<name>_pages-12-30_bilingual.epub` beside the whole-book one, never over it. A selection starting mid-section gets a `Page 12` heading in `source.md`; rename it there before the full run if the user wants a real title |
 | `--glossary` | the same file contract as on an EPUB; worth it on a paper with recurring terms |
+| `--img-model gpt-5.6-luna` | a paper, a textbook, anything with code listings: a vision model corrects docling's region roles (author line taken for a heading, listing read as footnotes; 40 of 66 label faults fixed in the study, `docs/evaluation/pdf-structure-llm-roles.md`). ~3k prompt tokens a page. `(--provider openai)` already turns it on through the example's `img_model`; `--img-model none` turns it off. Needs an OpenAI-compatible endpoint that reads images; a local route gets it only with `--img-base-url` at a hosted one. Changing it re-extracts |
 
 By document type (the full run; every one starts with the two-page first look):
 
 | document | add to the full run | say to the user |
 |---|---|---|
-| novel | `--use_context session --quiet` | chapters set without numbering get their level from font size alone: read the headings in `source.md` |
+| novel | `--use_context session --quiet` | chapters set without numbering get their level from font size alone: read the headings in `source.md`. The role pass was measured on papers, web pages and code, not novels: offer `--img-model none` on a long novel to save its tokens |
 | textbook with tables and formulas | `--pages A-B` per chapter, `--glossary` if terms recur | tables are detected without OCR; display formulas become pictures, not translated (`docs/evaluation/pdf-formulas-as-images.md`); inline maths is not covered |
-| paper | `--use_context session`; `--pages` to leave out the bibliography | heading levels were exact on 187 of 195 headings across 20 arXiv papers (`docs/evaluation/pdf-heading-levels.md`) |
-| scanned book | `--pdf-ocr`, plus `--ocr-lang iso:<lang>` outside Chinese/English | an Internet Archive or ABBYY scan can reach OCR as a smear in this build and come back empty or as the old OCR layer while the run completes: read `source.md` before paying (`docs/evaluation/pdf-page-render-backend.md`) |
+| paper | `--use_context session`, `--img-model gpt-5.6-luna` unless the entry already names one; `--pages` to leave out the bibliography | heading levels were exact on 187 of 195 headings across 20 arXiv papers (`docs/evaluation/pdf-heading-levels.md`) |
+| scanned book | `--pdf-ocr` (not when the scan carries an OCR layer: see step 3), plus `--ocr-lang iso:<lang>` outside Chinese/English | JBIG2-masked scans (Internet Archive, ABBYY) are rendered through pypdfium2 and the run says so; still read `source.md` before paying. `--img-model` buys little here: it cannot rebuild a page docling shattered |
 | Chinese scan | `--pdf-ocr --ocr-lang iso:zh-Hans` (`iso:zh-Hant` for traditional) | horizontal text reads well; **vertical** text comes back with its columns in the wrong order (CER 0.905 on the one page measured): do not translate it unreviewed (`docs/evaluation/pdf-ocr-llm-vs-local.md`) |
 
 By system (the route needs no GPU; the device changes speed, never the text):
@@ -591,12 +604,14 @@ so you can honour a request without guessing at legal values.
 | `--api_base` | endpoint URL | *unset*; the entry's `base_url` | a gateway, proxy or local server. The OpenAI shape wants `…/v1`; the anthropic shape wants the bare host |
 | `--provider` | a name from `bbm_providers.json` (repo root) or `~/.bbm/providers.json` | **the route, step 0** | the endpoint is an entry there: one word supplies `--api_base`, `--api_format`, the model(s) and the key variable. Explicit flags still win, so `--model` may ride along. An unknown name is an error naming both files |
 | `--proxy` | `http://127.0.0.1:7890`-style | *unset* | the user is behind one |
+| `--img-model` | a vision model id, or `none`; with `--img-base-url`/`--img-key` for another OpenAI-compatible endpoint | *unset*: the entry's `img_model`, else off — never the run's model by fallback | PDF route only (§1e). `none` turns the entry's model off; on any other book the run warns it does nothing |
 
 ### Plan mode
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | `--plan-classify` | `auto`, `none`, `all`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
+| `--classify-model` (old name `--plan-classify-model`), `--classify-base-url`, `--classify-key` | a model id; `jev` for TypeSafe's classifier | **never passed** | never, inside this skill: agent mode never pre-fills the plan (owner: an agent judges worse from pre-filled verdicts) and the run warns the flag is ignored. Outside the skill it gives `model`/`auto` a classifier of its own, a machine-translation route included (`docs/features/plan-mode.md`) |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
 | `--poetry-group-size` | integer, short lines per request | **leave unset — deprecated** | never set it fresh; general grouping covers verse and the units cap is `--max-batch-units`. It still works for old command lines, and warns |
 | `--exclude-translate-tags` | comma-separated tags; `""` excludes nothing | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
@@ -631,7 +646,8 @@ so you can honour a request without guessing at legal values.
 | `--quiet` | on/off | **on for every paid run** | never off for a run that translates — bars and per-unit echoes flood the log and your context; warnings and errors still print |
 | `--resume` | on/off | **off on the first run, on for every rerun** | never off after a crash — replay is positional and fingerprint-guarded. With no `.<book>.temp.bin` it raises an uncaught traceback, so it goes on neither a smoke nor a full run that follows a skipped smoke; and a cache written with `--only_filelist` is refused by the full run, whose filters differ |
 | `--parallel-workers` | integer | **1 (sequential)** | a long book where wall-clock matters more than consistency. Then drop to bare `--use_context`: **`--use_context session` is refused with it** (one history, which workers cannot share), and window context is per chapter anyway, so continuity stops at every chapter boundary. **Never on `codex`** (below) |
-| `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter |
+| `--extra_body` | JSON string | *unset* | the endpoint needs a vendor-specific parameter. It wins over `--no-thinking` |
+| `--no-thinking` | on/off | *off* | a reasoning model (local Qwen3-class, or a hosted one that thinks by default) spends tokens and time before every paragraph. The field is negotiated from the endpoint's rejections; refused on `codex` |
 | `--accumulated_num` | integer (tokens per request) | *unset* — derived per run: `1200` stock prompts, up to `1600` under a fat `--prompt`, `800` off-schema; session runs keep the un-halved value; the run narrates its choice | the run keeps printing misalignment recoveries (shorten it), or you want fewer/larger requests for cost (a typed value always wins, un-halved; `1` turns grouping off). Trade-offs and measurements: `docs/evaluation/grouping-batch-size.md` |
 | `--max-batch-units` | integer (units per request) | `16` (`8` automatically off-schema) — owner-set margin under the measured 64-unit fault onset | the run keeps printing misalignment recoveries: halve it (`8`, then `4`). Never past `48`. Detail: `docs/evaluation/grouping-batch-size.md` |
 
@@ -736,6 +752,12 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `N of M selected pages have no text layer …; rerun with --pdf-ocr` | a scanned PDF; the flag, not a different tool |
 | `The parser produced no text for a document whose pages have no text layer …`, or `no text was recognised on page(s) …`, on a scan in a script the engine's default does not read | check the `OCR engine: …, languages: …` line; rerun with `--ocr-lang` (`iso:ja`, `iso:ko`, `iso:zh-Hant`); the bundle is read again |
 | an OCR language the engine has no model for (the message names the engine and carries its list) | a code the engine does not know; use an `iso:` tag or a code from the list; nothing was read or paid |
+| `--img-model needs an OpenAI-compatible endpoint …` | the image model would be asked at a non-OpenAI endpoint; add an OpenAI-compatible `--img-base-url` (key in `--img-key` or the entry's `img_env_key`) or drop it. Before extraction; nothing paid |
+| `… did not read the probe image (…); image steps are skipped this run` | the model cannot see pictures there; the run goes on with docling's labels. Informational |
+| `Region roles: C of D asked items on page N changed; read that page in source.md …` | most of a page was relabeled; read that page before translating |
+| `plan: this endpoint missed the reply format twice …` | only under `--plan-classify model`/`auto`, never in this skill: the plain-session classifier stepped down (5 → 3 → 1 per turn, then stops and translates the rest) |
+| `… names a classifier, and --plan-classify agent … it is ignored this run` | a `--classify-*` flag rode along; drop it (agent mode asks no model) |
+| codex: `… is at capacity … retrying in 60 s` | usually Codex rate-limiting the network, not a missing model; the run retries by itself. Suggest another network or account if it repeats |
 | codex: `… codex login, then run this again` | the sidecar is up but not signed in. One `codex login`, then rerun; nothing was paid |
 | codex: waiting *N* min for the window to reset | the 5-hour plan window is spent — the run sleeps and continues by itself |
 | codex: `the Codex plan allowance is spent and does not reset until …` | the weekly limit. The run exits 1, having saved whatever the loader checkpoints; rerun with `--resume` after the time it names |
