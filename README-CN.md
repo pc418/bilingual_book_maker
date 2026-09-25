@@ -93,7 +93,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 - 或使用`--provider`进行翻译: `bbm_providers.example.json` 里预设了以下厂家（Gemini、Qwen、xAI、Groq、OrcaRouter、Ollama、LiteLLM、
   SiliconFlow、OpenRouter）：复制为 `bbm_providers.json`，并修改其中的key，
   例如`--provider gemini` 就是使用其中 Gemini 的api。
-- `--use_context session` 使用会话模式翻译；历史默认在 8k 时压缩（`--context-compact-at` 可改）。它维护一份缓存的历史以保持前后一致，并自动从交接报告中积累术语表（`--glossary-auto`），使人名、术语全书统一——是 OpenAI 兼容接口的推荐用法，下方示例均已带上。
+- `--use_context session` 使用会话模式翻译；历史默认在 8k 时压缩（`--context-compact-at` 可改）。它维护一份缓存的历史以保持前后一致，使人名、术语全书统一，也可以从交接报告中积累术语表（`--glossary-auto on`，默认关闭）——是 OpenAI 兼容接口的推荐用法，下方示例均已带上。
 - 旧的预设名和 key 参数仍然可用，见 [从旧参数迁移](./docs/migration.md)。
 
 ## 支持的翻译服务
@@ -253,7 +253,7 @@ codex "你好，请使用bbm-plan帮我将这本书：test_books/animal_farm.epu
 
 ## 使用说明
 
-- 翻译完会生成一本 `{book_name}_bilingual.epub` 的双语书
+- 翻译完会生成一本 `{book_name}_bilingual.epub` 的双语书；TXT、MD、SRT 输入分别生成 `{book_name}_bilingual.txt`、`{book_name}_bilingual.md`、`{book_name}_bilingual.srt`
 - 如果出现了错误或使用 `CTRL+C` 中断命令，不想接下来继续翻译了，会生成一本 `{book_name}_bilingual_temp.epub` 的书，直接改成你想要的名字就可以了
 
 ## 功能
@@ -348,12 +348,10 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
 **注意事项。**
 
 - **付费翻译整本之前先读 `source.md`**，至少读标题：它们会变成目录。标题识别在论文上不错，在其他生成器上要弱得多；Word 导出的 PDF 可能几乎没有标题。在工作目录里改好 Markdown 再重跑，提取不会重做。
-- **行间公式不会被解码。** 它们在 `source.md` 里标为 `<!-- formula-not-decoded -->`，数学内容不会进入成书。公式周围的结构会保留，阅读顺序也正确，但一篇数学密集的论文会丢掉它的数学。这是该路由目前最大的缺口。
 - 图表保留为图片，图中标注不翻译。一页提取出的文字远超印刷页容量时会警告，检查那一页。
 - 提取器不转义正文里的 Markdown 语法。含 `\s`、`[u](y)` 或 `<k>` 的句子可能在翻译前被当作原始 TeX、缺失的链接目标或原始 HTML 而拒绝；消息会指出是哪一块。在 `source.md` 里转义后重跑。
 - EPUB 不带 `bbm_translation_metadata.json`，也不内嵌术语表（书由 Pandoc 生成），`--no_disclosure` 在该路由上暂未生效：署名行总会加上。`--glossary-auto` 只在压缩发生时学习，短论文在默认预算下学不到任何东西。
 - 除 `--to-epub` 外的每个 PDF 参数在没走该路由时都会被报告为忽略；在非 PDF 书上加 `--to-epub` 会停止运行。
-- `--with-ocr` 和 `--no-gpu` 仍然可用，等同于 `--pdf-ocr` 和 `--device cpu`，会提示一次，保留一个版本。
 
 该路由仍是实验性的：只在 arXiv 论文和少数几种其他生成器的 PDF 上核过，并未覆盖所有 PDF 形态。欢迎提 issue 和 PR；能分享的话请附上 PDF，或者 `source.md` 里出错的那一页。
 

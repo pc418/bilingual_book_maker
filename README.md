@@ -102,10 +102,10 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
   Gemini API from it.
 - `--use_context session` translates in session mode; the history compacts
   at 8k by default (`--context-compact-at` overrides). It keeps one cached
-  history for consistency and learns a glossary from its own handoff
-  reports (`--glossary-auto`), so recurring names stay stable across the
-  book — the recommended mode on OpenAI-compatible endpoints, and what the
-  examples below use.
+  history for consistency, so recurring names stay stable across the book,
+  and can also learn a glossary from its own handoff reports
+  (`--glossary-auto on`, off by default) — the recommended mode on
+  OpenAI-compatible endpoints, and what the examples below use.
 - The old preset names and key flags still work, see
   [Migrating from the old flags](./docs/migration.md).
 
@@ -283,7 +283,7 @@ codex "Hi, please use bbm-plan to translate this book: test_books/animal_farm.ep
 
 ## Usage
 
-- Once the translation is complete, a bilingual book named `${book_name}_bilingual.epub` would be generated for EPUB inputs; for TXT/MD/SRT inputs a bilingual text (or subtitle) file named `${book_name}_bilingual.txt` (or `_bilingual.srt`) will be generated. For **PDF inputs** the tool will produce a bilingual `.txt` fallback and will also attempt to create `${book_name}_bilingual.epub` — if EPUB creation fails, the TXT fallback remains so you do not need to retranslate.
+- Once the translation is complete, a bilingual book named `${book_name}_bilingual.epub` would be generated for EPUB inputs; for TXT, MD and SRT inputs a bilingual file named `${book_name}_bilingual.txt`, `${book_name}_bilingual.md` or `${book_name}_bilingual.srt` will be generated. For **PDF inputs** the tool will produce a bilingual `.txt` fallback and will also attempt to create `${book_name}_bilingual.epub` — if EPUB creation fails, the TXT fallback remains so you do not need to retranslate.
 - If there are any errors or you wish to interrupt the translation by pressing `CTRL+C`, a temporary bilingual file (for example `{book_name}_bilingual_temp.epub` or `{book_name}_bilingual_temp.txt`) would be generated. You can simply rename it to any desired name.
 
 ## Features
@@ -549,11 +549,6 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   papers and much weaker on other producers; a Word-exported PDF can arrive
   with almost none. Fix the Markdown in the bundle and rerun; the extraction
   is not repeated.
-- **Display equations are not decoded.** Their regions are marked
-  `<!-- formula-not-decoded -->` in `source.md` and the mathematics does not
-  reach the book. The structure around them is kept and the reading order is
-  right, but a maths-heavy paper loses its maths. This is the route's
-  biggest gap.
 - Figures stay pictures and their labels are not translated. A page that
   extracts far more text than a printed page holds is warned about; inspect
   that page.
@@ -568,8 +563,6 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang ch_sim,
   nothing.
 - Every PDF flag other than `--to-epub` is reported as ignored when the route
   is not taken, and `--to-epub` on a non-PDF book stops the run.
-- `--with-ocr` and `--no-gpu` still work as `--pdf-ocr` and `--device cpu`,
-  with a notice, for one release.
 
 This route is experimental: it has been checked on arXiv papers and a handful
 of other producers, not on every PDF shape. Issues and PRs are welcome; attach
