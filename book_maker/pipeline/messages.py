@@ -86,8 +86,8 @@ INVISIBLE_TEXT_LAYER = (
     "{count} of {total} selected pages carry only an invisible OCR text layer "
     "(a scanned book with recognised text underneath); that layer is kept as "
     "the page's text (with --pdf-ocr, possibly mixed with what the OCR engine "
-    "reads), and --ocr-replace-layer with --pdf-ocr replaces it with a fresh "
-    "OCR reading of the page image."
+    "reads) unless --ocr-replace-layer is given with --pdf-ocr, which replaces "
+    "it with a fresh OCR reading of the page image."
 )
 OCR_REQUIRED = (
     "{count} of {total} selected pages have no text layer (page(s) {pages}); "
