@@ -40,6 +40,8 @@ from the backend.
 import time
 from dataclasses import dataclass, field
 
+from .endpoints import JEV_PATH  # noqa: F401  (re-exported for callers)
+
 # --------------------------------------------------------------------------
 # The question and the answer
 # --------------------------------------------------------------------------
@@ -554,8 +556,9 @@ JEV_MIN_CONFIDENCE_ENV = "BBM_JEV_MIN_CONFIDENCE"
 # docs.typesafe.ai/api (read 260923): one POST per request, a map of typed
 # questions evaluated in parallel against one `state`, one answer per
 # question id. 429 and 529 are "back off and retry"; 401 and 422 are the
-# request's own fault.
-JEV_PATH = "/v1/systemone"
+# request's own fault. The same wire is served by Jev-compatible servers
+# (Simple Jev); where a request goes is `endpoints.jev_request_url`, and
+# `JEV_PATH` is imported from there at the top of this module.
 # Per-request timeout in seconds; a request that times out is retried.
 JEV_TIMEOUT = 120
 # Retries wait 2, 4, 8 ... seconds, at most this long each, for as long as
@@ -741,11 +744,13 @@ class JevBackend:
         """POST `body`, patient on weather, fatal on the request's own fault."""
         from .redaction import redact
 
-        url = self.base + JEV_PATH
-        headers = {
-            "Authorization": f"Bearer {self.key}",
-            "Content-Type": "application/json",
-        }
+        from .endpoints import jev_request_url
+
+        url = jev_request_url(self.base)
+        headers = {"Content-Type": "application/json"}
+        if self.key:
+            # none for the keyless Simple Jev demo
+            headers["Authorization"] = f"Bearer {self.key}"
         attempt = 0
         while True:
             retry_after = None

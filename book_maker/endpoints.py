@@ -32,10 +32,14 @@ else the entry's key variable when the choice calls the address that entry
 names; else what that address's format reads from the environment.
 
 `jev` (TypeSafe's System One classifier) is a classify endpoint of its own
-kind: `--classify-model jev` (or a `jev-*` model id, or a TypeSafe address)
-selects it, with its own default address. Its key variables
-(`JEV_API_KEY`, `TYPESAFE_API_KEY`) are read only for a typesafe.ai host;
-at any other address (a gateway) the key is passed explicitly.
+kind, and so is any server that speaks its wire format (packet J, 260924:
+Featherless's Simple Jev, a gateway in front of TypeSafe). The same three
+flags reach them all; `is_jev_wire` says which (model, base) pairs speak it,
+and with no base the official endpoint is called. Key variables are read
+implicitly only at the hosts that own them (`JEV_API_KEY` /
+`TYPESAFE_API_KEY` at typesafe.ai, `FEATHERLESS_API_KEY` at featherless.ai);
+the documented keyless Simple Jev demo takes none; at any other address (a
+gateway) the key is passed explicitly.
 
 Nothing here builds a network client at import, and nothing imports the CLI
 at module level (the CLI imports this module).
@@ -103,6 +107,17 @@ JEV_HOST_SUFFIX = "typesafe.ai"
 # sending one to TypeSafe would hand a credential to a host that never
 # issued it. TYPESAFE_API_KEY is the name TypeSafe's own SDK reads.
 JEV_ENV_KEYS = ("JEV_API_KEY", "TYPESAFE_API_KEY")
+# The request path TypeSafe serves (docs.typesafe.ai/api, read 260924).
+JEV_PATH = "/v1/systemone"
+# Paths a base may already end at: the request is posted there verbatim.
+JEV_WIRE_PATHS = ("/systemone", "/classifier")
+# Featherless's Simple Jev (docs/260924-jev-alternative-format.md): an open
+# reimplementation of the Jev interface at `https://api.featherless.ai/v1/
+# classifier`, ids such as `featherless-ai/Qwen3.8-27B-classifier`, and a
+# public demo host that needs no key.
+FEATHERLESS_HOST_SUFFIX = "featherless.ai"
+FEATHERLESS_ENV_KEYS = ("FEATHERLESS_API_KEY",)
+SIMPLE_JEV_DEMO_HOST = "simple-jev-demo-api.featherless.ai"
 
 
 @dataclass(frozen=True)
@@ -141,15 +156,67 @@ def run_choice(model, api_base, key, api_format):
     )
 
 
-def is_jev(model, api_base=""):
-    """Whether (model, base) names TypeSafe's classifier."""
-    # The id's last segment: a gateway that namespaces its models
-    # (`typesafe-ai/jev` on Vercel's AI Gateway) serves the same classifier.
-    name = (model or "").strip().lower().rsplit("/", 1)[-1]
-    if name == JEV_ALIAS or name.startswith(JEV_ALIAS + "-"):
-        return True
+def _host_in(api_base, suffix):
+    """Whether `api_base`'s host is `suffix` or a subdomain of it."""
     host = (urlparse(api_base or "").hostname or "").lower()
-    return host == JEV_HOST_SUFFIX or host.endswith("." + JEV_HOST_SUFFIX)
+    return host == suffix or host.endswith("." + suffix)
+
+
+def _base_path(api_base):
+    return (urlparse(api_base or "").path or "").rstrip("/").lower()
+
+
+def is_jev_wire(model, api_base=""):
+    """Whether (model, base) speaks the Jev wire format (packet J, 260924).
+
+    The model id's last segment is `jev` or starts with `jev-` (a gateway
+    namespaces it: `typesafe-ai/jev`), or the id ends with `-classifier`
+    (Simple Jev's `featherless-ai/Qwen3.8-27B-classifier`); or the base's
+    host is typesafe.ai or featherless.ai (or a subdomain); or the base's
+    path ends at `/systemone` or `/classifier`.
+    """
+    name = (model or "").strip().lower()
+    last = name.rsplit("/", 1)[-1]
+    if last == JEV_ALIAS or last.startswith(JEV_ALIAS + "-"):
+        return True
+    if name.endswith("-classifier"):
+        return True
+    if _host_in(api_base, JEV_HOST_SUFFIX) or _host_in(
+        api_base, FEATHERLESS_HOST_SUFFIX
+    ):
+        return True
+    return _base_path(api_base).endswith(JEV_WIRE_PATHS)
+
+
+# The name packet F gave it.
+is_jev = is_jev_wire
+
+
+def jev_request_url(api_base):
+    """Where a Jev-wire request is posted: a base already ending at
+    `/systemone` or `/classifier` verbatim, else `<base>/v1/systemone`; no
+    base is the official endpoint."""
+    base = (api_base or JEV_DEFAULT_BASE).strip().rstrip("/")
+    if _base_path(base).endswith(JEV_WIRE_PATHS):
+        return base
+    return base + JEV_PATH
+
+
+def jev_env_keys(api_base):
+    """The key variables read implicitly for a Jev-wire address: only the
+    ones its host owns, none for the keyless demo or any other host."""
+    if _host_in(api_base, JEV_HOST_SUFFIX):
+        return JEV_ENV_KEYS
+    if jev_keyless(api_base):
+        return ()
+    if _host_in(api_base, FEATHERLESS_HOST_SUFFIX):
+        return FEATHERLESS_ENV_KEYS
+    return ()
+
+
+def jev_keyless(api_base):
+    """Whether the address is the documented keyless Simple Jev demo."""
+    return (urlparse(api_base or "").hostname or "").lower() == SIMPLE_JEV_DEMO_HOST
 
 
 def _address(api_base, api_format):
@@ -172,11 +239,6 @@ def _same_address(base_a, format_a, base_b, format_b):
     return where(base_a, format_a) == where(base_b, format_b)
 
 
-def _is_typesafe_host(api_base):
-    host = (urlparse(api_base or "").hostname or "").lower()
-    return host == JEV_HOST_SUFFIX or host.endswith("." + JEV_HOST_SUFFIX)
-
-
 def _bound_env_key(provider, model, sidecar_base, env_key):
     """`(env_key, base, format)`: the entry's key variable and the address
     it belongs to, read from the entry alone -- its own `*_base_url`, else
@@ -189,7 +251,7 @@ def _bound_env_key(provider, model, sidecar_base, env_key):
 
     if sidecar_base:
         return env_key, sidecar_base, infer_api_format(sidecar_base, model)
-    if is_jev(model, ""):
+    if is_jev_wire(model, ""):
         return env_key, JEV_DEFAULT_BASE, JEV_FORMAT
     return env_key, provider.api_base, provider.api_format
 
@@ -201,13 +263,15 @@ def _key(explicit, bound, choice, run, with_key, flag):
     run's key when the choice calls the run's *effective* address (after
     any `--api_base`); else the provider entry's key variable when the
     choice calls the address that variable belongs to (`bound`); else what
-    the choice's format reads from the environment. For jev (finding 2):
-    `JEV_API_KEY` / `TYPESAFE_API_KEY` are read *implicitly* only at a
-    typesafe.ai host, and never the run's key; anywhere else the key is
-    named explicitly -- by the flag, or by a provider entry whose
-    `*_env_key` names the variable for the entry's own address (a gateway
-    entry naming `JEV_API_KEY` for its gateway is that explicit naming, and
-    is honoured: lead 260924, Codex re-verify).
+    the choice's format reads from the environment. For the Jev wire
+    (finding 2, extended by packet J): `JEV_API_KEY` / `TYPESAFE_API_KEY`
+    are read *implicitly* only at a typesafe.ai host and
+    `FEATHERLESS_API_KEY` only at a featherless.ai host, and never the
+    run's key; the keyless Simple Jev demo needs none (no header is sent);
+    anywhere else the key is named explicitly -- by the flag, or by a
+    provider entry whose `*_env_key` names the variable for the entry's own
+    address (a gateway entry naming `JEV_API_KEY` for its gateway is that
+    explicit naming, and is honoured: lead 260924, Codex re-verify).
     """
     if not with_key:
         return None
@@ -219,12 +283,12 @@ def _key(explicit, bound, choice, run, with_key, flag):
     if choice.api_format == JEV_FORMAT:
         if bound_here and env.get(bound[0]):
             return env[bound[0]]
-        names = ((bound[0],) if bound_here else ()) + (
-            JEV_ENV_KEYS if _is_typesafe_host(choice.api_base) else ()
-        )
+        names = ((bound[0],) if bound_here else ()) + jev_env_keys(choice.api_base)
         found = next((env[n] for n in names if env.get(n)), "")
         if found:
             return found
+        if jev_keyless(choice.api_base):
+            return ""
         where = (
             f"set one of: {', '.join(names)}"
             if names
@@ -262,7 +326,7 @@ def _choose(model, base, run, source, *, image):
     api_format = infer_api_format(base, model) if base else None
     if base and api_format != "openai":
         raise SystemExit(unsupported.format(base=base, api_format=api_format))
-    if is_jev(model, base):
+    if is_jev_wire(model, base):
         if image:
             raise SystemExit(
                 unsupported.format(base=base or JEV_DEFAULT_BASE, api_format=JEV_FORMAT)

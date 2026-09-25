@@ -35,6 +35,7 @@ KEY_VARS = (
     "BBM_OPENAI_API_KEY",
     "JEV_API_KEY",
     "TYPESAFE_API_KEY",
+    "FEATHERLESS_API_KEY",
     "IMG_KEY_VAR",
 )
 
@@ -412,6 +413,166 @@ class TestJevIsAClassifyEndpoint:
             _provider(classify_model="jev", classify_env_key="IMG_KEY_VAR"),
         )
         assert (choice.key, choice.source) == ("k-var", "provider")
+
+
+class TestJevCompatibleEndpoints:
+    """Packet J (owner 260924): "it should support non official endpoints
+    ... accept 3 params but default to official jev". The same three
+    classify flags reach TypeSafe's Jev, a gateway in front of it, and
+    Featherless's Simple Jev (docs/260924-jev-alternative-format.md)."""
+
+    DEMO = "https://simple-jev-demo-api.featherless.ai/v1/classifier"
+    SIMPLE_JEV = "featherless-ai/Qwen3.8-27B-classifier"
+
+    @pytest.mark.parametrize(
+        "model, base, wire",
+        [
+            ("jev", "", True),
+            ("jev-latest", "", True),
+            ("jev-1.13.0", "", True),
+            ("typesafe-ai/jev", "https://ai-gateway.vercel.sh/typesafe", True),
+            ("JEV-Preview", "", True),
+            ("featherless-ai/Qwen3.8-27B-classifier", "", True),
+            ("my-classifier", "https://self.example/v1", True),
+            ("m", "https://api.typesafe.ai", True),
+            ("m", "https://eu.api.typesafe.ai", True),
+            ("m", "https://api.featherless.ai/v1", True),
+            ("m", "https://simple-jev-demo-api.featherless.ai", True),
+            ("m", "https://self.example/v1/classifier", True),
+            ("m", "https://self.example/v1/systemone/", True),
+            # not the wire
+            ("gpt-5.6-luna", "", False),
+            ("jevons", "", False),
+            ("jev/gpt-4o", "", False),
+            ("classifier-7b", "", False),
+            ("gpt-5.6-luna", "https://api.openai.com/v1", False),
+            ("m", "https://nottypesafe.ai", False),
+            ("m", "https://featherless.ai.example.com", False),
+            ("m", "https://self.example/classifiers", False),
+        ],
+    )
+    def test_the_detection_matrix(self, model, base, wire):
+        assert endpoints.is_jev_wire(model, base) is wire
+        assert endpoints.is_jev(model, base) is wire  # F's name, an alias
+
+    @pytest.mark.parametrize(
+        "base, url",
+        [
+            ("", "https://api.typesafe.ai/v1/systemone"),
+            (
+                "https://ai-gateway.vercel.sh/typesafe",
+                "https://ai-gateway.vercel.sh/typesafe/v1/systemone",
+            ),
+            (
+                "https://simple-jev-demo-api.featherless.ai/v1/classifier/",
+                "https://simple-jev-demo-api.featherless.ai/v1/classifier",
+            ),
+            (
+                "https://jev.self.example/v1/systemone",
+                "https://jev.self.example/v1/systemone",
+            ),
+        ],
+    )
+    def test_the_request_url_for_the_four_base_shapes(self, base, url):
+        assert endpoints.jev_request_url(base) == url
+
+    def test_no_base_is_the_official_jev(self, monkeypatch):
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
+        choice = resolve_classify_endpoint(_opts(classify_model="jev"), _run(), None)
+        assert endpoints.jev_request_url(choice.api_base) == (
+            "https://api.typesafe.ai/v1/systemone"
+        )
+        assert choice.model == "jev-latest"
+
+    def test_the_keyless_demo_needs_no_key_and_reads_none(self, monkeypatch):
+        # no variable is read for the demo, even the host family's own
+        monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
+        choice = resolve_classify_endpoint(
+            _opts(classify_model=self.SIMPLE_JEV, classify_base_url=self.DEMO),
+            _run(),
+            None,
+        )
+        assert (choice.api_format, choice.model, choice.api_base, choice.key) == (
+            "jev",
+            self.SIMPLE_JEV,
+            self.DEMO,
+            "",
+        )
+        # an explicit key is still the operator's to send
+        choice = resolve_classify_endpoint(
+            _opts(
+                classify_model=self.SIMPLE_JEV,
+                classify_base_url=self.DEMO,
+                classify_key="k-flag",
+            ),
+            _run(),
+            None,
+        )
+        assert choice.key == "k-flag"
+
+    def test_featherless_reads_its_own_variable_only(self, monkeypatch):
+        base = "https://api.featherless.ai/v1/classifier"
+        options = _opts(classify_model=self.SIMPLE_JEV, classify_base_url=base)
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
+        with pytest.raises(SystemExit, match="FEATHERLESS_API_KEY") as refused:
+            resolve_classify_endpoint(options, _run(), None)
+        assert "--classify-key" in str(refused.value)
+        assert "jev-secret" not in str(refused.value)
+        monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
+        assert resolve_classify_endpoint(options, _run(), None).key == "fl-secret"
+
+    def test_the_featherless_variable_is_not_sent_to_typesafe(self, monkeypatch):
+        monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
+        with pytest.raises(SystemExit, match="JEV_API_KEY"):
+            resolve_classify_endpoint(_opts(classify_model="jev"), _run(), None)
+
+    def test_the_gateway_needs_an_explicit_key(self, monkeypatch):
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
+        monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        options = _opts(
+            classify_model="typesafe-ai/jev",
+            classify_base_url="https://ai-gateway.vercel.sh/typesafe",
+        )
+        with pytest.raises(SystemExit, match="--classify-key") as refused:
+            resolve_classify_endpoint(options, _run(), None)
+        for secret in ("jev-secret", "fl-secret", "sk-openai", "sk-run"):
+            assert secret not in str(refused.value)
+
+    def test_the_demo_request_carries_no_authorization_header(self):
+        from book_maker.classifier import JevBackend, Question
+
+        sent = []
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"answers": {}, "usage": {}}
+
+        def post(url, json, headers, timeout):
+            sent.append((url, headers))
+            return Response()
+
+        choice = resolve_classify_endpoint(
+            _opts(classify_model=self.SIMPLE_JEV, classify_base_url=self.DEMO),
+            _run(),
+            None,
+        )
+        backend = JevBackend(
+            choice.model, choice.key, choice.api_base, post=post, log=print
+        )
+        backend.ask(
+            Question(
+                prompt="P",
+                candidates={"a": ("translate", "skip")},
+                per_candidate={"a": "A"},
+            )
+        )
+        ((url, headers),) = sent
+        assert url == self.DEMO
+        assert "Authorization" not in headers
 
 
 # ---------------------------------------------------------- the translator

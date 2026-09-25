@@ -453,3 +453,63 @@ class TestTheAsymmetricGate:
             ),
             "block:p.b": ("skip", "unnamed (jev verdict skip, confidence 0.95)"),
         }
+
+
+class TestTheTwoReplyShapes:
+    """Packet J: a Simple-Jev-shaped reply (docs/260924-jev-alternative-format.md)
+    and the Vercel AI Gateway's recorded reply (copied from jev-calculator's
+    `test/fixtures/gateway-response.recorded.json`) parse alike; the
+    gateway's `provider_metadata` is ignored."""
+
+    def test_a_simple_jev_reply(self):
+        payload = {
+            "answers": {
+                "route": {
+                    "type": "choice",
+                    "choice": "billing",
+                    "confidence": 0.9999,
+                    "probabilities": {
+                        "billing": 0.9999,
+                        "technical": 0.00003,
+                        "account": 0.0001,
+                    },
+                }
+            },
+            "usage": {"input_tokens": 434, "output_tokens": 3},
+        }
+        backend = _backend(Transport(Response(200, payload)))
+        answer = Classifier(None, "m", backends=[backend]).ask(
+            Question(
+                prompt="P",
+                candidates={"route": ("billing", "technical", "account")},
+                per_candidate={"route": "Which team handles this?"},
+            )
+        )
+        assert answer.values == {"route": "billing"}
+        assert answer.confidence == {"route": 0.9999}
+        assert answer.usage["prompt_tokens"] == 434
+        assert (backend.usage.prompt, backend.usage.completion) == (434, 3)
+
+    def test_the_recorded_gateway_reply(self):
+        import json
+        from pathlib import Path
+
+        fixture = Path(__file__).parent / "fixtures"
+        payload = json.loads(
+            (fixture / "jev_gateway_response.recorded.json").read_text()
+        )
+        options = tuple(payload["answers"]["next_char"]["probabilities"])
+        backend = _backend(Transport(Response(200, payload)))
+        answer = Classifier(None, "typesafe-ai/jev", backends=[backend]).ask(
+            Question(
+                prompt="P",
+                candidates={"next_char": options},
+                per_candidate={"next_char": "Next character?"},
+            )
+        )
+        assert answer.values == {"next_char": "5"}
+        # the chosen option's probability (0.76), not the derived
+        # `confidence` (0.73) nor provider_metadata's copy of it
+        assert answer.confidence == {"next_char": 0.76}
+        assert (backend.usage.prompt, backend.usage.completion) == (378, 102)
+        assert answer.unknown_ids == ()
