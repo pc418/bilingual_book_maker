@@ -1134,6 +1134,32 @@ def test_every_row_id_is_unique():
 
 
 class TestDryRunPreview:
+    def test_the_preview_says_c31_and_c32_as_the_run_would(self, tmp_path):
+        # PIN (packet H item 10, 260924; docs/260923-docs-WIKI_MODERNIZE.md,
+        # W2 worker contradiction 5): the preview checks DRY_RUN_RULES only,
+        # so an image model or an ignored classifier went unmentioned there
+        book = str(_book(tmp_path))
+        proc = _cli("--book_name", book, "--plan-dry-run", "--img-model", "m")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "only the PDF route (--to-epub on a PDF) has one" in _flat(proc)
+        proc = _cli(
+            "--book_name",
+            book,
+            "--plan-dry-run",
+            "--plan-classify",
+            "all",
+            "--classify-model",
+            "m",
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "--classify-model names a classifier, and --plan-classify all" in (
+            _flat(proc)
+        )
+        proc = _cli("--book_name", book, "--plan-dry-run", "--classify-model", "m")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "names a classifier" not in _flat(proc)
+        assert "only the PDF route" not in _flat(proc)
+
     def test_the_preview_says_when_the_run_will_not_be_planned(self, tmp_path):
         # B2: --translate-tags turns plan mode off, and then the real run
         # translates that selection instead of this plan

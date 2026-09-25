@@ -1887,6 +1887,13 @@ DRY_RUN_RULES = (
             f"each, so the real run can make more requests than these."
         ),
     ),
+    # C31 and C32 read only the command, so the preview can say them as the
+    # run would; the same predicate and sentence, under an id of their own.
+    *(
+        rule._replace(id=f"{rule.id}:dry-run")
+        for rule in COMPAT_RULES
+        if rule.id in ("C31", "C32")
+    ),
 )
 
 
@@ -3002,6 +3009,8 @@ def main(argv=None, *, markdown_loader_class=None):
                 api_format=dry_format,
                 translate_model=dry_model,
                 batch_units=batch_units,
+                # C32 asks it; the preview is an epub by construction
+                classify_mode=resolve_classify_mode(options, "epub")[0],
             ),
             rules=DRY_RUN_RULES,
         )
