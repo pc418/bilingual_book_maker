@@ -155,8 +155,8 @@ OCR_ENGINE_MISSING = (
 # [standard] names rapidocr only), so the line names both.
 OCR_ENGINE_INSTALL = {
     "rapidocr": (
-        "It runs on onnxruntime, which the pdf extra does not install: pip "
-        "install rapidocr onnxruntime."
+        "The pdf extra brings it; if it is missing here: pip install "
+        "rapidocr onnxruntime."
     ),
     "easyocr": (
         "Install it with pip install easyocr (it downloads its models on first " "use)."
@@ -340,8 +340,10 @@ HELP_OCR_LANG = (
 _OCR_ENGINE_BODY = (
     "the OCR engine for pages with no text layer (every page with "
     "--ocr-replace-layer). auto (default) takes the first installed of "
-    "ocrmac, rapidocr, easyocr. rapidocr ships with the pdf extra, models "
-    "included. ocrmac is Apple's Vision framework on macOS: nothing to "
+    "ocrmac, rapidocr, easyocr. rapidocr comes with the pdf extra and "
+    "downloads about 31 MB of models on first use unless onnxruntime is "
+    "installed (pip install onnxruntime), which carries them. ocrmac is "
+    "Apple's Vision framework on macOS: nothing to "
     "download (pip install ocrmac). easyocr downloads its models on first "
     "use (pip install easyocr). tesseract uses the tesseract program and its "
     "language data from PATH. Language codes differ by engine; see "

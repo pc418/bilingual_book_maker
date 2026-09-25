@@ -52,12 +52,16 @@ from book_maker.pipeline.pdf_settings import (  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 TRANSLATION = ["--api_format", "google", "--language", "zh-hans"]
 
-# The lead's text (packet K), verbatim: not to be reworded.
+# The lead's text (packet K; the rapidocr sentence revised in packet N,
+# 260925: the pdf extra alone downloads models on first use), verbatim:
+# not to be reworded.
 LEAD_HELP = (
     "PDF only, with --to-epub --pdf-ocr: the OCR engine for pages with no text "
     "layer (every page with --ocr-replace-layer). auto (default) takes the "
-    "first installed of ocrmac, rapidocr, easyocr. rapidocr ships with the pdf "
-    "extra, models included. ocrmac is Apple's Vision framework on macOS: "
+    "first installed of ocrmac, rapidocr, easyocr. rapidocr comes with the pdf "
+    "extra and downloads about 31 MB of models on first use unless onnxruntime "
+    "is installed (pip install onnxruntime), which carries them. ocrmac is "
+    "Apple's Vision framework on macOS: "
     "nothing to download (pip install ocrmac). easyocr downloads its models on "
     "first use (pip install easyocr). tesseract uses the tesseract program and "
     "its language data from PATH. Language codes differ by engine; see "
@@ -191,6 +195,15 @@ def test_a_missing_engine_is_refused_with_its_install_line(
     )
     assert f"--ocr-engine {engine}" in detail
     assert install_words in detail
+
+
+def test_the_rapidocr_install_line_is_the_lead_s_text_verbatim():
+    # PIN (lead, packet N, 260925): the extra brings rapidocr; the line names
+    # onnxruntime too, because a named rapidocr runs on it.
+    assert OCR_ENGINE_INSTALL["rapidocr"] == (
+        "The pdf extra brings it; if it is missing here: pip install "
+        "rapidocr onnxruntime."
+    )
 
 
 def test_the_tesseract_line_says_language_data_and_path(installed):

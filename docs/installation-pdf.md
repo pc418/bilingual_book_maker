@@ -134,6 +134,8 @@ The models (about 500 MB) download on the first run, so the first PDF takes noti
 export HF_HOME=/path/with/room
 ```
 
+A scan read with `--pdf-ocr` adds the OCR engine's models. With the pdf extra alone, `auto` picks rapidocr, which downloads about 31 MB of models on first use; `pip install onnxruntime` saves that download, and `--ocr-engine rapidocr` needs it. On a Mac, `pip install ocrmac` gives Apple's engine, which downloads nothing. [Which OCR engine](features/pdf-ocr-engines.md) compares them.
+
 Once cached, extraction needs no network. [Recommended settings for PDF](features/recommended-pdf.md) has the command for each kind of document.
 
 ## Check what you got
