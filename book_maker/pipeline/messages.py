@@ -67,12 +67,12 @@ DEVICE_UNAVAILABLE = (
 # that does not work is what breaks the loop.
 PDF_ROUTE_NOT_INSTALLED = (
     "reading a PDF needs the pdf extra, which is not installed. From a "
-    "checkout: pip install -r requirements-pdf-gpu.txt, or "
-    "requirements-pdf-cpu.txt on Linux without an NVIDIA GPU (the other "
-    "file downloads about 3 GB of CUDA there). The published package does "
-    'not carry this route yet, so pip install "bbook_maker[pdf]" will only '
-    "warn about the unknown extra and install the release without it. Every "
-    "case, per platform, in docs/installation-pdf.md. Detail: {err}"
+    'checkout: pip install ".[pdf]" (on Linux without an NVIDIA GPU add '
+    "--extra-index-url https://download.pytorch.org/whl/cpu, or the extra "
+    "downloads about 3 GB of CUDA there). The published package does not "
+    'carry this route yet, so pip install "bbook_maker[pdf]" will only warn '
+    "about the unknown extra and install the release without it. Every case, "
+    "per platform, in docs/installation-pdf.md. Detail: {err}"
 )
 PDFIUM_UNUSABLE = (
     "pypdfium2 is installed but unusable (no PdfDocument); reinstall it with "

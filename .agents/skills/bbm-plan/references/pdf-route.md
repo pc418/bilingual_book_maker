@@ -169,7 +169,7 @@ first look and the read-back showed, and hand over `<name>_bilingual.epub`.
 
 | symptom | meaning |
 |---|---|
-| `reading a PDF needs the pdf extra, which is not installed …` | the extra is missing. From a clone: `pip install ".[pdf]"` (with PyTorch's CPU or CUDA index on the two systems in check 1). The message itself names the locked requirements files; those work too but pin exact versions and download a torch the user may already have. Not `pip install "bbook_maker[pdf]"`. Nothing was paid |
+| `reading a PDF needs the pdf extra, which is not installed …` | the extra is missing. From a clone: `pip install ".[pdf]"` (with PyTorch's CPU or CUDA index on the two systems in check 1). Not `pip install "bbook_maker[pdf]"`. Nothing was paid |
 | `Pandoc is required for --to-epub …` | install it (check 2); it is checked before the PDF is opened |
 | `pandoc 3.x is too old for EPUB export; Pandoc 3.1.12 or newer is required …` | apt's Pandoc (Ubuntu 24.04: 3.1.3, Debian 13: 3.1.11); install the release from pandoc.org. Nothing was paid |
 | `N of M selected pages have no text layer …; rerun with --pdf-ocr` | a scanned PDF; the flag, not a different tool |

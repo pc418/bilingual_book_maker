@@ -70,7 +70,7 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 
 - **`Pandoc is required for --to-epub. Install it and make sure pandoc is on PATH.`** Install Pandoc 3.1.12 or newer from [pandoc.org](https://pandoc.org/installing.html).
 - **`pandoc 3.1.3 is too old for EPUB export; Pandoc 3.1.12 or newer is required …`** Your Pandoc came from apt (Ubuntu 24.04 ships 3.1.3, Debian 13 ships 3.1.11). Install the release and put it first on PATH; the line names the harness `tools/pdf_to_book.py --pandoc PATH` as the other way.
-- **`reading a PDF needs the pdf extra, which is not installed.`** From a clone, `pip install ".[pdf]"` (step 3 of [Installing the PDF extra](../installation-pdf.md)); the message names the locked requirements files, which work too but replace the PyTorch you have. Not `pip install "bbook_maker[pdf]"`.
+- **`reading a PDF needs the pdf extra, which is not installed.`** From a clone, `pip install ".[pdf]"` (step 3 of [Installing the PDF extra](../installation-pdf.md)). Not `pip install "bbook_maker[pdf]"`.
 - **`--device cuda was asked for, but the installed PyTorch is a CPU-only build.`** Reinstall through the CUDA route. **`… but this machine has no cuda accelerator available.`** Use `--device cpu` or `--device auto`.
 - **`--parallel-workers is not supported with --use_context session …`** Choose one.
 - **`--no-thinking has no request to travel in on the codex route: …`** Drop `--no-thinking` on codex.

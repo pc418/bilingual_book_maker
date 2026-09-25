@@ -273,8 +273,8 @@ def test_a_missing_pdf_install_is_an_error_not_a_cpu_fallback(monkeypatch):
     # PDF input without the PDF install refuses with the install line and a
     # pointer to the guide. It never degrades silently.
     detail = refused.value.detail
-    assert "requirements-pdf-cpu.txt" in detail
-    assert "requirements-pdf-gpu.txt" in detail
+    assert 'pip install ".[pdf]"' in detail
+    assert "--extra-index-url https://download.pytorch.org/whl/cpu" in detail
     assert "docs/installation-pdf.md" in detail
     # PIN (260921): the published package has no `pdf` extra, and pip meets a
     # missing extra with a warning and a successful install of the release
@@ -282,7 +282,7 @@ def test_a_missing_pdf_install_is_an_error_not_a_cpu_fallback(monkeypatch):
     # unchanged. The message may name the command only to say it does not
     # work, and the checkout route has to come first.
     assert 'pip install "bbook_maker[pdf]"' in detail
-    assert detail.index("requirements-pdf-gpu.txt") < detail.index("bbook_maker[pdf]")
+    assert detail.index('pip install ".[pdf]"') < detail.index("bbook_maker[pdf]")
     assert "does not carry this route yet" in detail
 
 

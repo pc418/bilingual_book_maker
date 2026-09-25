@@ -211,7 +211,7 @@ The two platforms are opposites, which is the trap: on Linux the default is CUDA
 
 These are the lines the tool prints, and what to do.
 
-- **`reading a PDF needs the pdf extra, which is not installed.`** Step 3 was not done. The message names the locked requirements files; `pip install ".[pdf]"` (step 3) does the same and keeps the PyTorch you have. If you ran `pip install "bbook_maker[pdf]"` and it said it succeeded, that is the trap described above.
+- **`reading a PDF needs the pdf extra, which is not installed.`** Step 3 was not done. If you ran `pip install "bbook_maker[pdf]"` and it said it succeeded, that is the trap described above.
 - **`Pandoc is required for --to-epub. Install it and make sure pandoc is on PATH.`** Do step 2.
 - **`… is too old for EPUB export; Pandoc 3.1.12 or newer is required`** Your Pandoc came from apt. Install the release from pandoc.org (step 2) and put it first on PATH; the message names the harness `tools/pdf_to_book.py --pandoc PATH` as the other way.
 - **`--device cuda was asked for, but the installed PyTorch is a CPU-only build.`** Reinstall the extra with the CUDA build: the plain line on Linux, the `cu126` index on Windows (step 3).
