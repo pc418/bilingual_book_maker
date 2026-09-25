@@ -359,9 +359,10 @@ opened, naming the missing one, so nothing is paid):
    silently skipped, so the run tells you when it is needed. Layout,
    headings and tables are detected either way; OCR is not what makes the
    extraction good. A scan in a script other than Latin also needs
-   `--ocr-lang` (portable `iso:` tags: `iso:zh-Hans`, `iso:zh-Hant`,
+   `--ocr-lang` (portable `iso:` tags: `iso:zh`, `iso:zh-Hant`,
    `iso:ja`, `iso:ko`, which docling 2.129 maps onto whichever engine
-   runs; or the engine's own codes, which `--help` lists). Prefer the
+   runs; or the engine's own codes, which `--help` lists; rapidocr refuses
+   `ch_sim`, easyocr's code, before reading a page). Prefer the
    `iso:` tag and always name the language: on a Mac with ocrmac
    installed docling picks ocrmac, and with its default languages it read
    a Chinese scan as Latin (measured on one scan). The engine is whatever
@@ -374,8 +375,11 @@ opened, naming the missing one, so nothing is paid):
    its model. A scan that already carries an OCR layer (Internet Archive,
    ABBYY) is readable **without** `--pdf-ocr`: the run names such pages
    (`… carry only an invisible OCR text layer …`) and uses the layer. With
-   the flag the local engine's text replaces it, which measured worse on 3
-   of 3 pages: run without it first and add it only if the layer is poor.
+   `--pdf-ocr` the layer is kept, possibly mixed with the engine's reading;
+   a fresh local OCR of such pages measured worse than the layer on 3 of 3
+   pages, so run without the flag first. Only when `source.md` shows the
+   layer is garbage (wrong language, bad OCR) add `--pdf-ocr
+   --ocr-replace-layer` with the scan's `--ocr-lang`.
 4. `--device` only if the default misbehaves: `auto` detects CUDA or MPS
    and falls back to the CPU. `--device cpu` is fully supported and gives
    the same text, only slower — it is never a downgrade in quality.
@@ -407,7 +411,8 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" --to-ep
 | `--use_context session` | the default on the openai/anthropic routes here too (§1d); `--parallel-workers` is refused with it |
 | `--pdf-ocr` | a **scanned** PDF only (the run refuses without it and says so). Not for tables — those are detected either way |
 | `--device cpu` | when the detected accelerator misbehaves; same output, slower |
-| `--ocr-lang iso:ja` | with `--pdf-ocr`, a scan in a script the engine's default does not read (rapidocr's default reads Chinese and English); portable `iso:` tags (`iso:zh-Hant`, `iso:ja`, `iso:ko`) or the engine's own codes; a typed PDF ignores it |
+| `--ocr-replace-layer` | only with `--pdf-ocr`; when the embedded text is wrong, not merely invisible. Every page is OCR'd and the layer dropped; always name `--ocr-lang`. Toggling it re-extracts |
+| `--ocr-lang iso:ja` | with `--pdf-ocr`, a scan in a script the engine's default does not read (rapidocr's default reads Chinese and English); portable `iso:` tags (`iso:zh`, `iso:zh-Hant`, `iso:ja`, `iso:ko`) or the engine's own codes (not `ch_sim` on rapidocr); a typed PDF ignores it |
 | `--pages 12-30` | the user wants one chapter or a range, or the paper's bibliography and appendix are not worth paying for; numbered from 1. The book is `<name>_pages-12-30_bilingual.epub` beside the whole-book one, never over it. A selection starting mid-section gets a `Page 12` heading in `source.md`; rename it there before the full run if the user wants a real title |
 | `--glossary` | the same file contract as on an EPUB; worth it on a paper with recurring terms |
 | `--img-model gpt-5.6-luna` | a paper, a textbook, anything with code listings: a vision model corrects docling's region roles (author line taken for a heading, listing read as footnotes; 40 of 66 label faults fixed in the study, `docs/evaluation/pdf-structure-llm-roles.md`). ~3k prompt tokens a page. `(--provider openai)` already turns it on through the example's `img_model`; `--img-model none` turns it off. Needs an OpenAI-compatible endpoint that reads images; a local route gets it only with `--img-base-url` at a hosted one. Changing it re-extracts |
@@ -420,7 +425,8 @@ By document type (the full run; every one starts with the two-page first look):
 | textbook with tables and formulas | `--pages A-B` per chapter, `--glossary` if terms recur | tables are detected without OCR; display formulas become pictures, not translated (`docs/evaluation/pdf-formulas-as-images.md`); inline maths is not covered |
 | paper | `--use_context session`, `--img-model gpt-5.6-luna` unless the entry already names one; `--pages` to leave out the bibliography | heading levels were exact on 187 of 195 headings across 20 arXiv papers (`docs/evaluation/pdf-heading-levels.md`) |
 | scanned book | `--pdf-ocr` (not when the scan carries an OCR layer: see step 3), plus `--ocr-lang iso:<lang>` outside Chinese/English | JBIG2-masked scans (Internet Archive, ABBYY) are rendered through pypdfium2 and the run says so; still read `source.md` before paying. `--img-model` buys little here: it cannot rebuild a page docling shattered |
-| Chinese scan | `--pdf-ocr --ocr-lang iso:zh-Hans` (`iso:zh-Hant` for traditional) | horizontal text reads well; **vertical** text comes back with its columns in the wrong order (CER 0.905 on the one page measured): do not translate it unreviewed (`docs/evaluation/pdf-ocr-llm-vs-local.md`) |
+| scanned book with a garbage layer | `--pdf-ocr --ocr-replace-layer --ocr-lang iso:<lang>` (`iso:zh` for a Chinese scan) | only after a first look without it showed the layer is wrong; on a good layer fresh OCR reads worse. A page read empty is named and kept empty; nothing read anywhere stops before translation |
+| Chinese scan | `--pdf-ocr --ocr-lang iso:zh` (`iso:zh-Hant` for traditional; not `ch_sim`, which rapidocr refuses) | horizontal text reads well; **vertical** text comes back with its columns in the wrong order (CER 0.905 on the one page measured): do not translate it unreviewed (`docs/evaluation/pdf-ocr-llm-vs-local.md`) |
 
 By system (the route needs no GPU; the device changes speed, never the text):
 
@@ -611,7 +617,7 @@ so you can honour a request without guessing at legal values.
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
 | `--plan-classify` | `auto`, `none`, `all`, `model`, `agent` | **`agent`** — this skill's hard constraint | never, inside this skill |
-| `--classify-model` (old name `--plan-classify-model`), `--classify-base-url`, `--classify-key` | a model id; `jev` for TypeSafe's classifier | **never passed** | never, inside this skill: agent mode never pre-fills the plan (owner: an agent judges worse from pre-filled verdicts) and the run warns the flag is ignored. Outside the skill it gives `model`/`auto` a classifier of its own, a machine-translation route included (`docs/features/plan-mode.md`) |
+| `--classify-model` (old name `--plan-classify-model`), `--classify-base-url`, `--classify-key` | a model id; `jev` (the cheapest classifier; needs its key or a Jev-compatible URL, e.g. Simple Jev's) | **never passed** | never, inside this skill: agent mode never pre-fills the plan (owner: an agent judges worse from pre-filled verdicts) and the run warns the flag is ignored. Outside the skill it gives `model`/`auto` a classifier of its own, a machine-translation route included (`docs/features/plan-mode.md`) |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
 | `--poetry-group-size` | integer, short lines per request | **leave unset — deprecated** | never set it fresh; general grouping covers verse and the units cap is `--max-batch-units`. It still works for old command lines, and warns |
 | `--exclude-translate-tags` | comma-separated tags; `""` excludes nothing | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
@@ -751,7 +757,9 @@ name-then-rule reasoning), what the read-back showed, and hand over
 | `pandoc 3.x is too old for EPUB export; Pandoc 3.1.12 or newer is required …` | apt's Pandoc (Ubuntu 24.04: 3.1.3, Debian 13: 3.1.11); install the release from pandoc.org (§1e). Nothing was paid |
 | `N of M selected pages have no text layer …; rerun with --pdf-ocr` | a scanned PDF; the flag, not a different tool |
 | `The parser produced no text for a document whose pages have no text layer …`, or `no text was recognised on page(s) …`, on a scan in a script the engine's default does not read | check the `OCR engine: …, languages: …` line; rerun with `--ocr-lang` (`iso:ja`, `iso:ko`, `iso:zh-Hant`); the bundle is read again |
-| an OCR language the engine has no model for (the message names the engine and carries its list) | a code the engine does not know; use an `iso:` tag or a code from the list; nothing was read or paid |
+| an OCR language the engine has no model for (the message names the engine and carries its list) | a code the engine does not know (`ch_sim` on rapidocr); use an `iso:` tag or a code from the list; nothing was read or paid |
+| `page N: the OCR engine read nothing where the PDF carried a text layer; …` | `--ocr-replace-layer` read that page empty and it stays empty (also in the manifest's limitations); rerun with the page's `--ocr-lang`, or without the flag to keep the layer |
+| `The OCR engine read nothing on any selected page, and with --ocr-replace-layer …` | stopped before translation, nothing paid; the manifest records the failed attempt. Usually the wrong or missing `--ocr-lang`; else drop the flag |
 | `--img-model needs an OpenAI-compatible endpoint …` | the image model would be asked at a non-OpenAI endpoint; add an OpenAI-compatible `--img-base-url` (key in `--img-key` or the entry's `img_env_key`) or drop it. Before extraction; nothing paid |
 | `… did not read the probe image (…); image steps are skipped this run` | the model cannot see pictures there; the run goes on with docling's labels. Informational |
 | `Region roles: C of D asked items on page N changed; read that page in source.md …` | most of a page was relabeled; read that page before translating |

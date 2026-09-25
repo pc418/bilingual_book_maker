@@ -93,13 +93,15 @@ Optional fields name two more endpoints: `img_model`/`img_base_url`/
 `img_env_key` (the PDF route's image step; off unless named, never the
 run's model by fallback) and `classify_model`/`classify_base_url`/
 `classify_env_key` (plan classification; default the run's model, unused
-by this skill's agent mode). Both extra bases must speak the OpenAI shape.
+by this skill's agent mode). Both extra bases must speak the OpenAI shape;
+a classify base may instead be a Jev-compatible URL.
 A key is bound to its address: `--img-key`/`--classify-key`; else the run's
 key only at the run's own address; else the entry's `*_env_key` only at the
 address the entry names; else the format's variable. `--extra_body` and
 `--extra_headers` never travel to another host. Jev (`--classify-model
 jev`) reads `JEV_API_KEY`/`TYPESAFE_API_KEY` only at a typesafe.ai
-address; through a gateway the key is named.
+address, Simple Jev (`featherless-ai/…-classifier`) `FEATHERLESS_API_KEY`
+only at featherless.ai; through a gateway the key is named.
 
 ## `--model orcarouter`: a gateway with no address to type
 
