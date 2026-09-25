@@ -195,13 +195,21 @@ is_jev = is_jev_wire
 
 
 def jev_request_url(api_base):
-    """Where a Jev-wire request is posted: a base already ending at
-    `/systemone` or `/classifier` verbatim, else `<base>/v1/systemone`; no
-    base is the official endpoint."""
+    """Where a Jev-wire request is posted (lead 260924, packet J fix round).
+
+    No base: the official endpoint. A base already ending at `/systemone`
+    or `/classifier`: verbatim. Otherwise the server's own path is
+    appended -- `/classifier` on a featherless.ai host (Simple Jev), else
+    `/systemone` -- after `/v1`, which is added unless the base already
+    ends there (`.../v1` -> `.../v1/classifier`, a bare host ->
+    `/v1/classifier`).
+    """
     base = (api_base or JEV_DEFAULT_BASE).strip().rstrip("/")
-    if _base_path(base).endswith(JEV_WIRE_PATHS):
+    path = _base_path(base)
+    if path.endswith(JEV_WIRE_PATHS):
         return base
-    return base + JEV_PATH
+    tail = "/classifier" if _host_in(base, FEATHERLESS_HOST_SUFFIX) else "/systemone"
+    return base + (tail if path.endswith("/v1") else "/v1" + tail)
 
 
 def jev_env_keys(api_base):

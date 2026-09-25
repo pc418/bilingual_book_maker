@@ -475,9 +475,23 @@ class TestJevCompatibleEndpoints:
                 "https://jev.self.example/v1/systemone",
                 "https://jev.self.example/v1/systemone",
             ),
+            # PIN (lead 260924, packet J fix round): the server's own path
+            # after /v1, which is not doubled
+            (
+                "https://api.featherless.ai/v1",
+                "https://api.featherless.ai/v1/classifier",
+            ),
+            ("https://api.featherless.ai/", "https://api.featherless.ai/v1/classifier"),
+            (
+                "https://simple-jev-demo-api.featherless.ai",
+                "https://simple-jev-demo-api.featherless.ai/v1/classifier",
+            ),
+            ("https://jev.self.example/v1/", "https://jev.self.example/v1/systemone"),
+            ("https://jev.self.example", "https://jev.self.example/v1/systemone"),
+            ("https://api.typesafe.ai", "https://api.typesafe.ai/v1/systemone"),
         ],
     )
-    def test_the_request_url_for_the_four_base_shapes(self, base, url):
+    def test_the_request_url_for_every_base_shape(self, base, url):
         assert endpoints.jev_request_url(base) == url
 
     def test_no_base_is_the_official_jev(self, monkeypatch):
