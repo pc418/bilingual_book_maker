@@ -274,7 +274,11 @@ def _convert(
     jbig2 = pdf_render.has_jbig2_mask(pdf)
     report["render"] = RENDER_PDFIUM_PAGE_IMAGE if jbig2 else RENDER_DOCLING_PARSE
     converter = _converter(device, settings, pdfium_page_images=jbig2)
-    result = converter.convert(str(pdf), page_range=span)
+    # No selection is docling's own default (every page): its `convert` is
+    # validated strictly and refuses `page_range=None` (docling 2.129).
+    result = converter.convert(
+        str(pdf), **({"page_range": span} if span is not None else {})
+    )
     # docling's document as it came back, before the formula markers and
     # the heading levels below change it.
     snapshot = Path(out_dir) / SNAPSHOT

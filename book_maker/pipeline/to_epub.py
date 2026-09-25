@@ -24,6 +24,7 @@ from .bundle import Bundle, parse_ocr_lang, parse_pages
 from .epub_export import export_epub
 from .errors import PipelineError
 from .messages import PANDOC_ON_PATH, PANDOC_REQUIRED, TO_EPUB_BUNDLE, TO_EPUB_COPY
+from .pdf_settings import check_ocr_engine
 from .preflight import find_pandoc
 from .stages import device_for, prepare
 from .translate import check_options, parse_bbm_options, translate_bundle
@@ -46,6 +47,7 @@ OWNED_OPTIONS = (
 OWNED_VALUE_OPTIONS = (
     "--book_name",
     "--ocr-lang",
+    "--ocr-engine",
     "--pages",
     "--device",
     # The image endpoint: resolved here, for the extraction. The inner
@@ -132,6 +134,7 @@ def pdf_to_epub(
     pages=None,
     formula_images=True,
     ocr_replace_layer=False,
+    ocr_engine="auto",
     img_model=None,
     img_base_url=None,
     img_key=None,
@@ -160,6 +163,9 @@ def pdf_to_epub(
     options = check_options(translation_argv(argv))
     parse_pages(pages)  # a selection that does not parse is refused here too
     parse_ocr_lang(ocr_lang)  # and an empty language list
+    if pdf_ocr:
+        # and an OCR engine this install cannot run (auto never is)
+        check_ocr_engine(ocr_engine)
     # The image model (`--img-model`, else the provider entry's img_model,
     # else off) is resolved here, before a page is read: an endpoint that
     # cannot take it, or one with no key, is refused now. Nothing of the
@@ -189,6 +195,7 @@ def pdf_to_epub(
         structure=structure,
         # Handed on only when asked for, as the stage's seams take it.
         **({"ocr_replace_layer": True} if ocr_replace_layer else {}),
+        **({"ocr_engine": ocr_engine} if (ocr_engine or "auto") != "auto" else {}),
     )
     if structure is not None and structure.translator is not None:
         _print_image_usage(structure)

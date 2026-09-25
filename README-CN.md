@@ -186,6 +186,7 @@ python3 make_book.py --book_name paper.pdf --to-epub --use_context session
 | `--to-epub` | 把 PDF 做成双语 EPUB |
 | `--pdf-ocr` | 识别没有文字层的页面（扫描件） |
 | `--ocr-lang` | OCR 引擎要认的语言（`iso:zh`、`iso:ja` 等） |
+| `--ocr-engine` | 用哪个 OCR 引擎读扫描件：`auto`、`rapidocr`、`ocrmac`、`easyocr`、`tesseract` |
 | `--ocr-replace-layer` | 配合 `--pdf-ocr`：每一页都重新 OCR，丢掉乱码文字层 |
 | `--pages` | 只处理这些页（`12-30`、`1,3,5-7`） |
 | `--device` | 提取模型运行的设备：`auto`、`cpu`、`cuda`、`mps`、`xpu` |

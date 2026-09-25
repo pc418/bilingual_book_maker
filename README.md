@@ -187,6 +187,7 @@ Every flag in one line. The full text is in [Command line options](docs/cmd.md),
 | `--to-epub` | turn the PDF into a bilingual EPUB |
 | `--pdf-ocr` | read pages with no text layer (a scan) |
 | `--ocr-lang` | the languages the OCR engine reads (`iso:zh`, `iso:ja`, …) |
+| `--ocr-engine` | which OCR engine reads the scan: `auto`, `rapidocr`, `ocrmac`, `easyocr`, `tesseract` |
 | `--ocr-replace-layer` | with `--pdf-ocr`: OCR every page and drop a garbage text layer |
 | `--pages` | only these pages (`12-30`, `1,3,5-7`) |
 | `--device` | where the extraction models run: `auto`, `cpu`, `cuda`, `mps`, `xpu` |

@@ -12,9 +12,13 @@ No docling import in this module: it is read on every resume check, and a
 Markdown run must not pay for the PDF parser.
 """
 
+import importlib.util
+import shutil
+import sys
 from dataclasses import dataclass
 
 from .errors import PipelineError
+from .messages import OCR_ENGINE_INSTALL, OCR_ENGINE_MISSING, OCR_ENGINE_NOT_MACOS
 
 OCR_ENGINES = ("auto", "rapidocr", "easyocr", "ocrmac", "tesseract")
 OCR_MODES = ("default", "full_page", "layout_regions", "pdf_aware_layout_regions")
@@ -25,6 +29,50 @@ TABLE_MODES = ("accurate", "fast", "v2")
 # replaced rather than kept (owner ruling 260923: an explicit setting, off
 # by default). `ocr_mode` is already identity, so toggling it re-extracts.
 OCR_MODE_REPLACE_LAYER = "full_page"
+
+# What an engine named by `--ocr-engine` needs importable before docling
+# can build it. rapidocr runs on onnxruntime (docling's default backend for
+# it). tesseract is a program, looked up on PATH instead.
+ENGINE_MODULES = {
+    "rapidocr": ("rapidocr", "onnxruntime"),
+    "easyocr": ("easyocr",),
+    "ocrmac": ("ocrmac",),
+}
+
+
+def check_ocr_engine(engine):
+    """Refuse an OCR engine this install cannot run, before a page is read.
+
+    `auto` is never refused: docling takes whichever engine is installed.
+    A named engine is checked without importing it (importing easyocr
+    starts torch): its modules must be findable, tesseract must be on PATH,
+    and ocrmac must be on macOS. What the check cannot see (a missing
+    language file) is docling's to refuse when the converter is built.
+    """
+    engine = engine or "auto"
+    if engine == "auto":
+        return
+    if engine not in OCR_ENGINES:
+        raise PipelineError(
+            f"ocr_engine {engine!r} is not one of {', '.join(OCR_ENGINES)}",
+            stage="extract",
+        )
+    if engine == "ocrmac" and sys.platform != "darwin":
+        raise PipelineError(OCR_ENGINE_NOT_MACOS, stage="extract")
+    if engine == "tesseract":
+        present = shutil.which("tesseract") is not None
+    else:
+        present = all(
+            importlib.util.find_spec(module) is not None
+            for module in ENGINE_MODULES[engine]
+        )
+    if not present:
+        raise PipelineError(
+            OCR_ENGINE_MISSING.format(
+                engine=engine, install=OCR_ENGINE_INSTALL[engine]
+            ),
+            stage="extract",
+        )
 
 
 @dataclass(frozen=True)

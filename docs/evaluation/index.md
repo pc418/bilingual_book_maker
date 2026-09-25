@@ -36,6 +36,10 @@ docling finds display equations but does not read them. Verdict: each one is cro
 
 A vision model had the lower character error rate on all 25 scanned pages measured, and invented text at low resolution. Verdict: the evidence favors a vision model at full resolution. OCR stays local for now (`--pdf-ocr`); no default needs a vision model, and an image model runs only when you name one.
 
+### [Which local OCR engine reads a scan best: rapidocr, ocrmac, easyocr and tesseract](pdf-ocr-engines.md)
+
+The four engines `--ocr-engine` can name, on the same 20 scanned pages, all on the CPU. Verdict: tesseract and ocrmac for English, rapidocr for simplified Chinese, ocrmac or rapidocr for traditional; easyocr last and slowest. The default stays `auto`.
+
 ### [Why the PDF route keeps docling-parse and only swaps the page image on JBIG2 scans](pdf-page-render-backend.md)
 
 docling's default backend draws some scans wrong, so OCR reads nothing. Verdict: keep docling-parse and take only the page image from pypdfium2 when the file carries a JBIG2 mask (8 of 8 pages found, no false positives). Built.

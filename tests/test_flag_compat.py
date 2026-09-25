@@ -313,6 +313,31 @@ class TestStops:
         )
         assert "C29" in tripped(f)
 
+    def test_an_ocr_engine_beside_pdf_ocr_is_not_warned_about(self):
+        f = facts(
+            [
+                "--book_name",
+                "b.pdf",
+                "--to-epub",
+                "--pdf-ocr",
+                "--ocr-engine",
+                "ocrmac",
+            ],
+            book_type="pdf",
+        )
+        assert tripped(f) == []
+
+    def test_the_default_engine_is_never_warned_about(self):
+        f = facts(["--book_name", "b.pdf", "--ocr-engine", "auto"], book_type="pdf")
+        assert "C36" not in tripped(f)
+
+    def test_an_ocr_engine_without_pdf_ocr_is_inert_even_on_the_route(self):
+        f = facts(
+            ["--book_name", "b.pdf", "--to-epub", "--ocr-engine", "easyocr"],
+            book_type="pdf",
+        )
+        assert "C36" in tripped(f)
+
     def test_device_without_the_route_is_inert(self):
         # --device chooses where the extraction models run, and they only
         # run on the --to-epub route
@@ -774,6 +799,17 @@ WARN_FIXTURES = [
         ["--ocr-lang", "ch_sim,en"],
         {},
         "only run on the --to-epub route with --pdf-ocr",
+    ),
+    (
+        # C36: --ocr-engine chooses the engine the PDF route's OCR reads
+        # with, and OCR only runs on the --to-epub route with --pdf-ocr
+        # (packet K, 260924; same shape as C29)
+        "C36",
+        ["--ocr-engine", "ocrmac"],
+        {},
+        "--ocr-engine ocrmac chooses the engine the PDF's OCR reads with, and "
+        "it only runs on the --to-epub route with --pdf-ocr; this run reads it "
+        "and does nothing with it.",
     ),
     (
         # C30: --no-formula-images turns off the pictures the PDF route

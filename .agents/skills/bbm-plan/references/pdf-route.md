@@ -69,6 +69,9 @@ paid):
    the layer. Run without the flag first; only when `source.md` shows the
    layer is garbage add `--pdf-ocr --ocr-replace-layer` with the scan's
    `--ocr-lang`.
+   `--ocr-engine` picks the engine (`auto` default; rapidocr for
+   simplified Chinese, tesseract or ocrmac for English, measured):
+   `docs/features/pdf-ocr-engines.md`.
 4. `--device` only if the default misbehaves: `auto` detects CUDA or MPS
    and falls back to the CPU. `--device cpu` gives the same text, only
    slower; it is never a downgrade in quality.
