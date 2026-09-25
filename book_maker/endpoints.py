@@ -121,7 +121,7 @@ SIMPLE_JEV_DEMO_HOST = "simple-jev-demo-api.featherless.ai"
 # Where a `featherless-ai/...-classifier` id is asked when no base is given.
 FEATHERLESS_NAMESPACE = "featherless-ai/"
 FEATHERLESS_DEFAULT_BASE = "https://api.featherless.ai/v1/classifier"
-# Not the lead's text: a `-classifier` id no default address is known for.
+# A `-classifier` id no default address is known for (lead-accepted 260924).
 CLASSIFIER_WITHOUT_BASE = (
     "{model} is a Jev-compatible classifier with no known default address; "
     "name its endpoint with --classify-base-url."
