@@ -95,8 +95,8 @@ class TestTheRequest:
         transport = Transport(
             _ok(
                 {
-                    "a": _answer("skip", {"translate": 0.1, "skip": 0.9}),
-                    "b": _answer("translate", {"translate": 0.7, "skip": 0.3}),
+                    "a": _answer("skip", {"translate": 0.03, "skip": 0.97}),
+                    "b": _answer("translate", {"translate": 0.97, "skip": 0.03}),
                 }
             )
         )
@@ -115,7 +115,7 @@ class TestTheRequest:
         }
         assert answer.backend == "jev"
         assert answer.values == {"a": "skip", "b": "translate"}
-        assert answer.confidence == {"a": 0.9, "b": 0.7}
+        assert answer.confidence == {"a": 0.97, "b": 0.97}
 
     def test_the_shared_context_is_the_state_and_criteria_describe_options(self):
         """Packet J (260924): the state is sent once per request, each
@@ -123,7 +123,7 @@ class TestTheRequest:
         transport = Transport(
             _ok(
                 {
-                    "a": _answer("skip", {"translate": 0.1, "skip": 0.9}),
+                    "a": _answer("skip", {"translate": 0.03, "skip": 0.97}),
                     "b": _answer("translate", {"translate": 0.9, "skip": 0.1}),
                 }
             )
@@ -144,19 +144,23 @@ class TestTheRequest:
 
     def test_without_a_fallback_a_low_confidence_answer_is_the_abstain(self):
         # a caller that sets no fallback (the role pass) keeps F's behaviour
-        assert JEV_MIN_CONFIDENCE == 0.5
+        # PIN (owner 260924, eval EJ, docs/260924-eval-JEV_CONFIDENCE_THRESHOLD.md):
+        # the gate is 0.95 on probabilities[choice], the cost minimum over 662
+        # corpus signatures against gpt-5.6-luna at 10:1; on two options the
+        # probability is never below 0.5, so a lower value would be inert.
+        assert JEV_MIN_CONFIDENCE == 0.95
         transport = Transport(
             _ok(
                 {
-                    "a": _answer("skip", {"translate": 0.3, "skip": 0.4, "x": 0.3}),
-                    "b": _answer("skip", {"translate": 0.5, "skip": 0.5}),
+                    "a": _answer("skip", {"translate": 0.06, "skip": 0.94}),
+                    "b": _answer("skip", {"translate": 0.05, "skip": 0.95}),
                 }
             )
         )
         c = Classifier(None, "jev-latest", backends=[_backend(transport)])
         answer = c.ask(_question())
-        assert answer.values["a"] == "unsure"  # 0.4 < 0.5
-        assert answer.values["b"] == "skip"  # 0.5 is not below
+        assert answer.values["a"] == "unsure"  # 0.94 < 0.95
+        assert answer.values["b"] == "skip"  # 0.95 is not below
 
     def test_usage_is_metered_as_jev(self):
         transport = Transport(
@@ -185,7 +189,7 @@ class TestPatience:
             Response(429, headers={"retry-after": "7"}, text="slow down"),
             Response(529, text="overloaded"),
             ConnectionError("reset"),
-            _ok({"a": _answer("skip", {"skip": 0.9, "translate": 0.1})}),
+            _ok({"a": _answer("skip", {"skip": 0.97, "translate": 0.03})}),
         )
         backend = _backend(transport, sleeps, lines)
         answer = Classifier(None, "j", backends=[backend]).ask(
@@ -201,7 +205,7 @@ class TestPatience:
         sleeps = []
         transport = Transport(
             *[Response(503, text="down")] * 40,
-            _ok({"a": _answer("skip", {"skip": 0.9, "translate": 0.1})}),
+            _ok({"a": _answer("skip", {"skip": 0.97, "translate": 0.03})}),
         )
         backend = _backend(transport, sleeps)
         Classifier(None, "j", backends=[backend]).ask(
@@ -371,11 +375,11 @@ class TestTheAsymmetricGate:
         answer = self._ask(
             {
                 "a": _answer("skip", {"translate": 0.3, "skip": 0.4, "x": 0.3}),
-                "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+                "b": _answer("skip", {"translate": 0.04, "skip": 0.96}),
             }
         )
         assert answer.values == {"a": "translate", "b": "skip"}
-        assert answer.confidence == {"a": 0.4, "b": 0.8}
+        assert answer.confidence == {"a": 0.4, "b": 0.96}
         assert answer.raw.fell_back == {"a": "skip"}
 
     # Codex (packet J review, 260924): a row without a choice was scored 0
@@ -384,7 +388,7 @@ class TestTheAsymmetricGate:
         answer = self._ask(
             {
                 "a": {"type": "choice", "confidence": 0.9},
-                "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+                "b": _answer("skip", {"translate": 0.04, "skip": 0.96}),
             }
         )
         assert answer.values == {"b": "skip"}
@@ -396,9 +400,9 @@ class TestTheAsymmetricGate:
             {
                 # the abstain label is never offered to jev, so never accepted
                 "a": _answer("unsure", {"translate": 0.1, "skip": 0.1, "unsure": 0.8}),
-                "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+                "b": _answer("skip", {"translate": 0.04, "skip": 0.96}),
                 # an id never asked is dropped whatever it says
-                "c": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+                "c": _answer("skip", {"translate": 0.04, "skip": 0.96}),
             }
         )
         assert answer.values == {"b": "skip"}
@@ -409,7 +413,7 @@ class TestTheAsymmetricGate:
         # a scalar "skip" carried neither a choice nor a probability; it used
         # to be copied into the reply ungated
         answer = self._ask(
-            {"a": "skip", "b": _answer("skip", {"translate": 0.2, "skip": 0.8})}
+            {"a": "skip", "b": _answer("skip", {"translate": 0.04, "skip": 0.96})}
         )
         assert answer.values == {"b": "skip"}
         assert "a" not in answer.raw
@@ -483,7 +487,7 @@ class TestTheAsymmetricGate:
             _ok(
                 {
                     "0": _answer("title", {"text": 0.6, "title": 0.4}),
-                    "1": _answer("title", {"text": 0.1, "title": 0.9}),
+                    "1": _answer("title", {"text": 0.03, "title": 0.97}),
                 }
             )
         )

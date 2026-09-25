@@ -543,14 +543,24 @@ class Classifier:
 # Below this probability for its chosen option, an answer other than the
 # question's `fallback` becomes the fallback (the question's `abstain` when
 # it sets none); the fallback itself is accepted at any confidence.
-# Placeholder until the eval (packet EJ, 260924) sets it from measured
-# agreement per confidence bin; the gate only guards non-fallback answers (a
-# wrong skip loses content, a wrong translate costs tokens).
+# The gate only guards non-fallback answers (a wrong skip loses content, a
+# wrong translate costs tokens). Measured 260924 (eval EJ,
+# docs/260924-eval-JEV_CONFIDENCE_THRESHOLD.md): over the 662 plan
+# signatures of the 45-EPUB epub3-samples corpus, against gpt-5.6-luna as
+# reference with a lost skip costing 10 and an extra translate costing 1,
+# total cost is lowest at 0.95 on probabilities[choice] (about 0.90 on the
+# official Jev's own confidence field, which is ~ 2p-1). On two options the
+# probability is never below 0.5, so anything lower is inert; the minimum
+# is not flat (0.90 -> 156, 0.94 -> 133, 0.95 -> 115, 0.96 -> 119, 0.99 ->
+# 133 in run 1; never skipping costs 140). At 0.95 the gate turns 88.7% of
+# Jev's skips into translate: what survives is apparatus (copyright lines,
+# line numbers, note marks, index locators). The weights are the owner's,
+# not measured; at 3:1 the minimum moves to 0.90.
 # The environment variable BBM_JEV_MIN_CONFIDENCE (a number from 0 to 1)
-# overrides it for a run, so the eval can sweep it without editing code; it
+# overrides it for a run, so an eval can sweep it without editing code; it
 # is read when a jev backend is built, and a value that is not such a
 # number stops the run there.
-JEV_MIN_CONFIDENCE = 0.5
+JEV_MIN_CONFIDENCE = 0.95
 JEV_MIN_CONFIDENCE_ENV = "BBM_JEV_MIN_CONFIDENCE"
 
 # docs.typesafe.ai/api (read 260923): one POST per request, a map of typed
