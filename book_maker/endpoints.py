@@ -172,8 +172,12 @@ def is_jev_wire(model, api_base=""):
     The model id's last segment is `jev` or starts with `jev-` (a gateway
     namespaces it: `typesafe-ai/jev`), or the id ends with `-classifier`
     (Simple Jev's `featherless-ai/Qwen3.8-27B-classifier`); or the base's
-    host is typesafe.ai or featherless.ai (or a subdomain); or the base's
-    path ends at `/systemone` or `/classifier`.
+    host is typesafe.ai (or a subdomain) or exactly the keyless Simple Jev
+    demo; or the base's path ends at `/systemone` or `/classifier`. Any
+    other featherless.ai address is not Jev by its host alone (lead 260924):
+    Featherless also serves an OpenAI-compatible chat API there, so
+    `--classify-base-url https://api.featherless.ai/v1` with a chat model
+    stays a chat model.
     """
     name = (model or "").strip().lower()
     last = name.rsplit("/", 1)[-1]
@@ -181,9 +185,7 @@ def is_jev_wire(model, api_base=""):
         return True
     if name.endswith("-classifier"):
         return True
-    if _host_in(api_base, JEV_HOST_SUFFIX) or _host_in(
-        api_base, FEATHERLESS_HOST_SUFFIX
-    ):
+    if _host_in(api_base, JEV_HOST_SUFFIX) or jev_keyless(api_base):
         return True
     return _base_path(api_base).endswith(JEV_WIRE_PATHS)
 

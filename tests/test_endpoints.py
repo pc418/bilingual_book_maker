@@ -436,8 +436,8 @@ class TestJevCompatibleEndpoints:
             ("my-classifier", "https://self.example/v1", True),
             ("m", "https://api.typesafe.ai", True),
             ("m", "https://eu.api.typesafe.ai", True),
-            ("m", "https://api.featherless.ai/v1", True),
             ("m", "https://simple-jev-demo-api.featherless.ai", True),
+            ("m", "https://api.featherless.ai/v1/classifier", True),
             ("m", "https://self.example/v1/classifier", True),
             ("m", "https://self.example/v1/systemone/", True),
             # not the wire
@@ -448,6 +448,10 @@ class TestJevCompatibleEndpoints:
             ("gpt-5.6-luna", "https://api.openai.com/v1", False),
             ("m", "https://nottypesafe.ai", False),
             ("m", "https://featherless.ai.example.com", False),
+            # PIN (lead 260924, packet J fix round): Featherless serves an
+            # OpenAI-compatible chat API too; its host alone is not Jev
+            ("m", "https://api.featherless.ai/v1", False),
+            ("m", "https://other.featherless.ai", False),
             ("m", "https://self.example/classifiers", False),
         ],
     )
@@ -521,6 +525,23 @@ class TestJevCompatibleEndpoints:
         assert "jev-secret" not in str(refused.value)
         monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
         assert resolve_classify_endpoint(options, _run(), None).key == "fl-secret"
+
+    def test_a_chat_model_at_featherless_is_a_chat_model(self, monkeypatch):
+        """PIN (lead 260924, fix round): a chat model at Featherless's
+        OpenAI-compatible base is asked as one, and FEATHERLESS_API_KEY is
+        not read implicitly for it."""
+        monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
+        options = _opts(
+            classify_model="some-llm",
+            classify_base_url="https://api.featherless.ai/v1",
+            classify_key="k-flag",
+        )
+        choice = resolve_classify_endpoint(options, _run(), None)
+        assert (choice.api_format, choice.api_base, choice.key) == (
+            "openai",
+            "https://api.featherless.ai/v1",
+            "k-flag",
+        )
 
     def test_the_featherless_variable_is_not_sent_to_typesafe(self, monkeypatch):
         monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
