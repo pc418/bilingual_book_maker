@@ -28,7 +28,7 @@ bbook_maker \
   --batch_size 20
 ```
 
-`prompt_md.json` in the repository is a prompt written for Markdown: it asks the model to keep the markup. There is no plan mode for Markdown, so in session mode every request re-reads the history. The run warns about this and names `--accumulated_num`, which the Markdown loader does not read. Raise `--batch_size` instead.
+`prompt_md.json` in the repository is a prompt written for Markdown: it asks the model to keep the markup. There is no plan mode for Markdown, so in session mode every request re-reads the history. Raise `--batch_size` to send fewer, larger requests.
 
 ## Flags that apply
 

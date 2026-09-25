@@ -55,7 +55,7 @@ These work the same on every format.
 
 | flag | what it does |
 |---|---|
-| `--accumulated_num N` | Characters of subtitle blocks sent in one request (capped at 512 for SRT). The run prints a warning that calls this flag EPUB-only; it is read here all the same. |
+| `--accumulated_num N` | Characters of subtitle blocks sent in one request (capped at 512 for SRT). |
 
 ## Not for this format
 

@@ -184,8 +184,10 @@ rather than a silent no-op.
 | `caiyun` | required |
 | `deepl` | required (RapidAPI DeepL Translator) |
 
-They translate text and nothing else: no context window, no structured
-output, and no plan classification. `--source_lang` reaches `customapi`
+They translate text and nothing else: no context window and no structured
+output. They cannot classify an EPUB for plan mode themselves; with
+`--classify-model` naming a model that can, an EPUB gets plan mode on these
+engines too. `--source_lang` reaches `customapi`
 (it goes into the request body); the other engines detect the source
 themselves. (On the LLM routes the flag reaches the prompt — see
 Languages below.)

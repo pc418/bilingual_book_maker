@@ -33,7 +33,7 @@ If you translate a novel, add `--use_context session` and, when a recurring name
 
 - **`session: compacting at 8192 estimated tokens (the default; --context-compact-at overrides)`**. Not a problem. The run says the budget it uses.
 - **`cached=` on the progress bar stays at 0 after a dozen requests.** The endpoint has no prompt cache, and every request pays for the whole history at full price. Press Ctrl+C and rerun with bare `--use_context`.
-- **`--use_context session outside plan mode leaves grouping off, so every paragraph is its own request and each one re-reads the whole history.`** You are on a Markdown book or passed `--plan-classify none`. On an EPUB, raise `--accumulated_num`; on Markdown (and the PDF route), raise `--batch_size`.
+- **`--use_context session outside plan mode leaves grouping off, so every paragraph is its own request and each one re-reads the whole history.`** An EPUB outside plan mode (for example `--plan-classify none`), or an SRT book on the codex route. Raise `--accumulated_num`. Markdown and PDF runs do not print this; there, a larger `--batch_size` sends fewer requests.
 - **`Error: --use_context session is not implemented for the gemini format; it would be accepted and ignored.`** Use bare `--use_context` on Gemini and Qwen.
 - **`--use_context session is not supported for txt books; it will be ignored.`** TXT and SRT carry no context.
 - **`--parallel-workers is not supported with --use_context session: one history is the context, and a worker cannot share it.`** Choose one. Bare `--use_context` keeps the workers.
