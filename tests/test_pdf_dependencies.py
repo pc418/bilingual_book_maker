@@ -30,7 +30,15 @@ except ImportError:  # Python 3.10
 ROOT = Path(__file__).resolve().parents[1]
 
 # Nothing the PDF route needs may sit in the base install.
-PDF_ONLY = ("docling", "pypdfium2", "torch", "transformers", "easyocr")
+PDF_ONLY = (
+    "docling",
+    "pypdfium2",
+    "torch",
+    "transformers",
+    "easyocr",
+    "onnxruntime",
+    "ocrmac",
+)
 
 CPU_FILE = ROOT / "requirements-pdf-cpu.txt"
 GPU_FILE = ROOT / "requirements-pdf-gpu.txt"
@@ -59,13 +67,28 @@ def test_the_base_install_carries_nothing_the_pdf_route_needs():
 def test_the_pdf_extra_names_what_is_needed_and_not_which_torch_build():
     extras = _project()["optional-dependencies"]
     pdf = extras["pdf"]
-    assert {_name(d) for d in pdf} == {"docling", "pypdfium2"}
+    # PIN (owner, 250925, docs/250925-feat-PDF_EXTRA_OCR_RUNTIMES.md):
+    # onnxruntime and ocrmac (darwin) in the extra, so rapidocr downloads
+    # nothing on first use and `auto` reads with ocrmac on every Mac.
+    assert {_name(d) for d in pdf} == {"docling", "pypdfium2", "onnxruntime", "ocrmac"}
+    (ocrmac,) = [d for d in pdf if _name(d) == "ocrmac"]
+    assert re.search(r"sys_platform\s*==\s*['\"]darwin['\"]", ocrmac)
     # A direct reference or an index URL here would be rejected by PyPI and
     # would still not reach anyone installing us as a dependency.
     assert not [d for d in pdf if "@" in d or "://" in d]
     # The retired `ocr` extra keeps working for a release: `--with-ocr` used
     # to start a second engine, and OCR is now one option of the one parser.
     assert extras["ocr"] == ["bbook_maker[pdf]"]
+
+
+def test_both_pdf_files_carry_the_ocr_runtimes():
+    # PIN (owner, 250925, docs/250925-feat-PDF_EXTRA_OCR_RUNTIMES.md).
+    for path in (CPU_FILE, GPU_FILE):
+        text = path.read_text()
+        assert _pinned(text, "onnxruntime"), path.name
+        assert re.search(
+            r'^ocrmac==\S+; sys_platform == "darwin"', text, re.M
+        ), path.name
 
 
 def test_the_exported_base_file_keeps_the_split():
