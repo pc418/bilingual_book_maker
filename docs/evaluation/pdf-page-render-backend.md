@@ -4,7 +4,7 @@
 
 docling reads a PDF through a backend. The default, docling-parse, extracts the text cells and draws the page image that OCR and the layout model look at. On some scans that page image is wrong: docling-parse ignores an image mask stored as JBIG2, so a masked page comes out as a smear, pure white or pure black. OCR then reads nothing and the run still reports success. docling's other backend, pypdfium2, draws these pages correctly, but switching to it outright changed tables, links and reading order on born-digital pages, and made one Chinese scan worse. The measured answer is a hybrid: keep docling-parse for everything, and take only the page image from pypdfium2 when the file carries a JBIG2 mask.
 
-The hybrid is implemented after this build. In this build the page image always comes from docling-parse.
+The route does this now: it prints one line when it takes the page image from pypdfium2.
 
 ## Setup
 
@@ -78,9 +78,9 @@ Reading the table:
 
 Keep docling-parse as the backend. When a dependency-free scan of the file finds a JBIG2 `/Mask` or `/SMask`, take only the page image from pypdfium2. Do not switch to the pypdfium2 backend, and never while OCR is on.
 
-On the feature branch this landed as `14ec784`, after the build this wiki describes. That version records `render_backend` in the manifest and prints a `JBIG2_MASK_RENDER` line when it swaps the image. Measured there, rapidocr on the Chinese scan went from Han CER 0.249 to 0.0095, and three born-digital fixtures came out byte-identical. With ocrmac as docling's auto engine and no `--ocr-lang`, the same page got worse (Han CER 0.291 → 0.494): the readable page was now OCR'd as Latin. Given `--ocr-lang zh-Hans,en-US`, ocrmac reached Han CER 0.056. The same branch therefore prints the `--ocr-lang` hint when a page carries only an invisible text layer.
+This is built (`14ec784`). The run records `render_backend` in the manifest and prints `The PDF carries JBIG2 image masks, which docling-parse renders wrongly (docling issue #4329); page images are rendered by pypdfium2 instead, the text layer still by docling-parse.` when it swaps the image. The swap is per document, not per page. Measured on the built version, rapidocr on the Chinese scan went from Han CER 0.249 to 0.0095, and three born-digital fixtures came out byte-identical. With ocrmac as docling's auto engine and no `--ocr-lang`, the same page got worse (Han CER 0.291 → 0.494): the readable page was now OCR'd as Latin. Given `--ocr-lang zh-Hans,en-US`, ocrmac reached Han CER 0.056. The run therefore also names pages that carry only an invisible OCR layer, and prints the `--ocr-lang` hint for them when OCR is on.
 
-In this build: if you translate an Internet Archive or ABBYY scan with `--pdf-ocr`, read `source.md` first. A page that looks right in a PDF viewer can reach OCR as a smear.
+What stays for you to check: the yellow-box defect below is not fixed, so on a scan read `source.md` before you pay for the translation.
 
 ## Limits
 

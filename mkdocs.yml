@@ -72,6 +72,7 @@ nav:
       - Why 16 units per request: evaluation/grouping-batch-size.md
       - Why the session compacts at 8192: evaluation/session-compact-budget.md
       - Why the tool probes the endpoint: evaluation/structured-output-ladder.md
+      - Jev as the plan classifier: evaluation/plan-classifier-jev.md
   - "Evaluation: PDF route":
       - Why heading levels come from the page: evaluation/pdf-heading-levels.md
       - Why formulas are pictures: evaluation/pdf-formulas-as-images.md

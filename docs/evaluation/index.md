@@ -18,6 +18,10 @@ Session mode carries a running conversation and summarizes it when it grows past
 
 Endpoints that claim schema support do not always apply it. Verdict: probe each endpoint once, remember the result, and step down from schema to JSON to delimiters, splitting a reply that cannot be aligned.
 
+### [Can a dedicated classifier decide the plan? Jev against gpt-5.6-luna](plan-classifier-jev.md)
+
+TypeSafe's Jev and gpt-5.6-luna classified the same 31 signatures of one book. Verdict: 27 of 31 agree, the 4 disagreements are Jev's low-confidence skips, and Jev used about twice the prompt tokens. Jev is available as a classify model; the default stays the translating model.
+
 ## PDF to EPUB
 
 ### [Why heading levels are read from the page and docling's heading model stays off](pdf-heading-levels.md)
@@ -30,15 +34,15 @@ docling finds display equations but does not read them. Verdict: each one is cro
 
 ### [Why a vision model reads a scanned page better than a local OCR engine](pdf-ocr-llm-vs-local.md)
 
-A vision model had the lower character error rate on all 25 scanned pages measured, and invented text at low resolution. Verdict: the evidence favors a vision model at full resolution; this build ships local OCR only, and defaults need no vision model.
+A vision model had the lower character error rate on all 25 scanned pages measured, and invented text at low resolution. Verdict: the evidence favors a vision model at full resolution. OCR stays local for now (`--pdf-ocr`); no default needs a vision model, and an image model runs only when you name one.
 
 ### [Why the PDF route keeps docling-parse and only swaps the page image on JBIG2 scans](pdf-page-render-backend.md)
 
-docling's default backend draws some scans wrong, so OCR reads nothing. Verdict: keep docling-parse and take only the page image from pypdfium2 when the file carries a JBIG2 mask (8 of 8 pages found, no false positives); implemented after this build.
+docling's default backend draws some scans wrong, so OCR reads nothing. Verdict: keep docling-parse and take only the page image from pypdfium2 when the file carries a JBIG2 mask (8 of 8 pages found, no false positives). Built.
 
 ### [Where an LLM fixes a layout detector's mistakes, and where it cannot](pdf-structure-llm-roles.md)
 
-123 structure faults on 85 pages were catalogued, and a vision model was asked to relabel regions. Verdict: it fixed 40 of 66 wrong labels, but running headers and shattered OCR pages need geometry rules first; not in this build.
+123 structure faults on 85 pages were catalogued, and a vision model was asked to relabel regions. Verdict: it fixed 40 of 66 wrong labels, but running headers and shattered OCR pages need geometry rules first. The role pass is built as `--img-model`; the geometry rules are not.
 
 ### [How the PDF extraction was checked on real papers and books](pdf-extraction-corpus.md)
 

@@ -4,7 +4,7 @@
 
 docling cuts each page into regions (paragraph, heading, footnote, code, table, picture and so on) and puts them in reading order. When a region has the wrong role or the wrong order, the book shows it: a code listing printed as footnotes, section 2 before section 1, a figure missing above its caption. The study catalogued docling's faults on 85 pages, then asked a vision model (gpt-5.6-luna) to relabel the regions it could see. The model fixed most wrong labels on born-digital pages. It could not fix what only shows across pages (running headers), and it could not rebuild a page docling had shattered into fragments. Those need rules based on page geometry, run before any model.
 
-None of this is in the build this wiki describes: extraction uses docling's labels as they come, and only the heading levels are corrected (see [Why heading levels come from the page](pdf-heading-levels.md)).
+The role pass is built: `--img-model` on the [PDF route](../features/pdf-to-epub.md#correcting-region-roles-with-a-vision-model). The geometry repairs the study calls for are not built yet, so running headers and shattered pages still come through as docling made them.
 
 ## Setup
 
@@ -70,7 +70,7 @@ Wrong labels are the most frequent class but break a book once. Shattered or wro
 
 ## Decision
 
-The lead's plan from this study, for the feature branch:
+The plan that came out of this study:
 
 1. Geometry repair runs first and is not a model's job: shattered lines and paragraphs, the cross-page merge, one-glyph slivers, code newlines, and running furniture found by repetition across pages.
 2. Then a role pass over the cleaned region ids. This is the first model step, because it is the cheapest seam and the only measured win.
@@ -82,19 +82,33 @@ A design consult (Codex, recorded) set the constraints for step 2:
 - a thin image adapter on the OpenAI-style route, reusing the existing structured-output ladder;
 - a role change is a typed replacement of the item, never a bare label write;
 - furniture, tables, pictures and lists are out of the first pass;
-- accepted changes apply atomically; a page with an unusual change rate is quarantined, not trimmed;
+- accepted changes apply atomically; a page with an unusual change rate is quarantined, not trimmed (changed after the first real runs, below);
 - every decision is written to `decisions.json` for audit;
 - off by default.
 
-**On-device models:** the role pass needs a vision model that can read the region tags. About 3,000 prompt tokens per page is modest, but the 164-region page took 7,860, which is beyond an 8B-class model. So the pass is an opt-in step behind the image-capability probe, and without it docling's own labels stand. The owner ruled that the image model must be named explicitly; there is no fallback to the translation model.
+**What was built.** Step 2, the role pass, ahead of the geometry repairs. The model sees the page rendered with docling's regions tagged, and answers one label per eligible region (text, section_header, title, caption, footnote, code, or abstain) under a strict per-region schema. Eligible regions are body text, titles and headings that no caption or footnote refers to, outside table cells and formulas. Lists, formulas, tables, pictures and furniture are not asked about. Accepted answers replace the item with one of the right type, before the formula and heading steps run.
 
-**Status:** not in this build. The image probe is in the code without a flag; the role pass is being built on the feature branch.
+The first real runs, gpt-5.6-luna on pages 1-2 of four fixtures, copied from the record:
+
+| fixture | asked | accepted (applied) | kept | rejected | quarantined pages | calls | prompt / completion tokens | seconds |
+|---|---|---|---|---|---|---|---|---|
+| arxiv_2010_03667v1 | 27 | 6 | 21 | 0 | 0 | 2 | 7001 / 368 | 9.9 |
+| web_en_chrome_1 | 28 | 4 | 24 | 0 | 0 | 2 | 6930 / 365 | 8.8 |
+| mixed_photo_code_1_p3031 | 15 | 1 (9 more quarantined) | 5 | 0 | 1 | 2 | 5538 / 177 | 6.2 |
+| arxiv_1706_03762 (held-out) | 21 | 2 | 19 | 0 | 0 | 2 | 6645 / 322 | 7.8 |
+
+The quarantine blocked the one book-breaking fix it met: on the code page the model was right on 9 of 10 answers, which crossed the 60% change threshold. So the owner dropped the quarantine. A page where more than 60% of the asked items change now keeps its changes and prints `Region roles: … on page N changed; read that page in source.md before translating.` Rerun without the quarantine, the eight listing lines export as code (eight separate code blocks, since adjacent code items are not merged yet). The held-out paper came out with 0 changed lines of Markdown.
+
+**The image model is chosen explicitly.** The pass runs only on a model you name, with `--img-model` or a provider entry's `img_model`. The translating model is never used for images by fallback (owner ruling), so no default needs a model that reads images. The shipped `openai` provider entry names gpt-5.6-luna, so `--provider openai` turns the pass on; `--img-model none` turns it off. Before the pass, a one-image probe checks that the model can see a picture; if it cannot, docling's labels stand.
+
+**On-device models:** about 3,000 prompt tokens per page is modest, but the 164-region page took 7,860, which is beyond an 8B-class model. Point the pass at a hosted vision model with `--img-base-url`, or leave it off.
 
 ## Limits
 
 - The role pass is measured on 12 pages and the whole-page probe on 3. The class-to-fix table in the record is a direction, not a rate.
 - The catalogue was made by one worker from overlays; heading levels on arXiv were not judged (a separate study covers them).
 - Only one model (gpt-5.6-luna) was run. No on-device model was tried.
+- The built pass was checked on pages 1-2 of four fixtures; label-only changes such as text to footnote change nothing in the export yet.
 - No OCR engine ran in the catalogue; the two scans were read through their embedded layers.
 
-Source: docs/260923-eval-PDF_STRUCTURE_FAULTS_LUNA_REGION_ROLES.md; docs/260923-eval-CODEX_CONSULT_STRUCTURE_DECISION_CLIENT.md for the design constraints; docs/260923-feat-PDF_CHOICES_EXECUTION.md for the status and the owner's image-model ruling (repository, dated records)
+Source: docs/260923-eval-PDF_STRUCTURE_FAULTS_LUNA_REGION_ROLES.md; docs/260923-eval-CODEX_CONSULT_STRUCTURE_DECISION_CLIENT.md for the design constraints; docs/260923-feat-PDF_ROLE_DECISIONS.md for what was built and its first runs; docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md for the `--img-model` flags and the owner's image-model ruling (repository, dated records)

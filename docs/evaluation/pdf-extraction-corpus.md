@@ -74,7 +74,7 @@ The record also pins a survey of how others score extraction (OmniDocBench, olmO
 
 - Every PDF run, test or smoke starts with the first two pages (`--pages 1-2`), and you read the extracted `source.md`, headings at least, before any translation is paid for. A page whose Markdown runs to thousands of lines is broken, not long.
 - `PAGE_TOO_DENSE` stays as a warning at 12,000 characters per page. Its headroom over a dense bibliography page is about 11%, so a false alarm there is possible; it costs a warning line.
-- The route moved from OpenDataLoader to docling (see [Why docling](pdf-parser-choice.md)). The figure sanitizer belonged to the old route and is not in this build.
+- The route moved from OpenDataLoader to docling (see [Why docling](pdf-parser-choice.md)). The figure sanitizer belonged to the old route and is not part of the docling route.
 
 ## Limits
 

@@ -52,7 +52,7 @@ OpenDataLoader's levels are right when it finds a heading, but it finds fewer th
 
 docling is the only PDF parser. There is no Java, no OpenDataLoader and no zero-model tier. PDF support is an optional install with a CPU route and a GPU route (see [PDF extra](../installation-pdf.md)); Pandoc stays, because it builds the EPUB, not the text.
 
-From the survey: the style ranking went into the heading rule (built); the narrowed header/footer rule, the ≠ fix and the diacritics fix are recommended, and none of them is in this build. The `--with-ocr` and `--no-gpu` flags from the Java route still parse as hidden aliases of `--pdf-ocr` and `--device cpu`.
+From the survey: the style ranking went into the heading rule (built); the narrowed header/footer rule, the ≠ fix and the diacritics fix are recommended, and none of them is built yet. The `--with-ocr` and `--no-gpu` flags from the Java route still parse as hidden aliases of `--pdf-ocr` and `--device cpu`.
 
 ## Limits
 

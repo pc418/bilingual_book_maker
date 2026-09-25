@@ -4,7 +4,7 @@
 
 When a PDF page has no text layer, the `--to-epub` route asks docling's local OCR engine to read it. On this Mac, docling's automatic choice was rapidocr on onnxruntime. The study paired that engine against a vision model (gpt-5.6-luna) reading the page image, on 25 scanned pages with typed or exact ground truth. The vision model had the lower character error rate (CER) on all 25 pages. On real scans the local engine left 16 to 54% CER; the vision model stayed near 1%. The vision model is only safe at full resolution: at low resolution it invented whole pages of fluent text. The study also found that docling's default PDF backend renders some scan encodings wrong, so OCR returns nothing while the run reports success.
 
-This build reads scans with docling's local OCR only. A vision reader is not a flag here.
+The tool still reads scans with docling's local OCR (`--pdf-ocr`). A vision model reading the page text is not a flag yet.
 
 ## Setup
 
@@ -66,12 +66,21 @@ Both invented replies ended normally, with no `[illegible]` marks. Detail low is
 
 ## Decision
 
-The evidence favors a vision model for scanned prose. This build does not act on it: it reads scans with docling's local OCR only (`--pdf-ocr`), and has no flag that sends a page image to a model. The image-capability probe for an OpenAI-style endpoint is in the code, and an image-reading step is being built on the feature branch after this build. The owner ruled that image steps run only when an image model is named explicitly, never by falling back to the translation model. So the default run needs no vision model, and an on-device model is never asked to read a page.
+The evidence favors a vision model for scanned prose. The tool does not read scans with one yet: `--pdf-ocr` uses docling's local OCR. The one step that sends a page image to a model today corrects region roles, not text, and it runs only on an image model you name: `--img-model`, or a provider entry's `img_model`. The translating model is never used for images by fallback (owner ruling). So the default run needs no vision model, and an on-device model is never asked to read a page.
+
+The owner ruled on the study's open questions afterwards:
+
+- **Render defect:** closed by taking the page image from pypdfium2 on JBIG2-masked files ([Why docling-parse stays](pdf-page-render-backend.md)). It is not a guarantee against every render defect.
+- **Variant characters:** when a vision OCR step is built, its prompt tells the model to keep printed variants (爲/為, 卽/即 and others) rather than modernize them. Exact-character CER is the primary score; a variant-folded CER is only a diagnostic.
+- **Running heads and page numbers** stay in the transcription; the reading edition drops them through structure classification, not through the OCR prompt.
+- **Vertical CJK:** when detected, such a page is to be marked unsupported for unattended OCR and stop before translation, rather than produce reversed prose. Not built yet.
+- **A page with an OCR layer:** keep the layer by default; replacing it with fresh OCR becomes an explicit option. Not built yet: today `--pdf-ocr` replaces the layer, and the run says so.
 
 What this means for you today:
 
-- For a scan in a script other than Chinese or English, pass `--ocr-lang` with the engine's codes (the run prints which engine it chose).
-- For an Internet Archive or ABBYY scan, check `source.md` before you translate. In this build `--pdf-ocr` can come back empty on such a page while the run completes.
+- For a scan in a script other than Chinese or English, pass `--ocr-lang` with the engine's codes or an `iso:` tag (the run prints which engine it chose).
+- For a scan that already has an OCR layer, try the run without `--pdf-ocr` first: the layer is read as text, and on 3 of 3 pages it beat a fresh local OCR pass.
+- An Internet Archive or ABBYY scan with JBIG2 masks is now rendered correctly; the run prints a line when it does so. Still read `source.md` before you pay for a translation.
 - Vertical Chinese comes back in the wrong column order. Do not translate it unreviewed.
 
 ## Limits
@@ -82,4 +91,4 @@ What this means for you today:
 - One CPU cell; no CUDA machine.
 - No price table for gpt-5.6-luna, so token counts were not converted to money.
 
-Source: docs/260923-eval-PDF_OCR_LUNA_VS_LOCAL_BASELINE.md; docs/260923-feat-PDF_CHOICES_EXECUTION.md for the build status and the owner's image-model ruling (repository, dated records)
+Source: docs/260923-eval-PDF_OCR_LUNA_VS_LOCAL_BASELINE.md; docs/260923-docs-OWNER_RULINGS_OCR_PROMPT_LAYER_WIKI.md for the rulings on its open questions; docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md for the image-model flags (repository, dated records)
