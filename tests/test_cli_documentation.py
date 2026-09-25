@@ -133,6 +133,10 @@ _REFERENCES = (
     ".agents/skills/bbm-plan/SKILL.md",
     ".agents/skills/bbm-plan/references/providers.md",
     ".agents/skills/bbm-plan/references/prompt-files.md",
+    ".agents/skills/bbm-plan/references/route-setup.md",
+    ".agents/skills/bbm-plan/references/epub-plan-mode.md",
+    ".agents/skills/bbm-plan/references/pdf-route.md",
+    ".agents/skills/bbm-plan/references/plain-formats.md",
     ".agents/skills/bbm-plan/assets/env.example",
 )
 
