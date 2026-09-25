@@ -731,9 +731,11 @@ class JevBackend:
                 probability, (int, float)
             ):
                 continue
-            probability = float(probability)
-            if not (0.0 <= probability <= 1.0):  # NaN fails this too
+            # range before float(): a JSON integer such as 10**400 compares
+            # but does not convert; NaN fails the comparison too
+            if not (0 <= probability <= 1):
                 continue
+            probability = float(probability)
             reply.confidence[cid] = probability
             if (
                 fallback is None

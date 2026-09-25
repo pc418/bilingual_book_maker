@@ -394,12 +394,11 @@ class TestTheAsymmetricGate:
     def test_a_choice_never_offered_stays_unanswered(self):
         answer = self._ask(
             {
-                "a": _answer(
-                    "abstain", {"translate": 0.2, "skip": 0.1, "abstain": 0.7}
-                ),
-                "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
                 # the abstain label is never offered to jev, so never accepted
-                "c": _answer("unsure", {"translate": 0.1, "skip": 0.1, "unsure": 0.8}),
+                "a": _answer("unsure", {"translate": 0.1, "skip": 0.1, "unsure": 0.8}),
+                "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+                # an id never asked is dropped whatever it says
+                "c": _answer("skip", {"translate": 0.2, "skip": 0.8}),
             }
         )
         assert answer.values == {"b": "skip"}
@@ -428,7 +427,8 @@ class TestTheAsymmetricGate:
         assert answer.confidence == {}
 
     @pytest.mark.parametrize(
-        "value", [-0.1, 1.7, float("nan"), float("inf"), -float("inf"), True, "0.9"]
+        "value",
+        [-0.1, 1.7, float("nan"), float("inf"), -float("inf"), True, "0.9", 10**400],
     )
     def test_a_probability_outside_the_unit_interval_stays_unanswered(self, value):
         answer = self._ask(
