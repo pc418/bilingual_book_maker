@@ -67,6 +67,7 @@ nav:
       - Plan mode: features/plan-mode.md
       - Session mode: features/session-mode.md
       - PDF to bilingual EPUB: features/pdf-to-epub.md
+      - Which OCR engine: features/pdf-ocr-engines.md
   - Evaluation:
       - evaluation/index.md
       - Why 16 units per request: evaluation/grouping-batch-size.md
@@ -77,6 +78,7 @@ nav:
       - Why heading levels come from the page: evaluation/pdf-heading-levels.md
       - Why formulas are pictures: evaluation/pdf-formulas-as-images.md
       - Why a vision model reads scans better: evaluation/pdf-ocr-llm-vs-local.md
+      - Which local OCR engine reads best: evaluation/pdf-ocr-engines.md
       - Why docling-parse stays: evaluation/pdf-page-render-backend.md
       - Where an LLM fixes layout: evaluation/pdf-structure-llm-roles.md
       - How extraction was checked: evaluation/pdf-extraction-corpus.md

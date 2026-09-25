@@ -28,6 +28,7 @@ The route's flags:
 | `--pdf-ocr` | Read pages that have no text layer. Off by default: a born-digital PDF is already readable, and OCR costs several times the time without changing what is read. Layout, heading and table detection run either way. |
 | `--ocr-replace-layer` | With `--pdf-ocr`: OCR every page and use that text instead of the text layer the PDF carries. Off by default: a layer is kept and only pages without one are OCR'd. For a scan whose layer is wrong (another language, or garbage from a poor OCR); on a clean scan the layer reads better than the local engine. Turning it on or off reads the PDF again on the next run. |
 | `--ocr-lang LANGS` | With `--pdf-ocr`: the languages the OCR engine reads, in its own codes. With the shipped requirements the engine is rapidocr (`ch`, `en`, `latin`), on macOS and on Linux alike. easyocr (`ch_sim`, `ja`, `ko`) and ocrmac (`zh-Hans`, `ja-JP`) are used when installed. A BCP-47 tag behind `iso:` (`iso:zh`, `iso:ja`, `iso:zh-Hant`) works on every engine, so it is the safe choice when you do not know which one will run. rapidocr has no `ch_sim`: for Chinese write `iso:zh`. rapidocr reads one language per run and uses the first. The run prints the engine and languages it used. |
+| `--ocr-engine ENGINE` | With `--pdf-ocr`: which OCR engine reads the pages: `auto` (default; the first installed of ocrmac, rapidocr, easyocr), `rapidocr`, `ocrmac` (macOS, nothing to download), `easyocr` or `tesseract`. An engine that is not installed is refused before any page is read. Which to choose, measured: [Which OCR engine](pdf-ocr-engines.md). |
 | `--device auto\|cpu\|cuda\|mps\|xpu` | Where the models run. `auto` detects CUDA or MPS and falls back to the CPU. The CPU gives the same text, only slower. |
 | `--pages 12-30` | Only these pages, numbered from 1 (`1,3,5-7` works too). The book gets its own names: `<name>_pages-12-30_book/`, `<name>_pages-12-30_bilingual.epub`. |
 | `--no-formula-images` | Leave display formulas as `<!-- formula-not-decoded -->` placeholders. Almost never what you want: the parser never reads equations, so without the pictures the mathematics is missing. |
@@ -124,7 +125,7 @@ Then open `book_pages-1-2_book/source.md` and read it. When it looks right, run 
       --use_context session
     ```
 
-    rapidocr's default reads Chinese and English. A scan in another script needs `--ocr-lang`; the first use of a language downloads its model.
+    rapidocr's default reads Chinese and English. A scan in another script needs `--ocr-lang`; the first use of a language downloads its model. Which engine reads which scan best, and what each one installs: [Which OCR engine](pdf-ocr-engines.md).
 
     **A scan that already carries an OCR layer** (Internet Archive and ABBYY FineReader files often do) is readable without `--pdf-ocr`: the run prints `… selected pages carry only an invisible OCR text layer …` and uses that layer. With `--pdf-ocr` the layer is still kept, possibly mixed with what the OCR engine reads. In the OCR study, the local engine re-reading such pages did worse than the layer on 3 of 3 pages. Try the run without `--pdf-ocr` first and read `source.md`. If the layer turns out to be garbage, see the next tab.
 
