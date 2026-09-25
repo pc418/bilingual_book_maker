@@ -17,7 +17,12 @@ from book_maker.loader import BOOK_LOADER_DICT
 from book_maker.legacy_cli import translate_legacy_argv
 from book_maker.loader.classify import can_session_classify
 from book_maker.loader.ledger import PlanLedgerError
-from book_maker.loader.plan import GENERAL_GROUP_MAX_UNITS
+from book_maker.loader.plan import (
+    GENERAL_GROUP_MAX_UNITS,
+    SESSION_BUDGET_CEILING,
+    SESSION_BUDGET_FLOOR,
+    SUBSTRICT_BUDGET_FLOOR,
+)
 from book_maker.endpoints import (
     CLASSIFY_BASE_WITHOUT_MODEL,
     HELP_CLASSIFY_BASE_URL,
@@ -2312,7 +2317,7 @@ def build_parser():
         dest="accumulated_num",
         type=accumulated_tokens,
         default=None,
-        help="""Wait for how many tokens have been accumulated before starting the translation.
+        help=f"""Wait for how many tokens have been accumulated before starting the translation.
 gpt3.5 limits the total_token to 4090.
 For example, if you use --accumulated_num 1600, maybe openai will output 2200 tokens
 and maybe 200 tokens for other messages in the system messages user messages, 1600+2200+200=4000,
@@ -2322,10 +2327,10 @@ length share one request up to this many tokens (at most --max-batch-units units
 per request; half that when the endpoint verifies JSON mode but not a strict
 schema).
 Untyped, every plan run derives a default from the run's own prompt overhead:
-1600 with the stock prompts, up to 2000 under a fat custom --prompt, and half
-that (floor 800) per request on an endpoint without a strict-schema verdict —
+{SESSION_BUDGET_FLOOR} with the stock prompts, up to {SESSION_BUDGET_CEILING} under a fat custom --prompt, and half
+that (floor {SUBSTRICT_BUDGET_FLOOR}) per request on an endpoint without a strict-schema verdict —
 the same margin that halves the unit cap there. Session runs (codex included)
-keep the un-halved value: 1600-2000 is their measured default. The run
+keep the un-halved value: {SESSION_BUDGET_FLOOR}-{SESSION_BUDGET_CEILING} is their measured default. The run
 narrates the number and the route class it chose; pass 1 to turn grouping
 off. Minimum 1.
 """,
@@ -2337,7 +2342,8 @@ off. Minimum 1.
         default=None,
         help="EPUB plan mode only: the most units --accumulated_num's token "
         f"budget may put in one request. Default {GENERAL_GROUP_MAX_UNITS}, "
-        "half the level a fault-emergence eval measured content faults at; "
+        "a quarter of the level a fault-emergence eval measured content "
+        "faults at; "
         "lower it for a weaker model. An endpoint that verifies JSON mode "
         "but not a strict schema carries half this many.",
     )
@@ -2441,7 +2447,9 @@ off. Minimum 1.
         help="PDF only, with --to-epub --pdf-ocr: the languages the OCR engine "
         "reads on pages with no text layer, comma-separated, in the engine's "
         "own codes (rapidocr: ch, en, latin; easyocr: ch_sim, ja, ko; ocrmac: "
-        "zh-Hans, ja-JP); the run names the engine and languages it used. "
+        "zh-Hans, ja-JP) or as iso: tags (iso:zh); rapidocr, the default "
+        "engine on macOS and CPU, reads only the first language and takes "
+        "iso:zh, not ch_sim; the run names the engine and languages it used. "
         "Without it the engine reads its own default languages and a scanned "
         "page in another script comes out wrong.",
     )
@@ -2935,7 +2943,7 @@ def main(argv=None, *, markdown_loader_class=None):
                 print(
                     f"note: the preview assumes the stock prompt overhead "
                     f"(budget {dry_budget}); a large custom prompt can "
-                    f"raise the real run's budget, up to 2000"
+                    f"raise the real run's budget, up to {SESSION_BUDGET_CEILING}"
                 )
         plan = build_plan(
             book,

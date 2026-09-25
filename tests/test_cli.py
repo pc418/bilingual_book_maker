@@ -1788,12 +1788,56 @@ def test_help_advertises_only_the_new_spelling(shared_help):
 
 
 def test_batch_units_defaults_to_the_measured_cap(shared_run):
-    # half the level the 260905 fault-emergence sweep measured faults at
+    # a quarter of the level the 260905 fault-emergence sweep measured faults at
     from book_maker.loader.plan import GENERAL_GROUP_MAX_UNITS
 
     proc, plan = shared_run("--plan-dry-run")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert json.loads(plan.read_text())["batch_units"] == GENERAL_GROUP_MAX_UNITS
+
+
+def _help_of(parser, dest):
+    return next(a.help for a in parser._actions if a.dest == dest)
+
+
+def test_accumulated_num_help_is_formatted_from_the_budget_constants(monkeypatch):
+    # PIN (owner ruling 260907, AGENTS.md "Model choice in evals"; packet H
+    # 260924, docs/260923-docs-WIKI_MODERNIZE.md "Findings for the owner"):
+    # the help said "1600 ... up to 2000" long after the constants moved to
+    # 1200 / 1600 / 800. It is formatted from plan.py's constants so it
+    # cannot drift again: patched values must show up in the help.
+    import book_maker.cli as cli
+    from book_maker.loader.plan import (
+        SESSION_BUDGET_CEILING,
+        SESSION_BUDGET_FLOOR,
+        SUBSTRICT_BUDGET_FLOOR,
+    )
+
+    text = " ".join(_help_of(cli.build_parser(), "accumulated_num").split())
+    assert f"{SESSION_BUDGET_FLOOR} with the stock prompts" in text
+    assert f"up to {SESSION_BUDGET_CEILING} under a fat custom" in text
+    assert f"(floor {SUBSTRICT_BUDGET_FLOOR})" in text
+    assert f"{SESSION_BUDGET_FLOOR}-{SESSION_BUDGET_CEILING} is their" in text
+    assert "2000" not in text
+
+    monkeypatch.setattr(cli, "SESSION_BUDGET_FLOOR", 1111)
+    monkeypatch.setattr(cli, "SESSION_BUDGET_CEILING", 2222)
+    monkeypatch.setattr(cli, "SUBSTRICT_BUDGET_FLOOR", 333)
+    text = " ".join(_help_of(cli.build_parser(), "accumulated_num").split())
+    assert "1111 with the stock prompts" in text
+    assert "up to 2222 under a fat custom" in text
+    assert "(floor 333)" in text
+    assert "1111-2222 is their" in text
+
+
+def test_max_batch_units_help_says_a_quarter_of_the_onset():
+    # PIN (packet H 260924): the default is 16, a quarter of the 64-unit
+    # fault onset (plan.py GENERAL_GROUP_MAX_UNITS), not half of it
+    from book_maker.cli import build_parser
+
+    text = " ".join(_help_of(build_parser(), "batch_units").split())
+    assert "a quarter of the level" in text
+    assert "half the level" not in text
 
 
 def test_an_untyped_accumulated_num_reaches_the_parser_as_none():
