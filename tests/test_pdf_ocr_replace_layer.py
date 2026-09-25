@@ -346,6 +346,40 @@ def test_every_page_read_empty_stops_before_translation(
     assert not bundle.source.exists()
 
 
+# Codex review 260924 (MEDIUM): the stop wrote nothing to the manifest.
+def test_the_all_empty_stop_is_recorded_in_the_manifest(bundle, layered, pandoc):
+    pdf = layered()
+    with pytest.raises(PipelineError):
+        _extract(bundle, pdf, pandoc, converting([None, None]))
+    manifest = bundle.read_manifest()
+    assert manifest["stages"]["extract"]["status"] == "failed"
+    extraction = manifest["extraction"]
+    assert extraction["status"] == "failed"
+    assert extraction["failure"] == OCR_REPLACE_ALL_EMPTY
+    assert extraction["empty_pages"] == [1, 2]
+    assert extraction["ocr_mode"] == "full_page"
+    assert extraction["ocr_replace_layer"] is True
+    lines = [OCR_REPLACE_EMPTY.format(page=n) for n in (1, 2)]
+    for line in lines + [OCR_REPLACE_ALL_EMPTY]:
+        assert line in manifest["limitations"]
+        assert line in extraction["limitations"]
+
+
+def test_a_stopped_retry_leaves_no_completed_extraction_behind(bundle, layered, pandoc):
+    pdf = layered()
+    _extract(bundle, pdf, pandoc, converting(["One.", "Two."]), settings=KEEP)
+    assert stages.already_prepared(bundle, pdf, "docling", None, KEEP)
+    with pytest.raises(PipelineError):
+        _extract(bundle, pdf, pandoc, converting([None, None]))
+    extraction = bundle.read_manifest()["extraction"]
+    # the earlier run's block is gone, not merged under the failure
+    assert extraction["status"] == "failed"
+    assert "provider" not in extraction
+    assert "pages_without_text_layer" not in extraction
+    assert not stages.already_prepared(bundle, pdf, "docling", None, KEEP)
+    assert not stages.already_prepared(bundle, pdf, "docling", None, REPLACE)
+
+
 def test_without_the_flag_an_empty_page_is_not_called_a_replaced_layer(
     bundle, layered, pandoc, capsys
 ):

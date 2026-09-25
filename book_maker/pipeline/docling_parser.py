@@ -388,6 +388,38 @@ def _selected_pages(ranges, examined):
     return wanted[:examined]
 
 
+def _record_failed_extraction(bundle, settings, page_range, *, reason, empty):
+    """The manifest's `extraction` block for an extraction that stopped.
+
+    Replaces the block rather than merging into it: a block left from an
+    earlier, completed extraction would otherwise still describe a text
+    this bundle no longer holds (Codex review 260924). It keeps what was
+    asked for, why it stopped and which pages came back empty; the same
+    lines go to the limitations, and are listed as this extraction's own
+    so the next one takes them back.
+    """
+    limitations = [OCR_REPLACE_EMPTY.format(page=page) for page in empty]
+    limitations.append(reason)
+    data = bundle.read_manifest()
+    data["extraction"] = {
+        "status": "failed",
+        "failure": reason,
+        "parser": PARSER,
+        "ocr": settings.ocr,
+        "ocr_engine_requested": settings.ocr_engine,
+        "ocr_mode": settings.ocr_mode,
+        "ocr_replace_layer": settings.ocr_replace_layer,
+        "ocr_lang": list(settings.ocr_lang) or None,
+        "table_mode": settings.table_mode,
+        "formula_images": settings.formula_images,
+        "page_range": page_range,
+        "empty_pages": list(empty),
+        "limitations": limitations,
+    }
+    bundle.write_manifest(data)
+    bundle.add_limitations(limitations)
+
+
 def _pages_read(text):
     """The pages of the numbered Markdown that carry any prose, as a set."""
     blank, _any = blank_pages(text)
@@ -1061,6 +1093,13 @@ def extract_pdf(
             for warning in _replaced_layer_lines(replaced_empty):
                 print(warning)
             if not read & set(selected):
+                _record_failed_extraction(
+                    bundle,
+                    settings,
+                    page_range,
+                    reason=OCR_REPLACE_ALL_EMPTY,
+                    empty=replaced_empty,
+                )
                 raise PipelineError(OCR_REPLACE_ALL_EMPTY, stage=STAGE)
         if not missing and not _prose(markdown):
             raise PipelineError(EXTRACTION_EMPTY, stage=STAGE)
