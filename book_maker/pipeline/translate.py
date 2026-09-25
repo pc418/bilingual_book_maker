@@ -82,12 +82,10 @@ FILE_FIELDS = ("prompt_arg", "glossary_path")
 # glossary flag was typed. `--glossary` and `--terminology` are one flag
 # under two names, so a bundle finished under one word must be reused under
 # the other rather than translated -- and paid for -- a second time.
-# The sidecar endpoints say nothing about the translation either: the image
-# model shapes the extraction (whose settings have their own identity, and
-# whose output is hashed above as `source`), and the Markdown run has no
-# classification step. Left in, every new parser field re-fingerprints every
-# finished bundle (Codex, packet H 260924: `classify_min_confidence` alone
-# would have re-translated or refused every pre-flag bundle).
+# The sidecar endpoints say nothing about the translation either, typed or
+# not: the image model shapes the extraction (whose settings have their own
+# identity, and whose output is hashed above as `source`), and the Markdown
+# run has no classification step.
 SIDECAR_FIELDS = (
     "img_model",
     "img_base_url",
@@ -99,6 +97,17 @@ SIDECAR_FIELDS = (
     "plan_classify_model",
 )
 IGNORED_FIELDS = ("book_name", "resume", "glossary_flag") + SIDECAR_FIELDS
+
+
+_DEFAULTS = None
+
+
+def _parser_defaults():
+    """`{field: value}` of a namespace parsed from no options at all."""
+    global _DEFAULTS
+    if _DEFAULTS is None:
+        _DEFAULTS = dict(vars(parse_bbm_options([])))
+    return _DEFAULTS
 
 
 def parse_bbm_options(bbm_options):
@@ -179,8 +188,20 @@ def option_identity(options):
     what is in it.
     """
     identity = []
+    defaults = _parser_defaults()
     for name, value in sorted(vars(options).items()):
         if name in IGNORED_FIELDS:
+            continue
+        # A value the parser would have supplied anyway says nothing about
+        # the run, so it is not written down: a flag added later, at its
+        # default, then leaves every finished bundle's identity alone. Before
+        # 260924 the whole namespace went in, and each new flag (packets F,
+        # G, H that day) re-fingerprinted every bundle -- a completed one
+        # translated and paid for again, an interrupted one refused with
+        # SETTINGS_CHANGED (Codex, packet H). The branch was unreleased; the
+        # bundles written before this change are the owner's own and match
+        # no longer, once. A field the parser does not know is kept.
+        if name in defaults and value == defaults[name]:
             continue
         if name in SECRET_FIELDS or (
             isinstance(value, str) and CREDENTIALED_URL.match(value)
