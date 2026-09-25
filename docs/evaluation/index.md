@@ -20,7 +20,7 @@ Endpoints that claim schema support do not always apply it. Verdict: probe each 
 
 ### [Can a dedicated classifier decide the plan? Jev against gpt-5.6-luna](plan-classifier-jev.md)
 
-TypeSafe's Jev and gpt-5.6-luna classified the same 31 signatures of one book. Verdict: 27 of 31 agree, the 4 disagreements are Jev's low-confidence skips, and Jev used about twice the prompt tokens. Jev is available as a classify model; the default stays the translating model.
+TypeSafe's Jev and gpt-5.6-luna classified the same 31 signatures of one book. Verdict: 27 of 31 agree, the 4 disagreements are Jev's low-confidence skips. Leaner requests later halved Jev's prompt tokens without moving agreement beyond run-to-run variation, and a doubtful skip now falls back to translate at a gate measured on 45 EPUBs. Jev is available as a classify model; the default stays the translating model.
 
 ## PDF to EPUB
 

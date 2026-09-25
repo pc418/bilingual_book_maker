@@ -2,14 +2,14 @@
 
 ## Abstract
 
-Plan mode asks a model, for each kind of block in an EPUB, whether it is worth translating. That is a labeling job, not a writing job, so a dedicated classifier could do it. Jev, TypeSafe's System One classifier, answers typed multiple-choice questions with a confidence. The same 31 signatures of the test book were classified by Jev and by gpt-5.6-luna. They agreed on 27. All 4 disagreements were Jev choosing `skip` where luna chose `translate`, each at low confidence. Jev used about twice luna's prompt tokens. Verdict: Jev works as a classify model; the default stays the translating model.
+Plan mode asks a model, for each kind of block in an EPUB, whether it is worth translating. That is a labeling job, not a writing job, so a dedicated classifier could do it. Jev, TypeSafe's System One classifier, answers typed multiple-choice questions with a confidence. The same 31 signatures of the test book were classified by Jev and by gpt-5.6-luna. They agreed on 27. All 4 disagreements were Jev choosing `skip` where luna chose `translate`, each at low confidence. Jev used about twice luna's prompt tokens. A second round sent each page's shared text once: Jev's prompt tokens halved, and its agreement with luna moved no more than between two Jev runs of the same code. The same round found that a gate at 0.5 on Jev's probability could never fire on a two-option question; the gate was then measured on a 45-EPUB corpus and set to 0.95. Verdict: Jev works as a classify model; the default stays the translating model.
 
 ## Setup
 
 - **Book:** `test_books/animal_farm.epub`, the repository's test book. Its plan has 31 tag signatures.
 - **Run:** `--test --test_num 8 --quiet --language zh-hans`, translating with gpt-5.6-luna, under a 1500 MB memory cap.
 - **Luna arm:** `--model gpt-5.6-luna --classify-model gpt-5.6-luna`. The endpoint verifies a strict JSON schema, so the signatures go in pages of several per request.
-- **Jev arm:** `--model gpt-5.6-luna --classify-model typesafe-ai/jev --classify-base-url https://ai-gateway.vercel.sh/typesafe`. One Choice question per signature. Below 0.5 confidence in its top answer, Jev answers `unsure`.
+- **Jev arm:** `--model gpt-5.6-luna --classify-model typesafe-ai/jev --classify-base-url https://ai-gateway.vercel.sh/typesafe`. One Choice question per signature. In this first round, below 0.5 confidence in its top answer, Jev answered `unsure`.
 - **Fixed-engine cell:** `--api_format google --classify-model gpt-5.6-luna`, to check that a machine-translation route gets a plan from an LLM classifier.
 - **Compared:** each signature's verdict between the two arms. Nobody judged which verdict was right.
 
@@ -37,20 +37,46 @@ Where the two agree, Jev's confidence is mostly above 0.9. It used about twice l
 
 A second Jev run, after the key-routing fixes, retried three 503s and ended with `llm classification: 31 verdict(s), 8 skip(s)` and `Translation plan: 20 documents, 202560 chars, coverage 99.7%`.
 
+### Second round: lean requests and the gate
+
+Each Jev question used to repeat the whole per-signature prompt. The lean mapping sends the page's shared text once as the state, and each question carries only its own instruction. A doubtful `skip` now falls back to `translate` instead of `unsure`. Same book, same flags, plus the Simple Jev demo. Copied from the record:
+
+| arm | classifier tokens in / out | requests, latency each | non-translate verdicts | agreement with c_final (luna) | agreement with c_before (luna) |
+|---|---|---|---|---|---|
+| (a) before, F's mapping, gateway | 14.4k / 1.1k | 3, after four 503 retries (wall 36 s) | 7 | 27/31 | 26/31 |
+| (a) after lean mapping only (`a_lean`) | 7.8k / 1.1k | 3 (wall 14 s) | 9 | 25/31 | not computed |
+| (a) final, lean + gate | 7.8k / 1.1k | 3: 0.87, 0.37, 0.67 s | 9 | 25/31 | 26/31 |
+| (b) Simple Jev keyless demo | 16.7k / 31 | 3: 2.26, 2.05, 0.90 s | 4 | 30/31 | 29/31 |
+| (c) luna schema (`c_final`) | 7.6k / ~1.4k | 3: 5.07, 6.03, 4.15 s | 5 | — | 30/31 |
+
+The two luna runs agree 30/31 with each other, and the two Jev runs on the same code (`a_lean`, `a_final`) agree 29/31.
+
+**The lean mapping halves Jev's prompt tokens (14.4k → 7.8k) and cuts wall time (36 s → 14 s incl. no retries); agreement did not move beyond Jev's own run-to-run variation.**
+
+**The gate finding**, copied from the record:
+
+> The official Jev's `confidence` field is not the chosen option's probability. On two options it is about `2p − 1` (0.51 → 0.02, 0.61 → 0.22, 0.76 → 0.53). Simple Jev's is `max p`. The code keeps F's choice and reads `probabilities[choice]` first. That is the same measure on both servers, but on two options it never falls below 0.5, so a 0.5 gate does nothing.
+>
+> Replaying `a_final` offline: a gate at 0.75 on the probability, which is the same as 0.5 on Jev's own `confidence`, would turn all 5 low-confidence skips into translate and keep the 4 confident ones. Agreement with luna would go to 30/31. That is one book and 31 signatures.
+
+That was one book and 31 signatures, so 0.75 was a hint, not a setting. The gate was then measured on a corpus: 0.95 on the chosen option's probability, over the 662 plan signatures of the 45-EPUB corpus against gpt-5.6-luna, with a lost skip costing 10 and an extra translate 1. At that value about nine of ten of Jev's skips fall back to `translate`, and what survives is apparatus: copyright lines, line numbers, note marks, index locators. Never skipping would cost 140 against 115 gated, so Jev's saving over translating everything is modest on this corpus.
+
 ## Decision
 
-- Jev is available as a classify model: `--classify-model jev` at TypeSafe's own address, or a gateway's id with `--classify-base-url` and `--classify-key`. See [Provider file and extra models](../providers.md#jev-a-dedicated-classifier).
+- Jev is available as a classify model: `--classify-model jev` at TypeSafe's own address, a gateway's id with `--classify-base-url` and `--classify-key`, or a Jev-compatible server such as Simple Jev. See [Provider file and extra models](../providers.md#jev-and-jev-compatible-classifiers).
 - The default classifier stays the translating model.
-- The abstain threshold stays at 0.5. With two options it fires only on a tie. At 0.62 the four disagreements above would become `unsure`, which stops a run in `model` mode. The four skips were recorded, not judged: two URLs, a single letter and a bare author name, which a reading edition could keep or translate.
-- The doubled prompt tokens come from each question repeating the whole per-signature prompt. Sending the shared instructions once is a later optimization.
+- First round: the abstain threshold stayed at 0.5; the four low-confidence skips were recorded, not judged (two URLs, a single letter and a bare author name, which a reading edition could keep or translate).
+- Second round: the requests are lean (the shared text sent once), and the threshold became an asymmetric gate. A `skip` below it becomes `translate`; a `translate` is taken at any probability. Content is never lost to a doubtful skip.
+- The gate is 0.95 on the chosen option's probability, from the corpus measurement above. `BBM_JEV_MIN_CONFIDENCE` overrides it for a run.
 
 What would change it: a comparison on more books, with verdicts judged against what a reader wants, and a price for both arms.
 
 ## Limits
 
-- One book, 31 signatures, one run per arm.
+- One book, 31 signatures, one run per arm in each round. Both rounds' agreement numbers, the lean mapping's token halving and the 0.75 replay rest on that one book.
+- Only the gate value comes from the 45-EPUB corpus, and agreement there is still agreement with luna. The Simple Jev demo used about twice luna's prompt tokens (16.7k); it was run once.
 - The key was a gateway key, so TypeSafe's own address was not exercised live (it answered 401 to that key).
 - Token counts only; no money comparison.
 - Agreement with luna is not correctness: luna's verdicts were not judged either.
 
-Source: docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md (repository, dated records)
+Source: docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md (first round); docs/260924-feat-JEV_LEAN_REQUESTS_GATE_COMPATIBLE_ENDPOINTS.md (second round, the gate finding); docs/260924-eval-JEV_CONFIDENCE_THRESHOLD.md (the gate's value) (repository, dated records)

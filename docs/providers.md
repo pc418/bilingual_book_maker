@@ -51,7 +51,7 @@ Flags you pass yourself win over the entry.
 | `img_base_url` | no | where `img_model` is served, when it is not this entry's own address. OpenAI-compatible only |
 | `img_env_key` | no | the variable holding the key for `img_model`'s address |
 | `classify_model` | no | the model for classification. Stands in for `--classify-model` |
-| `classify_base_url` | no | where `classify_model` is served, when it is not this entry's own address. OpenAI-compatible only |
+| `classify_base_url` | no | where `classify_model` is served, when it is not this entry's own address. OpenAI-compatible, or a [Jev-compatible](#jev-and-jev-compatible-classifiers) classifier's URL |
 | `classify_env_key` | no | the variable holding the key for `classify_model`'s address |
 
 The spent amount is an estimate from the usage each request reports; the vendor's bill is the number that counts.
@@ -81,7 +81,7 @@ The image step never falls back to the translating model. It runs only when a mo
     - An image model needs that endpoint to be OpenAI-shaped. On any other format the run stops before it starts: `--img-model needs an OpenAI-compatible endpoint; … resolves to the … format.`
     - A classify model works on any LLM route that can hold a conversation, the anthropic and codex routes included.
     - On a [machine-translation](machine-args.md) run there is no model to share an endpoint with. A classify model named without a base is then asked at the host its id implies: `--classify-model gpt-5.6-luna` goes to OpenAI.
-- **With `--img-base-url` or `--classify-base-url`**, the model is asked there. The address must speak the OpenAI shape; anything else is refused before anything is paid for.
+- **With `--img-base-url` or `--classify-base-url`**, the model is asked there. The address must speak the OpenAI shape, or, for a classifier, the [Jev protocol](#jev-and-jev-compatible-classifiers); anything else is refused before anything is paid for.
 - A base URL without its model stops the run: `--img-base-url names where --img-model is served, and no --img-model was given.` (and the same for `--classify-base-url`).
 
 A named classify model always gets its own client, even on the run's address, so its tokens are counted apart from the translation's.
@@ -138,11 +138,20 @@ bbook_maker \
 
 A local server needs no key, so the run's key is empty here; the classifier's key must be named.
 
-## Jev, a dedicated classifier
+## Jev and Jev-compatible classifiers
 
-Jev is TypeSafe's System One classifier. It answers typed questions and translates nothing, so it can only be the classify model. Each signature is one multiple-choice question. When Jev's confidence in its top answer is below 0.5, it answers `unsure`.
+Jev is TypeSafe's classifier: a model built to answer typed questions, not to write. Plan mode's question for each kind of block, translate it or keep it, is that kind of question, and Jev answers a page of them in one cheap round trip. It translates nothing, so it can only be the classify model. Jev-compatible servers speak the same protocol; Featherless's Simple Jev, an open reimplementation on open models, is one.
 
-At TypeSafe's own address (`api.typesafe.ai`, the default), the key comes from `JEV_API_KEY` or `TYPESAFE_API_KEY`:
+### The commands
+
+| classifier | flags | key |
+|---|---|---|
+| TypeSafe's Jev | `--classify-model jev` | `JEV_API_KEY` or `TYPESAFE_API_KEY`, sent only to `api.typesafe.ai` |
+| Jev through a gateway | `--classify-model typesafe-ai/jev --classify-base-url https://ai-gateway.vercel.sh/typesafe --classify-key "$GATEWAY_KEY"` | named with `--classify-key` |
+| Simple Jev at Featherless | `--classify-model featherless-ai/Qwen3.8-27B-classifier` | `FEATHERLESS_API_KEY`; the address defaults to `https://api.featherless.ai/v1/classifier` |
+| Simple Jev's keyless demo | `--classify-model featherless-ai/Qwen3.8-27B-classifier --classify-base-url https://simple-jev-demo-api.featherless.ai/v1/classifier` | none |
+
+For example, translating with gpt-5.6-luna and classifying with Jev:
 
 ```bash
 bbook_maker \
@@ -151,20 +160,39 @@ bbook_maker \
   --classify-model jev
 ```
 
-Through a gateway, name the gateway's model id and address, and pass the key yourself. `JEV_API_KEY` and `TYPESAFE_API_KEY` are read on their own only for a typesafe.ai address:
+### The rules
 
-```bash
-bbook_maker \
-  --book_name my_book.epub \
-  --model gpt-5.6-luna \
-  --classify-model typesafe-ai/jev \
-  --classify-base-url https://ai-gateway.vercel.sh/typesafe \
-  --classify-key "$JEV_API_KEY"
+- **A key is read from the environment only for its own host.** `JEV_API_KEY` and `TYPESAFE_API_KEY` go only to a typesafe.ai address, `FEATHERLESS_API_KEY` only to a featherless.ai one. Anywhere else, a gateway included, name the key with `--classify-key` or the entry's `classify_env_key`.
+- **A base URL that already ends in `/systemone` or `/classifier` is used as it is.** Any other base gets the server's own path added: `/classifier` on featherless.ai, `/systemone` elsewhere, after a `/v1`.
+- **Any other id ending in `-classifier` needs `--classify-base-url`.** Only Featherless's ids have a known address; for another the run stops and asks for one.
+- `jev` alone asks for TypeSafe's current model, `jev-latest`.
+
+### The gate: a doubtful skip is translated
+
+Jev returns a probability with each answer. A `skip` below the gate is recorded as `translate`, so no content is lost to a skip Jev was unsure of. A `translate` is taken at any probability. The gate is 0.95 on the probability of the chosen answer, measured over 662 plan signatures from 45 EPUBs against gpt-5.6-luna. At that value about nine of ten of Jev's skips become `translate`, and what Jev still skips is apparatus: copyright lines, line numbers, note marks, index locators. So on that corpus Jev saves little over translating everything; see [Jev as the plan classifier](evaluation/plan-classifier-jev.md). The plan file shows each fallback on its row: `unnamed (jev verdict skip at confidence 0.61, below the gate: translate)`. `BBM_JEV_MIN_CONFIDENCE`, a number from 0 to 1, overrides the gate for a run.
+
+### In a provider entry
+
+`classify_model`, `classify_base_url` and `classify_env_key` name a Jev classifier the same way the flags do:
+
+```json
+{
+  "providers": {
+    "openai-with-jev": {
+      "api_style": "openai",
+      "default_models": ["gpt-5.6-luna"],
+      "env_key": "OPENAI_API_KEY",
+      "classify_model": "typesafe-ai/jev",
+      "classify_base_url": "https://ai-gateway.vercel.sh/typesafe",
+      "classify_env_key": "JEV_API_KEY"
+    }
+  }
+}
 ```
 
-A provider entry whose `classify_env_key` names `JEV_API_KEY` for its own gateway address counts as naming the key, and is honored.
+An entry that names `JEV_API_KEY` for its own gateway address has named the key for that address, and it is honored. Without such an entry, the Jev variables are never sent to a gateway.
 
-Measured on one book: Jev agreed with gpt-5.6-luna on 27 of 31 signatures and used about twice the prompt tokens. See [Jev as the plan classifier](evaluation/plan-classifier-jev.md).
+On the test book, Jev's requests take half the prompt tokens they used to, and its agreement with gpt-5.6-luna moved no more than between two Jev runs of the same code. See [Jev as the plan classifier](evaluation/plan-classifier-jev.md).
 
 ## What the run prints
 

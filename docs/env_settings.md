@@ -45,6 +45,19 @@ sent there. The run says so; pass `--key` when you meant to reuse it. The file h
 See [Endpoints, models and languages](./model_lang.md#named-endpoints-provider).
 `--model orcarouter` reads `BBM_ORCAROUTER_API_KEY` the same way.
 
+## Classifier variables
+
+A [Jev-compatible classifier](providers.md#jev-and-jev-compatible-classifiers) reads its key only for its own host:
+
+| variable | read for |
+|---|---|
+| `JEV_API_KEY`, `TYPESAFE_API_KEY` | TypeSafe's Jev at a typesafe.ai address |
+| `FEATHERLESS_API_KEY` | Simple Jev at a featherless.ai address |
+
+Through a gateway, name the key with `--classify-key` or a provider entry's `classify_env_key`.
+
+`BBM_JEV_MIN_CONFIDENCE`, a number from 0 to 1, overrides Jev's gate for a run: a `skip` below it is translated. The default is 0.95. A value that is not a number from 0 to 1 stops the run.
+
 ## Old per-vendor variables
 
 The four vendor variables above are also read when an old-style command

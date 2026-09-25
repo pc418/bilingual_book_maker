@@ -101,12 +101,12 @@ Two steps can use a model other than the translating one:
 
 | flag | what it does |
 |---|---|
-| `--classify-model MODEL` | The model that decides an EPUB's plan. Default: the entry's `classify_model`, else the translating model. `--plan-classify-model` is its old name. |
-| `--classify-base-url URL`, `--classify-key KEY` | Where that model is served and its key, when it is not the run's endpoint (OpenAI-compatible only). |
+| `--classify-model MODEL` | The model that decides an EPUB's plan, or a Jev-compatible classifier (`jev` for TypeSafe's). Default: the entry's `classify_model`, else the translating model. `--plan-classify-model` is its old name. |
+| `--classify-base-url URL`, `--classify-key KEY` | Where that model is served and its key, when it is not the run's endpoint: an OpenAI-compatible address, or a Jev-compatible classifier's URL. |
 | `--img-model MODEL` | A vision model for the steps that look at a page image (today: correcting region roles on the [PDF route](features/pdf-to-epub.md)). Default: the entry's `img_model`, else off. Never the translating model by fallback. `none` turns an entry's image model off. |
 | `--img-base-url URL`, `--img-key KEY` | Where that model is served and its key (OpenAI-compatible only). |
 
-The fields, the shipped entries, which key is sent where, and the Jev classifier are on [Provider file and extra models](providers.md). Note that the shipped `openai` entry names an image model, so `--provider openai` turns the PDF route's image step on.
+The fields, the shipped entries, which key is sent where, and Jev and Jev-compatible classifiers are on [Provider file and extra models](providers.md). Note that the shipped `openai` entry names an image model, so `--provider openai` turns the PDF route's image step on.
 
 ## Language
 
