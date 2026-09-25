@@ -118,6 +118,14 @@ JEV_WIRE_PATHS = ("/systemone", "/classifier")
 FEATHERLESS_HOST_SUFFIX = "featherless.ai"
 FEATHERLESS_ENV_KEYS = ("FEATHERLESS_API_KEY",)
 SIMPLE_JEV_DEMO_HOST = "simple-jev-demo-api.featherless.ai"
+# Where a `featherless-ai/...-classifier` id is asked when no base is given.
+FEATHERLESS_NAMESPACE = "featherless-ai/"
+FEATHERLESS_DEFAULT_BASE = "https://api.featherless.ai/v1/classifier"
+# Not the lead's text: a `-classifier` id no default address is known for.
+CLASSIFIER_WITHOUT_BASE = (
+    "{model} is a Jev-compatible classifier with no known default address; "
+    "name its endpoint with --classify-base-url."
+)
 
 
 @dataclass(frozen=True)
@@ -194,6 +202,23 @@ def is_jev_wire(model, api_base=""):
 is_jev = is_jev_wire
 
 
+def jev_default_base(model):
+    """The address a Jev-wire id is asked at when no base is given, or None.
+
+    A `jev`/`jev-*` id (a gateway's `typesafe-ai/jev` included) is the
+    official Jev; a `featherless-ai/...-classifier` id is Featherless's
+    Simple Jev; any other `-classifier` id has no default (lead 260924,
+    packet J fix round: it is never sent to typesafe.ai).
+    """
+    name = (model or "").strip().lower()
+    last = name.rsplit("/", 1)[-1]
+    if last == JEV_ALIAS or last.startswith(JEV_ALIAS + "-"):
+        return JEV_DEFAULT_BASE
+    if name.startswith(FEATHERLESS_NAMESPACE) and name.endswith("-classifier"):
+        return FEATHERLESS_DEFAULT_BASE
+    return None
+
+
 def jev_request_url(api_base):
     """Where a Jev-wire request is posted (lead 260924, packet J fix round).
 
@@ -261,8 +286,8 @@ def _bound_env_key(provider, model, sidecar_base, env_key):
 
     if sidecar_base:
         return env_key, sidecar_base, infer_api_format(sidecar_base, model)
-    if is_jev_wire(model, ""):
-        return env_key, JEV_DEFAULT_BASE, JEV_FORMAT
+    if is_jev_wire(model, "") and jev_default_base(model):
+        return env_key, jev_default_base(model), JEV_FORMAT
     return env_key, provider.api_base, provider.api_format
 
 
@@ -341,10 +366,14 @@ def _choose(model, base, run, source, *, image):
             raise SystemExit(
                 unsupported.format(base=base or JEV_DEFAULT_BASE, api_format=JEV_FORMAT)
             )
+        if not base:
+            base = jev_default_base(model)
+            if base is None:
+                raise SystemExit(CLASSIFIER_WITHOUT_BASE.format(model=model))
         wire = JEV_DEFAULT_MODEL if model.strip().lower() == JEV_ALIAS else model
         return EndpointChoice(
             model=wire,
-            api_base=(base or JEV_DEFAULT_BASE).rstrip("/"),
+            api_base=base.rstrip("/"),
             key=None,
             api_format=JEV_FORMAT,
             source=source,

@@ -557,6 +557,34 @@ class TestJevCompatibleEndpoints:
             "k-flag",
         )
 
+    def test_a_featherless_classifier_id_defaults_to_featherless(self, monkeypatch):
+        """PIN (lead 260924, packet J fix round): with no base, a
+        `featherless-ai/...-classifier` id is asked at Featherless's
+        classifier with FEATHERLESS_API_KEY, never at typesafe.ai."""
+        monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
+        choice = resolve_classify_endpoint(
+            _opts(classify_model=self.SIMPLE_JEV), _run(), None
+        )
+        assert (choice.api_format, choice.api_base, choice.key) == (
+            "jev",
+            "https://api.featherless.ai/v1/classifier",
+            "fl-secret",
+        )
+        assert endpoints.jev_request_url(choice.api_base) == (
+            "https://api.featherless.ai/v1/classifier"
+        )
+
+    def test_another_classifier_id_without_a_base_is_refused(self, monkeypatch):
+        """PIN (lead 260924, packet J fix round): no default is guessed."""
+        monkeypatch.setenv("JEV_API_KEY", "jev-secret")
+        with pytest.raises(SystemExit, match="--classify-base-url") as refused:
+            resolve_classify_endpoint(
+                _opts(classify_model="acme/tiny-classifier"), _run(), None
+            )
+        assert "acme/tiny-classifier" in str(refused.value)
+        assert "typesafe" not in str(refused.value)
+
     def test_the_featherless_variable_is_not_sent_to_typesafe(self, monkeypatch):
         monkeypatch.setenv("FEATHERLESS_API_KEY", "fl-secret")
         with pytest.raises(SystemExit, match="JEV_API_KEY"):
