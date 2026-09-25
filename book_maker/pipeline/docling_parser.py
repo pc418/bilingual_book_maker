@@ -81,6 +81,8 @@ from .messages import (
 )
 from .pdf_common import (
     PAGE_MARKER,
+    UNPLACED_MARKER,
+    numbered_pages,
     _prose,
     blank_pages,
     check_recognised_text,
@@ -104,7 +106,6 @@ PAGE_BREAK = "\x00bbm-page-break\x00"
 
 # The line after the last page under which items with no page are written
 # (`_export_pages`); not a page marker, so no page claims them.
-UNPLACED_MARKER = "<!-- unplaced -->"
 
 # How many of the parser's log lines are kept for a failure message.
 LOG_TAIL_LINES = 20
@@ -488,7 +489,7 @@ def _pages_read(text_pages, text):
     if text_pages is not None:
         return set(text_pages)
     blank, _any = blank_pages(text)
-    return {int(n) for n in PAGE_MARKER.findall(text)} - set(blank)
+    return {int(n) for n in PAGE_MARKER.findall(numbered_pages(text))} - set(blank)
 
 
 def _replaced_layer_lines(empty):

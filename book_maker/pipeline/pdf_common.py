@@ -27,6 +27,18 @@ STAGE = "extract"
 # and Pandoc drops from the rendered book, so the provenance marker
 # survives translation without becoming prose. Pages are numbered from 1.
 PAGE_MARKER = re.compile(r"<!--\s*page\s+(\d+)\s*-->")
+# Items docling gave no page are written once after the last page, under
+# this line (`docling_parser._export_pages`). Every page-based check ends
+# the numbered pages here (Codex 260924: the tail counted as text on the
+# final page and hid an empty scanned one).
+UNPLACED_MARKER = "<!-- unplaced -->"
+
+
+def numbered_pages(markdown_text):
+    """The Markdown up to the unplaced tail: what the page checks read."""
+    return markdown_text.split(UNPLACED_MARKER, 1)[0]
+
+
 COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
@@ -335,7 +347,7 @@ def heading_for_top(markdown_text, first_page, title):
 
 def blank_pages(markdown_text):
     """`(page numbers that carry no prose, whether any page does)`."""
-    parts = PAGE_MARKER.split(markdown_text)
+    parts = PAGE_MARKER.split(numbered_pages(markdown_text))
     any_prose = bool(_prose(parts[0]))
     blank = []
     for number, body in zip(parts[1::2], parts[2::2]):
@@ -348,7 +360,7 @@ def blank_pages(markdown_text):
 
 def dense_pages(markdown_text, limit=PAGE_CHARS_LIMIT):
     """`[(page number, characters)]` for pages carrying more prose than fits."""
-    parts = PAGE_MARKER.split(markdown_text)
+    parts = PAGE_MARKER.split(numbered_pages(markdown_text))
     dense = []
     for number, body in zip(parts[1::2], parts[2::2]):
         chars = len(_prose(body))

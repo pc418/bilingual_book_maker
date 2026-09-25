@@ -28,6 +28,11 @@ from pipeline_helpers import PNG, pandoc_or_skip, write_pdf  # noqa: E402
 from book_maker.pipeline import docling_parser, stages  # noqa: E402
 from book_maker.pipeline.bundle import Bundle  # noqa: E402
 from book_maker.pipeline.errors import PipelineError  # noqa: E402
+from book_maker.pipeline.pdf_common import (  # noqa: E402
+    UNPLACED_MARKER,
+    blank_pages,
+    check_recognised_text,
+)
 from book_maker.pipeline.messages import (  # noqa: E402
     DEVICE_SELECTED,
     EXTRACTION_EMPTY,
@@ -399,6 +404,35 @@ def test_an_item_over_two_pages_is_written_once_under_its_first(
     source = bundle.source.read_text(encoding="utf-8")
     assert source.count("Runs over the page.") == 1
     assert "Runs over the page." in page_bodies(bundle)[1]
+
+
+# Codex re-verify 260924 (MEDIUM): the unplaced tail counted as text on the
+# last numbered page, so an empty final page went unnamed.
+def test_the_unplaced_tail_does_not_fill_an_empty_final_page(
+    bundle, tmp_path, pandoc, capsys
+):
+    pytest.importorskip("docling_core")
+    from docling_core.types.doc import document as d
+
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({1: "Text on page one."}, pages=[1, 2])
+    document.add_text(label=d.DocItemLabel.TEXT, text="A note with no page.")
+    _extract(bundle, pdf, pandoc, exporting(document))
+    source = bundle.source.read_text(encoding="utf-8")
+    assert "A note with no page." in source
+    assert blank_pages(source) == ([2], True)
+    assert docling_parser._pages_read(None, source) == {1}
+    assert OCR_REPLACE_EMPTY.format(page=2) in " ".join(capsys.readouterr().out.split())
+
+
+def test_the_scanned_page_check_ends_at_the_unplaced_tail(tmp_path):
+    source = tmp_path / "source.md"
+    source.write_text(
+        "<!-- page 1 -->\n\nText on page one.\n\n<!-- page 2 -->\n\n"
+        f"{UNPLACED_MARKER}\n\nA note with no page.\n",
+        encoding="utf-8",
+    )
+    assert check_recognised_text(source, [2]) == [2]
 
 
 # Codex re-verify 260924 (MEDIUM): one item without a page switched the
