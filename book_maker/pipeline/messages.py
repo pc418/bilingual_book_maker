@@ -150,15 +150,19 @@ OCR_ENGINE_MISSING = (
     "{install} Or leave out --ocr-engine: auto takes the first engine "
     "installed."
 )
+# rapidocr runs on onnxruntime when named (docling's default backend for
+# it), and the pdf extra carries rapidocr without onnxruntime (docling-slim
+# [standard] names rapidocr only), so the line names both.
 OCR_ENGINE_INSTALL = {
     "rapidocr": (
-        "It ships with the pdf extra (see docs/installation-pdf.md); on its "
-        "own: pip install rapidocr onnxruntime."
+        "It runs on onnxruntime, which the pdf extra does not install: pip "
+        "install rapidocr onnxruntime."
     ),
-    "easyocr": "Install it with pip install easyocr (it downloads its models on "
-    "first use).",
+    "easyocr": (
+        "Install it with pip install easyocr (it downloads its models on first " "use)."
+    ),
     "ocrmac": "Install it with pip install ocrmac (nothing to download).",
-    "tesseract": ("Install tesseract and its language data, then put it on PATH."),
+    "tesseract": "Install tesseract and its language data, then put it on PATH.",
 }
 OCR_ENGINE_NOT_MACOS = (
     "--ocr-engine ocrmac is Apple's Vision framework, which exists only on "
