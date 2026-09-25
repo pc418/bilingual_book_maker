@@ -1,5 +1,12 @@
 # Translating with an LLM
 
+If you have an OpenAI key, the default route needs nothing else:
+
+```bash
+export OPENAI_API_KEY=sk-...
+bbook_maker --book_name my_book.epub --use_context session
+```
+
 This page covers the flags that decide *where* the requests go and *what* they ask for. They work the same for every input format. What each format adds is on the [Formats](formats/epub.md) pages.
 
 ## The route: model, endpoint, format
@@ -69,6 +76,37 @@ A gateway that serves Claude models usually speaks the OpenAI shape. If a gatewa
 `--api_format groq`, `xai` and `litellm` are the OpenAI shape at Groq, xAI and a LiteLLM proxy (`http://localhost:4000`). Each knows its address, so the format, a key and `--model` are the whole route. `--model` is required there.
 
 `--model orcarouter` sends the run to the OrcaRouter gateway and its `orcarouter/auto` model. The key comes from `--key` or `BBM_ORCAROUTER_API_KEY`.
+
+## One command per vendor
+
+If your vendor is listed here, this is the whole command (the key can also come from the environment, see [Keys](#keys)):
+
+```bash
+# Claude: a claude-* model id selects the anthropic format on its own
+bbook_maker --book_name my_book.epub --model claude-sonnet-4-6 --key ${claude_key} --use_context session
+# Gemini, over the Gemini API; --interval paces the free tier
+bbook_maker --book_name my_book.epub --api_format gemini --key ${gemini_key} --model gemini-flash-latest --use_context
+# Qwen-MT on DashScope: a translation model with a source/target pair
+bbook_maker --book_name my_book.epub --api_format qwen --key ${qwen_key} --model qwen-mt-turbo --language "Simplified Chinese"
+# xAI
+bbook_maker --book_name my_book.epub --api_format xai --key ${xai_key} --model grok-4.3 --use_context session
+# Groq: --model is required, pick a current id from console.groq.com/docs/models
+bbook_maker --book_name my_book.epub --api_format groq --key ${groq_key} --model llama-3.3-70b-versatile --use_context session
+# a LiteLLM proxy on this machine: --model is the name its config gives a backend
+bbook_maker --book_name my_book.epub --api_format litellm --model ${name_in_your_litellm_config} --use_context session
+# OrcaRouter's smart routing (orcarouter/auto); --provider orcarouter --model <id> pins one model
+bbook_maker --book_name my_book.epub --model orcarouter --key ${orcarouter_key} --use_context session
+# Ollama; point --api_base at another host if the server is not local
+bbook_maker --book_name my_book.epub --api_base http://localhost:11434/v1 --model ${ollama_model_name} --use_context session
+# any other OpenAI-compatible endpoint: base URL, key, and the model id it uses
+bbook_maker --book_name my_book.epub --api_base "https://api.lingyiwanwu.com/v1" --key ${key} --model yi-34b-chat-0205 --use_context session
+# Azure OpenAI: the deployment's OpenAI-compatible URL, the deployment name as the model
+bbook_maker --book_name my_book.epub --api_base 'https://example-endpoint.openai.azure.com/openai/v1' --key ${azure_key} --model 'deployment-name' --use_context session
+# your ChatGPT plan through the Codex CLI (codex login first)
+bbook_maker --book_name my_book.epub --api_format codex --language zh-hans
+```
+
+Machine-translation services (Google, DeepL, Caiyun, Tencent, a custom API) are on [Machine translation](machine-args.md). A vendor you use often belongs in the [provider file](providers.md).
 
 ## Keys
 
@@ -195,3 +233,18 @@ If plan classification keeps failing on your model, `--plan-classify all` skips 
 | `--interval SECONDS` | Pause between requests. Only the gemini format uses it. |
 | `-p`, `--proxy URL` | An HTTP proxy for the run, for example `http://127.0.0.1:7890`. |
 | `--batch`, `--batch-use` | OpenAI's Batch API: submit a job, then build the book from it later. Not on EPUB. |
+
+Common `--extra_body` and `--extra_headers` values:
+
+```bash
+# openai route: turn off a local/vLLM chat template's thinking block
+--extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'
+# openai route (chat completions): reasoning effort and a token ceiling, neither of which has a flag
+--extra_body '{"reasoning_effort": "low", "max_completion_tokens": 2000}'
+# anthropic route: keep extended thinking off
+--extra_body '{"thinking": {"type": "disabled"}}'
+# OpenRouter attribution, shown on its dashboard
+--extra_headers '{"HTTP-Referer": "https://example.com", "X-Title": "bilingual_book_maker"}'
+# a gateway's own auth or routing header
+--extra_headers '{"X-API-Key": "sk-gateway-..."}'
+```

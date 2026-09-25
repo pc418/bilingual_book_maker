@@ -37,7 +37,7 @@ The classifier is found in this order: `--classify-model`, then the provider ent
 
 - **How it is asked.** Where the classifier's endpoint verifies a strict JSON schema, one request carries a page of signatures and the reply is held to the schema. Elsewhere it is a plain conversation: five signatures per turn, each answered `skip`, `translate` or `unsure`. Two missed replies in a row step down to three per turn, then to one. Below one, classification stops and the remaining signatures are translated. Each step prints one line.
 - **A classifier of its own** (named by flag or provider entry) plans the book whatever the translating route can do. The run prints `plan mode: on (classified by …)`. This is how a machine-translation route gets a plan. Google Translate with gpt-5.6-luna as the classifier was run end to end on the test book: all 31 signatures decided, coverage 99.8%.
-- **Agent mode asks no model.** `--plan-classify agent` hands every undecided row to you or your coding agent. A named classifier does not pre-fill the plan (owner ruling: an agent judges worse from pre-filled answers), and the run warns that it is ignored. `--plan-classify all` ignores it too.
+- **Agent mode asks no model.** `--plan-classify agent` hands every undecided row to you or your coding agent. A named classifier does not pre-fill the plan, because an agent judges worse from pre-filled answers; the run warns that it is ignored. `--plan-classify all` ignores it too.
 - **Where it is asked and with which key** is on [Provider file and extra models](../providers.md#where-each-model-is-asked). A classifier on its own address prints its own usage line at the end of the run.
 - **Jev**, TypeSafe's classifier, is built for exactly this question: translate or skip, a page of signatures per request, in one cheap round trip. `--classify-model jev` uses it; a Jev-compatible server such as Featherless's Simple Jev works too. Which key goes where, and the URL rules, are on [Provider file and extra models](../providers.md#jev-and-jev-compatible-classifiers).
 - **Jev's gate.** A doubtful `skip` becomes `translate`, so no content is lost to it. The gate is 0.95 on the probability of Jev's chosen answer, measured over 662 plan signatures from 45 EPUBs against gpt-5.6-luna. At that value about nine of ten of Jev's skips fall back to `translate`; what it still skips is apparatus (copyright lines, line numbers, note marks, index locators). On that corpus Jev saves little over translating everything. The plan file marks each fallback on its row (`… below the gate: translate`). `--classify-min-confidence P` moves the gate for a run (`BBM_JEV_MIN_CONFIDENCE` does the same without the flag); lower keeps more of Jev's skips, at your risk. See [Jev as the plan classifier](../evaluation/plan-classifier-jev.md).
@@ -53,6 +53,17 @@ The classifier is found in this order: `--classify-model`, then the provider ent
     ```
 
     The classifier goes to OpenAI and reads `OPENAI_API_KEY`. The translation stays with Google.
+
+=== "Jev from the shipped provider file"
+
+    ```bash
+    bbook_maker \
+      --book_name novel.epub \
+      --provider openai-jev \
+      --use_context session
+    ```
+
+    The one-line way: translates with gpt-5.6-luna at OpenAI (`OPENAI_API_KEY`) and classifies the plan with Jev (`JEV_API_KEY`), both from the `openai-jev` entry of the shipped `bbm_providers.example.json`.
 
 === "Jev at TypeSafe"
 
@@ -94,121 +105,7 @@ The classifier is found in this order: `--classify-model`, then the provider ent
 
 ## Recommended commands
 
-### By document type
-
-=== "Novel"
-
-    The default is right. Add a session so names stay consistent.
-
-    ```bash
-    bbook_maker \
-      --book_name novel.epub \
-      --language zh-hans \
-      --use_context session \
-      --quiet
-    ```
-
-=== "Textbook with tables and formulas"
-
-    Preview the plan first. A textbook puts text in table cells, captions and sidebars, and you want to see what will be skipped before you pay.
-
-    ```bash
-    bbook_maker \
-      --book_name textbook.epub \
-      --plan-dry-run
-    ```
-
-    If the table shows kinds of text you want that were not selected, translate every unit instead of classifying:
-
-    ```bash
-    bbook_maker \
-      --book_name textbook.epub \
-      --language zh-hans \
-      --plan-classify all \
-      --use_context session \
-      --quiet
-    ```
-
-    Formulas in an EPUB are MathML or images. The plan never sends MathML (`<math>`) or SVG to the model, so equations stay as they are.
-
-=== "Paper"
-
-    A paper as an EPUB takes the same command as a novel. A paper as a PDF has no plan: the PDF route translates every block. See [PDF to bilingual EPUB](pdf-to-epub.md).
-
-    ```bash
-    bbook_maker \
-      --book_name paper.epub \
-      --language zh-hans \
-      --use_context session
-    ```
-
-=== "Scanned book"
-
-    A scan is a PDF, and plan mode is EPUB only. Use [PDF to bilingual EPUB](pdf-to-epub.md) with `--pdf-ocr`.
-
-=== "Chinese scan"
-
-    A scan is a PDF, and plan mode is EPUB only. Use [PDF to bilingual EPUB](pdf-to-epub.md) with `--pdf-ocr` and `--ocr-lang iso:zh`. For a Chinese EPUB translated to English, plan mode works as for a novel:
-
-    ```bash
-    bbook_maker \
-      --book_name chinese_novel.epub \
-      --language en \
-      --use_context session
-    ```
-
-### By system
-
-Plan mode runs on the endpoint, not on your machine, so a hosted endpoint needs the same command everywhere. The system matters when the model runs locally.
-
-=== "macOS (Apple silicon)"
-
-    A local model through Ollama, which uses Metal:
-
-    ```bash
-    bbook_maker \
-      --book_name novel.epub \
-      --api_base http://localhost:11434/v1 \
-      --model qwen3:8b \
-      --use_context session
-    ```
-
-    A small local model has no strict JSON schema, so the run halves the unit cap to 8 by itself. See [On-device models](../llm-args.md#on-device-models-ollama-llamacpp-lm-studio).
-
-=== "Linux with NVIDIA"
-
-    A local server with an OpenAI-compatible API (vLLM, llama.cpp, Ollama) on the GPU:
-
-    ```bash
-    bbook_maker \
-      --book_name novel.epub \
-      --api_base http://localhost:8000/v1 \
-      --model your-model-id \
-      --use_context session
-    ```
-
-=== "CPU only"
-
-    A local model on the CPU is slow for a whole book. Use a hosted endpoint:
-
-    ```bash
-    bbook_maker \
-      --book_name novel.epub \
-      --model gpt-5.6-luna \
-      --use_context session
-    ```
-
-=== "Docker"
-
-    ```bash
-    docker run --rm \
-      -v "$PWD":/book \
-      -e OPENAI_API_KEY \
-      ghcr.io/yihong0618/bilingual_book_maker:latest \
-      --book_name /book/novel.epub \
-      --use_context session \
-      --quiet
-    ```
+The command per kind of book (novel, textbook, paper, dictionary), per endpoint (hosted, on-device, machine translation) and per system is on [Recommended settings for EPUB](recommended-epub.md).
 
 ## What can go wrong
 

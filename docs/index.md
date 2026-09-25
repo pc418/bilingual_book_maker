@@ -12,14 +12,12 @@ That writes `my_book_bilingual.epub` next to `my_book.epub`. The default model i
 
 ## Where to go next
 
-- [Quick start](quickstart.md): install, then one EPUB, one TXT and one PDF, with the file names you get back.
-- [Installation](installation.md): pip, a checkout, the [PDF extra](installation-pdf.md) and [Docker](docker.md).
-- [Translating with an LLM](llm-args.md): model, key, endpoint, provider file, prompt, retries, on-device models.
-- [Machine translation](machine-args.md): Google, DeepL, Caiyun, Tencent and a custom API, and what they cannot do.
-- [Formats](formats/epub.md): every flag that applies to each input format, and every flag that does not.
-- Features: [plan mode](features/plan-mode.md), [session mode](features/session-mode.md) and [PDF to bilingual EPUB](features/pdf-to-epub.md), each with recommended commands per document type and per system.
-- [Evaluation](evaluation/index.md): the measurements behind the defaults, one question per page.
-- [Command line options](cmd.md): the flat list of every flag.
+- **Start here:** [Quick start](quickstart.md) (one EPUB, one TXT, one PDF) and [Installation](installation.md) (pip, a checkout, [Docker](docker.md)).
+- **EPUB:** [the command most people need](formats/epub.md), then [recommended settings](features/recommended-epub.md) for textbooks, small models and local servers; [plan mode](features/plan-mode.md) and [session mode](features/session-mode.md) explain what happens.
+- **PDF:** [PDF to bilingual EPUB](features/pdf-to-epub.md) (two pages first, then the whole file), [recommended settings](features/recommended-pdf.md) per document type and system, and [installing the PDF extra](installation-pdf.md).
+- **Other formats:** [TXT](formats/txt.md), [SRT](formats/srt.md) and [Markdown](formats/md.md), one command each; [which page for which file](book_source.md).
+- **Endpoints and models:** [Translating with an LLM](llm-args.md) (model, key, endpoint, retries, on-device models), the [provider file](providers.md), [machine translation](machine-args.md), [prompt files](prompt.md) and [environment variables](env_settings.md).
+- **Reference:** [every command line option](cmd.md), and [the measurements behind the defaults](evaluation/index.md).
 
 ## Use it on material you may translate
 

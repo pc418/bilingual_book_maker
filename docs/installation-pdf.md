@@ -1,12 +1,16 @@
 # Installing the PDF extra
 
-`--to-epub` reads a PDF with [docling](https://github.com/docling-project/docling)'s layout and table models. So it needs more than the base install: PyTorch, the models, and Pandoc to build the EPUB. None of it is installed by default, because most people translate EPUBs and never open a PDF.
+If you want to turn a PDF into a bilingual EPUB (`--to-epub`), install the PDF extra from a clone of the repository:
 
-No Java is needed. Earlier versions of this route ran a Java engine; it was retired in favor of docling.
+```bash
+pip install ".[pdf]"
+```
+
+`--to-epub` reads a PDF with [docling](https://github.com/docling-project/docling)'s layout and table models, so it needs more than the base install: PyTorch, the models, and Pandoc to build the EPUB. None of it is installed by default, because most people translate EPUBs and never open a PDF. No Java is needed; instructions that mention a JRE or Adoptium are out of date.
 
 ## 1. Get the code
 
-The route is not in the published package yet, so you install from a checkout.
+The route is not in the published package yet, so you install from a clone.
 
 ```bash
 git clone https://github.com/yihong0618/bilingual_book_maker.git
@@ -16,11 +20,7 @@ git clone https://github.com/yihong0618/bilingual_book_maker.git
 cd bilingual_book_maker
 ```
 
-```bash
-pip install -r requirements.txt
-```
-
-A virtual environment is recommended. This is the base install. It cannot read a PDF yet.
+A virtual environment is recommended.
 
 ## 2. Pandoc
 
@@ -30,14 +30,16 @@ You need Pandoc **3.1.12 or newer** on PATH. It builds the EPUB and its navigati
 pandoc --version
 ```
 
-## 3. The PDF packages
+## 3. The PDF extra
 
-Which PyTorch build you get is decided by the *index* you install from, not by the version. Pick your system:
+Install the extra rather than the locked requirements files: the locked files pin exact versions of PyTorch and everything else, so they download again a torch you may already have; the extra reuses what is installed.
+
+Which PyTorch build you get is decided by the *index* it comes from, not by the version. Pick your system:
 
 === "macOS (Apple silicon)"
 
     ```bash
-    pip install -r requirements-pdf-gpu.txt
+    pip install ".[pdf]"
     ```
 
     You get MPS acceleration. There is nothing to choose.
@@ -45,7 +47,7 @@ Which PyTorch build you get is decided by the *index* you install from, not by t
 === "Linux with NVIDIA"
 
     ```bash
-    pip install -r requirements-pdf-gpu.txt
+    pip install ".[pdf]"
     ```
 
     PyPI's Linux wheel *is* the CUDA build, so this is all you need. The CUDA Toolkit is not needed; the wheel carries the runtime.
@@ -53,19 +55,20 @@ Which PyTorch build you get is decided by the *index* you install from, not by t
 === "Linux, CPU only"
 
     ```bash
-    pip install -r requirements-pdf-cpu.txt
+    pip install ".[pdf]" \
+        --extra-index-url https://download.pytorch.org/whl/cpu
     ```
 
-    The GPU file would give you about 3 GB of CUDA you cannot use. This one is about 180 MB and pulls no `nvidia-*` packages. It names PyTorch's CPU index inside the file, so there is no flag to remember.
+    Without the CPU index you get about 3.2 GB of CUDA you cannot use. With it, about 380 MB, and no `nvidia-*` packages.
 
 === "Windows with NVIDIA"
 
     ```bat
-    pip install -r requirements-pdf-gpu.txt ^
+    pip install ".[pdf]" ^
         --extra-index-url https://download.pytorch.org/whl/cu126
     ```
 
-    **PyPI's Windows wheel is CPU-only.** Windows CUDA builds are published only on PyTorch's own index, so the plain install leaves you on the processor, silently. `cu126` suits the pinned PyTorch 2.7.1; `cu128` is there for newer cards and drivers. The CUDA wheel is about 2.7 GB.
+    **PyPI's Windows wheel is CPU-only.** Windows CUDA builds are published only on PyTorch's own index, so the plain line leaves you on the processor, silently. `cu128` is there for newer cards and drivers. The CUDA wheel is about 2.7 GB.
 
     You also need the NVIDIA driver. PyTorch bundles the CUDA runtime, so you do **not** need the CUDA Toolkit, but the driver is yours to install:
 
@@ -83,12 +86,26 @@ Which PyTorch build you get is decided by the *index* you install from, not by t
 === "Windows, CPU only"
 
     ```bat
-    pip install -r requirements-pdf-gpu.txt
+    pip install ".[pdf]"
     ```
 
-    On Windows this file gives you the CPU build, because that is what PyPI ships there.
+    On Windows this gives you the CPU build, because that is what PyPI ships there.
 
 Use `--extra-index-url`, never `--index-url`. `--index-url` *replaces* PyPI, and everything else this tool needs would stop resolving.
+
+If you want exactly the versions the project tests, `requirements-pdf-gpu.txt` and `requirements-pdf-cpu.txt` are the pinned sets the Docker `pdf` image installs (`pip install -r requirements-pdf-cpu.txt` names the CPU index inside the file). Expect them to replace the PyTorch you have.
+
+### With uv
+
+```bash
+uv pip install ".[pdf]"
+```
+
+When you want the CPU build:
+
+```bash
+uv pip install ".[pdf]" --torch-backend=cpu
+```
 
 ## 4. Run it
 
@@ -117,7 +134,7 @@ The models (about 500 MB) download on the first run, so the first PDF takes noti
 export HF_HOME=/path/with/room
 ```
 
-Once cached, extraction needs no network. [PDF to bilingual EPUB](features/pdf-to-epub.md) has the recommended command for each kind of document.
+Once cached, extraction needs no network. [Recommended settings for PDF](features/recommended-pdf.md) has the command for each kind of document.
 
 ## Check what you got
 
@@ -141,25 +158,11 @@ WARNING: bbook-maker 1.2.1 does not provide the extra 'pdf'
 Successfully installed bbook-maker-1.2.1
 ```
 
-The next PDF run refuses with the missing-extra message, which names this command as the one that will not work. Until the route is released, clone the repository (step 1). From a clone, `pip install ".[pdf]"` is equivalent to the requirements files but takes whatever versions resolve today; the files are the pinned, tested set.
+The next PDF run refuses with the missing-extra message. Until a release carries the route, clone the repository (step 1) and install `".[pdf]"` from it.
 
-### With uv
+## Keeping the CPU build
 
-uv takes the first index that has a package, so it must be told to compare them:
-
-```bash
-uv pip install -r requirements-pdf-cpu.txt --index-strategy unsafe-best-match
-```
-
-Or use uv's own PyTorch switch:
-
-```bash
-uv pip install -r requirements-pdf-gpu.txt --torch-backend=cpu
-```
-
-### Keeping the CPU build
-
-`torch==2.7.1+cpu` satisfies any `torch>=…` requirement, so nothing forces it to be replaced. But the next `pip install -U` that touches PyTorch without the index will fetch the CUDA wheel and pull in about 3 GB. Make the index stick to the environment:
+`torch==…+cpu` satisfies any `torch>=…` requirement, so nothing forces it to be replaced. But the next `pip install -U` that touches PyTorch without the index will fetch the CUDA wheel and pull in about 3 GB. Make the index stick to the environment:
 
 ```bash
 export PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
@@ -172,15 +175,15 @@ Or in `pip.conf` / `pip.ini`:
 extra-index-url = https://download.pytorch.org/whl/cpu
 ```
 
-The uv equivalents are `UV_TORCH_BACKEND=cpu`, or `UV_INDEX_STRATEGY=unsafe-best-match` with `UV_EXTRA_INDEX_URL`.
+The uv equivalent is `UV_TORCH_BACKEND=cpu`.
 
 ## Or skip all of it: Docker
 
-The `pdf` image tag carries Pandoc and the whole docling runtime. See [Docker](docker.md), including why a Mac should install natively instead.
+The `pdf` image tag carries Pandoc and the whole docling runtime: `docker pull ghcr.io/yihong0618/bilingual_book_maker:pdf`. See [Docker](docker.md), including why a Mac should install natively instead.
 
 ## Sizes
 
-What the PDF step downloads, measured 2026-09-21 by resolving the route's dependency tree on each platform (102 packages) with PyTorch pinned as the lock pins it, 2.7.1:
+What the PDF step downloads with PyTorch 2.7.1, resolved on each platform (102 packages):
 
 | | download |
 |---|---|
@@ -208,12 +211,12 @@ The two platforms are opposites, which is the trap: on Linux the default is CUDA
 
 These are the lines the tool prints, and what to do.
 
-- **`reading a PDF needs the pdf extra, which is not installed.`** Step 3 was not done. The message carries the install line. If you ran `pip install "bbook_maker[pdf]"` and it said it succeeded, that is the trap described above. Do step 3.
+- **`reading a PDF needs the pdf extra, which is not installed.`** Step 3 was not done. The message names the locked requirements files; `pip install ".[pdf]"` (step 3) does the same and keeps the PyTorch you have. If you ran `pip install "bbook_maker[pdf]"` and it said it succeeded, that is the trap described above.
 - **`Pandoc is required for --to-epub. Install it and make sure pandoc is on PATH.`** Do step 2.
 - **`… is too old for EPUB export; Pandoc 3.1.12 or newer is required`** Your Pandoc came from apt. Install the release from pandoc.org (step 2) and put it first on PATH; the message names the harness `tools/pdf_to_book.py --pandoc PATH` as the other way.
-- **`--device cuda was asked for, but the installed PyTorch is a CPU-only build.`** Reinstall with `requirements-pdf-gpu.txt` (and the CUDA index on Windows).
+- **`--device cuda was asked for, but the installed PyTorch is a CPU-only build.`** Reinstall the extra with the CUDA build: the plain line on Linux, the `cu126` index on Windows (step 3).
 - **`--device cuda was asked for, but this machine has no cuda accelerator available.`** The build has CUDA; the machine or driver cannot provide it. Run `nvidia-smi`: no output means no driver; a CUDA version lower than your channel means the driver is too old. Otherwise use `--device cpu`.
-- **On Windows, `torch.version.cuda` is `None` although the machine has a card.** The plain install was used. Reinstall naming the `cu126` index (step 3).
-- **`… selected pages have no text layer …; rerun with --pdf-ocr …`** The PDF is a scan. Add `--pdf-ocr`, and `--ocr-lang` if the scan is not in Chinese or English. See [PDF to bilingual EPUB](features/pdf-to-epub.md#what-can-go-wrong).
+- **On Windows, `torch.version.cuda` is `None` although the machine has a card.** The plain line was used. Reinstall naming the `cu126` index (step 3).
+- **`… selected pages have no text layer …; rerun with --pdf-ocr …`** The PDF is a scan. Add `--pdf-ocr`, and `--ocr-lang` if the scan is not in Chinese or English. See [Recommended settings for PDF](features/recommended-pdf.md).
 - **In Docker, `--gpus all` seems ignored on an ARM machine.** It is: the arm64 image has a CPU-only PyTorch. Add `--platform linux/amd64`.
 - **In Docker on a Mac, the GPU is never used.** Correct and unfixable: the Linux VM cannot see Metal. Install natively (steps 1 to 4) for MPS.

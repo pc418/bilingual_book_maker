@@ -1,5 +1,13 @@
 # EPUB
 
+If you want a bilingual edition of an EPUB, this is the command most people need:
+
+```bash
+bbook_maker --book_name my_book.epub --language zh-hans --use_context session --quiet
+```
+
+It writes `my_book_bilingual.epub` beside the input. [Recommended settings for EPUB](../features/recommended-epub.md) has what to change for a textbook, a small model or a local server.
+
 EPUB is the format this tool knows best. Every feature works on it.
 
 ## How the file is read
@@ -104,4 +112,4 @@ These work the same on every format.
 
 - `--batch_size`: the EPUB loader groups with `--accumulated_num`; the run warns.
 - `--batch`, `--batch-use`: refused on EPUB: the Batch API path is never reached there.
-- `--to-epub`, `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on an EPUB stops the run; the others warn or do nothing (`--img-*`: the run warns that only the PDF route has an image step).
+- `--to-epub`, `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on an EPUB stops the run; the others warn or do nothing (the three image flags: the run warns that only the PDF route has an image step).
