@@ -104,4 +104,4 @@ These work the same on every format.
 
 - `--batch_size`: the EPUB loader groups with `--accumulated_num`; the run warns.
 - `--batch`, `--batch-use`: refused on EPUB: the Batch API path is never reached there.
-- `--to-epub`, `--pdf-ocr`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on an EPUB stops the run; the others warn or do nothing (`--img-*`: the run warns that only the PDF route has an image step).
+- `--to-epub`, `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on an EPUB stops the run; the others warn or do nothing (`--img-*`: the run warns that only the PDF route has an image step).

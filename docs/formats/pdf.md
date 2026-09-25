@@ -12,7 +12,7 @@ A PDF can take two routes. Pick the first unless you want plain text.
 ### How the file is read
 
 1. [docling](https://github.com/docling-project/docling) reads the PDF's text layer with its layout and table models and writes Markdown: `<name>_book/source.md` and the images.
-2. Pages with no text layer (a scan) are refused unless you pass `--pdf-ocr`; then the OCR models read them.
+2. Pages with no text layer (a scan) are refused unless you pass `--pdf-ocr`; then the OCR models read them. A page that has a text layer keeps it, unless you also pass `--ocr-replace-layer`: then every page is OCR'd and the PDF's own layer is not used.
 3. With `--img-model`, a vision model corrects the roles docling gave the page's regions (heading, caption, footnote, code) from the page image.
 4. Heading levels are read from the page (numbering first, then font size and weight). Display formulas are cropped from the page as pictures.
 5. The [Markdown loader](md.md) translates `source.md` into `book_bilingual.md`.
@@ -24,6 +24,7 @@ A rerun of the same command reuses the extraction and a finished translation. Ed
 
 - `<name>_book/` beside the PDF: `source.md`, `images/`, `book_bilingual.md`, a manifest, and `.work/`.
 - `<name>_bilingual.epub` beside the PDF, a copy of the finished book.
+- In `source.md`, a `<!-- page N -->` comment where each page starts, numbered as in the PDF file (from 1, as `--pages` counts), empty pages included. Items docling gave no page, which is rare, come last, under `<!-- unplaced -->`; the run says how many.
 - With `--pages 12-30`: `<name>_pages-12-30_book/` and `<name>_pages-12-30_bilingual.epub`, so a chapter never overwrites the whole book.
 
 ### Flags that apply
@@ -34,7 +35,8 @@ The route's own flags:
 |---|---|
 | `--to-epub` | Take this route. |
 | `--pdf-ocr` | Read pages with no text layer with the OCR models. Off by default; they are refused without it. |
-| `--ocr-lang LANGS` | With `--pdf-ocr`: the languages the OCR engine reads, comma-separated, in the engine's own codes (rapidocr: `ch`, `en`, `latin`; easyocr: `ch_sim`, `ja`, `ko`; ocrmac: `zh-Hans`, `ja-JP`), or a BCP-47 tag behind `iso:` (`iso:ja`), which every engine accepts. rapidocr uses only the first language. |
+| `--ocr-replace-layer` | With `--pdf-ocr`: OCR every page and use that text instead of the PDF's text layer. Off by default: a layer is kept and only pages without one are OCR'd. For a layer that is wrong (another language, garbage); on a clean scan the layer reads better. Toggling it reads the PDF again. |
+| `--ocr-lang LANGS` | With `--pdf-ocr`: the languages the OCR engine reads, comma-separated, in the engine's own codes (rapidocr: `ch`, `en`, `latin`; easyocr: `ch_sim`, `ja`, `ko`; ocrmac: `zh-Hans`, `ja-JP`), or a BCP-47 tag behind `iso:` (`iso:zh`, `iso:ja`), which every engine accepts. rapidocr, the engine the shipped requirements install, uses only the first language and refuses `ch_sim`: write `iso:zh` for Chinese. |
 | `--device auto\|cpu\|cuda\|mps\|xpu` | Where the extraction models run. `auto` (default) detects an accelerator and falls back to the CPU. The CPU gives the same output, slower. |
 | `--pages PAGES` | Only these pages, numbered from 1 (`12-30`, `1,3,5-7`). |
 | `--no-formula-images` | Leave display formulas as `<!-- formula-not-decoded -->` placeholders instead of pictures. |
@@ -122,7 +124,7 @@ The route and run flags in the table above, plus:
 - `--use_context`, `--context_paragraph_limit`, `--context-compact-at`, `--no-context-compact`: the PDF text loader carries no context. The run warns.
 - `--glossary`, `--glossary-auto`: not forwarded. The run warns.
 - `--parallel-workers`: the run stays serial. The run warns.
-- `--pdf-ocr`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`: `--to-epub` only. The run warns and reads the whole file.
+- `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`: `--to-epub` only. The run warns and reads the whole file.
 - `--img-model`, `--img-base-url`, `--img-key`: the image step belongs to `--to-epub`. The run warns.
 - `--classify-model` and its two companions: nothing classifies here. The run warns.
 - Every EPUB-only flag listed for the `--to-epub` route above, and `--accumulated_num`, `--quiet`, `--no_disclosure`, `--translation-metadata`.

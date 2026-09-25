@@ -4,9 +4,11 @@ This route is experimental. It has been checked on arXiv papers and a set of boo
 
 ## What it does
 
-`--to-epub` reads the PDF with [docling](https://github.com/docling-project/docling)'s layout and table models into Markdown, translates that Markdown with the Markdown loader, and has Pandoc build a reflowable bilingual EPUB. Every paragraph is followed by its translation, and the table of contents follows the headings. Heading levels are read from the page itself: numbering first (`1.`, `1.1`, `I.`, `A.`), then font size and weight. Figures stay pictures, and each display formula is cropped from the page as a picture and placed where it stood. Pages with no text layer, a scan, are read by the OCR models only when you pass `--pdf-ocr`. If you name a vision model with `--img-model`, it looks at each page and corrects the roles docling gave the regions (a heading that is really an author line, a code listing read as footnotes) before the Markdown is written.
+`--to-epub` reads the PDF with [docling](https://github.com/docling-project/docling)'s layout and table models into Markdown, translates that Markdown with the Markdown loader, and has Pandoc build a reflowable bilingual EPUB. Every paragraph is followed by its translation, and the table of contents follows the headings. Heading levels are read from the page itself: numbering first (`1.`, `1.1`, `I.`, `A.`), then font size and weight. Figures stay pictures, and each display formula is cropped from the page as a picture and placed where it stood. Pages with no text layer, a scan, are read by the OCR models only when you pass `--pdf-ocr`; a scan whose text layer is wrong can have it replaced with `--ocr-replace-layer`. If you name a vision model with `--img-model`, it looks at each page and corrects the roles docling gave the regions (a heading that is really an author line, a code listing read as footnotes) before the Markdown is written.
 
 Everything lives in a working folder beside the PDF, `<name>_book/`: `source.md` (the extraction), `images/`, `book_bilingual.md` (the translation) and a manifest. The finished book is copied out as `<name>_bilingual.epub`. Rerunning the same command reuses the extraction and a finished translation, so you can stop, read `source.md`, fix a heading, and go on without paying twice. A PDF is a page description, not a document: it stores glyphs at positions and knows nothing of paragraphs or headings, so every extractor guesses the structure back. A heading one level off or a table that arrives as prose is the format showing through, and a minute's edit in `source.md`.
+
+`source.md` marks where each page starts with a comment, `<!-- page N -->`. N is the page's number in the PDF file, counted from 1: the numbers `--pages` takes, not the number printed on the page. A page with nothing on it keeps its marker, so the numbering never slips. Rarely, docling returns an item with no page. Such items are written once, at the end of `source.md`, under `<!-- unplaced -->`, and the run says how many. Their place in the reading order is lost: move them where they belong, or delete them, before you translate.
 
 ![A translated arXiv paper open in Apple Books: the contents list on the left, Chinese text beside the original figure and caption](../img/pdf_reading_edition.jpg)
 
@@ -24,7 +26,8 @@ The route's flags:
 |---|---|
 | `--to-epub` | Take this route. |
 | `--pdf-ocr` | Read pages that have no text layer. Off by default: a born-digital PDF is already readable, and OCR costs several times the time without changing what is read. Layout, heading and table detection run either way. |
-| `--ocr-lang LANGS` | With `--pdf-ocr`: the languages the OCR engine reads, in its own codes. With the shipped requirements the engine is rapidocr (`ch`, `en`, `latin`). easyocr (`ch_sim`, `ja`, `ko`) and ocrmac (`zh-Hans`, `ja-JP`) are used when installed. A BCP-47 tag behind `iso:` (`iso:ja`, `iso:zh-Hant`) works on every engine, so it is the safe choice when you do not know which one will run. rapidocr reads one language per run and uses the first. The run prints the engine and languages it used. |
+| `--ocr-replace-layer` | With `--pdf-ocr`: OCR every page and use that text instead of the text layer the PDF carries. Off by default: a layer is kept and only pages without one are OCR'd. For a scan whose layer is wrong (another language, or garbage from a poor OCR); on a clean scan the layer reads better than the local engine. Turning it on or off reads the PDF again on the next run. |
+| `--ocr-lang LANGS` | With `--pdf-ocr`: the languages the OCR engine reads, in its own codes. With the shipped requirements the engine is rapidocr (`ch`, `en`, `latin`), on macOS and on Linux alike. easyocr (`ch_sim`, `ja`, `ko`) and ocrmac (`zh-Hans`, `ja-JP`) are used when installed. A BCP-47 tag behind `iso:` (`iso:zh`, `iso:ja`, `iso:zh-Hant`) works on every engine, so it is the safe choice when you do not know which one will run. rapidocr has no `ch_sim`: for Chinese write `iso:zh`. rapidocr reads one language per run and uses the first. The run prints the engine and languages it used. |
 | `--device auto\|cpu\|cuda\|mps\|xpu` | Where the models run. `auto` detects CUDA or MPS and falls back to the CPU. The CPU gives the same text, only slower. |
 | `--pages 12-30` | Only these pages, numbered from 1 (`1,3,5-7` works too). The book gets its own names: `<name>_pages-12-30_book/`, `<name>_pages-12-30_bilingual.epub`. |
 | `--no-formula-images` | Leave display formulas as `<!-- formula-not-decoded -->` placeholders. Almost never what you want: the parser never reads equations, so without the pictures the mathematics is missing. |
@@ -123,20 +126,37 @@ Then open `book_pages-1-2_book/source.md` and read it. When it looks right, run 
 
     rapidocr's default reads Chinese and English. A scan in another script needs `--ocr-lang`; the first use of a language downloads its model.
 
-    **A scan that already carries an OCR layer** (Internet Archive and ABBYY FineReader files often do) is readable without `--pdf-ocr`: the run prints `… selected pages carry only an invisible OCR text layer …` and uses that layer. With `--pdf-ocr`, the OCR models read the page image and their text replaces the layer. In the OCR study, the local engine re-reading such pages did worse than the layer on 3 of 3 pages. Try the run without `--pdf-ocr` first and read `source.md`; add it only when the layer is poor, and then name the language with `--ocr-lang`.
+    **A scan that already carries an OCR layer** (Internet Archive and ABBYY FineReader files often do) is readable without `--pdf-ocr`: the run prints `… selected pages carry only an invisible OCR text layer …` and uses that layer. With `--pdf-ocr` the layer is still kept, possibly mixed with what the OCR engine reads. In the OCR study, the local engine re-reading such pages did worse than the layer on 3 of 3 pages. Try the run without `--pdf-ocr` first and read `source.md`. If the layer turns out to be garbage, see the next tab.
 
     `--img-model` does little on a scan: in the study it fixed 0 of 11 label faults on a page docling had shattered into fragments.
 
-=== "Chinese scan"
+=== "Scan with a bad text layer"
 
-    Name the language the OCR engine should read. An `iso:` tag works whichever engine docling picks; use `iso:zh-Hant` for traditional characters.
+    Some scans carry a text layer that is wrong: recognised in the wrong language, or garbage from a poor OCR. `source.md` then reads as nonsense although the page image is clear. `--ocr-replace-layer` drops the layer and reads every page with the OCR engine instead.
 
     ```bash
     python make_book.py \
       --book_name scan.pdf \
       --to-epub \
       --pdf-ocr \
-      --ocr-lang iso:zh-Hans \
+      --ocr-replace-layer \
+      --ocr-lang iso:zh \
+      --language en \
+      --use_context session
+    ```
+
+    Put the scan's own language in `--ocr-lang` (`iso:zh` here, for a Chinese scan). Every page is now read by the engine, and in the wrong language it reads nothing. It needs `--pdf-ocr`; without it the run stops before anything is read. Try two pages first (`--pages 1-2 --test`). A page the engine read nothing on is named and left empty. If no page was read, the run stops before any translation is paid for. Do not use it on a scan whose layer reads well: in testing, on a scan with a good visible layer, the fresh OCR read worse than the layer.
+
+=== "Chinese scan"
+
+    Name the language the OCR engine should read. An `iso:` tag works whichever engine docling picks: `iso:zh` (the same as `iso:zh-Hans`) for simplified characters, `iso:zh-Hant` for traditional. Not `ch_sim`: that is easyocr's code, and rapidocr, the engine the shipped requirements install, refuses it before reading a page.
+
+    ```bash
+    python make_book.py \
+      --book_name scan.pdf \
+      --to-epub \
+      --pdf-ocr \
+      --ocr-lang iso:zh \
       --language en \
       --use_context session
     ```
@@ -222,6 +242,7 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 - **`--no-thinking has no request to travel in on the codex route: …`** Drop `--no-thinking` on codex.
 - **`--img-model needs an OpenAI-compatible endpoint; … resolves to the … format.`** The image model is asked at the run's endpoint, or at `--img-base-url`, and that endpoint is not OpenAI-shaped. Give an OpenAI-compatible `--img-base-url` (and `--img-key`), or drop `--img-model`.
 - **`--img-base-url names where --img-model is served, and no --img-model was given. …`** Name the model too.
+- **`--ocr-replace-layer re-reads pages that already carry a text layer with the OCR engine, so it needs --pdf-ocr.`** Add `--pdf-ocr`.
 
 ### During extraction
 
@@ -231,7 +252,12 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 - **`The parser returned no text for this PDF; there is nothing to translate. If its pages are scans, rerun with --pdf-ocr.`** As it says.
 - **`Warning: page N extracted C characters, several times what a printed page holds; inspect source.md before translating.`** Something on that page, usually a figure, carries far more text than it shows. A page whose Markdown is thousands of lines is junk, not a long page. Remove it from `source.md` or leave the page out with `--pages`.
 - **`The PDF carries JBIG2 image masks, which docling-parse renders wrongly (docling issue #4329); page images are rendered by pypdfium2 instead, the text layer still by docling-parse.`** Information. Scans from the Internet Archive and ABBYY FineReader often use such masks, and docling-parse would draw the page as a smear. The run takes the page image from pypdfium2 for the whole document. See [Why docling-parse stays](../evaluation/pdf-page-render-backend.md).
-- **`N of M selected pages carry only an invisible OCR text layer (a scanned book with recognised text underneath); with OCR on, the models read the page image and their text replaces that layer.`** Information. Without `--pdf-ocr` the layer is used as the text. With it, name the language with `--ocr-lang`; the run prints the language hint for these pages too, because in the wrong language a readable page turns to garbage.
+- **`N of M selected pages carry only an invisible OCR text layer (a scanned book with recognised text underneath); that layer is kept as the page's text …`** Information. With `--pdf-ocr` the layer may be mixed with what the OCR engine reads, so name the language with `--ocr-lang`; in the wrong language a readable page turns to garbage. If the layer itself is garbage, rerun with `--pdf-ocr --ocr-replace-layer` and the language.
+- **`OCR: replacing the embedded text layer on every page (--ocr-replace-layer)`** Information. Without `--ocr-lang` the language hint follows.
+- **`page N: the OCR engine read nothing where the PDF carried a text layer; …`** With `--ocr-replace-layer`, that page came back empty and stays an empty page: its layer is not used in its place. The line also goes into the manifest's limitations; past ten pages the rest are counted (`... and N more`). Rerun with `--ocr-lang` for the page's language, or without `--ocr-replace-layer` to keep the layer.
+- **`The OCR engine read nothing on any selected page, and with --ocr-replace-layer the PDF's text layer is not used, so there is nothing to translate; …`** The run stops before any translation is paid for. The manifest records the failed attempt: the reason, the empty pages and the settings used. The usual cause is the wrong `--ocr-lang`, or none on a scan outside the engine's default languages. Rerun with the right one, or without `--ocr-replace-layer` to keep the layer. In testing it also fired on a JBIG2-masked scan whose page images were forced to come from docling-parse; a normal run switches those to pypdfium2 by itself (the JBIG2 line above).
+- **`N item(s) carry no page number; they are placed after the last page in source.md.`** Rare. docling returned items without a page. They are at the end of `source.md`, under `<!-- unplaced -->`, and their place in the reading order is lost. Move them where they belong, or delete them, before you translate.
+- **`… has no model for the OCR language 'ch_sim'. …`** The engine does not know that code; the message lists the ones it does. On rapidocr, write `iso:zh` for Chinese. Nothing was read.
 - **`… did not read the probe image (…); image steps are skipped this run.`** The image model cannot see pictures at that endpoint. The extraction goes on with docling's own labels.
 - **`Region roles: A of B asked items changed by <model> (… kept, … rejected, … pages with many changes); overlay at <path>.`** Information: what the image model changed. **`Region roles: C of D asked items on page N changed; read that page in source.md before translating.`** Most of a page changed; the changes are kept, so look at it. **`Region roles: …; the detector's own labels stand there.`** Part of the pass did not finish (a budget ran out, an answer was rejected, a region went unanswered); those regions keep docling's labels.
 - **`Extracting again: the bundle's region-role pass is <status>; this run asks for --img-model …, which only a complete pass satisfies.`** Information. The earlier pass did not finish, so the PDF is read again.
@@ -265,3 +291,6 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 - Figures stay pictures and their labels are not translated.
 - The EPUB carries no `bbm_translation_metadata.json`, and `--no_disclosure` is not honored on this route yet: the credit line is always added.
 - `--glossary-auto` learns only when a compaction happens, so a short paper at the default budget learns nothing.
+- `--ocr-replace-layer` was tried on two scans, two pages each. On a scan with a good visible layer the fresh OCR read worse than it (2,785 and 1,963 characters against the layer's 3,236 and 2,228, with visible misreadings). On a Chinese scan with an invisible layer the two gave nearly the same text (706 and 709 Han characters replaced, 733 and 709 kept). Source: docs/260924-feat-PDF_OCR_REPLACE_LAYER.md (repository, dated records).
+- With an invisible layer, `--pdf-ocr` alone already has the OCR engine read the page, which is why the Chinese numbers above are close. Keeping such a layer untouched while OCR is on is not possible yet.
+- The manifest records a failed attempt only for the all-empty stop. `rapidocr` refusing `ch_sim` and taking `iso:zh` was measured on the same install (same record).

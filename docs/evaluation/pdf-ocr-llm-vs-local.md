@@ -74,12 +74,13 @@ The owner ruled on the study's open questions afterwards:
 - **Variant characters:** when a vision OCR step is built, its prompt tells the model to keep printed variants (爲/為, 卽/即 and others) rather than modernize them. Exact-character CER is the primary score; a variant-folded CER is only a diagnostic.
 - **Running heads and page numbers** stay in the transcription; the reading edition drops them through structure classification, not through the OCR prompt.
 - **Vertical CJK:** when detected, such a page is to be marked unsupported for unattended OCR and stop before translation, rather than produce reversed prose. Not built yet.
-- **A page with an OCR layer:** keep the layer by default; replacing it with fresh OCR becomes an explicit option. Not built yet: today `--pdf-ocr` replaces the layer, and the run says so.
+- **A page with an OCR layer:** keep the layer by default; replacing it with fresh OCR becomes an explicit option. Built: `--ocr-replace-layer`, off by default, only with `--pdf-ocr`. A visible layer is now kept under `--pdf-ocr`. An invisible layer is still read by the OCR engine too (docling's default OCR mode does that), so keeping it untouched while OCR is on is a follow-up.
 
 What this means for you today:
 
 - For a scan in a script other than Chinese or English, pass `--ocr-lang` with the engine's codes or an `iso:` tag (the run prints which engine it chose).
 - For a scan that already has an OCR layer, try the run without `--pdf-ocr` first: the layer is read as text, and on 3 of 3 pages it beat a fresh local OCR pass.
+- Only when that layer is garbage (the wrong language, a poor OCR) add `--pdf-ocr --ocr-replace-layer` and the scan's language in `--ocr-lang`.
 - An Internet Archive or ABBYY scan with JBIG2 masks is now rendered correctly; the run prints a line when it does so. Still read `source.md` before you pay for a translation.
 - Vertical Chinese comes back in the wrong column order. Do not translate it unreviewed.
 
@@ -91,4 +92,4 @@ What this means for you today:
 - One CPU cell; no CUDA machine.
 - No price table for gpt-5.6-luna, so token counts were not converted to money.
 
-Source: docs/260923-eval-PDF_OCR_LUNA_VS_LOCAL_BASELINE.md; docs/260923-docs-OWNER_RULINGS_OCR_PROMPT_LAYER_WIKI.md for the rulings on its open questions; docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md for the image-model flags (repository, dated records)
+Source: docs/260923-eval-PDF_OCR_LUNA_VS_LOCAL_BASELINE.md; docs/260923-docs-OWNER_RULINGS_OCR_PROMPT_LAYER_WIKI.md for the rulings on its open questions; docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md for the image-model flags; docs/260924-feat-PDF_OCR_REPLACE_LAYER.md for `--ocr-replace-layer` (repository, dated records)
