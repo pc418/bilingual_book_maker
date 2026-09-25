@@ -195,18 +195,14 @@ The route needs no GPU. The device changes the speed, never the text. Install fr
 
 === "Docker"
 
-    The `pdf` image carries Pandoc and the PDF packages. It is not published: build it from a clone of the repository, then keep the models in a volume.
-
-    ```bash
-    docker build --target pdf -t bbook_maker:pdf .
-    ```
+    The `pdf` image tag carries Pandoc and the PDF packages. Keep the models in a volume so they download once.
 
     ```bash
     docker run --rm \
       -v "$PWD":/book \
       -v bbm-models:/root/.cache \
       -e OPENAI_API_KEY \
-      bbook_maker:pdf \
+      ghcr.io/yihong0618/bilingual_book_maker:pdf \
       --book_name /book/paper.pdf \
       --to-epub \
       --use_context session
