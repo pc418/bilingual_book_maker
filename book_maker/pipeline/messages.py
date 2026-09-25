@@ -232,6 +232,23 @@ FORMULA_NOT_EXPORTED = (
     "Warning: undecoded formula {number} on page {page} did not appear in the "
     "parser's Markdown, so its picture was not placed."
 )
+# Figures, drawn from the PDF by our own renderer at a chosen resolution
+# (`pdf_figures`, packet Q, owner 260925); docling's 72 DPI pictures are
+# the fallback.
+FIGURES_DRAWN = "Figures: {count} drawn at {policy}, {size}."
+FIGURES_REDRAWN = (
+    "Figures redrawn at {policy} (they were {old}); source.md and the "
+    "translation are kept."
+)
+FIGURE_RENDER_FAILED = (
+    "Figure {id} on page {page} could not be drawn at {policy} ({err}); "
+    "it keeps docling's 72 DPI picture."
+)
+FIGURES_LEGACY = (
+    "This bundle was made before figures were drawn by their own "
+    "renderer, so its figures stay at 72 DPI. Delete the bundle directory "
+    "to extract again with sharp figures."
+)
 PAGE_TOO_DENSE = (
     "Warning: page {page} extracted {chars} characters, several times what a "
     "printed page holds; inspect source.md before translating."

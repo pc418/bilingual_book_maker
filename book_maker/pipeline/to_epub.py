@@ -24,6 +24,7 @@ from .bundle import Bundle, parse_ocr_lang, parse_pages
 from .epub_export import export_epub
 from .errors import PipelineError
 from .messages import PANDOC_ON_PATH, PANDOC_REQUIRED, TO_EPUB_BUNDLE, TO_EPUB_COPY
+from .pdf_figures import FIGURE_POLICY_DEFAULT, render_figures
 from .pdf_settings import check_ocr_engine
 from .preflight import find_pandoc
 from .stages import device_for, prepare
@@ -55,6 +56,10 @@ OWNED_VALUE_OPTIONS = (
     "--img-model",
     "--img-base-url",
     "--img-key",
+    # How sharp the figures are drawn: the pixels, never the translation.
+    # No main-CLI flag yet (packet Q); owned here so that when it comes it
+    # can never reach the inner run.
+    "--figure-policy",
 )
 
 
@@ -140,7 +145,9 @@ def pdf_to_epub(
     img_key=None,
     quiet=False,
     pandoc=None,
+    figure_policy=FIGURE_POLICY_DEFAULT,
     prepare_stage=prepare,
+    figure_stage=render_figures,
     translate_stage=translate_bundle,
     export_stage=export_epub,
 ):
@@ -199,6 +206,11 @@ def pdf_to_epub(
     )
     if structure is not None and structure.translator is not None:
         _print_image_usage(structure)
+    # The figures, drawn at the policy asked for: after an extraction, and
+    # on a rerun that reused one, so another policy redraws them (and only
+    # them) before the book is built. The export below always rebuilds the
+    # EPUB, so the new pixels reach it and the copy beside the PDF.
+    figure_stage(bundle, pdf, figure_policy)
     translate_stage(bundle, options, pandoc=executable)
     built = export_stage(bundle, pandoc=executable)
 

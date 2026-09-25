@@ -138,6 +138,7 @@ def write_pdf(
     text_clip=None,
     cropbox=None,
     render_mode=None,
+    rotate=None,
 ):
     """A real PDF, one page per entry; `None` writes a page with no text.
 
@@ -167,6 +168,8 @@ def write_pdf(
     (`3 Tr` is invisible, the way a scanned book's OCR layer is written);
     a tuple sets it line by line. The mode is graphics state and outlives
     `ET`, so a visible line after an invisible one needs its own `0`.
+    `rotate` writes `/Rotate` on every page (90: a portrait page shown
+    landscape).
     """
     objects = []
     figure_page, figure_lines = figure if figure else (None, ())
@@ -281,10 +284,12 @@ def write_pdf(
         content = add(
             b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream)
         )
+        turned = b"/Rotate %d " % rotate if rotate else b""
         kids.append(
             add(
-                b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] "
-                b"/Resources << %s >> /Contents %d 0 R >>" % (tree, resources, content)
+                b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] %s"
+                b"/Resources << %s >> /Contents %d 0 R >>"
+                % (tree, turned, resources, content)
             )
         )
     objects[catalog - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % tree

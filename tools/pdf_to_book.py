@@ -28,6 +28,11 @@ from book_maker.pipeline.bundle import Bundle  # noqa: E402
 from book_maker.pipeline.epub_export import export_epub  # noqa: E402
 from book_maker.pipeline.errors import PipelineError  # noqa: E402
 from book_maker.pipeline.importer import import_markdown  # noqa: E402
+from book_maker.pipeline.pdf_figures import (  # noqa: E402
+    FIGURE_POLICY_DEFAULT,
+    parse_figure_policy,
+    render_figures,
+)
 from book_maker.pipeline.pdf_settings import OCR_ENGINES  # noqa: E402
 from book_maker.pipeline.preflight import find_pandoc  # noqa: E402
 from book_maker.pipeline.stages import (  # noqa: E402
@@ -94,6 +99,9 @@ def build_parser():
     export.add_argument("bundle", help=messages.HELP_BUNDLE)
     export.add_argument("--title", default=None, help=messages.HELP_TITLE)
     export.add_argument("--language", default=None, help=messages.HELP_LANGUAGE)
+    # Not given: the figures stay as drawn. Given: they are drawn again at
+    # that policy first, when it differs from the one they were drawn at.
+    _add_figure_policy(export, default=None)
 
     run = sub.add_parser("run", help=messages.HELP_RUN, allow_abbrev=False)
     run.add_argument("input", help=messages.HELP_INPUT)
@@ -157,6 +165,24 @@ def _add_pdf_options(parser):
     parser.add_argument(
         "--img-key", dest="img_key", default=None, metavar="KEY", help=HELP_IMG_KEY
     )
+    _add_figure_policy(parser, default=FIGURE_POLICY_DEFAULT)
+
+
+def _add_figure_policy(parser, *, default):
+    """`--figure-policy KIND:VALUE`: a developer option of this harness.
+
+    How sharp the PDF's figures are drawn (`pdf_figures.FigurePolicy`);
+    no main-CLI flag yet, its name and meaning follow the eval (packet Q).
+    """
+    parser.add_argument(
+        "--figure-policy",
+        dest="figure_policy",
+        default=default,
+        type=parse_figure_policy,
+        metavar="KIND:VALUE",
+        help="developer option: how sharp figures are drawn, one of "
+        "dpi:N, page-width:PX, figure-px:PX",
+    )
 
 
 def structure_request(options, trailing):
@@ -178,6 +204,26 @@ def structure_request(options, trailing):
 
     request = image_request(options, translation)
     return {"structure": request} if request is not None else {}
+
+
+def _extracted_pdf(bundle):
+    """The PDF this bundle was extracted from, the same bytes, or a refusal."""
+    from book_maker.pipeline.bundle import sha256_file
+
+    source = bundle.read_manifest().get("source") or {}
+    origin = source.get("origin")
+    if source.get("kind") != "pdf" or not origin:
+        raise PipelineError(
+            "--figure-policy needs a bundle extracted from a PDF", stage="export"
+        )
+    pdf = Path(origin)
+    if not pdf.is_file() or sha256_file(pdf) != source.get("origin_sha256"):
+        raise PipelineError(
+            f"the PDF this bundle was extracted from is not at {pdf} as it "
+            f"was; the figures cannot be drawn again",
+            stage="export",
+        )
+    return pdf
 
 
 def main(argv=None):
@@ -229,11 +275,14 @@ def main(argv=None):
                 ocr_engine=options.ocr_engine,
                 **structure,
             )
+            render_figures(bundle, options.input, options.figure_policy)
         elif command == "translate":
             bundle = Bundle(options.bundle)
             translate_bundle(bundle, check_options(trailing), pandoc=pandoc)
         elif command == "export":
             bundle = Bundle(options.bundle)
+            if options.figure_policy is not None:
+                render_figures(bundle, _extracted_pdf(bundle), options.figure_policy)
             export_epub(
                 bundle,
                 pandoc=pandoc,
@@ -262,6 +311,7 @@ def main(argv=None):
                 ocr_engine=options.ocr_engine,
                 **structure,
             )
+            render_figures(bundle, options.input, options.figure_policy)
             translate_bundle(bundle, bbm_options, pandoc=pandoc)
             export_epub(
                 bundle,

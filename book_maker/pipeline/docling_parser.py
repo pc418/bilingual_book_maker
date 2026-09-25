@@ -33,7 +33,7 @@ from .bundle import (
     parse_pages,
     sha256_file,
 )
-from . import pdf_formula, pdf_headings, pdf_render
+from . import pdf_figures, pdf_formula, pdf_headings, pdf_render
 from .errors import PipelineError
 from .importer import import_markdown
 from .messages import (
@@ -331,7 +331,11 @@ def _document_markdown(
     # the glyphs under each heading decide them before the export.
     pdf_headings.assign(document, pdf)
     images = Path(out_dir) / IMAGE_DIR
-    exported, report["unplaced"] = _export_pages(document, images, span)
+    exported, report["unplaced"], figures = _export_pages(document, images, span)
+    # Each named figure is shown at its share of the page's width, so the
+    # pixels the render step draws decide sharpness, never size.
+    report["figures"] = figures
+    exported = pdf_figures.add_widths(exported, figures)
     markdown = pdf_headings.promote(_relative_images(exported, images))
     if not formulas:
         return markdown, 0, []
@@ -345,8 +349,8 @@ def _document_markdown(
 
 
 def _export_pages(document, images, span):
-    """`(Markdown, unplaced item count)`: one segment per page, joined by
-    `PAGE_BREAK`.
+    """`(Markdown, unplaced item count, figure records)`: one segment per
+    page, joined by `PAGE_BREAK`.
 
     Page by page, from each item's own page (docling's `page_no` filter,
     which reads `prov[0].page_no`, so an item whose provenance runs over
@@ -369,6 +373,11 @@ def _export_pages(document, images, span):
     (the step `export_to_markdown(image_dir=...)` runs, private): calling
     the public export per page would deep-copy the whole document once per
     page. Pinned in tests/test_pdf_ocr_replace_layer.py.
+
+    Each picture written then gets its stable name (`pdf_figures.
+    name_pictures`, on the copy, by the item's own reference), so the
+    Markdown names `figures/p0003-01.png` and not docling's pixels; the
+    records say where each one stands, for the render step.
     """
     from docling_core.types.doc import BoundingBox, DocItem, ProvenanceItem
     from docling_core.types.doc.base import ImageRefMode
@@ -381,11 +390,12 @@ def _export_pages(document, images, span):
             image_mode=ImageRefMode.REFERENCED,
             image_dir=images,
         )
-        return markdown, 0
+        return markdown, 0, []
     first = span[0] if span else 1
     last = min(span[1], numbers[-1]) if span else numbers[-1]
     # A copy with the pictures written out; ours to change.
     referenced = document._with_pictures_refs(image_dir=Path(images), page_no=None)
+    figures = pdf_figures.name_pictures(referenced, Path(images).parent)
     # On a line of its own, as docling writes its own breaks: a page that
     # opens with a heading must still start its line with `#` for
     # `pdf_headings.promote`, which runs before the pages are numbered.
@@ -411,7 +421,7 @@ def _export_pages(document, images, span):
             image_mode=ImageRefMode.REFERENCED, page_no=beyond
         )
         markdown = f"{markdown}\n\n{UNPLACED_MARKER}\n\n{tail}"
-    return markdown, len(unplaced)
+    return markdown, len(unplaced), figures
 
 
 def _text_pages(document):
@@ -927,6 +937,9 @@ def extract_pdf(
     # as its own go; what other stages recorded stays.
     previous = (bundle.read_manifest().get("extraction") or {}).get("limitations")
     bundle.drop_limitations(previous or [])
+    # And the figures drawn from the last one: their files are about to be
+    # replaced, so their record goes with them.
+    pdf_figures.forget(bundle)
 
     bundle.set_stage(STAGE, "running", parser=PARSER, device=resolved)
     staging = bundle.work_file("extraction")
@@ -1200,6 +1213,23 @@ def extract_pdf(
         dense = dense_pages(text)
         for number, chars in dense:
             print(PAGE_TOO_DENSE.format(page=number, chars=chars))
+        # The figures this Markdown names, and where each stands on its
+        # page: what the render step draws from. Written for every
+        # extraction, none included -- its absence marks a bundle made
+        # before figures were drawn (`pdf_figures.render_figures`).
+        pdf_figures.write_records(
+            staging / pdf_figures.FIGURES_FILE,
+            [
+                dict(
+                    record,
+                    fallback=(staging / record["fallback"])
+                    .relative_to(bundle.root)
+                    .as_posix(),
+                )
+                for record in pdf_figures.referenced(found.get("figures") or [], text)
+            ],
+        )
+        pdf_figures.clear_assets(bundle)
         report = import_markdown(
             bundle, source, pandoc=pandoc, origin=pdf, stage=STAGE, kind="pdf"
         )

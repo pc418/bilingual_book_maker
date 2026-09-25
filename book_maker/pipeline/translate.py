@@ -96,7 +96,13 @@ SIDECAR_FIELDS = (
     "classify_min_confidence",
     "plan_classify_model",
 )
-IGNORED_FIELDS = ("book_name", "resume", "glossary_flag") + SIDECAR_FIELDS
+# How sharp the PDF route draws its figures (`pdf_figures.FigurePolicy`):
+# the pixels only, never a word the model is asked, and a change redraws
+# the figures without translating again (packet Q, owner 260925).
+ROUTE_FIELDS = ("figure_policy",)
+IGNORED_FIELDS = (
+    ("book_name", "resume", "glossary_flag") + SIDECAR_FIELDS + ROUTE_FIELDS
+)
 
 
 _DEFAULTS = None
@@ -257,7 +263,7 @@ def translation_fingerprint(bundle, bbm_options, options=None):
     payload = {
         "formatter": FORMATTER_VERSION,
         "source": sha256_text(bundle.source.read_text(encoding="utf-8")),
-        "assets": bundle.asset_fingerprints(),
+        "assets": _translated_assets(bundle),
         "options": option_identity(options),
     }
     return hashlib.sha256(
@@ -265,6 +271,27 @@ def translation_fingerprint(bundle, bbm_options, options=None):
             "utf-8"
         )
     ).hexdigest()
+
+
+def _translated_assets(bundle):
+    """The asset fingerprints the translation identity holds.
+
+    Every asset, except the figures a PDF extraction drew
+    (`assets/figures/p0003-01.png`): their names are in `source.md`, which
+    is hashed, and their pixels change with the figure policy alone -- a
+    redraw must not translate the book again, or refuse to resume it. A
+    Markdown import's own images, whatever their directory, stay hashed.
+    """
+    from .pdf_figures import is_drawn_figure
+
+    kind = None
+    if bundle.manifest_path.is_file():
+        kind = (bundle.read_manifest().get("source") or {}).get("kind")
+    return {
+        path: digest
+        for path, digest in bundle.asset_fingerprints().items()
+        if not (kind == "pdf" and is_drawn_figure(path))
+    }
 
 
 def language_tag(options):
