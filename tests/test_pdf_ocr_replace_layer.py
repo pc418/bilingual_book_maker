@@ -96,12 +96,9 @@ def layered(request, tmp_path):
     return make
 
 
-def converting(pages, *, report_pages=True):
-    """The `convert=` seam, returning `pages` (text or None) as the export.
-
-    `report_pages` also answers `text_pages`, as the real converter does
-    from the document; without it the adapter reads the page markers.
-    """
+def converting(pages):
+    """The `convert=` seam, returning `pages` (text or None) as the export,
+    one segment per page, as `_export_pages` writes it."""
     calls = []
 
     def convert(pdf_path, **kwargs):
@@ -109,12 +106,6 @@ def converting(pages, *, report_pages=True):
         images = Path(kwargs["out_dir"]) / docling_parser.IMAGE_DIR
         images.mkdir(parents=True, exist_ok=True)
         (images / "imageFile1.png").write_bytes(PNG)
-        if report_pages:
-            kwargs["report"]["text_pages"] = [
-                number for number, text in enumerate(pages, start=1) if text
-            ]
-        # docling writes no break for a page with no item; the seam says
-        # what the document says, and the markers are not relied on.
         return BREAK.join(text or "" for text in pages)
 
     convert.calls = calls
@@ -186,30 +177,139 @@ def test_the_converter_asks_docling_for_full_page_ocr_only_with_the_flag(
     assert all(options.do_ocr for options in built)
 
 
-def test_the_document_s_own_pages_decide_what_was_read():
-    """docling writes no page break for a page with no item, so the page
-    markers after an empty page count short; the pages that were read are
-    taken from the document instead."""
+def real_document(texts, pages=None, picture_on=None):
+    """A real `DoclingDocument`: `texts` is `{page: text}`, `pages` the
+    page numbers it has (docling keeps an empty page in `pages`), and
+    `picture_on` a page that also carries a picture. Built the way
+    tests/test_pdf_structure_wiring.py builds one."""
     pytest.importorskip("docling_core")
-    from docling_core.types.doc import (
-        BoundingBox,
-        DocItemLabel,
-        DoclingDocument,
-        ProvenanceItem,
-        Size,
+    from docling_core.types.doc import document as d
+    from PIL import Image
+
+    document = d.DoclingDocument(name="real")
+    for number in pages or sorted(texts):
+        document.add_page(page_no=number, size=d.Size(width=612.0, height=792.0))
+
+    def prov(page, text=""):
+        box = d.BoundingBox(l=72, t=700, r=540, b=680, coord_origin="BOTTOMLEFT")
+        return d.ProvenanceItem(page_no=page, bbox=box, charspan=(0, len(text)))
+
+    for page, text in sorted(texts.items()):
+        document.add_text(label=d.DocItemLabel.TEXT, text=text, prov=prov(page, text))
+    if picture_on is not None:
+        document.add_picture(
+            image=d.ImageRef.from_pil(Image.new("RGB", (40, 30), "red"), dpi=72),
+            prov=prov(picture_on),
+        )
+    return document
+
+
+def exporting(document):
+    """The `convert=` seam running the real document-to-Markdown step."""
+
+    def convert(pdf_path, **kwargs):
+        return docling_parser._document_markdown(
+            document,
+            pdf_path,
+            out_dir=kwargs["out_dir"],
+            span=kwargs["span"],
+            formulas=kwargs["formulas"],
+            report=kwargs["report"],
+        )
+
+    return convert
+
+
+def page_bodies(bundle):
+    """`{page number: body}` of the extracted source.md."""
+    from book_maker.pipeline.pdf_common import PAGE_MARKER
+
+    parts = PAGE_MARKER.split(bundle.source.read_text(encoding="utf-8"))
+    return {int(n): body for n, body in zip(parts[1::2], parts[2::2])}
+
+
+def _pdf(tmp_path, count):
+    _pdfium_or_skip()
+    return write_pdf(
+        tmp_path / f"pages{count}.pdf", [f"Layer {n}." for n in range(1, count + 1)]
     )
 
-    document = DoclingDocument(name="t")
-    for number in (1, 2, 3):
-        document.add_page(page_no=number, size=Size(width=600, height=800))
-    box = BoundingBox(l=10, t=10, r=100, b=40)
-    for page, text in ((2, "read on two"), (3, "  ")):
-        document.add_text(
-            label=DocItemLabel.TEXT,
-            text=text,
-            prov=ProvenanceItem(page_no=page, bbox=box, charspan=(0, len(text))),
-        )
-    assert docling_parser._text_pages(document) == [2]
+
+# ---------------------------------- page markers from each item's own page
+# Codex review 260924 (HIGH): docling writes no page break for a page with
+# no item, so a page OCR read nothing on shifted every later page's text
+# onto the wrong marker, and a gapped selection kept the wrong page.
+def test_an_empty_first_page_keeps_page_two_s_text_under_page_two(
+    bundle, tmp_path, pandoc, capsys
+):
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({2: "Text read on page two."}, pages=[1, 2])
+    _extract(bundle, pdf, pandoc, exporting(document))
+    bodies = page_bodies(bundle)
+    assert "Text read on page two." in bodies[2]
+    assert "Text read on page two." not in bodies[1]
+    out = capsys.readouterr().out
+    assert OCR_REPLACE_EMPTY.format(page=1) in out
+    assert OCR_REPLACE_EMPTY.format(page=2) not in out
+
+
+def test_an_empty_middle_page_keeps_page_three_s_text_under_page_three(
+    bundle, tmp_path, pandoc, capsys
+):
+    pdf = _pdf(tmp_path, 3)
+    document = real_document(
+        {1: "Text on page one.", 3: "Text on page three."}, pages=[1, 2, 3]
+    )
+    _extract(bundle, pdf, pandoc, exporting(document))
+    bodies = page_bodies(bundle)
+    assert "Text on page one." in bodies[1]
+    assert "Text on page three." in bodies[3]
+    assert "Text on page" not in bodies[2]
+    assert OCR_REPLACE_EMPTY.format(page=2) in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("page_two", [None, "Text on page two."])
+def test_a_gapped_selection_keeps_page_three_and_drops_page_two(
+    bundle, tmp_path, pandoc, page_two
+):
+    # --pages 1,3: the run 1-3 is read and page 2 dropped afterwards
+    pdf = _pdf(tmp_path, 3)
+    texts = {1: "Text on page one.", 3: "Text on page three."}
+    if page_two:
+        texts[2] = page_two
+    document = real_document(texts, pages=[1, 2, 3])
+    _extract(bundle, pdf, pandoc, exporting(document), page_range="1,3")
+    bodies = page_bodies(bundle)
+    assert sorted(bodies) == [1, 3]
+    assert "Text on page one." in bodies[1]
+    assert "Text on page three." in bodies[3]
+    source = bundle.source.read_text(encoding="utf-8")
+    assert "Text on page two." not in source
+
+
+def test_a_picture_is_written_once_and_placed_on_its_own_page(bundle, tmp_path, pandoc):
+    # pins docling-core's `_with_pictures_refs`, which `_export_pages`
+    # calls once rather than deep-copying the document for every page
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({1: "Text on page one."}, pages=[1, 2], picture_on=2)
+    _extract(bundle, pdf, pandoc, exporting(document), settings=KEEP)
+    bodies = page_bodies(bundle)
+    assert "![" in bodies[2] and "![" not in bodies[1]
+    pictures = [p for p in bundle.assets.rglob("*.png")]
+    assert len(pictures) == 1
+
+
+def test_nothing_read_on_a_real_document_stops_before_translation(
+    bundle, tmp_path, pandoc
+):
+    # Codex next step: the all-empty stop through the real export, with
+    # no text item on any selected page
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({}, pages=[1, 2])
+    with pytest.raises(PipelineError) as stopped:
+        _extract(bundle, pdf, pandoc, exporting(document))
+    assert stopped.value.detail == OCR_REPLACE_ALL_EMPTY
+    assert not bundle.source.exists()
 
 
 # ------------------------------------------------------ failure semantics
@@ -244,37 +344,6 @@ def test_every_page_read_empty_stops_before_translation(
     assert OCR_REPLACE_EMPTY.format(page=2) in out
     assert bundle.stage_status("extract") == "failed"
     assert not bundle.source.exists()
-
-
-def test_an_empty_first_page_is_named_by_the_document_not_the_markers(
-    bundle, layered, pandoc, capsys
-):
-    # docling's export writes no break for a page with no item, so an
-    # empty page 1 leaves page 2's text under the first marker; the
-    # document's own page numbers name the right page.
-    pdf = layered()
-
-    def convert(pdf_path, **kwargs):
-        kwargs["report"]["text_pages"] = [2]
-        return "Read by OCR on two.\n"
-
-    _extract(bundle, pdf, pandoc, convert)
-    out = capsys.readouterr().out
-    assert OCR_REPLACE_EMPTY.format(page=1) in out
-    assert OCR_REPLACE_EMPTY.format(page=2) not in out
-
-
-def test_the_page_markers_answer_when_the_converter_does_not(
-    bundle, layered, pandoc, capsys
-):
-    pdf = layered()
-    _extract(
-        bundle,
-        pdf,
-        pandoc,
-        converting(["Read by OCR on one.", None], report_pages=False),
-    )
-    assert OCR_REPLACE_EMPTY.format(page=2) in capsys.readouterr().out
 
 
 def test_without_the_flag_an_empty_page_is_not_called_a_replaced_layer(
@@ -323,14 +392,7 @@ def test_a_selection_is_checked_page_by_page_with_its_own_numbers(
     _pdfium_or_skip()
     pdf = write_pdf(tmp_path / "four.pdf", [f"Layer {n}." for n in range(1, 5)])
     convert = converting(["Read on three.", None])
-
-    def shifted(pdf_path, **kwargs):
-        # the document numbers its pages as the PDF does
-        result = convert(pdf_path, **kwargs)
-        kwargs["report"]["text_pages"] = [3]
-        return result
-
-    _extract(bundle, pdf, pandoc, shifted, page_range="3-4")
+    _extract(bundle, pdf, pandoc, convert, page_range="3-4")
     out = capsys.readouterr().out
     assert OCR_REPLACE_EMPTY.format(page=4) in out
     assert OCR_REPLACE_EMPTY.format(page=3) not in out

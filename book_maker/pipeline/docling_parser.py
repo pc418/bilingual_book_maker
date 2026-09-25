@@ -261,8 +261,6 @@ def _convert(
     page images, under `render`, and with `structure` (a `StructureRequest`)
     what the region-role pass did, under `structure`.
     """
-    from docling_core.types.doc.base import ImageRefMode
-
     report = {} if report is None else report
     # docling-parse paints a JBIG2-masked image unmasked (docling issue
     # #4329), and the models then read a smear; such a file's page images
@@ -276,20 +274,34 @@ def _convert(
     snapshot = Path(out_dir) / SNAPSHOT
     _write_snapshot(result.document, snapshot)
     report["snapshot"] = snapshot
-    # Which pages came back with any text, read from the document rather
-    # than from the Markdown's page markers: docling writes no page break
-    # for a page that has no item at all, so after an empty page the
-    # markers count one short and would name the wrong page.
-    report["text_pages"] = _text_pages(result.document)
+    return _document_markdown(
+        result.document,
+        pdf,
+        out_dir=out_dir,
+        span=span,
+        formulas=formulas,
+        report=report,
+        structure=structure,
+    )
+
+
+def _document_markdown(
+    document, pdf, *, out_dir, span, formulas=True, report=None, structure=None
+):
+    """Markdown for a converted `document`, pages joined by `PAGE_BREAK`.
+
+    Everything `_convert` does after docling has read the pages, apart so
+    that a test can hand it a real `DoclingDocument` without loading a
+    model. Same return and `report` as `_convert`.
+    """
+    report = {} if report is None else report
     # The region roles, after the snapshot (which stays docling's own) and
     # before anything reads a label: the formula markers and the heading
     # levels below must see the corrected items, and a heading the model
     # made gets its level from `pdf_headings` like any other.
     if structure is not None:
         try:
-            report["structure"] = _decide_structure(
-                result.document, pdf, out_dir, structure
-            )
+            report["structure"] = _decide_structure(document, pdf, out_dir, structure)
         except BaseException:
             # The extraction fails with it; the manifest says which part.
             from .decisions import STATUS_FAILED
@@ -299,17 +311,14 @@ def _convert(
     # Before the export: each undecoded formula is given a marker as its
     # text, so the serializer writes the marker where the equation stands
     # and the picture can only land at its own item.
-    regions = pdf_formula.mark(result.document) if formulas else []
+    regions = pdf_formula.mark(document) if formulas else []
     # And the headings' levels, which docling does not give: numbering and
     # the glyphs under each heading decide them before the export.
-    pdf_headings.assign(result.document, pdf)
+    pdf_headings.assign(document, pdf)
     images = Path(out_dir) / IMAGE_DIR
-    markdown = result.document.export_to_markdown(
-        page_break_placeholder=PAGE_BREAK,
-        image_mode=ImageRefMode.REFERENCED,
-        image_dir=images,
+    markdown = pdf_headings.promote(
+        _relative_images(_export_pages(document, images, span), images)
     )
-    markdown = pdf_headings.promote(_relative_images(markdown, images))
     if not formulas:
         return markdown, 0, []
     return pdf_formula.apply(
@@ -317,27 +326,53 @@ def _convert(
         regions,
         pdf,
         out_dir,
-        neighbours=pdf_formula.neighbours(result.document),
+        neighbours=pdf_formula.neighbours(document),
     )
 
 
-def _text_pages(document):
-    """The page numbers on which the document holds any text, from 1."""
-    from docling_core.types.doc import TableItem, TextItem
+def _export_pages(document, images, span):
+    """The document's Markdown, one segment per page, joined by `PAGE_BREAK`.
 
-    pages = set()
-    for item, _level in document.iterate_items():
-        if not getattr(item, "prov", None):
-            continue
-        if isinstance(item, TextItem):
-            has_text = bool((item.text or "").strip())
-        elif isinstance(item, TableItem):
-            has_text = any((cell.text or "").strip() for cell in item.data.table_cells)
-        else:
-            continue
-        if has_text:
-            pages.update(prov.page_no for prov in item.prov)
-    return sorted(pages)
+    Page by page, from each item's own page (docling's `page_no` filter,
+    which reads `prov[0].page_no`), because docling's own page breaks are
+    written only between items: a page with no item at all gets none, and
+    every page after it was numbered one short (Codex review 260924). Here
+    every page of the converted run has a segment, empty or not, so
+    `_number_pages` counts right and `_selected_only` keeps the right
+    pages. The document is not changed, so the formula markers and the
+    heading levels are exactly as they were.
+
+    The pictures are written once, by docling-core's `_with_pictures_refs`
+    (the step `export_to_markdown(image_dir=...)` runs, private): calling
+    the public export per page would deep-copy the whole document once per
+    page. Pinned in tests/test_pdf_ocr_replace_layer.py.
+    """
+    from docling_core.types.doc import DocItem
+    from docling_core.types.doc.base import ImageRefMode
+
+    numbers = sorted(int(number) for number in (document.pages or {}))
+    unplaced = any(
+        isinstance(item, DocItem) and not item.prov
+        for item, _level in document.iterate_items()
+    )
+    if not numbers or unplaced:
+        # Nothing to number by (a document without pages, or an item with
+        # no page, which a page filter would drop): docling's own breaks,
+        # as before. A PDF conversion gives every item its page.
+        return document.export_to_markdown(
+            page_break_placeholder=PAGE_BREAK,
+            image_mode=ImageRefMode.REFERENCED,
+            image_dir=images,
+        )
+    first = span[0] if span else 1
+    last = min(span[1], numbers[-1]) if span else numbers[-1]
+    referenced = document._with_pictures_refs(image_dir=Path(images), page_no=None)
+    return PAGE_BREAK.join(
+        referenced.export_to_markdown(
+            image_mode=ImageRefMode.REFERENCED, page_no=number
+        )
+        for number in range(first, last + 1)
+    )
 
 
 def _selected_pages(ranges, examined):
@@ -353,14 +388,8 @@ def _selected_pages(ranges, examined):
     return wanted[:examined]
 
 
-def _pages_read(text_pages, text):
-    """The pages that came back with any text, as a set.
-
-    `text_pages` is the document's own answer (`_convert`); a converter
-    that does not give it is answered from the Markdown's page markers.
-    """
-    if text_pages is not None:
-        return set(text_pages)
+def _pages_read(text):
+    """The pages of the numbered Markdown that carry any prose, as a set."""
     blank, _any = blank_pages(text)
     return {int(n) for n in PAGE_MARKER.findall(text)} - set(blank)
 
@@ -1025,7 +1054,7 @@ def extract_pdf(
         replaced_empty = []
         if replace_layer:
             selected = _selected_pages(ranges, examined)
-            read = _pages_read(found.get("text_pages"), text)
+            read = _pages_read(text)
             replaced_empty = [
                 page for page in selected if page not in missing and page not in read
             ]
