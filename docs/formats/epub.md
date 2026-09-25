@@ -7,7 +7,7 @@ EPUB is the format this tool knows best. Every feature works on it.
 An EPUB is a zip of XHTML pages. The tool reads every page the book's spine lists.
 
 - **With an LLM route (the default):** the book goes through [plan mode](../features/plan-mode.md). The loader finds every block that carries text (paragraphs, headings, list items, table cells, blockquotes, verse lines, captions), groups them by kind, and asks the model which kinds are worth translating. The answer is saved in `<book>_plan.json` and reused by later runs. Consecutive blocks then share one request, up to a token budget and a unit cap.
-- **With a machine-translation route, or `--plan-classify none`:** only the `--translate-tags` selection is translated, `<p>` by default. Verse or a table outside `<p>` then stays in the source language.
+- **With a machine-translation route and no `--classify-model`, or with `--plan-classify none`:** only the `--translate-tags` selection is translated, `<p>` by default. Verse or a table outside `<p>` then stays in the source language.
 - Links, emphasis and other inline markup inside a paragraph are replaced by numbered markers before translation and put back afterwards, so the model never sees raw HTML.
 - Content inside `--exclude-translate-tags` (`sup` and `code` by default) is never sent.
 
@@ -56,6 +56,7 @@ These work the same on every format.
 | `--source_lang LANGUAGE` | Source language, stated. Reaches every LLM prompt; sent as a field on `qwen` and `customapi`. |
 | `--prompt VALUE_OR_FILE` | Custom prompt: `user` template (must contain `{text}`), `system`, `style`. |
 | `--temperature FLOAT` | Sampling temperature, on the formats that take one. |
+| `--no-thinking` | Ask the model not to reason before answering. The field is negotiated on the OpenAI-shaped routes; `thinking: disabled` on anthropic; refused on codex. |
 | `--extra_body JSON` | Extra request-body fields on the openai and anthropic routes. |
 | `--extra_headers JSON` | Extra HTTP headers on the openai and anthropic routes. |
 | `--interval SECONDS` | Pause between requests. Only the gemini format uses it. |
@@ -75,7 +76,9 @@ These work the same on every format.
 | `--only_filelist FILES` | Translate only these internal files (OPF-relative names, comma-separated). |
 | `--exclude_filelist FILES` | Skip these internal files. Ignored when `--only_filelist` is given. |
 | `--plan-classify MODE` | How the plan is decided: `auto` (default), `none`, `all`, `model`, `agent`. See [Plan mode](../features/plan-mode.md). |
-| `--plan-classify-model MODEL` | Classify with another model; a failure then stops the run. |
+| `--classify-model MODEL` | Classify with another model (default: the provider entry's `classify_model`, else the translating model). Typed, it puts the run in `model` mode, so a failure stops the run; it also gives a machine-translation route a plan. `--plan-classify-model` is the old name. Ignored under `--plan-classify all` or `agent`. |
+| `--classify-base-url URL` | Where that model is served, when it is not the run's endpoint (OpenAI-compatible only). |
+| `--classify-key KEY` | The key for `--classify-base-url`. See [which key goes where](../providers.md#which-key-goes-where). |
 | `--plan-dry-run` | Print the plan and write `<book>_plan.json` without translating. No key needed. |
 | `--plan-min-coverage FRACTION` | Stop when the plan covers less than this share of the text (default 0.5). |
 | `--poetry-group-size N` | Deprecated; still works and warns. Use `--max-batch-units`. |
@@ -101,4 +104,4 @@ These work the same on every format.
 
 - `--batch_size`: the EPUB loader groups with `--accumulated_num`; the run warns.
 - `--batch`, `--batch-use`: refused on EPUB: the Batch API path is never reached there.
-- `--to-epub`, `--pdf-ocr`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`: PDF only. `--to-epub` on an EPUB stops the run; the others warn or do nothing.
+- `--to-epub`, `--pdf-ocr`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on an EPUB stops the run; the others warn or do nothing (`--img-*`: the run warns that only the PDF route has an image step).

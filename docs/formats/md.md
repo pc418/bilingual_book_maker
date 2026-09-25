@@ -49,6 +49,7 @@ These work the same on every format.
 | `--source_lang LANGUAGE` | Source language, stated. Reaches every LLM prompt; sent as a field on `qwen` and `customapi`. |
 | `--prompt VALUE_OR_FILE` | Custom prompt: `user` template (must contain `{text}`), `system`, `style`. |
 | `--temperature FLOAT` | Sampling temperature, on the formats that take one. |
+| `--no-thinking` | Ask the model not to reason before answering. The field is negotiated on the OpenAI-shaped routes; `thinking: disabled` on anthropic; refused on codex. |
 | `--extra_body JSON` | Extra request-body fields on the openai and anthropic routes. |
 | `--extra_headers JSON` | Extra HTTP headers on the openai and anthropic routes. |
 | `--interval SECONDS` | Pause between requests. Only the gemini format uses it. |
@@ -74,7 +75,8 @@ These work the same on every format.
 ## Not for this format
 
 - `--accumulated_num`: not read by the Markdown loader; the run warns and points at `--batch_size`. Outside plan mode a session re-reads its history on every request, so a larger `--batch_size` keeps the request count down.
-- `--max-batch-units`, `--plan-classify`, `--plan-classify-model`, `--plan-dry-run`, `--plan-min-coverage`, `--poetry-group-size`: plan mode is EPUB only.
+- `--max-batch-units`, `--plan-classify`, `--plan-dry-run`, `--plan-min-coverage`, `--poetry-group-size`: plan mode is EPUB only.
+- `--classify-model`, `--classify-base-url`, `--classify-key` (and `--plan-classify-model`, the old name): nothing classifies on this format yet. The run warns that the flag is ignored.
 - `--exclude-translate-tags`: accepted without a warning, but the Markdown loader does not read it.
 - `--translate-tags`, `--allow_navigable_strings`: EPUB markup selectors; the run warns.
 - `--only_filelist`, `--exclude_filelist`: EPUB internal files; ignored.
@@ -84,4 +86,4 @@ These work the same on every format.
 - `--retranslate`: EPUB only; refused.
 - `--quiet`: EPUB only; the run warns.
 - `--batch`, `--batch-use`: the Markdown loader does not implement the Batch API.
-- `--to-epub`, `--pdf-ocr`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`: PDF only. `--to-epub` on this format stops the run; the others warn or do nothing.
+- `--to-epub`, `--pdf-ocr`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`, `--pdf_layout`, `--img-model`, `--img-base-url`, `--img-key`: PDF only. `--to-epub` on this format stops the run; the others warn or do nothing (`--img-*`: the run warns that only the PDF route has an image step).
