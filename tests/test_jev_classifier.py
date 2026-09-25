@@ -394,12 +394,68 @@ class TestTheAsymmetricGate:
     def test_a_choice_never_offered_stays_unanswered(self):
         answer = self._ask(
             {
-                "a": _answer("abstain", {"translate": 0.2, "skip": 0.1}),
+                "a": _answer(
+                    "abstain", {"translate": 0.2, "skip": 0.1, "abstain": 0.7}
+                ),
                 "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+                # the abstain label is never offered to jev, so never accepted
+                "c": _answer("unsure", {"translate": 0.1, "skip": 0.1, "unsure": 0.8}),
             }
         )
         assert answer.values == {"b": "skip"}
+        assert "a" not in answer.raw and "c" not in answer.raw
         assert answer.raw.fell_back == {}
+
+    def test_a_bare_label_row_stays_unanswered(self):
+        # a scalar "skip" carried neither a choice nor a probability; it used
+        # to be copied into the reply ungated
+        answer = self._ask(
+            {"a": "skip", "b": _answer("skip", {"translate": 0.2, "skip": 0.8})}
+        )
+        assert answer.values == {"b": "skip"}
+        assert "a" not in answer.raw
+        assert "a" not in answer.confidence
+        assert answer.raw.fell_back == {}
+
+    def test_a_probability_container_that_is_not_an_object_stays_unanswered(self):
+        answer = self._ask(
+            {
+                "a": {"type": "choice", "choice": "skip", "probabilities": [0.9]},
+                "b": {"type": "choice", "choice": "skip", "probabilities": "0.9"},
+            }
+        )
+        assert answer.values == {}
+        assert answer.confidence == {}
+
+    @pytest.mark.parametrize(
+        "value", [-0.1, 1.7, float("nan"), float("inf"), -float("inf"), True, "0.9"]
+    )
+    def test_a_probability_outside_the_unit_interval_stays_unanswered(self, value):
+        answer = self._ask(
+            {
+                "a": {
+                    "type": "choice",
+                    "choice": "skip",
+                    "probabilities": {"skip": value},
+                }
+            }
+        )
+        assert answer.values == {}
+        assert answer.confidence == {}
+
+    @pytest.mark.parametrize("value", [0, 1, 0.0, 1.0])
+    def test_the_unit_interval_s_ends_are_accepted(self, value):
+        answer = self._ask(
+            {
+                "a": {
+                    "type": "choice",
+                    "choice": "translate",
+                    "probabilities": {"translate": value},
+                }
+            }
+        )
+        assert answer.values == {"a": "translate"}
+        assert answer.confidence == {"a": float(value)}
 
     def test_a_choice_without_its_probability_stays_unanswered(self):
         # the server's `confidence` is never read in its place: on the
@@ -412,11 +468,6 @@ class TestTheAsymmetricGate:
                     "choice": "skip",
                     "confidence": 0.95,
                     "probabilities": {"translate": "0.1", "skip": "0.9"},
-                },
-                "c": {
-                    "type": "choice",
-                    "choice": "skip",
-                    "probabilities": {"skip": 1.7},
                 },
             }
         )

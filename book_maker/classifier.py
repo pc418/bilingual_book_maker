@@ -711,27 +711,28 @@ class JevBackend:
         by_key = {str(cid): cid for cid in question.candidates}
         for key, answer in (data.get("answers") or {}).items():
             cid = by_key.get(key, key)
-            if not isinstance(answer, dict):
-                reply[cid] = answer
+            # A malformed row (not an object, no choice, a choice never
+            # offered, no finite probability for it in [0, 1]) stays
+            # unanswered: the caller's missing-id path (`unsure`, a retry)
+            # sees it, the gate never turns it into the fallback and a bare
+            # label never lands in the reply ungated (Codex, packet J review
+            # 260924). The server's own `confidence` is not substituted: on
+            # the official Jev it is not the chosen option's probability.
+            if not isinstance(answer, dict) or cid not in question.candidates:
                 continue
-            # A malformed row (no choice, a choice never offered, no finite
-            # probability for it) stays unanswered: the caller's missing-id
-            # path (`unsure`, a retry) sees it, the gate never turns it into
-            # the fallback (Codex, packet J review 260924). The server's own
-            # `confidence` is not substituted: on the official Jev it is not
-            # the chosen option's probability.
             choice = answer.get("choice")
-            if cid not in question.candidates or choice not in self.options(
-                question, cid
-            ):
+            if choice not in self.options(question, cid):
                 continue
-            probability = (answer.get("probabilities") or {}).get(choice)
-            if not isinstance(probability, (int, float)) or isinstance(
-                probability, bool
+            probabilities = answer.get("probabilities")
+            if not isinstance(probabilities, dict):
+                continue
+            probability = probabilities.get(choice)
+            if isinstance(probability, bool) or not isinstance(
+                probability, (int, float)
             ):
                 continue
             probability = float(probability)
-            if not (0.0 <= probability <= 1.0):
+            if not (0.0 <= probability <= 1.0):  # NaN fails this too
                 continue
             reply.confidence[cid] = probability
             if (
