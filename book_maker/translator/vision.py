@@ -23,7 +23,6 @@ import io
 import random
 import re
 
-from PIL import Image, ImageDraw, ImageFont
 from rich import print
 from rich.markup import escape
 
@@ -99,6 +98,11 @@ IMAGE_REFUSAL_WORDS = re.compile(
 
 def challenge_png(rng):
     """A PNG with `CHALLENGE_LENGTH` random characters on it, and the answer."""
+    # Pillow comes with the pdf extra, and the image probe runs only on that
+    # route: imported here so the base install (no Pillow) still loads the
+    # translator.
+    from PIL import Image, ImageDraw, ImageFont
+
     answer = "".join(rng.choice(CHALLENGE_ALPHABET) for _ in range(CHALLENGE_LENGTH))
     image = Image.new("RGB", CHALLENGE_SIZE, "white")
     draw = ImageDraw.Draw(image)

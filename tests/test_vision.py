@@ -22,7 +22,6 @@ from openai import (
     BadRequestError,
     RateLimitError,
 )
-from PIL import Image
 
 from book_maker.structured import StructuredJSONFailed
 from book_maker.translator.base_translator import UsageMeter
@@ -37,6 +36,8 @@ from book_maker.translator.vision import (
     probe_image,
     QuestionTimedOut,
 )
+
+Image = pytest.importorskip("PIL.Image")  # Pillow is a pdf-extra dependency
 
 REQUEST = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
 SCHEMA = {
