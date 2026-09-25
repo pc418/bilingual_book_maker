@@ -270,13 +270,61 @@ class _Budget:
             )
 
 
+# A backend that asks one short typed question per signature over a shared
+# state (jev) is sent these instead of `build_prompt`'s paragraph (packet J,
+# 260924): the state is the numbered signatures alone (`build_context`), each
+# question points at one of them (`candidate_pointer`), and each answer is
+# described by the prompt's own words (`CRITERIA`, verbatim from
+# `build_prompt`, pinned by a test). `build_prompt` itself is unchanged: it is
+# what the schema and session backends send, and it is audited
+# (docs/260920-feat-CLASSIFY_LADDER_PROMPT_AUDIT.md). There is no "unsure"
+# option on that channel: a low-confidence answer falls back instead.
+CRITERIA = {
+    "translate": (
+        "book content a reader wants translated: prose, verse, dialogue, "
+        "headings, captions"
+    ),
+    "skip": (
+        "text to keep as is: running heads, page or line numbers, manuscript "
+        "sigla, cross-reference labels, publisher boilerplate, decorative "
+        "markers"
+    ),
+}
+POINTER = (
+    'Signature {index} ("{key}"): translate its text, or skip it (keep it as '
+    "is)? Answer translate when its samples are thin or show more than one "
+    "kind of content."
+)
+# Appended to POINTER for an "inline:" signature only.
+POINTER_INLINE = (
+    " It is markup inside a sentence: skip it only when it is genuinely " "apparatus."
+)
+
+
+def build_context(candidates):
+    """The signatures as `build_prompt` numbers them, without its paragraph."""
+    lines = []
+    for i, c in enumerate(candidates, 1):
+        lines.extend(describe_candidate(i, c))
+    return "\n".join(lines)
+
+
+def candidate_pointer(index, c):
+    """The short question about signature `index` of `build_context`."""
+    text = POINTER.format(index=index, key=c["key"])
+    if c["key"].startswith("inline:"):
+        text += POINTER_INLINE
+    return text
+
+
 def page_question(page):
     """The page as a `Question`: this module's prompt and schema, verbatim.
 
     Each candidate may answer with a `{content_type, verdict}` object whose
     `verdict` is one of `VERDICTS`; `unsure` is the answer that settles
-    nothing. `per_candidate` is the same prompt built for each signature
-    alone, for a backend that asks one question per candidate (jev).
+    nothing. `context`, `per_candidate` and `criteria` are the lean form a
+    backend that asks one question per candidate over a shared state reads
+    (jev); the other backends send `prompt`.
     """
     return Question(
         prompt=build_prompt(page),
@@ -285,7 +333,11 @@ def page_question(page):
         field="verdict",
         abstain="unsure",
         accept=lambda obj: _answers_all(obj, page),
-        per_candidate={c["key"]: build_prompt([c]) for c in page},
+        per_candidate={
+            c["key"]: candidate_pointer(i, c) for i, c in enumerate(page, 1)
+        },
+        context=build_context(page),
+        criteria=dict(CRITERIA),
     )
 
 

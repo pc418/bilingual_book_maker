@@ -318,9 +318,12 @@ class TestPlanClassificationGoesThroughTheClassifier:
         (question,) = schema.asked
         assert question.prompt == model_entry.build_prompt(page)
         assert question.schema == model_entry.build_schema(page)
-        assert question.per_candidate["block:p.a"] == model_entry.build_prompt(
-            [page[0]]
+        # the lean fields a per-candidate backend (jev) reads instead
+        assert question.context == model_entry.build_context(page)
+        assert question.per_candidate["block:p.a"] == (
+            model_entry.candidate_pointer(1, page[0])
         )
+        assert question.criteria == model_entry.CRITERIA
 
     def test_a_label_only_backend_is_recorded_with_its_probability(self, monkeypatch):
         from book_maker.loader.classify import model as model_entry

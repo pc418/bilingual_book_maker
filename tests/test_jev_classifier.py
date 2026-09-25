@@ -117,6 +117,31 @@ class TestTheRequest:
         assert answer.values == {"a": "skip", "b": "translate"}
         assert answer.confidence == {"a": 0.9, "b": 0.7}
 
+    def test_the_shared_context_is_the_state_and_criteria_describe_options(self):
+        """Packet J (260924): the state is sent once per request, each
+        question adds only its pointer and the caller's option wording."""
+        transport = Transport(
+            _ok(
+                {
+                    "a": _answer("skip", {"translate": 0.1, "skip": 0.9}),
+                    "b": _answer("translate", {"translate": 0.9, "skip": 0.1}),
+                }
+            )
+        )
+        question = _question(
+            context="1. sig a\n2. sig b",
+            criteria={"translate": "book content", "skip": "apparatus"},
+        )
+        Classifier(None, "jev-latest", backends=[_backend(transport)]).ask(question)
+        ((_url, body, _headers),) = transport.sent
+        assert body["state"] == "1. sig a\n2. sig b"
+        assert body["questions"]["b"] == {
+            "type": "choice",
+            "instructions": "PROMPT B",
+            # abstain ("unsure") is never offered, described or not
+            "criteria": {"translate": "book content", "skip": "apparatus"},
+        }
+
     def test_a_flat_distribution_is_the_abstain_answer(self):
         assert JEV_ABSTAIN_BELOW == 0.5
         transport = Transport(
@@ -263,3 +288,58 @@ class TestDispatch:
         c = build_classifier(choice, object(), None, "English")
         assert c.separate
         assert c.translator.model == "gpt-5.6-luna"
+
+
+class TestThePlanClassifierIsLean:
+    """Packet J (260924): the plan classifier's jev request carries the
+    signatures once as the state and a one-line pointer per signature, not
+    the instruction paragraph per signature (F's mapping sent 14.4k prompt
+    tokens for 31 signatures against the schema arm's 7.6k)."""
+
+    PAGE = [
+        {"key": f"block:p.c{i}", "units": 3, "chars": 90, "samples": [f"s{i}"]}
+        for i in range(11)
+    ] + [{"key": "inline:span.x", "units": 2, "chars": 9, "samples": ["Fig. 1"]}]
+
+    def _body(self):
+        from book_maker.loader.classify import model as model_entry
+
+        question = model_entry.page_question(self.PAGE)
+        body, settled = _backend(Transport()).request_body(question)
+        return model_entry, question, body, settled
+
+    def test_the_paragraph_is_not_sent_and_the_signatures_are_sent_once(self):
+        import json
+
+        model_entry, question, body, settled = self._body()
+        wire = json.dumps(body, ensure_ascii=False)
+        assert settled == {}
+        assert body["state"] == model_entry.build_context(self.PAGE)
+        assert "You are preparing a bilingual EPUB" not in wire
+        assert wire.count("Sample: s3") == 1
+        # F's mapping: the page prompt as the state plus the one-signature
+        # prompt per question; on this page the lean request is well under
+        # two thirds of it even with tiny samples (the paragraph dominates)
+        old = len(model_entry.build_prompt(self.PAGE)) + sum(
+            len(model_entry.build_prompt([c])) for c in self.PAGE
+        )
+        assert len(wire) < old * 0.6
+
+    def test_each_question_points_at_its_numbered_signature(self):
+        model_entry, _q, body, _s = self._body()
+        first = body["questions"]["block:p.c0"]["instructions"]
+        assert first.startswith('Signature 1 ("block:p.c0"):')
+        assert '1. "block:p.c0"' in body["state"]
+        assert "markup inside a sentence" not in first
+        inline = body["questions"]["inline:span.x"]["instructions"]
+        assert inline.startswith('Signature 12 ("inline:span.x"):')
+        assert inline.endswith(model_entry.POINTER_INLINE)
+
+    def test_the_criteria_are_the_audited_prompt_s_own_words(self):
+        """The descriptions are copied from `build_prompt`, which stays what
+        the schema and session backends send (the audited prompt)."""
+        model_entry, _q, body, _s = self._body()
+        prompt = model_entry.build_prompt(self.PAGE)
+        for label, words in model_entry.CRITERIA.items():
+            assert f'Answer "{label}" for {words}.' in prompt
+        assert body["questions"]["block:p.c0"]["criteria"] == model_entry.CRITERIA

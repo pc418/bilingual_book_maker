@@ -56,11 +56,21 @@ class Question:
     member those answers constrain. `abstain` is the answer that means "the
     evidence does not settle it" (a backend that answers with a probability
     uses it for a flat distribution). `accept` is the schema ladder's
-    terminating test (see `Base.structured_json`). `per_candidate` holds the
-    caller's prompt for each candidate alone (a backend that asks one
-    question per candidate sends that). `trunk` is the instruction text a
-    held conversation opens with. `deadline` (a `time.monotonic()` value)
-    bounds an image question's waiting.
+    terminating test (see `Base.structured_json`). `trunk` is the
+    instruction text a held conversation opens with. `deadline` (a
+    `time.monotonic()` value) bounds an image question's waiting.
+
+    Three fields only a backend that asks one typed question per candidate
+    over a shared state (jev) reads; the schema and session backends send
+    `prompt` and ignore them, and a caller that never reaches such a backend
+    (the role pass) leaves them unset:
+
+    `context`        the shared state: the candidates as the caller shows
+                     them, without the instruction paragraph (the whole
+                     `prompt` stands in when a caller gives none)
+    `per_candidate`  a short pointer per candidate id: what to decide, and
+                     which of the context's candidates it is about
+    `criteria`       `{answer: description}` in the caller's own words
     """
 
     prompt: str
@@ -73,6 +83,8 @@ class Question:
     per_candidate: dict = None
     trunk: str = None
     deadline: float = None
+    context: str = None
+    criteria: dict = None
 
 
 @dataclass
@@ -551,14 +563,18 @@ def _requests_post(url, json, headers, timeout):
 
 
 class JevBackend:
-    """One TypeSafe Choice question per candidate, one request per question.
+    """One TypeSafe Choice question per candidate, all in one request.
 
-    `state` is the caller's prompt for the whole question (verbatim); each
-    candidate's Choice carries the caller's prompt for that candidate alone
-    as its instructions, and its allowed answers but `abstain` as the
-    options. The top option answers, unless its probability is below
-    `JEV_ABSTAIN_BELOW`, when the answer is `abstain`: a flat distribution is
-    what abstaining means here. Text only.
+    The interface is built for several short questions over one shared
+    `state` (the server reads the state once for all of them), so the state
+    is the question's `context` -- the candidates as the caller shows them
+    -- and each candidate's Choice carries only its short `per_candidate`
+    pointer as instructions, with the caller's `criteria` describing each
+    option (its allowed answers but `abstain`). A caller that gives no
+    context has its whole prompt sent as the state. The top option
+    answers, unless its probability is below `JEV_ABSTAIN_BELOW`, when the
+    answer is `abstain`: a flat distribution is what abstaining means here.
+    Text only.
     """
 
     name = "jev"
@@ -624,12 +640,14 @@ class JevBackend:
                 continue
             if not options:
                 continue
+            criteria = question.criteria or {}
             questions[str(cid)] = {
                 "type": "choice",
                 "instructions": question.per_candidate[cid],
-                "criteria": {option: None for option in options},
+                "criteria": {option: criteria.get(option) for option in options},
             }
-        body = {"model": self.model, "state": question.prompt, "questions": questions}
+        state = question.context if question.context else question.prompt
+        body = {"model": self.model, "state": state, "questions": questions}
         return body, settled
 
     def ask(self, question):
