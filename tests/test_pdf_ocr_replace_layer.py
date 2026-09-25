@@ -525,6 +525,31 @@ def test_a_stopped_retry_leaves_no_completed_extraction_behind(bundle, layered, 
     assert not stages.already_prepared(bundle, pdf, "docling", None, REPLACE)
 
 
+# Codex re-verify 260924 (MEDIUM): the success writer merged into the
+# failed block, leaving status 'failed', `failure` and `empty_pages` beside
+# a completed stage.
+def test_a_successful_retry_after_the_stop_leaves_no_failure_behind(
+    bundle, layered, pandoc
+):
+    pdf = layered()
+    with pytest.raises(PipelineError):
+        _extract(bundle, pdf, pandoc, converting([None, None]))
+    failed = bundle.read_manifest()["extraction"]["limitations"]
+    _extract(bundle, pdf, pandoc, converting(["One.", "Two."]))
+    manifest = bundle.read_manifest()
+    assert manifest["stages"]["extract"]["status"] == "completed"
+    extraction = manifest["extraction"]
+    for key in ("status", "failure", "empty_pages"):
+        assert key not in extraction, key
+    assert extraction["provider"] == "docling"
+    assert extraction["ocr_replace_layer"] is True
+    # the failed attempt's lines are gone, from both lists
+    for line in failed:
+        assert line not in manifest["limitations"], line
+        assert line not in extraction["limitations"], line
+    assert stages.already_prepared(bundle, pdf, "docling", None, REPLACE)
+
+
 def test_without_the_flag_an_empty_page_is_not_called_a_replaced_layer(
     bundle, layered, pandoc, capsys
 ):

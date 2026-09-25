@@ -1425,52 +1425,57 @@ def _write_provenance(
         + "\n",
         encoding="utf-8",
     )
-    bundle.update_manifest(
-        extraction={
-            "provider": PARSER,
-            "version": version,
-            "device": resolved,
-            "device_requested": requested or "auto",
-            "picture_description": False,
-            # Pages the PDF itself could not spell out, and which therefore
-            # had to be read by the OCR models.
-            "pages_without_text_layer": list(scanned),
-            "pages_examined": examined,
-            "ocr": ocr,
-            # Every selected page when the layer was replaced.
-            "pages_read_by_ocr": (
-                list(selected or [])
-                if settings.ocr_replace_layer
-                else (list(scanned) if ocr else [])
-            ),
-            # The languages the models were told to read, as given
-            # (`--ocr-lang`); None means the engine's own default.
-            "ocr_lang": ocr_lang,
-            # Whether display formulas were kept as pictures, and how many
-            # were; a rerun that changes the setting extracts again.
-            "formula_images": formula_images,
-            "formula_image_count": formulas,
-            # The OCR engine asked for, the one that ran (docling's choice
-            # under `auto`; None without OCR), and the OCR and table modes.
-            **engine,
-            # The region-role pass: the model asked for, its revision,
-            # whether it ran, and what it did (overlay: decisions.json).
-            **roles,
-            # docling's document before our changes, bundle-relative.
-            "raw_document": raw_document,
-            # Which renderer painted the page images the models read:
-            # docling-parse, or pypdfium2 for a PDF with JBIG2 image masks.
-            # Derived from the file, so provenance, not a setting.
-            "render_backend": render,
-            "pdf": pdf.name,
-            "pdf_sha256": sha256_file(pdf),
-            "page_range": page_range,
-            "page_range_sent": pages,
-            "page_numbering": "1-based input, 1-based request",
-            # Nothing was bought: the local parser has no provider charge.
-            "cost_cents": None,
-        }
-    )
+    # Replaces the block rather than merging into it: a stopped attempt's
+    # `status`, `failure` and `empty_pages` (`_record_failed_extraction`)
+    # would otherwise sit beside a completed stage (Codex re-verify 260924).
+    # Nothing written earlier in this extraction is lost: the limitations
+    # are listed after this, and `structure_status` is in `roles`.
+    data = bundle.read_manifest()
+    data["extraction"] = {
+        "provider": PARSER,
+        "version": version,
+        "device": resolved,
+        "device_requested": requested or "auto",
+        "picture_description": False,
+        # Pages the PDF itself could not spell out, and which therefore
+        # had to be read by the OCR models.
+        "pages_without_text_layer": list(scanned),
+        "pages_examined": examined,
+        "ocr": ocr,
+        # Every selected page when the layer was replaced.
+        "pages_read_by_ocr": (
+            list(selected or [])
+            if settings.ocr_replace_layer
+            else (list(scanned) if ocr else [])
+        ),
+        # The languages the models were told to read, as given
+        # (`--ocr-lang`); None means the engine's own default.
+        "ocr_lang": ocr_lang,
+        # Whether display formulas were kept as pictures, and how many
+        # were; a rerun that changes the setting extracts again.
+        "formula_images": formula_images,
+        "formula_image_count": formulas,
+        # The OCR engine asked for, the one that ran (docling's choice
+        # under `auto`; None without OCR), and the OCR and table modes.
+        **engine,
+        # The region-role pass: the model asked for, its revision,
+        # whether it ran, and what it did (overlay: decisions.json).
+        **roles,
+        # docling's document before our changes, bundle-relative.
+        "raw_document": raw_document,
+        # Which renderer painted the page images the models read:
+        # docling-parse, or pypdfium2 for a PDF with JBIG2 image masks.
+        # Derived from the file, so provenance, not a setting.
+        "render_backend": render,
+        "pdf": pdf.name,
+        "pdf_sha256": sha256_file(pdf),
+        "page_range": page_range,
+        "page_range_sent": pages,
+        "page_numbering": "1-based input, 1-based request",
+        # Nothing was bought: the local parser has no provider charge.
+        "cost_cents": None,
+    }
+    bundle.write_manifest(data)
     bundle.set_stage(STAGE, "completed", parser=PARSER, device=resolved)
 
 
