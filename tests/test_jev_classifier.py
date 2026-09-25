@@ -378,6 +378,51 @@ class TestTheAsymmetricGate:
         assert answer.confidence == {"a": 0.4, "b": 0.8}
         assert answer.raw.fell_back == {"a": "skip"}
 
+    # Codex (packet J review, 260924): a row without a choice was scored 0
+    # and gated into the fallback, so a malformed reply read as a plan verdict.
+    def test_a_row_without_a_choice_stays_unanswered(self):
+        answer = self._ask(
+            {
+                "a": {"type": "choice", "confidence": 0.9},
+                "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+            }
+        )
+        assert answer.values == {"b": "skip"}
+        assert "a" not in answer.confidence
+        assert answer.raw.fell_back == {}
+
+    def test_a_choice_never_offered_stays_unanswered(self):
+        answer = self._ask(
+            {
+                "a": _answer("abstain", {"translate": 0.2, "skip": 0.1}),
+                "b": _answer("skip", {"translate": 0.2, "skip": 0.8}),
+            }
+        )
+        assert answer.values == {"b": "skip"}
+        assert answer.raw.fell_back == {}
+
+    def test_a_choice_without_its_probability_stays_unanswered(self):
+        # the server's `confidence` is never read in its place: on the
+        # official Jev it is not the chosen option's probability
+        answer = self._ask(
+            {
+                "a": {"type": "choice", "choice": "skip", "confidence": 0.95},
+                "b": {
+                    "type": "choice",
+                    "choice": "skip",
+                    "confidence": 0.95,
+                    "probabilities": {"translate": "0.1", "skip": "0.9"},
+                },
+                "c": {
+                    "type": "choice",
+                    "choice": "skip",
+                    "probabilities": {"skip": 1.7},
+                },
+            }
+        )
+        assert answer.values == {}
+        assert answer.confidence == {}
+
     def test_the_role_pass_s_fallback_is_its_abstain_label(self):
         # the role pass sets `abstain` and no fallback (it never reaches jev
         # today: it asks with an image); a text question shaped like it

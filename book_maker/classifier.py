@@ -714,11 +714,26 @@ class JevBackend:
             if not isinstance(answer, dict):
                 reply[cid] = answer
                 continue
+            # A malformed row (no choice, a choice never offered, no finite
+            # probability for it) stays unanswered: the caller's missing-id
+            # path (`unsure`, a retry) sees it, the gate never turns it into
+            # the fallback (Codex, packet J review 260924). The server's own
+            # `confidence` is not substituted: on the official Jev it is not
+            # the chosen option's probability.
             choice = answer.get("choice")
+            if cid not in question.candidates or choice not in self.options(
+                question, cid
+            ):
+                continue
             probability = (answer.get("probabilities") or {}).get(choice)
-            if probability is None:
-                probability = answer.get("confidence") or 0.0
-            reply.confidence[cid] = float(probability)
+            if not isinstance(probability, (int, float)) or isinstance(
+                probability, bool
+            ):
+                continue
+            probability = float(probability)
+            if not (0.0 <= probability <= 1.0):
+                continue
+            reply.confidence[cid] = probability
             if (
                 fallback is None
                 or choice == fallback
