@@ -739,7 +739,7 @@ are a minute's edit in `source.md`.
 
   A file of `term → translation` lines — one per line, `#` starts a note or a
   comment, plain text.
-  Read by the openai- and codex-shaped routes for EPUB and Markdown books.
+  Read by the openai- and codex-shaped routes for EPUB, Markdown, and PDF books.
 
   A pinned term makes the translation say what you pinned, so pin only
   renderings you can stand behind.

@@ -490,7 +490,7 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang iso:zh 
 - `--glossary` / `--terminology`:
 
   一个 `term → translation` 术语文件（每行一条，`#` 之后是注释，txt格式）。
-  仅 openai 系与 codex 路由、且书籍为 EPUB 或 Markdown 时生效。
+  仅 openai 系与 codex 路由、且书籍为 EPUB、Markdown 或 PDF 时生效。
   
   钉住一个术语就等于让译文照此表述，所以只钉你能负责的译法。
 
