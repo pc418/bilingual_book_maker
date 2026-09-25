@@ -4,7 +4,7 @@ This route is experimental. It has been checked on arXiv papers and a set of boo
 
 ## What it does
 
-`--to-epub` reads the PDF with [docling](https://github.com/docling-project/docling)'s layout and table models into Markdown, translates that Markdown with the Markdown loader, and has Pandoc build a reflowable bilingual EPUB. Every paragraph is followed by its translation, and the table of contents follows the headings. Heading levels are read from the page itself: numbering first (`1.`, `1.1`, `I.`, `A.`), then font size and weight. Figures stay pictures, and each display formula is cropped from the page as a picture and placed where it stood. Pages with no text layer, a scan, are read by the OCR models only when you pass `--pdf-ocr`.
+`--to-epub` reads the PDF with [docling](https://github.com/docling-project/docling)'s layout and table models into Markdown, translates that Markdown with the Markdown loader, and has Pandoc build a reflowable bilingual EPUB. Every paragraph is followed by its translation, and the table of contents follows the headings. Heading levels are read from the page itself: numbering first (`1.`, `1.1`, `I.`, `A.`), then font size and weight. Figures stay pictures, and each display formula is cropped from the page as a picture and placed where it stood. Pages with no text layer, a scan, are read by the OCR models only when you pass `--pdf-ocr`. If you name a vision model with `--img-model`, it looks at each page and corrects the roles docling gave the regions (a heading that is really an author line, a code listing read as footnotes) before the Markdown is written.
 
 Everything lives in a working folder beside the PDF, `<name>_book/`: `source.md` (the extraction), `images/`, `book_bilingual.md` (the translation) and a manifest. The finished book is copied out as `<name>_bilingual.epub`. Rerunning the same command reuses the extraction and a finished translation, so you can stop, read `source.md`, fix a heading, and go on without paying twice. A PDF is a page description, not a document: it stores glyphs at positions and knows nothing of paragraphs or headings, so every extractor guesses the structure back. A heading one level off or a table that arrives as prose is the format showing through, and a minute's edit in `source.md`.
 
@@ -28,8 +28,23 @@ The route's flags:
 | `--device auto\|cpu\|cuda\|mps\|xpu` | Where the models run. `auto` detects CUDA or MPS and falls back to the CPU. The CPU gives the same text, only slower. |
 | `--pages 12-30` | Only these pages, numbered from 1 (`1,3,5-7` works too). The book gets its own names: `<name>_pages-12-30_book/`, `<name>_pages-12-30_bilingual.epub`. |
 | `--no-formula-images` | Leave display formulas as `<!-- formula-not-decoded -->` placeholders. Almost never what you want: the parser never reads equations, so without the pictures the mathematics is missing. |
+| `--img-model MODEL` | A vision model that corrects region roles from the page image. Off unless named here or as the provider entry's `img_model`; never the translating model by fallback. `none` turns an entry's model off. See [Correcting region roles](#correcting-region-roles-with-a-vision-model). |
+| `--img-base-url URL` | Where that model is served, when it is not the run's endpoint (OpenAI-compatible only). |
+| `--img-key KEY` | The key for `--img-base-url`. Defaults to the run's key on the run's own endpoint. |
 
-Every Markdown-loader flag works unchanged: `--use_context session` (recommended), `--glossary`, `--parallel-workers` (not with a session), `--test`. The full list is on [PDF](../formats/pdf.md).
+Every Markdown-loader flag works unchanged: `--use_context session` (recommended), `--glossary`, `--parallel-workers` (not with a session), `--no-thinking`, `--test`. The full list is on [PDF](../formats/pdf.md). A combination the translation would refuse, such as `--no-thinking` on the codex route, is refused before the extraction starts, so nothing is paid for first. `--classify-model` does nothing on this route yet; the run warns.
+
+## Correcting region roles with a vision model
+
+docling cuts each page into regions and labels them: text, heading, title, caption, footnote, code, table, picture. Some labels are wrong, and the book shows it: an author line in the table of contents, a code listing printed as prose, a figure label promoted to a section. With `--img-model`, each page is shown to the model with docling's regions drawn and numbered on it. The model answers one role per region (text, heading, title, caption, footnote, code) or abstains. Accepted answers replace the labels before the Markdown is written, so the contents and the code blocks come out right. The text itself is never rewritten.
+
+- **What it cannot fix.** Lists, tables, pictures, formulas and running headers and footers are not asked about. A scanned page that docling has shattered into fragments is not rebuilt by relabeling them.
+- **What it costs.** About 3,000 prompt tokens per page; 2.7 to 10.6 s per page in the study. In the study behind it, the model fixed 40 of 66 wrong labels on 12 pages; see [Where an LLM fixes layout](../evaluation/pdf-structure-llm-roles.md).
+- **What it needs.** An OpenAI-compatible endpoint that accepts images. The run checks once that the model can read a picture. If it cannot, the run says so and extracts with docling's own labels.
+- **The model is named, never assumed.** The step runs only on a model you name with `--img-model` or in the provider entry's `img_model`. The shipped `openai` entry names `gpt-5.6-luna`, so `--provider openai` turns the step on; `--img-model none` turns it off. An on-device translating model is never asked to read a page.
+- **Changing it extracts again.** The image model and its address are part of what the extraction is compared against, so adding, changing or dropping `--img-model` reads the PDF again. A bundle whose role pass did not finish is also read again when a run asks for the pass.
+
+The decisions are kept in `<name>_book/.work/extraction/decisions.json`. At the end of the extraction the run prints the pass's token usage on its own line: `Image model (<model> at <address>): …`.
 
 ## Recommended commands
 
@@ -60,7 +75,7 @@ Then open `book_pages-1-2_book/source.md` and read it. When it looks right, run 
       --quiet
     ```
 
-    Check the chapter headings in `source.md` first: a novel often sets chapters without numbering, and the route then relies on font size alone.
+    Check the chapter headings in `source.md` first: a novel often sets chapters without numbering, and the route then relies on font size alone. The region-role pass was measured on papers, web pages and code listings, not on novels; with `--provider openai` it is on, and `--img-model none` saves its tokens.
 
 === "Textbook with tables and formulas"
 
@@ -76,7 +91,7 @@ Then open `book_pages-1-2_book/source.md` and read it. When it looks right, run 
       --glossary terms.txt
     ```
 
-    Translate a chapter at a time with `--pages`; each range gets its own book and never overwrites another. Inline mathematics inside a sentence is not a formula region and is not covered: it arrives as whatever the text layer or OCR made of it.
+    Translate a chapter at a time with `--pages`; each range gets its own book and never overwrites another. A textbook with code listings gains from `--img-model gpt-5.6-luna`: in the study, the listing's lines came out as code instead of footnotes. Inline mathematics inside a sentence is not a formula region and is not covered: it arrives as whatever the text layer or OCR made of it.
 
 === "Paper"
 
@@ -87,10 +102,11 @@ Then open `book_pages-1-2_book/source.md` and read it. When it looks right, run 
       --book_name paper.pdf \
       --to-epub \
       --language zh-hans \
-      --use_context session
+      --use_context session \
+      --img-model gpt-5.6-luna
     ```
 
-    Heading levels were exact on 187 of 195 headings across 20 arXiv papers. Leave out the bibliography with `--pages` if you do not want to pay for it.
+    Heading levels were exact on 187 of 195 headings across 20 arXiv papers. `--img-model` demotes an author line or a figure label that docling took for a heading, for about 3,000 prompt tokens a page; leave it out to spend nothing on it. Leave out the bibliography with `--pages` if you do not want to pay for it.
 
 === "Scanned book"
 
@@ -106,6 +122,10 @@ Then open `book_pages-1-2_book/source.md` and read it. When it looks right, run 
     ```
 
     rapidocr's default reads Chinese and English. A scan in another script needs `--ocr-lang`; the first use of a language downloads its model.
+
+    **A scan that already carries an OCR layer** (Internet Archive and ABBYY FineReader files often do) is readable without `--pdf-ocr`: the run prints `… selected pages carry only an invisible OCR text layer …` and uses that layer. With `--pdf-ocr`, the OCR models read the page image and their text replaces the layer. In the OCR study, the local engine re-reading such pages did worse than the layer on 3 of 3 pages. Try the run without `--pdf-ocr` first and read `source.md`; add it only when the layer is poor, and then name the language with `--ocr-lang`.
+
+    `--img-model` does little on a scan: in the study it fixed 0 of 11 label faults on a page docling had shattered into fragments.
 
 === "Chinese scan"
 
@@ -199,6 +219,9 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 - **`reading a PDF needs the pdf extra, which is not installed.`** Do step 3 of [PDF extra](../installation-pdf.md). Not `pip install "bbook_maker[pdf]"`.
 - **`--device cuda was asked for, but the installed PyTorch is a CPU-only build.`** Reinstall through the CUDA route. **`… but this machine has no cuda accelerator available.`** Use `--device cpu` or `--device auto`.
 - **`--parallel-workers is not supported with --use_context session …`** Choose one.
+- **`--no-thinking has no request to travel in on the codex route: …`** Drop `--no-thinking` on codex.
+- **`--img-model needs an OpenAI-compatible endpoint; … resolves to the … format.`** The image model is asked at the run's endpoint, or at `--img-base-url`, and that endpoint is not OpenAI-shaped. Give an OpenAI-compatible `--img-base-url` (and `--img-key`), or drop `--img-model`.
+- **`--img-base-url names where --img-model is served, and no --img-model was given. …`** Name the model too.
 
 ### During extraction
 
@@ -207,7 +230,12 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 - **`The parser produced no text for a document whose pages have no text layer; the OCR pass returned pictures only.`** or **`Warning: no text was recognised on page(s) …`** The engine could not read the script. Rerun with `--ocr-lang` for the page's language.
 - **`The parser returned no text for this PDF; there is nothing to translate. If its pages are scans, rerun with --pdf-ocr.`** As it says.
 - **`Warning: page N extracted C characters, several times what a printed page holds; inspect source.md before translating.`** Something on that page, usually a figure, carries far more text than it shows. A page whose Markdown is thousands of lines is junk, not a long page. Remove it from `source.md` or leave the page out with `--pages`.
-- **A scanned page reads as garbage although the scan is clean.** Scans from the Internet Archive and ABBYY FineReader often use JBIG2 image masks, which docling-parse draws as a smear (docling issue #4329). The build this site was written against does not work around it. Newer builds render such pages with pypdfium2 and print `The PDF carries JBIG2 image masks, which docling-parse renders wrongly …`. See [Why docling-parse stays](../evaluation/pdf-page-render-backend.md).
+- **`The PDF carries JBIG2 image masks, which docling-parse renders wrongly (docling issue #4329); page images are rendered by pypdfium2 instead, the text layer still by docling-parse.`** Information. Scans from the Internet Archive and ABBYY FineReader often use such masks, and docling-parse would draw the page as a smear. The run takes the page image from pypdfium2 for the whole document. See [Why docling-parse stays](../evaluation/pdf-page-render-backend.md).
+- **`N of M selected pages carry only an invisible OCR text layer (a scanned book with recognised text underneath); with OCR on, the models read the page image and their text replaces that layer.`** Information. Without `--pdf-ocr` the layer is used as the text. With it, name the language with `--ocr-lang`; the run prints the language hint for these pages too, because in the wrong language a readable page turns to garbage.
+- **`… did not read the probe image (…); image steps are skipped this run.`** The image model cannot see pictures at that endpoint. The extraction goes on with docling's own labels.
+- **`Region roles: A of B asked items changed by <model> (… kept, … rejected, … pages with many changes); overlay at <path>.`** Information: what the image model changed. **`Region roles: C of D asked items on page N changed; read that page in source.md before translating.`** Most of a page changed; the changes are kept, so look at it. **`Region roles: …; the detector's own labels stand there.`** Part of the pass did not finish (a budget ran out, an answer was rejected, a region went unanswered); those regions keep docling's labels.
+- **`Extracting again: the bundle's region-role pass is <status>; this run asks for --img-model …, which only a complete pass satisfies.`** Information. The earlier pass did not finish, so the PDF is read again.
+- **`--img-model <model> failed: …`** The image endpoint answered with an error that waiting does not fix, such as a rejected key. The run stops. Fix the key (`--img-key`) or the address.
 
 ### After extraction, before translation
 
@@ -226,6 +254,11 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 - **`Error: … Bilingual Markdown was edited; export it or use a new output directory.`** You edited `book_bilingual.md` by hand. That is allowed, but the run will not overwrite it.
 - **`EPUB navigation is invalid: …`** The headings do not form a usable table of contents. Fix the heading levels in `source.md` (one `#` title, then `##`, `###`) and rerun.
 - **`Interrupted. Rerun the same command to resume.`** Ctrl+C. Rerun; the stages that finished are not repeated.
+
+### After the run
+
+- **`Image model (<model> at <address>): tokens: …`** The image model's own usage, printed after the extraction, apart from the translation's.
+- **`Nothing on this route classifies yet, so --classify-model is ignored on a … book.`** A classify flag or a provider's `classify_model` reached the translation of `source.md`, where nothing classifies. Harmless.
 
 ### Limits to know
 

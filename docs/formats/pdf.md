@@ -13,9 +13,10 @@ A PDF can take two routes. Pick the first unless you want plain text.
 
 1. [docling](https://github.com/docling-project/docling) reads the PDF's text layer with its layout and table models and writes Markdown: `<name>_book/source.md` and the images.
 2. Pages with no text layer (a scan) are refused unless you pass `--pdf-ocr`; then the OCR models read them.
-3. Heading levels are read from the page (numbering first, then font size and weight). Display formulas are cropped from the page as pictures.
-4. The [Markdown loader](md.md) translates `source.md` into `book_bilingual.md`.
-5. Pandoc builds the EPUB. Its navigation follows the headings.
+3. With `--img-model`, a vision model corrects the roles docling gave the page's regions (heading, caption, footnote, code) from the page image.
+4. Heading levels are read from the page (numbering first, then font size and weight). Display formulas are cropped from the page as pictures.
+5. The [Markdown loader](md.md) translates `source.md` into `book_bilingual.md`.
+6. Pandoc builds the EPUB. Its navigation follows the headings.
 
 A rerun of the same command reuses the extraction and a finished translation. Edit `source.md` before the translation runs if something came out wrong. Delete `book_bilingual.md` to translate again. [PDF to bilingual EPUB](../features/pdf-to-epub.md) has the recommended commands and the terminal lines to watch for.
 
@@ -37,6 +38,9 @@ The route's own flags:
 | `--device auto\|cpu\|cuda\|mps\|xpu` | Where the extraction models run. `auto` (default) detects an accelerator and falls back to the CPU. The CPU gives the same output, slower. |
 | `--pages PAGES` | Only these pages, numbered from 1 (`12-30`, `1,3,5-7`). |
 | `--no-formula-images` | Leave display formulas as `<!-- formula-not-decoded -->` placeholders instead of pictures. |
+| `--img-model MODEL` | A vision model that corrects region roles from the page image. Off unless named here or as the provider entry's `img_model` (the shipped `openai` entry names one); `none` turns that off. Never the translating model by fallback. About 3,000 prompt tokens per page. |
+| `--img-base-url URL` | Where that model is served, when it is not the run's endpoint (OpenAI-compatible only). |
+| `--img-key KEY` | The key for `--img-base-url`; defaults to the run's key on the run's own endpoint. |
 | `--quiet` | No live progress line during extraction. |
 
 Every other flag goes to the Markdown translation unchanged. These are the ones that do something there:
@@ -54,6 +58,7 @@ Every other flag goes to the Markdown translation unchanged. These are the ones 
 | `--source_lang LANGUAGE` | Source language, stated. Reaches every LLM prompt; sent as a field on `qwen` and `customapi`. |
 | `--prompt VALUE_OR_FILE` | Custom prompt: `user` template (must contain `{text}`), `system`, `style`. |
 | `--temperature FLOAT` | Sampling temperature, on the formats that take one. |
+| `--no-thinking` | Ask the model not to reason before answering. The field is negotiated on the OpenAI-shaped routes; `thinking: disabled` on anthropic; refused on codex. |
 | `--extra_body JSON` | Extra request-body fields on the openai and anthropic routes. |
 | `--extra_headers JSON` | Extra HTTP headers on the openai and anthropic routes. |
 | `--interval SECONDS` | Pause between requests. Only the gemini format uses it. |
@@ -79,6 +84,7 @@ Every other flag goes to the Markdown translation unchanged. These are the ones 
 - `--translation-metadata`: Pandoc builds this EPUB, which carries no metadata file and no embedded glossary.
 - `--pdf_layout`: belongs to the text route.
 - `--accumulated_num`, `--max-batch-units` and every `--plan-*` flag: plan mode is EPUB only; the Markdown loader groups with `--batch_size`.
+- `--classify-model`, `--classify-base-url`, `--classify-key`: nothing on this route classifies yet. The run warns that the flag is ignored.
 - `--translate-tags`, `--exclude-translate-tags`, `--allow_navigable_strings`, `--only_filelist`, `--exclude_filelist`, `--block_size`, `--sentence_mode`, `--translation_style`, `--translation_color`, `--retranslate`: EPUB input only.
 - `--batch`, `--batch-use`: not implemented on this route.
 
@@ -117,4 +123,6 @@ The route and run flags in the table above, plus:
 - `--glossary`, `--glossary-auto`: not forwarded. The run warns.
 - `--parallel-workers`: the run stays serial. The run warns.
 - `--pdf-ocr`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`: `--to-epub` only. The run warns and reads the whole file.
+- `--img-model`, `--img-base-url`, `--img-key`: the image step belongs to `--to-epub`. The run warns.
+- `--classify-model` and its two companions: nothing classifies here. The run warns.
 - Every EPUB-only flag listed for the `--to-epub` route above, and `--accumulated_num`, `--quiet`, `--no_disclosure`, `--translation-metadata`.
