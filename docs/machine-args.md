@@ -17,6 +17,8 @@ Pick one with `--api_format`.
 
 Both DeepL routes send the source as English. Use them for English books.
 
+Caiyun publishes a test token, `3975l6lr5pcbvidl6jl2`, for trying the route; for your own, follow [this tutorial](https://bobtranslate.com/service/translate/caiyun.html).
+
 ## Commands
 
 === "Google"
