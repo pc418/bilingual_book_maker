@@ -308,6 +308,11 @@ def _document_markdown(
 
             report["structure_status"] = STATUS_FAILED
             raise
+    # Which pages the engine read any text on, from the document's own
+    # text, before the formula markers below give empty items text: the
+    # Markdown cannot say, because an empty table still exports its pipes
+    # (Codex re-verify 260924).
+    report["text_pages"] = _text_pages(document)
     # Before the export: each undecoded formula is given a marker as its
     # text, so the serializer writes the marker where the equation stands
     # and the picture can only land at its own item.
@@ -378,6 +383,30 @@ def _export_pages(document, images, span):
     )
 
 
+def _text_pages(document):
+    """The pages on which the document holds any text, from 1.
+
+    A text item with non-blank text, or a table with a cell that has one;
+    every page an item's provenance names counts, so a paragraph that runs
+    onto the next page counts as read there too. Pictures are not text.
+    """
+    from docling_core.types.doc import TableItem, TextItem
+
+    pages = set()
+    for item, _level in document.iterate_items():
+        if not getattr(item, "prov", None):
+            continue
+        if isinstance(item, TextItem):
+            has_text = bool((item.text or "").strip())
+        elif isinstance(item, TableItem):
+            has_text = any((cell.text or "").strip() for cell in item.data.table_cells)
+        else:
+            continue
+        if has_text:
+            pages.update(prov.page_no for prov in item.prov)
+    return sorted(pages)
+
+
 def _selected_pages(ranges, examined):
     """The page numbers `text_layer_report` examined, from 1.
 
@@ -423,8 +452,15 @@ def _record_failed_extraction(bundle, settings, page_range, *, reason, empty):
     bundle.add_limitations(limitations)
 
 
-def _pages_read(text):
-    """The pages of the numbered Markdown that carry any prose, as a set."""
+def _pages_read(text_pages, text):
+    """The pages the engine read any text on, as a set.
+
+    `text_pages` is the document's own answer (`_document_markdown`); a
+    converter seam that does not give it is answered from the numbered
+    Markdown's page markers.
+    """
+    if text_pages is not None:
+        return set(text_pages)
     blank, _any = blank_pages(text)
     return {int(n) for n in PAGE_MARKER.findall(text)} - set(blank)
 
@@ -1089,7 +1125,7 @@ def extract_pdf(
         replaced_empty = []
         if replace_layer:
             selected = _selected_pages(ranges, examined)
-            read = _pages_read(text)
+            read = _pages_read(found.get("text_pages"), text)
             replaced_empty = [
                 page for page in selected if page not in missing and page not in read
             ]

@@ -177,10 +177,11 @@ def test_the_converter_asks_docling_for_full_page_ocr_only_with_the_flag(
     assert all(options.do_ocr for options in built)
 
 
-def real_document(texts, pages=None, picture_on=None, headings=None):
+def real_document(texts, pages=None, picture_on=None, headings=None, empty_tables=()):
     """A real `DoclingDocument`: `texts` is `{page: text}`, `pages` the
-    page numbers it has (docling keeps an empty page in `pages`), and
-    `picture_on` a page that also carries a picture. Built the way
+    page numbers it has (docling keeps an empty page in `pages`),
+    `picture_on` a page that also carries a picture, and `empty_tables`
+    pages that carry a 2x2 table with no text in any cell. Built the way
     tests/test_pdf_structure_wiring.py builds one."""
     pytest.importorskip("docling_core")
     from docling_core.types.doc import document as d
@@ -198,6 +199,22 @@ def real_document(texts, pages=None, picture_on=None, headings=None):
         for heading in (headings or {}).get(page, ()):
             document.add_heading(text=heading, level=1, prov=prov(page, heading))
         document.add_text(label=d.DocItemLabel.TEXT, text=text, prov=prov(page, text))
+    for page in empty_tables:
+        cells = [
+            d.TableCell(
+                text="",
+                start_row_offset_idx=row,
+                end_row_offset_idx=row + 1,
+                start_col_offset_idx=col,
+                end_col_offset_idx=col + 1,
+            )
+            for row in range(2)
+            for col in range(2)
+        ]
+        document.add_table(
+            data=d.TableData(num_rows=2, num_cols=2, table_cells=cells),
+            prov=prov(page),
+        )
     if picture_on is not None:
         document.add_picture(
             image=d.ImageRef.from_pil(Image.new("RGB", (40, 30), "red"), dpi=72),
@@ -304,6 +321,38 @@ def test_a_heading_that_opens_a_page_is_promoted_like_any_other(
     lines = page_bodies(bundle)[2].splitlines()
     assert "# Section Two" in lines
     assert "## Section Two" not in lines
+
+
+# Codex re-verify 260924 (HIGH): an empty table exports its pipes, and the
+# Markdown then called the page read.
+def test_a_page_holding_only_an_empty_table_is_an_empty_page(
+    bundle, tmp_path, pandoc, capsys
+):
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({2: "Text on page two."}, pages=[1, 2], empty_tables=[1])
+    _extract(bundle, pdf, pandoc, exporting(document))
+    assert "|" in page_bodies(bundle)[1]  # the table's pipes are there
+    assert OCR_REPLACE_EMPTY.format(page=1) in capsys.readouterr().out
+
+
+def test_empty_tables_on_every_page_stop_before_translation(bundle, tmp_path, pandoc):
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({}, pages=[1, 2], empty_tables=[1, 2])
+    with pytest.raises(PipelineError) as stopped:
+        _extract(bundle, pdf, pandoc, exporting(document))
+    assert stopped.value.detail == OCR_REPLACE_ALL_EMPTY
+
+
+def test_a_table_with_text_is_a_page_read(bundle, tmp_path, pandoc, capsys):
+    pytest.importorskip("docling_core")
+    from docling_core.types.doc import document as d
+
+    pdf = _pdf(tmp_path, 2)
+    document = real_document({2: "Text on page two."}, pages=[1, 2], empty_tables=[1])
+    document.tables[0].data.table_cells[0].text = "cell"
+    _extract(bundle, pdf, pandoc, exporting(document))
+    assert OCR_REPLACE_EMPTY.format(page=1) not in capsys.readouterr().out
+    assert isinstance(document.tables[0], d.TableItem)
 
 
 def test_a_picture_is_written_once_and_placed_on_its_own_page(bundle, tmp_path, pandoc):
