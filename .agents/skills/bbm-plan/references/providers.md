@@ -1,8 +1,11 @@
 # Routes: model name → endpoint shape → flags
 
-Loaded from SKILL.md §0/§1b. Everything here is verified against the code
-(`book_maker/cli.py`, `book_maker/translator/`) and, where marked, against a
-live gateway on 2026-08-07.
+Loaded from `references/route-setup.md` step 3. The user pages cover the
+flags themselves: `docs/llm-args.md` (model, endpoint, format, keys),
+`docs/model_lang.md` (per-vendor addresses), `docs/providers.md` (the
+provider file's fields, the image and classify models, which key is sent
+where). This file carries only what the agent needs beyond them: which
+shape to try, how to probe it, and what each route can do.
 
 ## The one rule that decides everything
 
@@ -25,7 +28,7 @@ guess. Any model id reaches any endpoint; nothing has to be registered.
 | the anthropic shape, on a gateway domain | the same plus `--api_format anthropic` |
 | an entry in `bbm_providers.json` / `~/.bbm/providers.json` | `--provider NAME`, optionally `--model "$MODEL"` |
 | the OrcaRouter gateway | `--model orcarouter`, no `--api_base` |
-| nothing: a local Codex sidecar on the user's plan | `--api_format codex`, no key, no base (SKILL.md §1c) |
+| nothing: a local Codex sidecar on the user's plan | `--api_format codex`, no key, no base (`references/route-setup.md` step 4) |
 
 On the openai format `--model` may be left out; it defaults to
 `gpt-5.6-luna`. Every other format wants an id, and the anthropic format
@@ -57,51 +60,24 @@ and session-context machinery.
 
 ## `--provider NAME`: the same route, written once
 
-An endpoint used more than once belongs in a provider file, not on every
-command line. `bbm_providers.json` in the working directory is read first,
-then `~/.bbm/providers.json`; a project entry wins on a shared name. Each
-entry is the route spelled out:
+The fields and the lookup order are on `docs/providers.md`; what matters
+for the probe:
 
-```json
-{
-  "providers": {
-    "nvidia": {
-      "api_style": "openai",
-      "base_url": "https://integrate.api.nvidia.com/v1",
-      "default_models": ["moonshotai/kimi-k2-thinking"],
-      "env_key": "NVIDIA_API_KEY"
-    }
-  }
-}
-```
-
-The `providers` wrapper is required; the loader reads nothing from a file
-without it.
-
-`api_style` is any `--api_format` that names an endpoint — `openai`,
-`anthropic`, `gemini`, `qwen`, `groq`, `xai`, `litellm` — plus `claude`,
-which older files use for `anthropic`. Any other OpenAI-compatible host is
-`openai` with its address in `base_url`; an unrecognised style is refused
-with that entry printed. The shipped example file has an entry per vendor. `default_models` becomes `--model` when it holds one
-id and `--model_list` when it holds several. `env_key` is read for the key
-ahead of `BBM_API_KEY` and the format's own variables. **Explicit flags
-win**, so `--provider nvidia --model <id>` keeps the user's model. A name
-in neither file falls back to the shipped example, with a warning naming
-the address and key variable it used.
-
-Optional fields name two more endpoints: `img_model`/`img_base_url`/
-`img_env_key` (the PDF route's image step; off unless named, never the
-run's model by fallback) and `classify_model`/`classify_base_url`/
-`classify_env_key` (plan classification; default the run's model, unused
-by this skill's agent mode). Both extra bases must speak the OpenAI shape;
-a classify base may instead be a Jev-compatible URL.
-A key is bound to its address: `--img-key`/`--classify-key`; else the run's
-key only at the run's own address; else the entry's `*_env_key` only at the
-address the entry names; else the format's variable. `--extra_body` and
-`--extra_headers` never travel to another host. Jev (`--classify-model
-jev`) reads `JEV_API_KEY`/`TYPESAFE_API_KEY` only at a typesafe.ai
-address, Simple Jev (`featherless-ai/…-classifier`) `FEATHERLESS_API_KEY`
-only at featherless.ai; through a gateway the key is named.
+- The `providers` wrapper is required; the loader reads nothing from a file
+  without it. A project `bbm_providers.json` wins over
+  `~/.bbm/providers.json` on a shared name; a name in neither falls back to
+  the shipped example, with a warning naming the address and key variable.
+- `api_style` is the format (`openai`, `anthropic`, `gemini`, `qwen`,
+  `groq`, `xai`, `litellm`; `claude` in older files). Any other
+  OpenAI-compatible host is `openai` with its address in `base_url`.
+- `default_models` becomes `--model` when it holds one id and
+  `--model_list` when it holds several. `env_key` is read for the key ahead
+  of `BBM_API_KEY` and the format's own variables. **Explicit flags win**,
+  so `--provider nvidia --model <id>` keeps the user's model.
+- A key is bound to its address: the entry's `env_key` is not sent when an
+  `--api_base` moves the run elsewhere. The `img_*` and `classify_*` fields
+  follow the same rule (`docs/providers.md#which-key-goes-where`); this
+  skill's EPUB flow never adds a `classify_model`.
 
 ## `--model orcarouter`: a gateway with no address to type
 
