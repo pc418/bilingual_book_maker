@@ -92,6 +92,7 @@ class TestRouting:
             pages,
             formula_images,
             ocr_replace_layer,
+            ocr_engine,
             img_model,
             img_base_url,
             img_key,
@@ -99,6 +100,7 @@ class TestRouting:
         ):
             seen.update(
                 ocr_replace_layer=ocr_replace_layer,
+                ocr_engine=ocr_engine,
                 path=Path(path),
                 argv=list(argv),
                 device=device,
@@ -130,6 +132,8 @@ class TestRouting:
         assert seen["pages"] is None
         # an embedded layer is kept unless replacing it is asked for
         assert seen["ocr_replace_layer"] is False
+        # docling takes whichever OCR engine is installed unless one is named
+        assert seen["ocr_engine"] == "auto"
         assert seen["img_model"] is None
         assert seen["quiet"] is False
         # every other option is the translation's, and is handed on as typed
@@ -183,6 +187,7 @@ class TestRouting:
             # without them the equations are missing from the book.
             "formula_images": True,
             "ocr_replace_layer": False,
+            "ocr_engine": "auto",
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -218,6 +223,7 @@ class TestRouting:
             "pages": "6-7",
             "formula_images": True,
             "ocr_replace_layer": False,
+            "ocr_engine": "auto",
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -248,6 +254,7 @@ class TestRouting:
             "pages": None,
             "formula_images": True,
             "ocr_replace_layer": False,
+            "ocr_engine": "auto",
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -268,6 +275,7 @@ class TestRouting:
             "pages": None,
             "formula_images": True,
             "ocr_replace_layer": False,
+            "ocr_engine": "auto",
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -302,6 +310,7 @@ class TestRouting:
             "pages": None,
             "formula_images": True,
             "ocr_replace_layer": False,
+            "ocr_engine": "auto",
             # The region-role pass is off unless its model is named.
             "img_model": None,
             "img_base_url": None,
@@ -551,6 +560,9 @@ class TestTheStages:
         (["--ocr-lang=ja", "--key", "k"], ["--key", "k"]),
         # route-owned: the inner run would warn (C34) and fingerprint it
         (["--ocr-replace-layer", "--key", "k"], ["--key", "k"]),
+        # route-owned: the engine is the extraction's (row C36 would warn)
+        (["--ocr-engine", "ocrmac", "--key", "k"], ["--key", "k"]),
+        (["--ocr-engine=easyocr", "--key", "k"], ["--key", "k"]),
         # route-owned: the image endpoint is the extraction's, and must
         # not reach the translation run (row C31 would warn) or its
         # fingerprint

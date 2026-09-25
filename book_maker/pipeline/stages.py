@@ -19,7 +19,11 @@ from .messages import (
     STAGE_COMPLETE,
     STRUCTURE_NOT_REUSED,
 )
-from .pdf_settings import OCR_MODE_REPLACE_LAYER, ExtractionSettings
+from .pdf_settings import (
+    OCR_MODE_REPLACE_LAYER,
+    ExtractionSettings,
+    check_ocr_engine,
+)
 
 MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown"}
 PDF_SUFFIXES = {".pdf"}
@@ -56,6 +60,9 @@ def check_pdf_options(kind, options):
 
     `--ocr-replace-layer` replaces what the OCR engine reads, so without
     `--pdf-ocr` there is nothing to replace the layer with: refused too.
+    An `--ocr-engine` other than auto is a PDF option like the others, and
+    with `--pdf-ocr` an engine this install cannot run is refused here,
+    before a page is read.
     """
     device = getattr(options, "device", None)
     pdf_ocr = getattr(options, "pdf_ocr", False)
@@ -63,12 +70,21 @@ def check_pdf_options(kind, options):
     ocr_lang = getattr(options, "ocr_lang", None)
     img_model = getattr(options, "img_model", None)
     replace_layer = getattr(options, "ocr_replace_layer", False)
+    engine = getattr(options, "ocr_engine", None) or "auto"
     if kind != "pdf" and (
-        device or pdf_ocr or pages or ocr_lang or img_model or replace_layer
+        device
+        or pdf_ocr
+        or pages
+        or ocr_lang
+        or img_model
+        or replace_layer
+        or engine != "auto"
     ):
         raise PipelineError(PDF_OPTIONS_INERT)
     if replace_layer and not pdf_ocr:
         raise PipelineError(OCR_REPLACE_NEEDS_OCR)
+    if pdf_ocr:
+        check_ocr_engine(engine)
     return device_for(device)
 
 
@@ -194,10 +210,11 @@ def prepare(
     settings=None,
     structure=None,
     ocr_replace_layer=False,
+    ocr_engine="auto",
 ):
     """Import or extract, chosen by the input's suffix alone.
 
-    The extraction settings are built from `ocr`, `ocr_lang`,
+    The extraction settings are built from `ocr`, `ocr_engine`, `ocr_lang`,
     `formula_images` and `ocr_replace_layer` unless `settings` is given,
     and the same value is what the bundle is compared against and what the
     extraction runs with.
@@ -214,6 +231,7 @@ def prepare(
     if settings is None:
         settings = ExtractionSettings(
             ocr=bool(ocr),
+            ocr_engine=ocr_engine or "auto",
             ocr_mode=OCR_MODE_REPLACE_LAYER if ocr_replace_layer else "default",
             ocr_lang=tuple(parse_ocr_lang(ocr_lang) or ()),
             formula_images=bool(formula_images),

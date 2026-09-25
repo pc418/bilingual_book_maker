@@ -535,6 +535,10 @@ python3 make_book.py --book_name scan.pdf --to-epub --pdf-ocr --ocr-lang iso:zh 
 
   PDF 阅读版：文字层变成 Markdown，Markdown 变成带导航的双语 EPUB。工作目录、OCR 以及 `source.md` 里该核对什么，见 [PDF 转双语 EPUB](#pdf-转-双语-epub-实验性)。
 
+- `--ocr-engine {auto,rapidocr,easyocr,ocrmac,tesseract}`（仅限 PDF，需同时加 `--to-epub --pdf-ocr`）：
+
+  选择 OCR 引擎。`auto` 依次取已安装的 ocrmac、rapidocr、easyocr；rapidocr 随 `pdf` 依赖一起安装；macOS 上 `pip install ocrmac` 即可用苹果自带的识别引擎，无需下载模型。指定的引擎没有安装时，在读任何页面之前就会被拒绝。怎么选：[docs/features/pdf-ocr-engines.md](docs/features/pdf-ocr-engines.md)。
+
 - `--sentence_mode`:
 
   将 EPUB 的每个段落拆成句子逐句翻译，而不是整段翻译。与 EPUB 计划模式不兼容。

@@ -28,6 +28,7 @@ from book_maker.pipeline.bundle import Bundle  # noqa: E402
 from book_maker.pipeline.epub_export import export_epub  # noqa: E402
 from book_maker.pipeline.errors import PipelineError  # noqa: E402
 from book_maker.pipeline.importer import import_markdown  # noqa: E402
+from book_maker.pipeline.pdf_settings import OCR_ENGINES  # noqa: E402
 from book_maker.pipeline.preflight import find_pandoc  # noqa: E402
 from book_maker.pipeline.stages import (  # noqa: E402
     MARKDOWN_SUFFIXES,
@@ -123,6 +124,13 @@ def _add_pdf_options(parser):
         help=messages.HELP_DEVICE,
     )
     parser.add_argument("--ocr-lang", default=None, help=messages.HELP_OCR_LANG)
+    parser.add_argument(
+        "--ocr-engine",
+        dest="ocr_engine",
+        default="auto",
+        choices=OCR_ENGINES,
+        help=messages.HELP_OCR_ENGINE,
+    )
     parser.add_argument("--pages", default=None, help=messages.HELP_PAGES)
     parser.add_argument(
         "--no-formula-images",
@@ -218,6 +226,7 @@ def main(argv=None):
                 ocr_lang=options.ocr_lang,
                 formula_images=options.formula_images,
                 ocr_replace_layer=options.ocr_replace_layer,
+                ocr_engine=options.ocr_engine,
                 **structure,
             )
         elif command == "translate":
@@ -250,6 +259,7 @@ def main(argv=None):
                 ocr_lang=options.ocr_lang,
                 formula_images=options.formula_images,
                 ocr_replace_layer=options.ocr_replace_layer,
+                ocr_engine=options.ocr_engine,
                 **structure,
             )
             translate_bundle(bundle, bbm_options, pandoc=pandoc)

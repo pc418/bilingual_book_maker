@@ -798,6 +798,10 @@ are a minute's edit in `source.md`.
 
   The PDF reading edition: the text layer becomes Markdown, the Markdown becomes a bilingual EPUB with navigation. See [PDF to bilingual EPUB](#pdf-to-bilingual-epub-experimental) for the bundle, OCR and what to check in `source.md`.
 
+- `--ocr-engine {auto,rapidocr,easyocr,ocrmac,tesseract}` (PDF only, with `--to-epub --pdf-ocr`):
+
+  The OCR engine. `auto` takes the first installed of ocrmac, rapidocr, easyocr; rapidocr ships with the `pdf` extra; on macOS `pip install ocrmac` adds Apple's engine with nothing to download. A named engine that is not installed is refused before any page is read. Which to choose: [docs/features/pdf-ocr-engines.md](docs/features/pdf-ocr-engines.md).
+
 - `--sentence_mode`:
 
   Translate EPUB text sentence by sentence instead of translating each paragraph as one

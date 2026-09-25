@@ -34,7 +34,12 @@ from book_maker.endpoints import (
     HELP_IMG_MODEL,
     IMG_BASE_WITHOUT_MODEL,
 )
-from book_maker.pipeline.messages import HELP_OCR_REPLACE_LAYER, OCR_REPLACE_NEEDS_OCR
+from book_maker.pipeline.messages import (
+    HELP_OCR_ENGINE_CLI,
+    HELP_OCR_REPLACE_LAYER,
+    OCR_REPLACE_NEEDS_OCR,
+)
+from book_maker.pipeline.pdf_settings import OCR_ENGINES
 from book_maker.prompt_file import parse_prompt_markdown
 from book_maker.provider_loader import resolve_provider
 from book_maker.session_context import DEFAULT_COMPACT_BUDGET, compact_budget_notice
@@ -1626,6 +1631,17 @@ COMPAT_RULES = (
         ),
     ),
     CompatRule(
+        "C36",
+        "warn",
+        lambda f: (getattr(f.options, "ocr_engine", None) or "auto") != "auto"
+        and not (f.options.to_epub and f.options.pdf_ocr),
+        lambda f: (
+            f"--ocr-engine {f.options.ocr_engine} chooses the engine the PDF's "
+            f"OCR reads with, and it only runs on the --to-epub route with "
+            f"--pdf-ocr; this run reads it and does nothing with it."
+        ),
+    ),
+    CompatRule(
         "C30",
         "warn",
         lambda f: not f.options.formula_images and not f.options.to_epub,
@@ -2544,6 +2560,13 @@ off. Minimum 1.
         "page in another script comes out wrong.",
     )
     parser.add_argument(
+        "--ocr-engine",
+        dest="ocr_engine",
+        default="auto",
+        choices=OCR_ENGINES,
+        help=HELP_OCR_ENGINE_CLI,
+    )
+    parser.add_argument(
         "--pages",
         dest="pages",
         default=None,
@@ -2891,6 +2914,7 @@ def run_to_epub(options, argv):
             pages=options.pages,
             formula_images=options.formula_images,
             ocr_replace_layer=options.ocr_replace_layer,
+            ocr_engine=options.ocr_engine,
             img_model=options.img_model,
             img_base_url=options.img_base_url,
             img_key=options.img_key,

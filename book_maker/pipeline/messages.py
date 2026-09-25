@@ -41,8 +41,8 @@ PANDOC_TOO_OLD = (
 )
 NAV_INVALID = "EPUB navigation is invalid: "
 PDF_OPTIONS_INERT = (
-    "--pdf-ocr, --ocr-replace-layer, --device, --ocr-lang, --pages and "
-    "--img-model apply only to PDF input."
+    "--pdf-ocr, --ocr-replace-layer, --ocr-engine, --device, --ocr-lang, "
+    "--pages and --img-model apply only to PDF input."
 )
 DEVICE_SELECTED = "PDF extraction device: {device}."
 DEVICE_CPU_FALLBACK = "PDF extraction device: cpu (no supported accelerator detected)."
@@ -142,6 +142,29 @@ PAGE_MAP_UNPLACED = (
 )
 OCR_ENGINE_USED = "OCR engine: {engine}{chosen}, languages: {languages}."
 OCR_ENGINE_CHOSEN = " (docling's choice on this install)"
+# `--ocr-engine` (packet K): an engine named by the operator that this
+# install cannot run is refused before any page is read, with the line that
+# installs it; `auto` is never refused (it takes whatever is installed).
+OCR_ENGINE_MISSING = (
+    "--ocr-engine {engine} was asked for, but it is not installed here. "
+    "{install} Or leave out --ocr-engine: auto takes the first engine "
+    "installed."
+)
+OCR_ENGINE_INSTALL = {
+    "rapidocr": (
+        "It ships with the pdf extra (see docs/installation-pdf.md); on its "
+        "own: pip install rapidocr onnxruntime."
+    ),
+    "easyocr": "Install it with pip install easyocr (it downloads its models on "
+    "first use).",
+    "ocrmac": "Install it with pip install ocrmac (nothing to download).",
+    "tesseract": ("Install tesseract and its language data, then put it on PATH."),
+}
+OCR_ENGINE_NOT_MACOS = (
+    "--ocr-engine ocrmac is Apple's Vision framework, which exists only on "
+    "macOS; on this system choose rapidocr, easyocr or tesseract, or leave "
+    "out --ocr-engine."
+)
 OCR_LANGUAGES_GIVEN = "{languages}"  # comma-joined, as given
 OCR_LANGUAGES_DEFAULT = "the engine's defaults"
 EXTRACTION_REUSED_OTHER_RUNTIME = (
@@ -308,6 +331,20 @@ HELP_OCR_LANG = (
     "the engine and languages it used. Without it the engine reads its own "
     "default languages."
 )
+# `--ocr-engine` (packet K): the lead's text, verbatim, for make_book.py;
+# the harness has no --to-epub, so its copy opens with its own condition.
+_OCR_ENGINE_BODY = (
+    "the OCR engine for pages with no text layer (every page with "
+    "--ocr-replace-layer). auto (default) takes the first installed of "
+    "ocrmac, rapidocr, easyocr. rapidocr ships with the pdf extra, models "
+    "included. ocrmac is Apple's Vision framework on macOS: nothing to "
+    "download (pip install ocrmac). easyocr downloads its models on first "
+    "use (pip install easyocr). tesseract uses the tesseract program and its "
+    "language data from PATH. Language codes differ by engine; see "
+    "--ocr-lang. The run names the engine it used."
+)
+HELP_OCR_ENGINE_CLI = "PDF only, with --to-epub --pdf-ocr: " + _OCR_ENGINE_BODY
+HELP_OCR_ENGINE = "With --pdf-ocr: " + _OCR_ENGINE_BODY
 HELP_FORMULA_IMAGES = (
     "Keep display formulas as the bare placeholder instead of a picture "
     "cropped from the page; the default keeps the picture."
