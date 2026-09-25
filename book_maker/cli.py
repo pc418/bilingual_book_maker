@@ -2475,7 +2475,8 @@ off. Minimum 1.
         default=None,
         metavar="LANGS",
         help="PDF only, with --to-epub --pdf-ocr: the languages the OCR engine "
-        "reads on pages with no text layer, comma-separated, in the engine's "
+        "reads on pages with no text layer (every page with "
+        "--ocr-replace-layer), comma-separated, in the engine's "
         "own codes (rapidocr: ch, en, latin; easyocr: ch_sim, ja, ko; ocrmac: "
         "zh-Hans, ja-JP) or as iso: tags (iso:zh); rapidocr, the default "
         "engine on macOS and CPU, reads only the first language and takes "

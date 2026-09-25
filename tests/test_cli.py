@@ -1840,6 +1840,20 @@ def test_max_batch_units_help_says_a_quarter_of_the_onset():
     assert "half the level" not in text
 
 
+def test_ocr_lang_help_names_iso_tags_and_the_replace_layer_scope():
+    # PIN (packet H items 1 and 13, 260924): docling 2.129 takes iso: tags,
+    # rapidocr (the default engine on macOS/CPU) reads the first language
+    # and refuses ch_sim (measured 260924,
+    # docs/260924-feat-PDF_OCR_REPLACE_LAYER.md), and --ocr-replace-layer
+    # has every page read
+    from book_maker.cli import build_parser
+
+    text = " ".join(_help_of(build_parser(), "ocr_lang").split())
+    assert "on pages with no text layer (every page with --ocr-replace-layer)" in text
+    assert "or as iso: tags (iso:zh)" in text
+    assert "reads only the first language and takes iso:zh, not ch_sim" in text
+
+
 def test_an_untyped_accumulated_num_reaches_the_parser_as_none():
     # the explicitness is the whole mechanism: plan mode defaults the budget
     # by context mode only when the flag was not typed, and `1` has to stay

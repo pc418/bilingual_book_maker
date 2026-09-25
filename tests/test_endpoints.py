@@ -739,6 +739,22 @@ def test_the_endpoint_help_says_what_the_resolution_does():
     assert "same default rule as --img-key" in HELP_CLASSIFY_KEY
 
 
+def test_the_classify_endpoint_help_names_jev_urls_and_host_keys():
+    # PIN (packet H item 13, 260924, the lead's text): a Jev-compatible
+    # server is reached by --classify-base-url, and a Jev host's own key
+    # variable is read only at that host (docs/260923-feat-ENDPOINT_OVERRIDES_CLASSIFIER_JEV.md)
+    from book_maker.endpoints import HELP_CLASSIFY_BASE_URL, HELP_CLASSIFY_KEY
+
+    assert "OpenAI-compatible only" not in HELP_CLASSIFY_BASE_URL
+    assert "or a Jev-compatible classifier's URL" in HELP_CLASSIFY_BASE_URL
+    assert "/systemone or /classifier is used as is" in HELP_CLASSIFY_BASE_URL
+    assert HELP_CLASSIFY_KEY.endswith(
+        " A Jev host's own variable (JEV_API_KEY or TYPESAFE_API_KEY at "
+        "typesafe.ai, FEATHERLESS_API_KEY at featherless.ai) is read only at "
+        "that host."
+    )
+
+
 def test_a_classifier_implies_model_mode_on_an_epub_only():
     from book_maker.cli import resolve_classify_mode
 
