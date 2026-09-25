@@ -27,6 +27,7 @@ from book_maker.endpoints import (
     CLASSIFY_BASE_WITHOUT_MODEL,
     HELP_CLASSIFY_BASE_URL,
     HELP_CLASSIFY_KEY,
+    HELP_CLASSIFY_MIN_CONFIDENCE,
     HELP_CLASSIFY_MODEL,
     HELP_IMG_BASE_URL,
     HELP_IMG_KEY,
@@ -772,6 +773,20 @@ PLAN_MIN_COVERAGE_DEFAULT = 0.5
 POETRY_GROUP_SIZE_DEFAULT = 8
 
 
+def classify_min_confidence(value):
+    """argparse type for --classify-min-confidence: the Jev gate, 0 to 1.
+
+    The same rule as BBM_JEV_MIN_CONFIDENCE (`parse_min_confidence`), said
+    at parse time, so a typo stops the run before anything is paid for.
+    """
+    from book_maker.classifier import parse_min_confidence
+
+    try:
+        return parse_min_confidence(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"--classify-min-confidence {err}")
+
+
 def coverage_fraction(value):
     """argparse type for --plan-min-coverage: a fraction of the book, 0-1.
 
@@ -1078,6 +1093,22 @@ def _a8_grouped_session(f):
     return (
         f.options.context_mode == "session" and f.book_type in CONTEXT_AWARE_BOOK_TYPES
     )
+
+
+def _c35_ignoring_classifier(f):
+    """Who ignores `--classify-min-confidence` this run, or None when a
+    Jev-wire classifier reads it."""
+    from book_maker.endpoints import is_jev_wire
+
+    if getattr(f.options, "classify_min_confidence", None) is None:
+        return None
+    choice = f.classify_choice
+    if choice is None:
+        return "this run asks no classifier and"
+    if is_jev_wire(choice.model, choice.api_base):
+        return None
+    model = choice.model or (f.model_names[0] if f.model_names else "")
+    return model or "the run's model"
 
 
 def _c8_ignored_style_flags(f):
@@ -1652,6 +1683,15 @@ COMPAT_RULES = (
         ),
     ),
     CompatRule(
+        "C35",
+        "warn",
+        lambda f: _c35_ignoring_classifier(f) is not None,
+        lambda f: (
+            f"--classify-min-confidence applies only to a Jev-compatible "
+            f"classifier; {_c35_ignoring_classifier(f)} ignores it."
+        ),
+    ),
+    CompatRule(
         "C33",
         "warn",
         lambda f: f.book_type != "epub" and _ignored_classifier(f.options) is not None,
@@ -1775,6 +1815,7 @@ def endpoint_preview_lines(options):
     refusal instead of stopping the preview.
     """
     from book_maker.endpoints import (
+        is_jev_wire,
         resolve_classify_endpoint,
         resolve_image_endpoint,
         run_choice,
@@ -1794,7 +1835,14 @@ def endpoint_preview_lines(options):
             raise _AsksNothing(mode)
         choice = resolve_classify_endpoint(copy, run, provider, with_key=False)
         model = choice.model or "the run's model"
-        lines.append(f"Classifier: {model} at {choice.where()} ({choice.source})")
+        line = f"Classifier: {model} at {choice.where()} ({choice.source})"
+        if is_jev_wire(choice.model, choice.api_base):
+            # the gate the run's JevBackend will use (flag, variable, constant)
+            from book_maker.classifier import jev_min_confidence
+
+            gate = jev_min_confidence(getattr(copy, "classify_min_confidence", None))
+            line += f" gate {gate:g}"
+        lines.append(line)
     except _AsksNothing:
         lines.append(f"Classifier: none (--plan-classify {mode} asks nothing)")
     except SystemExit as err:
@@ -1994,6 +2042,9 @@ def run_facts(options, given, **resolved):
         batch_units=GENERAL_GROUP_MAX_UNITS,
         # a classifier other than the run's translator (see main)
         classifier_resolved=False,
+        # the classify choice resolved without a key (see main); None where
+        # nothing classifies (not an epub, or --plan-classify all/agent)
+        classify_choice=None,
     )
     # The one parse of `--prompt` this run does. The rows below ask about it,
     # and `main` announces and re-raises from the same pair rather than
@@ -2302,6 +2353,14 @@ def build_parser():
         default="",
         metavar="KEY",
         help=HELP_CLASSIFY_KEY,
+    )
+    parser.add_argument(
+        "--classify-min-confidence",
+        dest="classify_min_confidence",
+        type=classify_min_confidence,
+        default=None,
+        metavar="P",
+        help=HELP_CLASSIFY_MIN_CONFIDENCE,
     )
     # The old name of --classify-model (owner 260923): still accepted,
     # hidden from the help, merged by `normalize_options`, where the new
@@ -3126,11 +3185,13 @@ def main(argv=None, *, markdown_loader_class=None):
     # plans on a route that could not classify by itself). A choice that
     # cannot be made is refused now, in its own words.
     classifier_resolved = False
+    previewed_classify_choice = None
     if book_type == "epub" and classify_mode not in NEVER_CLASSIFIES:
         try:
-            classifier_resolved = is_separate_classifier(
-                preview_classify_choice(options, model_names, api_format)
+            previewed_classify_choice = preview_classify_choice(
+                options, model_names, api_format
             )
+            classifier_resolved = is_separate_classifier(previewed_classify_choice)
         except SystemExit as err:
             print(f"[bold red]Error: {escape(redact(str(err)))}[/bold red]")
             exit(1)
@@ -3149,6 +3210,7 @@ def main(argv=None, *, markdown_loader_class=None):
         plan_auto=plan_auto,
         batch_units=batch_units,
         classifier_resolved=classifier_resolved,
+        classify_choice=previewed_classify_choice,
     )
     check_compatibility(facts)
 

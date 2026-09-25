@@ -45,6 +45,7 @@ sections after it provide additional notes for selected workflows.
 | `--classify-model MODEL` | Model for every classification step (old name `--plan-classify-model`), or a Jev-compatible classifier (TypeSafe's Jev by default; Simple Jev at its URL); implies model mode on an epub. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation. Default: the provider entry's `classify_model`, else the run's model. |
 | `--classify-base-url URL` | Endpoint for `--classify-model` when it is not the run's (OpenAI-compatible only). |
 | `--classify-key KEY` | Key for `--classify-base-url`; same default rule as `--img-key`. |
+| `--classify-min-confidence P` | Confidence gate for a Jev-compatible classifier, 0 to 1: a `skip` whose probability is below it becomes `translate`; `translate` is never gated. Default `0.95`, measured; below `0.5` the gate is off. `BBM_JEV_MIN_CONFIDENCE` sets it without the flag. |
 | `--plan-min-coverage FRACTION` | Fail if selected planned text is below this fraction; default `0.5`, must be between 0 and 1 (`0` disables the guard, values above `0.9` usually abort — both warn). |
 | `--poetry-group-size N` | Deprecated — general grouping and the session handoff give short lines their neighbours now, and the units cap is `--max-batch-units`. Still works (default `8`, minimum `1`) but warns. |
 

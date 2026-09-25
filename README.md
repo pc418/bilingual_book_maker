@@ -333,7 +333,8 @@ python3 make_book.py --book_name my_book.epub --key ${key} --plan-classify agent
   row stops the run instead of falling back), `agent`.
   `--classify-model X` classifies with another model (`--plan-classify-model`
   is its old name), or a Jev-compatible classifier (TypeSafe's Jev by
-  default; Simple Jev at its URL); set explicitly, a classification failure aborts instead
+  default; Simple Jev at its URL), where `--classify-min-confidence` moves
+  the gate (default 0.95, measured); set explicitly, a classification failure aborts instead
   of falling back. `--classify-base-url URL` asks it at another
   OpenAI-compatible endpoint, with `--classify-key KEY`.
 - `--plan-min-coverage` (default 0.5): the run aborts when the plan covers

@@ -61,6 +61,8 @@ HELP_IMG_KEY = "API key for --img-base-url. Default: the run's key when the endp
 HELP_CLASSIFY_MODEL = "Model for every classification step: plan mode's unit classifier (the PDF route has no classification step yet). Resolution: this flag, else the provider entry's classify_model, else the run's own model. --plan-classify-model is the old name of this flag. Asked over a JSON schema where its endpoint verifies one, else over a plain conversation. 'jev' asks TypeSafe's Jev classifier (default host api.typesafe.ai, key JEV_API_KEY); a Jev-compatible server such as Simple Jev is reached by its URL in --classify-base-url."
 HELP_CLASSIFY_BASE_URL = "Base URL for --classify-model: an OpenAI-compatible endpoint, or a Jev-compatible classifier's URL (a path ending in /systemone or /classifier is used as is)."
 HELP_CLASSIFY_KEY = "API key for --classify-base-url; same default rule as --img-key. A Jev host's own variable (JEV_API_KEY or TYPESAFE_API_KEY at typesafe.ai, FEATHERLESS_API_KEY at featherless.ai) is read only at that host."
+# The lead's text, verbatim (packet H item 14, owner ruling 260924).
+HELP_CLASSIFY_MIN_CONFIDENCE = "Confidence gate for a Jev-compatible classifier, 0 to 1: a 'skip' whose probability is below it becomes 'translate'; 'translate' is never gated. Default 0.95, measured 260924 on the epub3-samples corpus against gpt-5.6-luna with a lost skip costing ten extra translates. On two options the probability is never below 0.5, so a lower value turns the gate off. BBM_JEV_MIN_CONFIDENCE sets it for a run without the flag."
 
 # The run's closing usage line for a classifier on an endpoint of its own
 # (packet F: "Classifier ({model} at {base}): ..."); the image model's is
@@ -570,7 +572,14 @@ def build_classifier(
         return Classifier(
             None,
             choice.model,
-            backends=[JevBackend(choice.model, choice.key, choice.api_base)],
+            backends=[
+                JevBackend(
+                    choice.model,
+                    choice.key,
+                    choice.api_base,
+                    min_confidence=getattr(options, "classify_min_confidence", None),
+                )
+            ],
             source=choice.source,
             base=choice.api_base,
             separate=True,

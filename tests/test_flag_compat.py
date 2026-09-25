@@ -830,6 +830,16 @@ WARN_FIXTURES = [
         "on a md book.",
     ),
     (
+        # C35: the Jev gate on a classifier that has none (packet H item 14,
+        # owner ruling 260924); with no choice resolved the run classifies
+        # nothing at all
+        "C35",
+        ["--classify-min-confidence", "0.9"],
+        {"book_type": "md"},
+        "--classify-min-confidence applies only to a Jev-compatible "
+        "classifier; this run asks no classifier and ignores it.",
+    ),
+    (
         "C32:old-name",
         ["--plan-classify", "all", "--plan-classify-model", "gpt-5.6-luna"],
         {},
@@ -1000,6 +1010,91 @@ class TestRowsFollowWhatTheLoadersRead:
         assert tripped(f) == []
         check_compatibility(f)
         assert capsys.readouterr().out == ""
+
+
+class TestTheJevGateFlag:
+    """PIN (owner ruling 260924, packet H item 14): --classify-min-confidence
+    is read by a Jev-compatible classifier only; C35 says so for any other,
+    naming the model that ignores it, and a Jev-wire choice is silent."""
+
+    def _choice(self, model, base=""):
+        from book_maker.endpoints import EndpointChoice
+
+        return EndpointChoice(model, base, None, "openai", "cli")
+
+    def test_c35_names_a_chat_classifier_that_ignores_it(self, capsys):
+        f = facts(
+            [
+                "--book_name",
+                "b.epub",
+                "--classify-model",
+                "gpt-5.6-luna",
+                "--classify-min-confidence",
+                "0.9",
+            ],
+            classify_choice=self._choice("gpt-5.6-luna"),
+        )
+        assert "C35" in tripped(f)
+        check_compatibility(f)
+        out = " ".join(capsys.readouterr().out.split())
+        assert (
+            "--classify-min-confidence applies only to a Jev-compatible "
+            "classifier; gpt-5.6-luna ignores it." in out
+        )
+
+    def test_c35_names_the_run_model_when_the_run_classifies(self, capsys):
+        f = facts(
+            ["--book_name", "b.epub", "--classify-min-confidence", "0.9"],
+            classify_choice=self._choice(""),
+            model_names=["run-model"],
+        )
+        check_compatibility(f)
+        assert "run-model ignores it." in " ".join(capsys.readouterr().out.split())
+
+    @pytest.mark.parametrize(
+        "model,base",
+        [
+            ("jev-latest", "https://api.typesafe.ai"),
+            ("featherless-ai/Qwen3.8-27B-classifier", ""),
+            ("m", "https://gw.example/v1/systemone"),
+        ],
+    )
+    def test_c35_is_silent_for_a_jev_wire_classifier(self, model, base):
+        f = facts(
+            ["--book_name", "b.epub", "--classify-min-confidence", "0.9"],
+            classify_choice=self._choice(model, base),
+        )
+        assert "C35" not in tripped(f)
+
+    def test_c35_is_silent_without_the_flag(self):
+        f = facts(
+            ["--book_name", "b.epub", "--classify-model", "gpt-5.6-luna"],
+            classify_choice=self._choice("gpt-5.6-luna"),
+        )
+        assert "C35" not in tripped(f)
+
+    def test_the_preview_prints_the_gate_for_a_jev_classifier(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("BBM_JEV_MIN_CONFIDENCE", raising=False)
+        book = str(_book(tmp_path))
+        proc = _cli(
+            "--book_name",
+            book,
+            "--plan-dry-run",
+            "--classify-model",
+            "jev",
+            "--classify-min-confidence",
+            "0.9",
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "Classifier: jev-latest at https://api.typesafe.ai (cli) gate 0.9" in (
+            _flat(proc)
+        )
+        proc = _cli("--book_name", book, "--plan-dry-run", "--classify-model", "jev")
+        assert "(cli) gate 0.95" in _flat(proc)
+        proc = _cli("--book_name", book, "--plan-dry-run")
+        assert " gate " not in _flat(proc)
 
 
 class TestTheLegacySystemVariableIsDeprecated:

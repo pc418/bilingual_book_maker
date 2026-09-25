@@ -831,3 +831,91 @@ def test_plan_classification_goes_through_the_injected_classifier(monkeypatch):
     except Exception:
         pass
     assert seen["translator"] is loader.translate_model
+
+
+# ---------------------------------------------------- --classify-min-confidence
+#
+# PIN (owner ruling 260924, "make it a cli flag and we give them evaled
+# value, so it's their problem"; packet H item 14; the 0.95 measurement is
+# docs/260924-eval-JEV_CONFIDENCE_THRESHOLD.md): the Jev gate is a flag,
+# precedence flag > BBM_JEV_MIN_CONFIDENCE > JEV_MIN_CONFIDENCE, one
+# validation rule for flag and variable. Provider entries get no field.
+
+
+def _jev_choice():
+    from book_maker.endpoints import EndpointChoice
+
+    return EndpointChoice(
+        "jev-latest", "https://api.typesafe.ai", "k", "jev", "cli", own_base=True
+    )
+
+
+def _jev_backend(options):
+    from book_maker.endpoints import build_classifier
+
+    classifier = build_classifier(_jev_choice(), None, options, "zh-hans")
+    return classifier.backends["jev"]
+
+
+def test_the_flag_reaches_the_jev_backend(monkeypatch):
+    monkeypatch.delenv("BBM_JEV_MIN_CONFIDENCE", raising=False)
+    options = _parsed("--classify-model", "jev", "--classify-min-confidence", "0.8")
+    assert options.classify_min_confidence == 0.8
+    assert _jev_backend(options).min_confidence == 0.8
+
+
+def test_the_flag_beats_the_variable(monkeypatch):
+    monkeypatch.setenv("BBM_JEV_MIN_CONFIDENCE", "0.7")
+    options = _parsed("--classify-model", "jev", "--classify-min-confidence", "0.8")
+    assert _jev_backend(options).min_confidence == 0.8
+
+
+def test_the_variable_beats_the_constant(monkeypatch):
+    from book_maker.classifier import JEV_MIN_CONFIDENCE
+
+    monkeypatch.setenv("BBM_JEV_MIN_CONFIDENCE", "0.7")
+    options = _parsed("--classify-model", "jev")
+    assert options.classify_min_confidence is None
+    assert _jev_backend(options).min_confidence == 0.7
+    monkeypatch.delenv("BBM_JEV_MIN_CONFIDENCE")
+    assert _jev_backend(options).min_confidence == JEV_MIN_CONFIDENCE == 0.95
+
+
+@pytest.mark.parametrize("raw", ["1.5", "-0.1", "nan", "high"])
+def test_an_out_of_range_flag_stops_at_parse_time(raw, capsys):
+    # argument validation, so nothing is built and nothing is asked
+    from book_maker.cli import parse_args
+
+    with pytest.raises(SystemExit) as stopped:
+        parse_args(["--book_name", "b.epub", "--classify-min-confidence", raw])
+    assert stopped.value.code == 2
+    err = " ".join(capsys.readouterr().err.split())
+    assert (
+        f"--classify-min-confidence must be a number from 0 to 1; got {raw!r}." in err
+    )
+
+
+def test_the_flag_and_the_variable_share_one_rule(monkeypatch):
+    from book_maker.classifier import jev_min_confidence
+
+    monkeypatch.setenv("BBM_JEV_MIN_CONFIDENCE", "1.5")
+    with pytest.raises(SystemExit) as stopped:
+        jev_min_confidence()
+    assert str(stopped.value) == (
+        "BBM_JEV_MIN_CONFIDENCE must be a number from 0 to 1; got '1.5'."
+    )
+
+
+def test_the_flag_help_is_the_leads_text():
+    from book_maker.cli import build_parser
+    from book_maker.endpoints import HELP_CLASSIFY_MIN_CONFIDENCE
+
+    action = next(
+        a for a in build_parser()._actions if a.dest == "classify_min_confidence"
+    )
+    assert action.help == HELP_CLASSIFY_MIN_CONFIDENCE
+    assert action.metavar == "P" and action.default is None
+    assert HELP_CLASSIFY_MIN_CONFIDENCE.startswith(
+        "Confidence gate for a Jev-compatible classifier, 0 to 1:"
+    )
+    assert "Default 0.95, measured 260924" in HELP_CLASSIFY_MIN_CONFIDENCE

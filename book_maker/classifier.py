@@ -580,23 +580,38 @@ JEV_WAIT_CAP = 120
 JEV_FATAL_STATUSES = frozenset({400, 401, 403, 404, 405, 413, 422})
 
 
-def jev_min_confidence():
-    """`JEV_MIN_CONFIDENCE`, or the environment's override of it."""
+def parse_min_confidence(raw):
+    """A gate value typed as text: a number from 0 to 1, else ValueError.
+
+    One rule for the flag and the variable, so the two cannot accept
+    different things; the caller names which one was wrong.
+    """
     import math
+
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = math.nan
+    if not 0.0 <= value <= 1.0:  # NaN fails too
+        raise ValueError(f"must be a number from 0 to 1; got {raw!r}.")
+    return value
+
+
+def jev_min_confidence(flag=None):
+    """The gate this run uses: `--classify-min-confidence` (already
+    validated, passed in as `flag`), else the environment's
+    BBM_JEV_MIN_CONFIDENCE, else `JEV_MIN_CONFIDENCE`."""
     import os
 
+    if flag is not None:
+        return flag
     raw = os.environ.get(JEV_MIN_CONFIDENCE_ENV, "").strip()
     if not raw:
         return JEV_MIN_CONFIDENCE
     try:
-        value = float(raw)
-    except ValueError:
-        value = math.nan
-    if not 0.0 <= value <= 1.0:  # NaN fails too
-        raise SystemExit(
-            f"{JEV_MIN_CONFIDENCE_ENV} must be a number from 0 to 1; got {raw!r}."
-        )
-    return value
+        return parse_min_confidence(raw)
+    except ValueError as err:
+        raise SystemExit(f"{JEV_MIN_CONFIDENCE_ENV} {err}")
 
 
 class JevFatal(Exception):
@@ -640,6 +655,7 @@ class JevBackend:
         sleep=time.sleep,
         log=None,
         wait_cap=JEV_WAIT_CAP,
+        min_confidence=None,
     ):
         from .redaction import remember
         from .translator.base_translator import UsageMeter
@@ -652,7 +668,9 @@ class JevBackend:
         self._sleep = sleep
         self._log = log
         self.wait_cap = wait_cap
-        self.min_confidence = jev_min_confidence()
+        # the flag's value when one was typed, else the variable or the
+        # constant (`jev_min_confidence`)
+        self.min_confidence = jev_min_confidence(min_confidence)
         self.usage = UsageMeter()
 
     def can(self, question):
