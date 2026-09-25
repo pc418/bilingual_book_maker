@@ -33,9 +33,32 @@ def main():
     fixed = np.array([r[1] for r in ROWS])
     kept = np.array([r[2] for r in ROWS])
     changed = np.array([r[3] for r in ROWS])
-    ax.barh(y, fixed, color=PALETTE["blue_main"], edgecolor="black", linewidth=1.2, label="fixed")
-    ax.barh(y, kept, left=fixed, color=PALETTE["neutral"], edgecolor="black", linewidth=1.2, label="kept wrong")
-    ax.barh(y, changed, left=fixed + kept, color=PALETTE["red_strong"], edgecolor="black", linewidth=1.2, label="changed to another wrong label")
+    ax.barh(
+        y,
+        fixed,
+        color=PALETTE["blue_main"],
+        edgecolor="black",
+        linewidth=1.2,
+        label="fixed",
+    )
+    ax.barh(
+        y,
+        kept,
+        left=fixed,
+        color=PALETTE["neutral"],
+        edgecolor="black",
+        linewidth=1.2,
+        label="kept wrong",
+    )
+    ax.barh(
+        y,
+        changed,
+        left=fixed + kept,
+        color=PALETTE["red_strong"],
+        edgecolor="black",
+        linewidth=1.2,
+        label="changed to another wrong label",
+    )
     ax.set_yticks(y)
     ax.set_yticklabels([r[0] for r in ROWS], fontsize=13)
     ax.invert_yaxis()

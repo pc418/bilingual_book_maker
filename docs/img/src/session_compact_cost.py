@@ -21,7 +21,9 @@ PRICE = [("old defaults", 283361), ("C=4096", 360681), ("C=8192", 396197)]
 
 def main():
     apply()
-    fig, (left, right) = plt.subplots(1, 2, figsize=(13, 5), gridspec_kw={"width_ratios": [1.4, 1]})
+    fig, (left, right) = plt.subplots(
+        1, 2, figsize=(13, 5), gridspec_kw={"width_ratios": [1.4, 1]}
+    )
     for book, (values, color) in BOOKS.items():
         left.plot(C, values, marker="o", lw=2.5, ms=8, color=color, label=book)
     left.set_xscale("log")
@@ -39,7 +41,13 @@ def main():
     bars = right.bar(labels, tokens, color=colors, edgecolor="black", linewidth=1.5)
     for bar, text in zip(bars, ["", "+27.3%", "+39.8%"]):
         if text:
-            right.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5, text, ha="center", fontsize=13)
+            right.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 5,
+                text,
+                ha="center",
+                fontsize=13,
+            )
     right.set_ylabel("session tokens (thousands)")
     right.set_ylim(0, 450)
     right.set_title("260907: 300 units, new grouping", fontsize=15)
