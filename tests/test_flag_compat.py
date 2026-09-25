@@ -993,7 +993,7 @@ class TestRowsFollowWhatTheLoadersRead:
         assert "A8" in tripped(f)
 
     def test_a8_is_quiet_on_srt_with_the_flag_the_loader_ignores(self):
-        # txt, srt and pdf never forward --use_context session (the run says
+        # txt and srt never forward --use_context session (the run says
         # so itself), so there is no growing history to warn about
         f = facts(["--book_name", "b.srt", "--use_context", "session"], book_type="srt")
         assert "A8" not in tripped(f)

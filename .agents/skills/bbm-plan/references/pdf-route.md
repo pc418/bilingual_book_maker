@@ -183,4 +183,3 @@ first look and the read-back showed, and hand over `<name>_bilingual.epub`.
 | `Warning: page N extracted C characters, several times what a printed page holds …` | usually a figure carrying hidden text; remove it from `source.md` or leave the page out with `--pages` |
 | `EPUB navigation is invalid: …` | the headings do not form a usable contents; fix the levels in `source.md` (one `#` title, then `##`, `###`) and rerun |
 | `Error: translate failed: Source or translation settings changed; start a new translation bundle.` | model, language or `source.md` changed after a partial translation; rerun with the original settings, or move the bundle aside |
-| `--use_context session` not supported for a *pdf* without `--to-epub` | the text route never hands context to the model; use `--to-epub` |

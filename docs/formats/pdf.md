@@ -94,7 +94,7 @@ Every other flag goes to the Markdown translation unchanged. These are the ones 
 
 ### How the file is read
 
-The text of every page is taken with PyMuPDF and split into lines. Lines are sent in groups of `--batch_size` (default 10). There is no structure: no headings, no figures, no tables.
+The text of every page is taken with PyMuPDF and split into lines. Lines are sent in groups of `--batch_size` (default 10), with earlier text when `--use_context` is on (window or `session`) and the pins of a `--glossary`. There is no structure: no headings, no figures, no tables.
 
 ### What you get
 
@@ -121,8 +121,6 @@ The route and run flags in the table above, plus:
 
 ### Not for the text route
 
-- `--use_context`, `--context_paragraph_limit`, `--context-compact-at`, `--no-context-compact`: the PDF text loader carries no context. The run warns.
-- `--glossary`, `--glossary-auto`: not forwarded. The run warns.
 - `--parallel-workers`: the run stays serial. The run warns.
 - `--pdf-ocr`, `--ocr-replace-layer`, `--device`, `--ocr-lang`, `--pages`, `--no-formula-images`: `--to-epub` only. The run warns and reads the whole file.
 - `--img-model`, `--img-base-url`, `--img-key`: the image step belongs to `--to-epub`. The run warns.

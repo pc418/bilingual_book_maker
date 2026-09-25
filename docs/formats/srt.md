@@ -62,7 +62,7 @@ These work the same on every format.
 - `--batch_size`: not read by the SRT loader; group with `--accumulated_num`.
 - `--use_context`: the SRT loader never hands context to the model, in either mode; the run warns.
 - `--context_paragraph_limit`, `--context-compact-at`, `--no-context-compact`: context flags; nothing reads them here.
-- `--glossary`, `--glossary-auto`: forwarded by the EPUB and Markdown loaders only; the run warns.
+- `--glossary`, `--glossary-auto`: forwarded by the EPUB, Markdown and PDF loaders only; the run warns.
 - `--max-batch-units`, `--plan-classify`, `--plan-dry-run`, `--plan-min-coverage`, `--poetry-group-size`: plan mode is EPUB only.
 - `--classify-model`, `--classify-base-url`, `--classify-key` (and `--plan-classify-model`, the old name): nothing classifies on this format yet. The run warns that the flag is ignored.
 - `--translate-tags`, `--exclude-translate-tags`, `--allow_navigable_strings`: EPUB markup selectors; the run warns.

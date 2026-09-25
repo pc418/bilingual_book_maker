@@ -24,7 +24,7 @@ What does not apply, so do not pass it:
 
 - **TXT and SRT carry no context**: `--use_context` (either mode),
   `--context-compact-at`, `--glossary` are ignored with a warning. Only
-  Markdown takes the `CONTEXT` array and `--glossary`.
+  Markdown and the PDF text route take the `CONTEXT` array and `--glossary`.
 - `--quiet` is EPUB only; the run warns. Keep the log redirect.
 - `--parallel-workers` works on Markdown only (not with a session); TXT and
   SRT stay serial.

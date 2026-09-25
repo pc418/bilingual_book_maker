@@ -70,7 +70,7 @@ These work the same on every format.
 
 - `--use_context`: the TXT loader never hands context to the model, in either mode. The run warns; for a session it prints `--use_context session is not supported for txt books; it will be ignored.`
 - `--context_paragraph_limit`, `--context-compact-at`, `--no-context-compact`: context flags; nothing reads them here.
-- `--glossary`, `--glossary-auto`: forwarded by the EPUB and Markdown loaders only; the run warns.
+- `--glossary`, `--glossary-auto`: forwarded by the EPUB, Markdown and PDF loaders only; the run warns.
 - `--accumulated_num`: not read by the TXT loader; the run warns and points at `--batch_size`.
 - `--max-batch-units`, `--plan-classify`, `--plan-dry-run`, `--plan-min-coverage`, `--poetry-group-size`: plan mode is EPUB only.
 - `--classify-model`, `--classify-base-url`, `--classify-key` (and `--plan-classify-model`, the old name): nothing classifies on this format yet. The run warns that the flag is ignored.

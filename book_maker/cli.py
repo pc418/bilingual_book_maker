@@ -1039,8 +1039,8 @@ def prompt_has_system(facts):
 
 # Loaders that read the tag-selection flags: epub alone. Markdown reads
 # neither the selections nor the exclusions; everything outside epub ignores
-# the styling flags, and outside epub and Markdown the worker count and the
-# context switch.
+# the styling flags, outside epub and Markdown the worker count, and outside
+# epub, Markdown and pdf the context switch.
 TAG_AWARE_BOOK_TYPES = ("epub",)
 EXCLUDE_AWARE_BOOK_TYPES = ("epub",)
 # Loaders that group by `--accumulated_num`: epub (a token budget) and srt

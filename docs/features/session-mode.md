@@ -10,7 +10,7 @@ A history cannot grow for ever. When it reaches `--context-compact-at` (default 
 
 Nothing to install. Session mode needs:
 
-- an EPUB or Markdown book (and a PDF on the `--to-epub` route, which translates Markdown). TXT, SRT and the PDF text route never hand context to the model.
+- an EPUB, Markdown or PDF book (a PDF on either route: `--to-epub` translates Markdown, and the text route takes a session too). TXT and SRT never hand context to the model.
 - a route that keeps a history: the openai-shaped routes (OpenAI, gateways, groq, xai, litellm, local servers) and anthropic. Gemini and Qwen keep their own history and take bare `--use_context` instead; they refuse `session`. The codex route is a session whether you ask or not: its thread is the history.
 
 The flags:
@@ -35,7 +35,7 @@ If you translate a novel, add `--use_context session` and, when a recurring name
 - **`cached=` on the progress bar stays at 0 after a dozen requests.** The endpoint has no prompt cache, and every request pays for the whole history at full price. Press Ctrl+C and rerun with bare `--use_context`.
 - **`--use_context session outside plan mode leaves grouping off, so every paragraph is its own request and each one re-reads the whole history.`** You are on a Markdown book or passed `--plan-classify none`. On an EPUB, raise `--accumulated_num`; on Markdown (and the PDF route), raise `--batch_size`.
 - **`Error: --use_context session is not implemented for the gemini format; it would be accepted and ignored.`** Use bare `--use_context` on Gemini and Qwen.
-- **`--use_context session is not supported for txt books; it will be ignored.`** TXT, SRT and the PDF text route carry no context. For a PDF, use `--to-epub`.
+- **`--use_context session is not supported for txt books; it will be ignored.`** TXT and SRT carry no context.
 - **`--parallel-workers is not supported with --use_context session: one history is the context, and a worker cannot share it.`** Choose one. Bare `--use_context` keeps the workers.
 - **`a compact budget of N is too small for a session; use at least 1500 estimated tokens.`** Below 1500 a window is mostly the handoff that opens it. Use bare `--use_context` if you want less context than that.
 - **`ℹ handoff report failed (…); starting the next context window without a summary`**, or `… keeping the current context and retrying on the next paragraph`. One compaction produced no usable report. Translation continues. If the text after that seam drifts, pin the terms with `--glossary`.

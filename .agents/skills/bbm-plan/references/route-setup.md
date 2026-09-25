@@ -223,7 +223,7 @@ text is on `docs/cmd.md`.
 | `--no-context-compact` | on/off | *off* | a small model writes poor handoff reports and the text drifts after a seam; the next window then starts empty |
 | `--context_paragraph_limit` | integer | *unset* (3 pairs) | window mode only, when the user wants a different number of pairs re-sent |
 | `--prompt` | path to `.json` / `.txt` / `.md`, or a template string | *unset* unless the user has one | the user hands over their own voice/register. Lint first (`references/prompt-files.md`). The run prints where each section landed |
-| `--glossary` / `--terminology` | path to a `term -> translation` file | *unset* unless the user has pinned terms | the user names renderings that must hold (people, places, titles). Hits-only: costs nothing on untouched paragraphs. openai-shaped and codex routes, EPUB and Markdown books. A pin is verbatim: use only renderings the user stands behind |
+| `--glossary` / `--terminology` | path to a `term -> translation` file | *unset* unless the user has pinned terms | the user names renderings that must hold (people, places, titles). Hits-only: costs nothing on untouched paragraphs. openai-shaped and codex routes, EPUB, Markdown and PDF books. A pin is verbatim: use only renderings the user stands behind |
 | `--glossary-auto` | `on`, `off` | **off** | only for a session run on a capable model when the user wants self-taught renderings kept across window seams |
 
 ## Failure lines on any route (all fail loud by design)
