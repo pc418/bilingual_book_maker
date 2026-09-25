@@ -246,6 +246,24 @@ def test_every_page_read_empty_stops_before_translation(
     assert not bundle.source.exists()
 
 
+def test_an_empty_first_page_is_named_by_the_document_not_the_markers(
+    bundle, layered, pandoc, capsys
+):
+    # docling's export writes no break for a page with no item, so an
+    # empty page 1 leaves page 2's text under the first marker; the
+    # document's own page numbers name the right page.
+    pdf = layered()
+
+    def convert(pdf_path, **kwargs):
+        kwargs["report"]["text_pages"] = [2]
+        return "Read by OCR on two.\n"
+
+    _extract(bundle, pdf, pandoc, convert)
+    out = capsys.readouterr().out
+    assert OCR_REPLACE_EMPTY.format(page=1) in out
+    assert OCR_REPLACE_EMPTY.format(page=2) not in out
+
+
 def test_the_page_markers_answer_when_the_converter_does_not(
     bundle, layered, pandoc, capsys
 ):
