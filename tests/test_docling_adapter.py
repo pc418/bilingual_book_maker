@@ -876,6 +876,16 @@ def test_a_page_with_no_text_layer_is_refused_without_the_models(
     assert bundle.stage_status("extract") == "failed"
 
 
+def test_the_ocr_refusal_names_the_flag_as_it_is_typed():
+    # PIN (packet H, 260924; docs/260923-docs-WIKI_MODERNIZE.md "Findings
+    # for the owner" item 3): --pdf-ocr takes no value, so "--pdf-ocr on"
+    # was a command argparse refuses
+    text = OCR_REQUIRED.format(count=1, total=2, pages="2")
+    assert "rerun with --pdf-ocr to read them" in text
+    assert "--pdf-ocr on" not in text
+    assert "--with-ocr" not in text
+
+
 def test_a_plain_run_reads_without_ocr_and_says_so(bundle, pdf, pandoc, device, capsys):
     # PIN (owner 260921, docs/260921-plan-PDF_DOCLING_ONLY_AND_INSTALL_ROUTES.md):
     # OCR is not the quality boundary. On born-digital PDFs it changed

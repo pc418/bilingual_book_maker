@@ -84,6 +84,17 @@ def test_the_main_cli_route_keeps_the_too_old_message(tmp_path, monkeypatch):
     assert calls == [None]
 
 
+def test_a_too_old_pandoc_names_path_first_and_the_harness_flag_as_such():
+    # PIN (packet H, 260924; docs/260923-docs-WIKI_MODERNIZE.md "Findings
+    # for the owner" item 3): the refusal reaches the main CLI's --to-epub
+    # route too, which has no --pandoc flag, so the fix it names first is
+    # PATH and --pandoc is offered as the harness's
+    text = PANDOC_TOO_OLD.format(found="pandoc 3.1.3")
+    assert "put a Pandoc ≥ 3.1.12 first on PATH" in text
+    assert "(or run the harness tools/pdf_to_book.py with --pandoc PATH)" in text
+    assert "or provide --pandoc PATH" not in text
+
+
 def test_the_main_cli_route_still_rewords_a_missing_pandoc(tmp_path, monkeypatch):
     def missing(explicit=None):
         raise PipelineError(PANDOC_REQUIRED)

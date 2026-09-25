@@ -36,7 +36,8 @@ PANDOC_TOO_OLD = (
     "{found} is too old for EPUB export; Pandoc 3.1.12 or newer is required "
     "(its table of contents points at headings, older releases point at "
     "files). Install a current release from https://pandoc.org/installing.html "
-    "or provide --pandoc PATH."
+    "and put a Pandoc ≥ 3.1.12 first on PATH (or run the harness "
+    "tools/pdf_to_book.py with --pandoc PATH)."
 )
 NAV_INVALID = "EPUB navigation is invalid: "
 PDF_OPTIONS_INERT = (
@@ -91,7 +92,7 @@ INVISIBLE_TEXT_LAYER = (
 )
 OCR_REQUIRED = (
     "{count} of {total} selected pages have no text layer (page(s) {pages}); "
-    "rerun with --pdf-ocr on to read them with the OCR models."
+    "rerun with --pdf-ocr to read them with the OCR models."
 )
 EXTRACTION_EMPTY = (
     "The parser returned no text for this PDF; there is nothing to translate. "
