@@ -53,8 +53,10 @@ nav:
       - Python: installation.md
       - PDF extra: installation-pdf.md
       - Docker: docker.md
-  - Translating with an LLM: llm-args.md
-  - Machine translation: machine-args.md
+  - Translation routes:
+      - Translating with an LLM: llm-args.md
+      - Provider file and extra models: providers.md
+      - Machine translation: machine-args.md
   - Formats:
       - EPUB: formats/epub.md
       - TXT: formats/txt.md

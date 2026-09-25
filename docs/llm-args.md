@@ -62,7 +62,7 @@ Examples, one per common case:
       --api_format codex
     ```
 
-    Spends your ChatGPT plan through the [Codex CLI](https://developers.openai.com/codex/cli), which must be installed and signed in (`codex login`). It runs `gpt-5.6-luna`; add `--model <id>` for another. The thread is the context, so no `--use_context` is needed. It ignores `--api_base` and `--key`.
+    Spends your ChatGPT plan through the [Codex CLI](https://developers.openai.com/codex/cli), which must be installed and signed in (`codex login`). It runs `gpt-5.6-luna`; add `--model <id>` for another. The thread is the context, so no `--use_context` is needed. It ignores `--api_base` and `--key`. When Codex answers that the selected model is at capacity, the run prints a `codex: … retrying in 60 s` line and asks again; that answer is usually Codex rate-limiting a network it distrusts, and another network or account helps.
 
 A gateway that serves Claude models usually speaks the OpenAI shape. If a gateway answers 404 to the anthropic shape, the run stops and names `--api_format openai` as the fix.
 
@@ -86,31 +86,9 @@ set -a; source .env; set +a
 
 More variables are on [Environment variables](env_settings.md).
 
-## The provider file
+## The provider file and extra models
 
-`--provider NAME` takes the route from a JSON file instead of flags. Create `bbm_providers.json` in the directory you run from, or `~/.bbm/providers.json`. The project file wins on a shared name. The repository ships `bbm_providers.example.json` with an entry for Gemini, Qwen, xAI, Groq, OrcaRouter, Ollama, LiteLLM, SiliconFlow and OpenRouter.
-
-```json
-{
-  "providers": {
-    "siliconflow": {
-      "api_style": "openai",
-      "base_url": "https://api.siliconflow.cn/v1",
-      "default_models": ["Qwen/Qwen2.5-72B-Instruct"],
-      "env_key": "BBM_SILICONFLOW_API_KEY"
-    }
-  }
-}
-```
-
-| field | required | meaning |
-|---|---|---|
-| `api_style` | yes | `openai`, `anthropic`, `gemini`, `qwen`, `groq`, `xai` or `litellm` |
-| `base_url` | no | the address; defaults to the style's own |
-| `default_models` | no | models to use; required if you do not pass `--model` |
-| `env_key` | no | the environment variable holding the key; required if you do not pass `--key` |
-| `prices` | no | per million tokens, per model: `{"<model>": {"input": …, "output": …, "cached_input": …}}`. With a price for every model in the run, the progress bar shows money spent (`spent=$0.012`) instead of token counts |
-| `currency` | no | default `USD`; `EUR`, `GBP`, `CNY`, `JPY` print with their symbol |
+`--provider NAME` takes the route from a JSON file instead of flags: `bbm_providers.json` in the directory you run from, or `~/.bbm/providers.json`. A name in neither falls back to the shipped `bbm_providers.example.json`, and the run says so.
 
 ```bash
 bbook_maker \
@@ -119,7 +97,16 @@ bbook_maker \
   --use_context session
 ```
 
-Flags you pass yourself win over the entry. The spent amount is an estimate from the usage each request reports; the vendor's bill is the number that counts.
+Two steps can use a model other than the translating one:
+
+| flag | what it does |
+|---|---|
+| `--classify-model MODEL` | The model that decides an EPUB's plan. Default: the entry's `classify_model`, else the translating model. `--plan-classify-model` is its old name. |
+| `--classify-base-url URL`, `--classify-key KEY` | Where that model is served and its key, when it is not the run's endpoint (OpenAI-compatible only). |
+| `--img-model MODEL` | A vision model for the steps that look at a page image (today: correcting region roles on the [PDF route](features/pdf-to-epub.md)). Default: the entry's `img_model`, else off. Never the translating model by fallback. `none` turns an entry's image model off. |
+| `--img-base-url URL`, `--img-key KEY` | Where that model is served and its key (OpenAI-compatible only). |
+
+The fields, the shipped entries, which key is sent where, and the Jev classifier are on [Provider file and extra models](providers.md). Note that the shipped `openai` entry names an image model, so `--provider openai` turns the PDF route's image step on.
 
 ## Language
 
@@ -183,9 +170,10 @@ What to expect from an 8B or 16B model:
 
 - **No strict JSON schema.** Most local servers do not enforce one. The run notices this with a one-request probe and switches to a delimiter format, printing a line such as `doesn't apply JSON schema … using delimiter method`. This is not an error.
 - **Smaller requests.** On an endpoint without a strict schema, each request carries at most 8 units, half of the default 16, and outside session mode about 800 tokens of text. The run prints the numbers it chose. The defaults are chosen so that a small model can hold them.
-- **Plan classification by one word.** Plan mode asks the model `skip` or `translate` per kind of block. Anything else is treated as `translate`, so a weak model translates too much rather than too little.
+- **Plan classification by one word.** Plan mode asks the model `skip` or `translate` for five kinds of block per turn. If the model misses the reply format twice in a row, the run asks three per turn, then one. If it still misses, classification stops and the rest is translated. Anything unreadable is treated as `translate`, so a weak model translates too much rather than too little. You can also hand classification to a hosted model with `--classify-model` and keep translating locally; see [Provider file and extra models](providers.md#examples).
 - **Short context.** Set `--context-compact-at` to the model's input limit (minimum 1500) so a session window never overflows it.
-- **Thinking models.** A model that reasons before it answers can be told not to, through `--extra_body`, for example `--extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'`.
+- **Thinking models.** A model that reasons before it answers can be told not to with `--no-thinking`. The run finds the request field the server accepts from the server's own rejections. If your server needs a field of its own, `--extra_body` wins, for example `--extra_body '{"chat_template_kwargs": {"enable_thinking": false}}'`.
+- **No image step.** The PDF route's image step runs only on a model you name with `--img-model`, so a local model is never asked to read a page.
 
 Flags to avoid on a small model:
 
@@ -200,7 +188,8 @@ If plan classification keeps failing on your model, `--plan-classify all` skips 
 | flag | what it does |
 |---|---|
 | `--temperature` | Sampling temperature. The anthropic format always sends it; the openai format leaves it out when it equals the API default or when the model rejects one; codex ignores it. |
-| `--extra_body JSON` | Extra fields on every request body (openai and anthropic routes). A field here beats the flag for it. |
+| `--no-thinking` | Ask the model not to reason before answering; thinking buys nothing on a paragraph and costs tokens and time. On the OpenAI-shaped routes the request field is found from the endpoint's own rejections and remembered; if the endpoint refuses every spelling, the run warns once and goes on without it. On anthropic it is `thinking: {"type": "disabled"}`. Refused on codex. Image requests carry it too. |
+| `--extra_body JSON` | Extra fields on every request body (openai and anthropic routes). A field here beats the flag for it, `--no-thinking` included. |
 | `--extra_headers JSON` | Extra HTTP headers on every request (openai and anthropic routes). |
 | `--model_list IDS` | Several models to rotate across, to spread rate limits. Refused with `--use_context session`. |
 | `--interval SECONDS` | Pause between requests. Only the gemini format uses it. |
