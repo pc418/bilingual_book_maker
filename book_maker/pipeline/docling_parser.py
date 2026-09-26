@@ -37,6 +37,7 @@ from . import pdf_figures, pdf_formula, pdf_headings, pdf_render
 from .errors import PipelineError
 from .importer import import_markdown
 from .messages import (
+    CONTROL_CHARACTERS_REMOVED,
     FORMULA_IMAGES,
     BACKEND_FAILED,
     INVISIBLE_TEXT_LAYER,
@@ -89,6 +90,7 @@ from .pdf_common import (
     dense_pages,
     first_selected_page,
     heading_for_top,
+    strip_control_characters,
     text_layer_report,
 )
 from .pdf_settings import ExtractionSettings
@@ -1167,6 +1169,17 @@ def extract_pdf(
         text = _number_pages(markdown, first_selected_page(page_range))
         if gapped:
             text = _selected_only(text, ranges)
+        # docling reads some glyphs as C0 control characters. They are not
+        # text, XML forbids them, and a model shown one writes it back as a
+        # `\u0000` escape Pandoc takes for raw TeX: removed here, said once,
+        # and kept in the limitations (skill field test 260925).
+        text, removed, control_pages = strip_control_characters(text)
+        control_note = None
+        if removed:
+            control_note = CONTROL_CHARACTERS_REMOVED.format(
+                count=removed, pages=", ".join(control_pages)
+            )
+            print(control_note)
         # With --ocr-replace-layer a page that carried a layer and came
         # back empty is empty: the layer is not used in its place (owner
         # ruling 260923, no silent fallback). Said page by page; nothing
@@ -1279,6 +1292,8 @@ def extract_pdf(
         limitations.append(JBIG2_MASK_RENDER)
     if unplaced_note is not None:
         limitations.append(unplaced_note)
+    if control_note is not None:
+        limitations.append(control_note)
     if heading_note is not None:
         limitations.append(heading_note)
     for number, chars in dense:

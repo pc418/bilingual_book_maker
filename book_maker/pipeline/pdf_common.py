@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .bundle import parse_pages
 from .errors import PipelineError
+from .preflight import CONTROL_CHARACTER
 from .messages import (
     OCR_EMPTY,
     OCR_EMPTY_PAGES,
@@ -356,6 +357,30 @@ def blank_pages(markdown_text):
         else:
             blank.append(int(number))
     return blank, any_prose
+
+
+def strip_control_characters(markdown_text):
+    """`(text, count, pages)`: the Markdown without C0 control characters.
+
+    Tab, LF and CR stay. `pages` names, in order, the pages (from their
+    markers) the removed characters stood on; one after the unplaced tail
+    marker is named "unplaced", one before any marker is not named.
+    """
+    matches = list(CONTROL_CHARACTER.finditer(markdown_text))
+    if not matches:
+        return markdown_text, 0, []
+    markers = [(m.start(), m.group(1)) for m in PAGE_MARKER.finditer(markdown_text)]
+    tail = markdown_text.find(UNPLACED_MARKER)
+    pages = []
+    for match in matches:
+        if tail != -1 and match.start() > tail:
+            page = "unplaced"
+        else:
+            before = [number for start, number in markers if start < match.start()]
+            page = before[-1] if before else None
+        if page is not None and page not in pages:
+            pages.append(page)
+    return CONTROL_CHARACTER.sub("", markdown_text), len(matches), pages
 
 
 def dense_pages(markdown_text, limit=PAGE_CHARS_LIMIT):

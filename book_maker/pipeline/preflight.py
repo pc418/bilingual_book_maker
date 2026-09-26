@@ -11,10 +11,11 @@ Two questions, both answered before anything is paid for or published:
   instead of being translated as prose or dropped on the way to the EPUB.
 
 Pandoc's own reader decides what the document *is*; this module only walks
-the tree it returns. Two forms are checked on the raw text instead, because
+the tree it returns. Three forms are checked on the raw text instead, because
 Pandoc's answer for them is indistinguishable from ordinary prose or from a
 supported form: reference-style images, which the Markdown loader would hand
-to the model as text, and HTML images, which carry no Pandoc target.
+to the model as text, HTML images, which carry no Pandoc target, and C0
+control characters, which XML forbids in the EPUB.
 """
 
 import json
@@ -59,6 +60,13 @@ HTML_COMMENT = re.compile(r"^\s*<!--.*-->\s*$", re.S)
 
 REFERENCE_IMAGE = re.compile(r"!\[[^\]\n]*\]\s*\[[^\]\n]*\]")
 HTML_IMAGE = re.compile(r"<img\b", re.I)
+
+# C0 control characters other than tab, LF and CR. XML 1.0 forbids them, so
+# one in the text makes the EPUB's XHTML not well-formed; a model shown one
+# may also write it back as a `\u0000` escape, which Pandoc reads as raw TeX.
+# Both failures used to surface at export, after the translation was paid
+# for (skill field test 260925); refused here instead, code fences included.
+CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 @dataclass
@@ -215,6 +223,11 @@ class _Walker:
 
     # -- raw text -----------------------------------------------------
     def scan_raw(self, text):
+        for match in CONTROL_CHARACTER.finditer(text):
+            self.problem(
+                f"control character U+{ord(match.group()):04X}",
+                f"line {text.count(chr(10), 0, match.start()) + 1}",
+            )
         text = blank_out_code(text)
         for match in REFERENCE_IMAGE.finditer(text):
             self.problem(

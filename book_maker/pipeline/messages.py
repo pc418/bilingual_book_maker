@@ -277,6 +277,13 @@ FIGURES_LEGACY = (
     "renderer, so its figures stay at 72 DPI. Delete the bundle directory "
     "to extract again with sharp figures."
 )
+# docling reads some glyphs (a minus, an approximately-equal sign) as C0
+# control characters; the extraction removes them from source.md (skill
+# field test 260925, lead's text).
+CONTROL_CHARACTERS_REMOVED = (
+    "Extraction: removed {count} control character(s) that docling read from "
+    "glyphs on page(s) {pages}; they are not text and would break the EPUB."
+)
 PAGE_TOO_DENSE = (
     "Warning: page {page} extracted {chars} characters, several times what a "
     "printed page holds; inspect source.md before translating."

@@ -947,3 +947,47 @@ def test_a_numbered_translation_stays_prose(tmp_path, pandoc, monkeypatch):
     assert not any(
         inner["t"] == "OrderedList" for div in divs[:2] for inner in div["c"][1]
     )
+
+
+# --------------------------------------------------------------------------
+# Control characters and raw TeX: refused before the model is paid
+# --------------------------------------------------------------------------
+# PIN: lead 260925, skill field test, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md
+# -- a control character (docling reads some glyphs as U+0000, U+0006,
+# U+0019) or the `\u0000` escape a model writes back for one broke the
+# EPUB export after the translation had been paid for. The check that
+# refuses them runs on source.md before translation, on every run,
+# including a source.md the operator edited after extraction.
+@pytest.mark.parametrize(
+    "inserted, named",
+    [
+        ("\x00", "control character U+0000"),
+        ("\x06", "control character U+0006"),
+        ("\x19", "control character U+0019"),
+        ("\\u0000", "raw tex"),
+    ],
+)
+def test_a_control_character_or_raw_tex_is_refused_before_translation(
+    tmp_path, pandoc, fake_format, inserted, named
+):
+    bundle = prepared(tmp_path, pandoc)
+    edited = bundle.source.read_text(encoding="utf-8").replace(
+        "ordinary prose", f"ordinary {inserted} prose"
+    )
+    bundle.source.write_text(edited, encoding="utf-8")
+
+    with pytest.raises(PipelineError) as refused:
+        translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    assert named in refused.value.detail
+    assert FakeTranslator.instances == []
+    assert not bundle.bilingual_markdown.exists()
+
+
+def test_a_control_character_inside_a_code_fence_is_refused_too(tmp_path, pandoc):
+    """XML forbids it everywhere, so a fence does not make it safe."""
+    text = "# T\n\ntext\n\n```\nbad \x01 byte\n```\n"
+    book = write_fixture(tmp_path / "src", text)
+    bundle = Bundle(tmp_path / "bundle").create()
+    with pytest.raises(PipelineError) as refused:
+        import_markdown(bundle, book, pandoc=pandoc)
+    assert "control character U+0001 at line 6" in refused.value.detail

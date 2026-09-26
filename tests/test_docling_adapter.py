@@ -2494,3 +2494,53 @@ def test_the_info_line_of_a_failing_conversion_is_its_last_words(
             convert=_logging_convert("Processing page 2", fail=RuntimeError("boom")),
         )
     assert "(last log line: Processing page 2)" in failed.value.detail
+
+
+# PIN: lead 260925, skill field test, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md
+# -- docling read glyphs as U+0000, U+0006 and U+0019 into the prose of
+# mixed_photo_code_1_p56.pdf; the EPUB export then failed after the
+# translation was paid for. The extraction removes them, says so once in
+# the lead's words, and keeps the line in the limitations.
+def test_control_characters_are_removed_from_source_md_and_said_once(
+    bundle, pdf, pandoc, device, capsys
+):
+    from book_maker.pipeline.messages import CONTROL_CHARACTERS_REMOVED
+
+    markdown = (
+        "# Chapter One\n\nR 1 \x00 R 4 and Vout \x00 Vsens.\n"
+        f"{BREAK}\n## Notes\n\nripple ( \x06 0.3 V ), tab\tkept.\n"
+    )
+    docling_parser.extract_pdf(
+        bundle, pdf, pandoc=pandoc, convert=fake_convert(markdown=markdown)
+    )
+    source = bundle.source.read_text(encoding="utf-8")
+    raw = bundle.raw_source.read_text(encoding="utf-8")
+    for text in (source, raw):
+        assert not pdf_common.CONTROL_CHARACTER.search(text)
+    assert "R 1  R 4" in source and "tab\tkept." in source
+    line = CONTROL_CHARACTERS_REMOVED.format(count=3, pages="1, 2")
+    assert line == (
+        "Extraction: removed 3 control character(s) that docling read from "
+        "glyphs on page(s) 1, 2; they are not text and would break the EPUB."
+    )
+    assert capsys.readouterr().out.count(line) == 1
+    assert line in bundle.read_manifest()["limitations"]
+
+
+def test_a_clean_extraction_says_nothing_about_control_characters(
+    bundle, pdf, pandoc, device, capsys
+):
+    docling_parser.extract_pdf(bundle, pdf, pandoc=pandoc, convert=fake_convert())
+    assert "control character" not in capsys.readouterr().out
+
+
+def test_control_characters_are_attributed_to_their_pages():
+    text = (
+        "<!-- page 3 -->\n\na\x00b\n\n<!-- page 4 -->\n\nclean\n\n"
+        "<!-- page 5 -->\n\nc\x19\x19d\n\n<!-- unplaced -->\n\ne\x01\n"
+    )
+    cleaned, count, pages = pdf_common.strip_control_characters(text)
+    assert count == 4
+    assert pages == ["3", "5", "unplaced"]
+    assert "ab" in cleaned and "cd" in cleaned and "e\n" in cleaned
+    assert pdf_common.strip_control_characters("x\ty\r\nz\n") == ("x\ty\r\nz\n", 0, [])
