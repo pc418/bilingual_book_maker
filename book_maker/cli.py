@@ -3678,25 +3678,15 @@ def main(argv=None, *, markdown_loader_class=None):
         if e.classify_translator.separate:
             print(f"classifier: {escape(e.classify_translator.describe())}")
 
-    separate = getattr(e, "classify_translator", None)
-    classified_by_said = False
-    if (
-        plan_auto
-        and book_type == "epub"
-        and not translate_tags_given
-        and getattr(separate, "separate", False)
-    ):
+    classifier = getattr(e, "classify_translator", None)
+    separate = getattr(classifier, "separate", False)
+    enter_plan = False
+    if plan_auto and book_type == "epub" and not translate_tags_given and separate:
         # A classifier of its own plans the book whatever the run's route can
         # answer (lead ruling 260923, Codex finding 4); grouping still reads
         # the run translator's own verdict.
         plan_auto = False
-        print(f"plan mode: on (classified by {escape(separate.describe())})")
-        classified_by_said = True
-        e.plan_mode = True
-        e.plan_auto = True
-        e.plan_fallback_tags = options.translate_tags
-        e.translate_tags = "auto"
-        e.plan_classify = "model"
+        enter_plan = True
     if plan_auto:
         # the verdict is cached, so the first translation does not pay again
         try:
@@ -3719,25 +3709,28 @@ def main(argv=None, *, markdown_loader_class=None):
             # LLM rules on the rows. Which channel carries the question is
             # the endpoint's business, settled again in classify_plan.
             print(f"plan mode: on ({reason})")
-            e.plan_mode = True
-            e.plan_auto = True
-            e.plan_fallback_tags = options.translate_tags
-            e.translate_tags = "auto"
-            e.plan_classify = "model"
+            enter_plan = True
         else:
             print(f"plan mode: off ({reason})")
-    elif (
-        not classified_by_said
+    if enter_plan:
+        e.plan_mode = True
+        e.plan_auto = True
+        e.plan_fallback_tags = options.translate_tags
+        e.translate_tags = "auto"
+        e.plan_classify = "model"
+    if (
+        separate
         and book_type == "epub"
         and getattr(e, "plan_mode", False)
         and getattr(e, "plan_classify", None) == "model"
-        and getattr(separate, "separate", False)
     ):
-        # Model mode asked for by flag (`--classify-model`, `--plan-classify
-        # model`) says the same line as `auto` with a provider classifier:
-        # the operator sees who plans the book either way (lead 260925,
-        # skill field test; docs/features/plan-mode.md promises it).
-        print(f"plan mode: on (classified by {escape(separate.describe())})")
+        # Model mode with a classifier of its own, whether `auto` chose it
+        # above or a flag asked for it (`--classify-model`, `--plan-classify
+        # model`), says who plans the book (lead 260925, skill field test;
+        # docs/features/plan-mode.md promises it). `auto` on a route that
+        # plans by itself has said its own line above, and never has a
+        # separate classifier there.
+        print(f"plan mode: on (classified by {escape(classifier.describe())})")
 
     try:
         e.make_bilingual_book()
