@@ -187,15 +187,16 @@ late section:
   wide at 200 DPI is about 550 px)?
 - any delimiter or JSON residue in the text, or Pandoc syntax shown as
   text (`{#…}`, `:::`, a stray `*`) in a heading or the contents?
-- is any translation identical to its original? A short quotation in a
-  third script (Greek beside its English rendering) has come back echoed,
-  and the run does not notice. Name every echoed block to the user. To
-  mend them: write the translation into its `bbm-translation` div in
-  `<name>_book/book_bilingual.md`, run `python tools/pdf_to_book.py export
-  <name>_book`, and copy `<name>_book/book_bilingual.epub` over
-  `<name>_bilingual.epub`. The `make_book.py` command refuses an edited
-  `book_bilingual.md` (`Bilingual Markdown was edited …`) and rebuilds
-  nothing.
+- is any translation identical to its original? A quotation in another
+  script (Greek beside its English rendering) has come back unchanged. The
+  run names such blocks (`… block(s) came back identical to the original
+  …`); keeping one the book already renders nearby may be right. Tell the
+  user which; to mend one, write the translation into its
+  `bbm-translation` div in `<name>_book/book_bilingual.md` and run
+  `python tools/pdf_to_book.py export <name>_book`, which rebuilds the
+  EPUB and the copy beside the PDF. Rerunning the `make_book.py` command
+  instead is refused (`Bilingual Markdown was edited; rebuild the EPUB
+  from it with: …`) and rebuilds nothing.
 
 Then report the settings used (the run prints the OCR engine and languages,
 the device and, with `--img-model`, the image model's token line), what the

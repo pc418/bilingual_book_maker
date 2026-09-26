@@ -45,9 +45,13 @@ translating.
 **It stops only while a row is still `null`.** Once every row is decided,
 the same command is the paid full run of the whole book: it does not stop
 to show the plan again (a field test spent 14 units on the ChatGPT plan
-this way). After step 3, every command you run carries either `--test`
-(step 4) or `--quiet` and a log redirect (step 5); never the bare base
-command.
+this way). After step 3 the base command is a paid run however it is
+dressed: `--quiet` and a log redirect keep it out of the conversation, they
+do not stop it. To look at the plan again without paying, read
+`<book>_plan.json` itself, or run the base command with `--plan-dry-run`,
+which prints a fresh report, keeps your edited plan file and never
+translates. Run the base command again only as the smoke (step 4) or the
+full run (step 5).
 
 **Offline on every route.** Nothing is asked of the endpoint until the
 first paid request, so a wrong model id or a dead gateway surfaces there,
@@ -228,9 +232,13 @@ intentionally.
 ## A classifier the user names
 
 Agent mode is the default because you judge better than a pre-filled plan.
-When the user asks for a classifier by name ("use Jev", "let gpt-5.6-luna
-decide the skips"), that is their call: use it, say in the choices block
-that the plan is the classifier's, not yours, and still read its skips.
+When the user asks for a classifier to decide the skips ("use Jev", "let
+gpt-5.6-luna decide what to skip"), that is their call: use `auto` with it,
+say in the choices block that the plan is the classifier's, not yours, and
+still read its skips. This picks another mode; agent mode itself never
+takes a pre-filled plan. None of these is such a request: naming the
+*translation* model, a Jev key being set, or a provider entry carrying a
+`classify_model`. Nor is "agent mode": then it stays agent mode.
 
 ```bash
 python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" \
