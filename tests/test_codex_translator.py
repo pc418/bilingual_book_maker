@@ -863,11 +863,17 @@ class TestQuiet:
         t.translate("two")
         assert "of the window remaining" in capsys.readouterr().out
 
-    def test_preflight_says_nothing_about_a_healthy_window(self, capsys):
+    # PIN: lead 260925, skill field test,
+    # docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md -- the one signed-in
+    # line matters during a paid run, so --quiet keeps it; only the
+    # per-unit quota line is silenced.
+    def test_preflight_says_the_healthy_window_once_even_when_quiet(self, capsys):
         t = _codex()
         t.quiet = True
         t.preflight()
-        assert capsys.readouterr().out == ""
+        out = capsys.readouterr().out
+        assert out.count("Codex: signed in") == 1
+        assert "of the window remaining" in out
 
     def test_preflight_still_warns_about_a_spent_one(self, capsys):
         limits = RateLimits(

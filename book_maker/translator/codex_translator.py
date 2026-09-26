@@ -292,9 +292,9 @@ class Codex(Base):
             return None
         plan = f" ({limits.plan_type} plan)" if limits.plan_type else ""
         self._last_remaining = limits.remaining_percent
-        if self.quiet and limits.used_percent < QUOTA_WARN_PERCENT:
-            # --quiet keeps warnings and errors; a healthy window is neither.
-            return limits
+        # One line, printed under --quiet too: during a paid run the share
+        # of the window left matters (lead 260925, skill field test). The
+        # per-unit line in `_report_quota` stays quiet.
         if limits.used_percent >= QUOTA_WARN_PERCENT:
             print(
                 f"[bold yellow]Warning:[/bold yellow] only "
