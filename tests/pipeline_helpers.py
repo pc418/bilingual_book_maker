@@ -328,6 +328,8 @@ def write_image_pdf(
     rotate=None,
     smask=False,
     empty_form=None,
+    state_smask=False,
+    clip=None,
 ):
     """A one-page PDF drawing an embedded RGB picture once per placement.
 
@@ -336,7 +338,11 @@ def write_image_pdf(
     `label=(x, y, text)` writes a line of text; `rotate` writes `/Rotate`;
     `smask` gives the first picture a soft mask. `empty_form=(x, y)` draws
     a Form XObject with nothing in it there (the shape of pdfTeX's link
-    anchors).
+    anchors). `state_smask` draws the first picture under a graphics
+    state whose `/SMask` is a luminosity soft mask (an ExtGState object,
+    not the image's own dictionary). `clip` is a path, in content-stream
+    operators (`"100 600 m 172 600 l 136 654 l h"`), clipping the first
+    picture.
     """
     px_w, px_h = pixels
     data = bytes(
@@ -374,10 +380,27 @@ def write_image_pdf(
                 b"stream\n" % (px_w, px_h, extra, len(data)) + data + b"\nendstream"
             )
         )
+    state = None
+    if state_smask:
+        group = b"0.5 g 0 0 %.2f %.2f re f" % size
+        luminosity = add(
+            b"<< /Type /XObject /Subtype /Form /BBox [0 0 %.2f %.2f] "
+            b"/Group << /S /Transparency /CS /DeviceGray >> /Length %d >>\n"
+            b"stream\n" % (size[0], size[1], len(group)) + group + b"\nendstream"
+        )
+        state = add(
+            b"<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity "
+            b"/G %d 0 R >> >>" % luminosity
+        )
     content = b""
     for index, matrix in enumerate(placements):
         numbers = b" ".join(b"%.4f" % float(v) for v in matrix)
-        content += b"q %s cm /Im%d Do Q\n" % (numbers, index)
+        before = b""
+        if index == 0 and state:
+            before += b"/GS0 gs "
+        if index == 0 and clip:
+            before += clip.encode() + b" W n "
+        content += b"q %s%s cm /Im%d Do Q\n" % (before, numbers, index)
     form = None
     if empty_form:
         form = add(
@@ -395,10 +418,12 @@ def write_image_pdf(
     if form:
         xobjects += b" /Fm0 %d 0 R" % form
     turn = b" /Rotate %d" % rotate if rotate else b""
+    states = b" /ExtGState << /GS0 %d 0 R >>" % state if state else b""
     page = add(
         b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %.2f %.2f]%s "
-        b"/Resources << /Font << /F1 %d 0 R >> /XObject << %s >> >> "
-        b"/Contents %d 0 R >>" % (tree, size[0], size[1], turn, font, xobjects, stream)
+        b"/Resources << /Font << /F1 %d 0 R >> /XObject << %s >>%s >> "
+        b"/Contents %d 0 R >>"
+        % (tree, size[0], size[1], turn, font, xobjects, states, stream)
     )
     objects[catalog - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % tree
     objects[tree - 1] = b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page

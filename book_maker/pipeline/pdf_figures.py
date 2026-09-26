@@ -40,6 +40,11 @@ from .errors import PipelineError
 from .messages import (
     FIGURE_CAPPED,
     FIGURE_FALLBACK_MISSING,
+    FIGURE_RECORD_BROKEN,
+    FIGURE_RECORD_MISSING,
+    FIGURE_RECORD_UNLISTED,
+    FIGURE_RECORD_UNNAMED,
+    FIGURE_RECORD_UNREADABLE,
     FIGURE_RENDER_FAILED,
     FIGURES_DRAWN,
     FIGURES_LEGACY,
@@ -452,6 +457,10 @@ def clear_assets(bundle):
 LEGACY_PICTURE = re.compile(
     r"!\[[^\]\n]*\]\(<?" + ASSETS_DIR + r"/images/(?!formula_)[^)\n]+\)"
 )
+# A drawn figure as source.md names it: `](assets/figures/p0003-01.png`.
+DRAWN_REFERENCE = re.compile(
+    r"\]\(<?(" + ASSETS_DIR + "/" + FIGURE_DIR + r"/p\d{4,}-\d{2,}\.png)(?=[>)\s])"
+)
 
 
 def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
@@ -462,8 +471,12 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
     the bundle has no extraction to draw from.
 
     - No completed PDF extraction (a Markdown import, a stub stage): nothing.
-    - No `figures.json`: a bundle made before this step. It is left exactly
-      as it is, and `FIGURES_LEGACY` is said once if it has pictures.
+    - source.md names no drawn figure and there is no `figures.json`: a
+      bundle made before this step. It is left exactly as it is, and
+      `FIGURES_LEGACY` is said once if it names docling's pictures.
+    - Otherwise the record must list exactly the figures source.md names
+      (`_read_records`), or the run stops (`FIGURE_RECORD_BROKEN`) before
+      anything is drawn or reused.
     - The manifest's block matches (`_still_drawn`: policy, revision, the
       record's digest, every file's size and hash, nothing failed): nothing
       is drawn.
@@ -476,15 +489,16 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
     extract = ((manifest.get("stages") or {}).get("extract") or {}).get("status")
     if extract != "completed":
         return None
+    text = bundle.source.read_text(encoding="utf-8") if bundle.source.is_file() else ""
+    named = sorted(set(DRAWN_REFERENCE.findall(text)))
     path = records_path(bundle)
-    if not path.is_file():
-        if bundle.source.is_file() and LEGACY_PICTURE.search(
-            bundle.source.read_text(encoding="utf-8")
-        ):
+    if not named and not path.exists():
+        # Legacy is decided from source.md alone: docling's pictures and
+        # not one stable name.
+        if LEGACY_PICTURE.search(text):
             print(FIGURES_LEGACY)
         return None
-    raw = path.read_bytes()
-    records = json.loads(raw.decode("utf-8"))
+    raw, records = _read_records(path, named)
     digest = sha256_bytes(raw)
     old = manifest.get("figures")
     wanted = policy.to_manifest()
@@ -495,7 +509,8 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
     # half-way is then drawn again on the next run, whatever it asks for.
     forget(bundle)
     failed, lines, total, files, native = [], [], 0, {}, 0
-    masked = masked_sizes(pdf_path)
+    # Only a drawing reads the PDF's bytes.
+    masked = masked_sizes(pdf_path) if records else None
     for record, outcome in _draw_all(pdf_path, records, bundle.root, policy, masked):
         destination = bundle.root / record["file"]
         if isinstance(outcome, BaseException):
@@ -569,6 +584,57 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
         if native:
             print(FIGURES_NATIVE.format(count=native, policy=policy.describe()))
     return block
+
+
+def _read_records(path, named):
+    """`(raw bytes, records)` of `figures.json`, one record per name in `named`.
+
+    `named` are the bundle-relative figure paths source.md references. A
+    record that is missing, cannot be read, leaves a named figure out or
+    lists one source.md does not name stops the run: the figures would
+    otherwise be drawn wrong or not at all while the run looks fine.
+    """
+
+    def broken(problem):
+        return PipelineError(
+            FIGURE_RECORD_BROKEN.format(count=len(named), problem=problem),
+            stage="figures",
+        )
+
+    if not path.is_file():
+        raise broken(FIGURE_RECORD_MISSING)
+    try:
+        raw = path.read_bytes()
+        records = json.loads(raw.decode("utf-8"))
+        if not isinstance(records, list):
+            raise ValueError("not a list")
+        listed = []
+        for record in records:
+            if not isinstance(record, dict) or not is_drawn_figure(record["file"]):
+                raise ValueError(f"not a figure record: {record!r}")
+            if Path(record["file"]).stem != record["id"]:
+                raise ValueError(f"id and file disagree: {record!r}")
+            listed.append(record["file"])
+        if len(set(listed)) != len(listed):
+            raise ValueError("a figure is listed twice")
+    except (OSError, ValueError, KeyError, TypeError) as err:
+        raise broken(FIGURE_RECORD_UNREADABLE) from err
+    unlisted = sorted(set(named) - set(listed))
+    if unlisted:
+        raise broken(FIGURE_RECORD_UNLISTED.format(ids=_ids(unlisted)))
+    unnamed = sorted(set(listed) - set(named))
+    if unnamed:
+        raise broken(FIGURE_RECORD_UNNAMED.format(ids=_ids(unnamed)))
+    return raw, records
+
+
+def _ids(paths, shown=10):
+    """`p0001-01, p0002-01` from figure paths; past `shown`, `and N more`."""
+    ids = [Path(p).stem for p in paths]
+    text = ", ".join(ids[:shown])
+    if len(ids) > shown:
+        text += f" and {len(ids) - shown} more"
+    return text
 
 
 def _still_drawn(bundle, old, wanted, digest, records):
@@ -655,9 +721,22 @@ def _replace(destination, write):
 
 _WIDTH = re.compile(rb"/Width\s+(\d+)(?![\d\s]*R\b)")
 _HEIGHT = re.compile(rb"/Height\s+(\d+)(?![\d\s]*R\b)")
+# A soft mask set by a graphics state (`/SMask` in an ExtGState), which no
+# image dictionary shows: its dictionary written inline, or the soft-mask
+# dictionary itself (`/S /Alpha` or `/S /Luminosity` is required there
+# and used nowhere else), wherever it stands. `/SMask /None` matches
+# neither.
+_STATE_SOFT_MASK = re.compile(rb"/SMask\s*<<|/S\s*/(?:Alpha|Luminosity)\b")
+# The file is read this many bytes at a time, each piece scanned with the
+# previous one's last `SCAN_OVERLAP` bytes in front, so a match up to that
+# long is whole in one piece: `_STREAM_OBJECT`'s dictionary is at most
+# 8192 bytes, and the overlap leaves room for the object header and the
+# whitespace around it.
+SCAN_CHUNK = 8 * 1024 * 1024
+SCAN_OVERLAP = 64 * 1024
 
 
-def masked_sizes(pdf_path):
+def masked_sizes(pdf_path, chunk=SCAN_CHUNK, overlap=SCAN_OVERLAP):
     """The pixel sizes of the PDF's masked pictures, or None if unknown.
 
     pypdfium2 does not say whether an image object carries a `/SMask` or
@@ -666,26 +745,43 @@ def masked_sizes(pdf_path):
     `pdf_render.has_jbig2_mask`, and a picture on the page whose size is
     one of these is not trusted with the native path. An unmasked picture
     that happens to share a masked one's size is only drawn normally.
-    None -- the file cannot be read, or a masked picture's size is not
-    written plainly -- means no picture is trusted.
+    None -- the file cannot be read, a masked picture's size is not
+    written plainly, or a graphics state anywhere carries a soft mask
+    (`_STATE_SOFT_MASK`) -- means no picture is trusted.
+
+    The file is read `chunk` bytes at a time, never whole. An object
+    stream (`/ObjStm`) is compressed and not seen here; `native_dpi`
+    asks pdfium about each picture's own graphics state as well.
     """
     from .pdf_render import _STREAM_OBJECT
 
+    sizes = set()
     try:
-        data = Path(pdf_path).read_bytes()
+        with open(pdf_path, "rb") as handle:
+            tail = b""
+            while True:
+                piece = handle.read(chunk)
+                if not piece:
+                    break
+                data = tail + piece
+                tail = data[-overlap:] if overlap else b""
+                if _STATE_SOFT_MASK.search(data):
+                    return None
+                if b"Mask" not in data:
+                    continue
+                for match in _STREAM_OBJECT.finditer(data):
+                    dictionary = match.group(3)
+                    if b"/Image" not in dictionary or not re.search(
+                        rb"/S?Mask\b", dictionary
+                    ):
+                        continue
+                    width = _WIDTH.search(dictionary)
+                    height = _HEIGHT.search(dictionary)
+                    if not width or not height:
+                        return None
+                    sizes.add((int(width.group(1)), int(height.group(1))))
     except OSError:
         return None
-    sizes = set()
-    if b"Mask" not in data:
-        return sizes
-    for match in _STREAM_OBJECT.finditer(data):
-        dictionary = match.group(3)
-        if b"/Image" not in dictionary or not re.search(rb"/S?Mask\b", dictionary):
-            continue
-        width, height = _WIDTH.search(dictionary), _HEIGHT.search(dictionary)
-        if not width or not height:
-            return None
-        sizes.add((int(width.group(1)), int(height.group(1))))
     return sizes
 
 
@@ -835,6 +931,10 @@ def native_dpi(page, crop, masked=None, box=None):
     the image's pixel size over its placed size in points (the larger of
     the two axes), never the file's metadata. Its pixel size must not be
     one of `masked` (`masked_sizes`); `masked` None trusts no picture.
+    pdfium must say the picture is drawn without transparency (a soft
+    mask, alpha or blend mode from its graphics state) and without a clip
+    other than one axis-aligned rectangle (`_plainly_clipped`); where it
+    cannot say, the picture is not trusted.
     """
     import pypdfium2.raw as raw
 
@@ -877,7 +977,67 @@ def native_dpi(page, crop, masked=None, box=None):
     px_w, px_h = image.get_px_size()
     if px_w <= 0 or px_h <= 0 or (px_w, px_h) in masked:
         return None
+    if not _plainly_drawn(image):
+        return None
     return max(px_w * 72.0 / a, px_h * 72.0 / d)
+
+
+def _plainly_drawn(image):
+    """Whether pdfium says `image` is drawn with no transparency and at
+    most a rectangular clip; False when it cannot say.
+
+    A rectangle is allowed because pdfTeX clips every included picture to
+    its bounding box (measured: mit_lecnotes12 page 5, 0.44 pt inside the
+    picture); a rectangle trims straight picture edges and adds no edge of
+    its own for more pixels to sharpen. Any other clip (a curve, several
+    paths) is a vector edge, and the picture is drawn normally.
+    """
+    import pypdfium2.raw as raw
+
+    try:
+        if raw.FPDFPageObj_HasTransparency(image.raw):
+            return False
+        clip = raw.FPDFPageObj_GetClipPath(image.raw)
+        if not clip:
+            return True
+        paths = raw.FPDFClipPath_CountPaths(clip)
+        if paths < 1:
+            return True
+        return paths == 1 and _is_rectangle(clip)
+    except Exception:
+        return False
+
+
+def _is_rectangle(clip):
+    """Whether the clip's one path is an axis-aligned rectangle."""
+    import ctypes
+
+    import pypdfium2.raw as raw
+
+    points = []
+    for index in range(raw.FPDFClipPath_CountPathSegments(clip, 0)):
+        segment = raw.FPDFClipPath_GetPathSegment(clip, 0, index)
+        kind = raw.FPDFPathSegment_GetType(segment)
+        if kind != (raw.FPDF_SEGMENT_MOVETO if index == 0 else raw.FPDF_SEGMENT_LINETO):
+            return False
+        x, y = ctypes.c_float(), ctypes.c_float()
+        if not raw.FPDFPathSegment_GetPoint(segment, x, y):
+            return False
+        points.append((x.value, y.value))
+    if len(points) == 5 and _same(points[0], points[-1]):
+        points.pop()
+    if len(points) != 4:
+        return False
+    for (x0, y0), (x1, y1) in zip(points, points[1:] + points[:1]):
+        if not (abs(x0 - x1) < 1e-3 or abs(y0 - y1) < 1e-3):
+            return False
+    xs = sorted({round(x, 3) for x, _y in points})
+    ys = sorted({round(y, 3) for _x, y in points})
+    return len(xs) == 2 and len(ys) == 2
+
+
+def _same(p, q):
+    return abs(p[0] - q[0]) < 1e-3 and abs(p[1] - q[1]) < 1e-3
 
 
 def _snapped(margins, page_size, scale):

@@ -40,6 +40,11 @@ from book_maker.pipeline.messages import (  # noqa: E402
     DEVICE_SELECTED,
     FIGURE_CAPPED,
     FIGURE_FALLBACK_MISSING,
+    FIGURE_RECORD_BROKEN,
+    FIGURE_RECORD_MISSING,
+    FIGURE_RECORD_UNLISTED,
+    FIGURE_RECORD_UNNAMED,
+    FIGURE_RECORD_UNREADABLE,
     FIGURE_RENDER_FAILED,
     FIGURES_DRAWN,
     FIGURES_LEGACY,
@@ -522,21 +527,104 @@ def test_a_degenerate_box_is_a_failure_with_the_fallback(
 def test_a_bundle_from_before_figures_were_drawn_is_left_alone(
     tmp_path, pandoc, device, capsys
 ):
+    import re
+
     bundle, pdf = extracted(tmp_path, pandoc)
     # The shape of a bundle made before this change: docling's hash-named
-    # picture in source.md, no record, no `figures` block.
+    # pictures in source.md, no stable name, no record, no `figures` block.
     (bundle.work_file("extraction") / "figures.json").unlink()
-    legacy = bundle.source.read_text(encoding="utf-8").replace(
-        "assets/figures/p0002-01.png){width=49%}",
-        "assets/images/image_000000_abc.png)",
+    legacy, count = re.subn(
+        r"assets/figures/p0002-0(\d)\.png\)\{width=\d+%\}",
+        r"assets/images/image_00000\1_abc.png)",
+        bundle.source.read_text(encoding="utf-8"),
     )
+    assert count == 2
     bundle.source.write_text(legacy, encoding="utf-8")
     before = bundle.source.read_bytes()
+    assets = {p: p.read_bytes() for p in bundle.assets.rglob("*") if p.is_file()}
     capsys.readouterr()
     assert pdf_figures.render_figures(bundle, pdf, FIGURE_POLICY_DEFAULT) is None
     assert capsys.readouterr().out.count(FIGURES_LEGACY) == 1
     assert bundle.source.read_bytes() == before
     assert "figures" not in bundle.read_manifest()
+    assert {p: p.read_bytes() for p in bundle.assets.rglob("*") if p.is_file()} == (
+        assets
+    )
+
+
+# PIN (Codex review 260925, lead's fix list; docs/260925-feat-PDF_FIGURE_RENDER*):
+# legacy is decided from source.md alone. A bundle whose source.md names
+# stable figures must carry a record listing exactly those figures, else
+# the run stops before anything is drawn or reused -- a missing record
+# must never look like a legacy bundle and skip a requested redraw.
+@pytest.mark.parametrize(
+    "damage, count, problem",
+    [
+        ("missing", 2, FIGURE_RECORD_MISSING),
+        ("corrupt", 2, FIGURE_RECORD_UNREADABLE),
+        ("not-a-list", 2, FIGURE_RECORD_UNREADABLE),
+        ("reference-without-record", 2, FIGURE_RECORD_UNLISTED.format(ids="p0001-02")),
+        (
+            "record-without-reference",
+            1,
+            FIGURE_RECORD_UNNAMED.format(ids="p0001-02"),
+        ),
+    ],
+)
+def test_a_broken_figure_record_stops_before_anything_is_drawn(
+    tmp_path, monkeypatch, damage, count, problem
+):
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO])
+    bundle = drawn_bundle(
+        tmp_path, pdf, [("p0001-01", PHOTO_BOX), ("p0001-02", PHOTO_BOX)]
+    )
+    policy = FigurePolicy("dpi", 144)
+    pdf_figures.render_figures(bundle, pdf, policy)
+    drawn = bundle.read_manifest()["figures"]
+    path = pdf_figures.records_path(bundle)
+    if damage == "missing":
+        path.unlink()
+    elif damage == "corrupt":
+        path.write_text('[{"id": ', encoding="utf-8")
+    elif damage == "not-a-list":
+        path.write_text('{"id": "p0001-01"}', encoding="utf-8")
+    elif damage == "reference-without-record":
+        pdf_figures.write_records(path, records(bundle)[:1])
+    else:
+        text = bundle.source.read_text(encoding="utf-8")
+        bundle.source.write_text(
+            text.replace("![](assets/figures/p0001-02.png)\n", ""), encoding="utf-8"
+        )
+
+    def never(*args, **kwargs):
+        raise AssertionError("drawn despite a broken record")
+
+    monkeypatch.setattr(pdf_figures, "_draw_all", never)
+    monkeypatch.setattr(pdf_figures, "masked_sizes", never)
+    # Another policy would redraw; the same one would reuse: both stop.
+    for asked in (FigurePolicy("dpi", 200), policy):
+        with pytest.raises(PipelineError) as caught:
+            pdf_figures.render_figures(bundle, pdf, asked)
+        assert str(caught.value) == FIGURE_RECORD_BROKEN.format(
+            count=count, problem=problem
+        )
+    assert bundle.read_manifest()["figures"] == drawn
+
+
+def test_a_broken_record_names_ten_figures_and_counts_the_rest(tmp_path):
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO])
+    bundle = drawn_bundle(tmp_path, pdf, [])
+    names = [f"p0001-{n:02d}" for n in range(1, 13)]
+    bundle.source.write_text(
+        "".join(f"![](assets/figures/{name}.png){{width=10%}}\n\n" for name in names),
+        encoding="utf-8",
+    )
+    with pytest.raises(PipelineError) as caught:
+        pdf_figures.render_figures(bundle, pdf, FIGURE_POLICY_DEFAULT)
+    ids = ", ".join(names[:10]) + " and 2 more"
+    assert str(caught.value) == FIGURE_RECORD_BROKEN.format(
+        count=12, problem=FIGURE_RECORD_UNLISTED.format(ids=ids)
+    )
 
 
 def test_a_bundle_with_no_extraction_is_not_drawn(tmp_path, capsys):
@@ -964,6 +1052,11 @@ def drawn_bundle(tmp_path, pdf, figures):
             }
         )
     pdf_figures.write_records(pdf_figures.records_path(bundle), records)
+    bundle.source.write_text(
+        "# Figures\n\n"
+        + "".join(f"![](assets/figures/{ident}.png)\n" for ident, _ in figures),
+        encoding="utf-8",
+    )
     return bundle
 
 
@@ -1043,6 +1136,9 @@ PHOTO_BOX = (100.0, 138.0, 172.0, 192.0)
         ({"placements": [PHOTO], "smask": True}, None),
         ({"placements": [PHOTO], "rotate": 90}, None),
         ({"placements": [PHOTO], "empty_form": (130, 640)}, 96.0),
+        ({"placements": [PHOTO], "state_smask": True}, None),
+        ({"placements": [PHOTO], "clip": "100 600 m 172 600 l 136 654 l h"}, None),
+        ({"placements": [PHOTO], "clip": "100.5 600.5 71 53 re"}, 96.0),
     ],
     ids=[
         "alone",
@@ -1052,6 +1148,9 @@ PHOTO_BOX = (100.0, 138.0, 172.0, 192.0)
         "soft-mask",
         "page-turned",
         "empty-anchor",
+        "graphics-state-soft-mask",
+        "clipped",
+        "rectangle-clip",
     ],
 )
 def test_only_a_lone_plain_picture_keeps_its_own_resolution(
@@ -1238,3 +1337,80 @@ def test_the_picture_must_fill_the_detected_box(tmp_path, box, native):
     bundle = drawn_bundle(tmp_path, pdf, [("p0001-01", box)])
     block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 200))
     assert block["files"]["p0001-01"].get("native_dpi") == native
+
+
+def test_pdfium_s_graphics_state_refuses_a_soft_mask_the_scan_cannot_see(
+    tmp_path, monkeypatch
+):
+    # An ExtGState in a compressed object stream never reaches the byte
+    # scan; pdfium's own reading of the picture's graphics state does.
+    _render_or_skip()
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO], state_smask=True)
+    assert pdf_figures.masked_sizes(pdf) is None
+    monkeypatch.setattr(pdf_figures, "masked_sizes", lambda path: set())
+    bundle = drawn_bundle(tmp_path, pdf, [("p0001-01", PHOTO_BOX)])
+    block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 200))
+    assert "native_dpi" not in block["files"]["p0001-01"]
+
+
+def test_a_clip_pdfium_cannot_report_trusts_no_picture(tmp_path, monkeypatch):
+    _render_or_skip()
+    import pypdfium2.raw as raw
+
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO])
+    bundle = drawn_bundle(tmp_path, pdf, [("p0001-01", PHOTO_BOX)])
+    monkeypatch.delattr(raw, "FPDFPageObj_GetClipPath")
+    block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 200))
+    assert "native_dpi" not in block["files"]["p0001-01"]
+
+
+def test_a_bundle_without_figures_never_reads_the_pdf(tmp_path, monkeypatch):
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO])
+    bundle = drawn_bundle(tmp_path, pdf, [])
+
+    def never(*args, **kwargs):
+        raise AssertionError("the PDF was scanned with no figure to draw")
+
+    monkeypatch.setattr(pdf_figures, "masked_sizes", never)
+    block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 200))
+    assert block["count"] == 0 and block["files"] == {}
+
+
+def test_the_mask_scan_reads_in_pieces_and_finds_a_dictionary_across_two(tmp_path):
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO], smask=True)
+    data = pdf.read_bytes()
+    # The piece boundary falls inside the masked picture's `/SMask` key.
+    boundary = data.index(b"/SMask") + 3
+    assert pdf_figures.masked_sizes(pdf) == {(96, 72)}
+    assert pdf_figures.masked_sizes(pdf, chunk=boundary, overlap=1024) == {(96, 72)}
+    # Without the overlap the split dictionary is seen by neither piece.
+    assert pdf_figures.masked_sizes(pdf, chunk=boundary, overlap=0) == set()
+
+
+def test_the_mask_scan_never_reads_the_whole_file_at_once(tmp_path, monkeypatch):
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO], smask=True)
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda self: pytest.fail("the PDF was read whole")
+    )
+    reads = []
+    real_open = open
+
+    class Spy:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def read(self, size=-1):
+            reads.append(size)
+            return self.handle.read(size)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.handle.close()
+
+    monkeypatch.setattr(
+        "builtins.open", lambda path, mode="r", *a, **k: Spy(real_open(path, mode))
+    )
+    assert pdf_figures.masked_sizes(pdf, chunk=4096, overlap=1024) == {(96, 72)}
+    assert reads and all(0 < size <= 4096 for size in reads)
