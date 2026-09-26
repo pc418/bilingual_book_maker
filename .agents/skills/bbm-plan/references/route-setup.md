@@ -26,15 +26,19 @@ for f in (pathlib.Path("bbm_providers.json"), pathlib.Path.home()/".bbm"/"provid
             seen.append(f"{name}: {e.get('api_style')} {e.get('base_url','(default host)')} "
                         f"model={(e.get('default_models') or ['(none)'])[0]} {key}={'set' if os.environ.get(key) else 'UNSET'}")
 print("\n".join(seen) or "no provider entries")
-for v in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "BBM_API_KEY", "BBM_ORCAROUTER_API_KEY"):
+for v in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "BBM_API_KEY", "BBM_ORCAROUTER_API_KEY",
+          "JEV_API_KEY", "TYPESAFE_API_KEY", "FEATHERLESS_API_KEY"):
     print(v, "set" if os.environ.get(v) else "unset")
 EOF
 command -v codex >/dev/null && codex login status 2>&1 | head -1 || echo "codex: not installed"
 ```
 
-That prints every provider entry and whether its key is set, the four
-conventional key variables, and whether the codex CLI is signed in
-(`Logged in using ChatGPT`). Then ask **one** question that covers the
+That prints every provider entry and whether its key is set, the
+conventional key variables (the last three are classifier keys, used only
+when the user names Jev: `references/epub-plan-mode.md`, "A classifier the
+user names"), and whether the codex CLI is signed in
+(`Logged in using ChatGPT`). The user wants the codex route and it is
+signed in: skip steps 2 and 3, go to step 4. Then ask **one** question that covers the
 route, the model and the prompt file together; the user answers once:
 
 > Here is what I found: *(the list)*. Which do you want this book to spend:
@@ -47,8 +51,8 @@ Read the answer into the `ROUTE` array:
 | the user picks | `ROUTE` | format |
 |---|---|---|
 | a provider entry `NAME` | `(--provider NAME)`; add `--model "$MODEL"` only if they named a different one | the entry's `api_style`, which is the format: `openai`, `anthropic` (`claude` in older files), `gemini`, `qwen`, `groq`, `xai`, `litellm` |
-| a bare `OPENAI_API_KEY` | `(--provider openai)` after step 2 | openai |
-| a bare `ANTHROPIC_API_KEY` | `(--provider anthropic)` after step 2 | anthropic |
+| a bare `OPENAI_API_KEY` | `(--provider openai)`; step 2 is optional | openai |
+| a bare `ANTHROPIC_API_KEY` | `(--provider anthropic)`; step 2 is optional | anthropic |
 | `BBM_ORCAROUTER_API_KEY` | `(--model orcarouter)` | openai |
 | codex, signed in | `(--api_format codex)`; step 4, nothing else to set up | codex |
 
@@ -80,15 +84,20 @@ Then tell them exactly what to edit and stop until they say it is done:
   example carries gpt-5.6-luna's list price.
 - The example's `openai` entry also sets `img_model: gpt-5.6-luna`, which
   only the PDF flow uses (`references/pdf-route.md`); leave it in unless
-  the user wants to spend nothing on it. **Never add a `classify_model`
-  for this skill**: the EPUB flow's agent mode asks no model.
+  the user wants to spend nothing on it. **Add a `classify_model` only
+  when the user names a classifier** (`references/epub-plan-mode.md`, "A
+  classifier the user names"); by default the EPUB flow's agent mode asks
+  no model.
 - `.env`: the variable `env_key` names, with the key as its value.
 
-A bare key with no entry gets the same treatment: the example file's
-`openai` / `anthropic` entries already point at the vendor hosts and read
-the conventional variable, so nothing needs editing beyond deleting the
-others. Rerun the probe afterwards; it should now show the entry with its
-key `set`.
+A bare `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` needs no file at all:
+with no `bbm_providers.json`, `--provider openai` (or `anthropic`) reads
+the shipped example's entry, prints one warning line saying so, and sends
+the run to the vendor host with the conventional variable (and, for
+`openai`, `img_model: gpt-5.6-luna`). Hand the file over only when the user
+wants the warning gone, another model or price, or cannot write in the
+repo root (then `~/.bbm/providers.json` is read instead). Otherwise rerun
+the probe after step 2; it should show the entry with its key `set`.
 
 **Keys never go on the command line.** The entry's `env_key` (or
 `$BBM_API_KEY`) is read when `--key` is absent, which is why this skill
@@ -147,7 +156,8 @@ allowance instead of API credits. Step 3 does not apply.
   model, add `--model "$MODEL"`, and offer only ids the user's plan lists.
 - **No `--key`, no `--api_base`.** Run `codex login` once beforehand. The
   run checks that the sidecar is up and signed in before parsing the book,
-  and reports how much of the 5-hour window is left.
+  and prints `Codex: signed in (…), N% of the window remaining`, under
+  `--quiet` too. Read it off the plan step's output before the paid run.
 - **`--parallel-workers` is refused here**: turns serialize on one thread.
   **`--no-thinking` is refused too**: there is no request body to carry it.
 - **The sidecar is stripped before any book text reaches it**: shell, exec,
@@ -169,7 +179,7 @@ allowance instead of API credits. Step 3 does not apply.
 | openai (any OpenAI-shaped entry, `orcarouter`, and `groq`/`xai`/`litellm`, which are that route at their own address) | `(--provider NAME)` | `(--use_context session)` | one cached history, compacted at 8192 by default; costs less than window mode for several times the context |
 | anthropic (`api_style: anthropic`) | `(--provider NAME)` | `(--use_context session)` | the same history, and this route keeps it |
 | gemini, qwen | `(--provider NAME)` | `(--use_context)` | neither keeps a re-sendable session history, so `--use_context session` is refused; window mode is what they have |
-| codex | `(--api_format codex)` | `()` | the thread is the context; a context flag has nothing to add |
+| codex | `(--api_format codex)` | `()` | the thread is the context; a context flag has nothing to add (`--use_context` is accepted and does nothing) |
 
 ```bash
 set -a; source .env; set +a

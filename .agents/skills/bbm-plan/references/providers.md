@@ -76,8 +76,8 @@ for the probe:
   so `--provider nvidia --model <id>` keeps the user's model.
 - A key is bound to its address: the entry's `env_key` is not sent when an
   `--api_base` moves the run elsewhere. The `img_*` and `classify_*` fields
-  follow the same rule (`docs/providers.md#which-key-goes-where`); this
-  skill's EPUB flow never adds a `classify_model`.
+  follow the same rule (`docs/providers.md#which-key-goes-where`); the
+  EPUB flow adds a `classify_model` only when the user names a classifier.
 
 ## `--model orcarouter`: a gateway with no address to type
 
@@ -237,9 +237,10 @@ it answers the shape question outright.
 | `codex` | one turn per unit, on a thread that is itself the context window | yes, via the prompt rung — the sidecar compiles no schema |
 | `google`, `deepl`, `deeplfree`, `caiyun`, `tencent`, `customapi` | translation only | only with a classifier of its own (`--classify-model`, or an entry's `classify_model`) |
 
-Classification capability does not gate *this* skill — `--plan-classify
-agent` makes no API call, you are the classifier. It matters only if someone
-switches to `--plan-classify model`.
+Classification capability does not gate the default flow — `--plan-classify
+agent` makes no API call, you are the classifier. It matters only when the
+user names a classifier (`references/epub-plan-mode.md`, "A classifier the
+user names") and that classifier is the translating model.
 
 The machine-translation engines have one channel, and it translates
 whatever it is handed. They cannot be asked a question.

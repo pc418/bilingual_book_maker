@@ -24,12 +24,14 @@ and (if they have one) a prompt file, approves the plan and the cost, and
 gets a bilingual book back. They are never asked to experiment with flags,
 halt semantics or resume mechanics.
 
-**Hard constraint: the EPUB flow uses `--plan-classify agent`, and only
-that.** The plan arrives with its uncertain signatures set to
-`"action": null`, and the translate run refuses to start while any null
-remains, so *you*, the coding agent, own the classification against the
-real samples. Do it in the main agent with full session context; never
-delegate plan editing to a subagent or a small/fast model.
+**The EPUB flow uses `--plan-classify agent`.** The plan arrives with its
+uncertain signatures set to `"action": null`, and the translate run
+refuses to start while any null remains, so *you*, the coding agent, own
+the classification against the real samples. Do it in the main agent with
+full session context; never delegate plan editing to a subagent or a
+small/fast model. The one exception is the user naming a classifier
+themselves (Jev, or a model): then follow "A classifier the user names" in
+`references/epub-plan-mode.md`, and still read its skips.
 
 All state lives on disk (`bbm_providers.json`, `.env`, the flow's own
 working files, the resume cache, `run.log`), so any step can be redone

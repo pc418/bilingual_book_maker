@@ -21,7 +21,8 @@ python make_book.py --book_name "$BOOK" "${ROUTE[@]}" \
   --language "$LANG" --plan-classify agent "${CONTEXT[@]}"
 ```
 
-Per step: `--plan-classify agent` always; the full run adds `--quiet`, and
+Per step: `--plan-classify agent` always (unless the user named a
+classifier: "A classifier the user names" below); the full run adds `--quiet`, and
 `--resume` only once a cache exists (step 5); the optional smoke adds
 `--quiet --test --test_num 8`. Nothing from the "Never pass" list below.
 
@@ -40,6 +41,13 @@ By kind of book (the user-facing version, with the endpoint and system rows, is 
 Run the base command once. It partitions the whole book, writes
 `<book>_plan.json`, prints a handoff block, and exits (code 3) without
 translating.
+
+**It stops only while a row is still `null`.** Once every row is decided,
+the same command is the paid full run of the whole book: it does not stop
+to show the plan again (a field test spent 14 units on the ChatGPT plan
+this way). After step 3, every command you run carries either `--test`
+(step 4) or `--quiet` and a log redirect (step 5); never the bare base
+command.
 
 **Offline on every route.** Nothing is asked of the endpoint until the
 first paid request, so a wrong model id or a dead gateway surfaces there,
@@ -95,14 +103,17 @@ as `HAPTER` and `MR. JONES` loses its `M`. Skip an inline signature only
 when its text is *whole* (a URL, a page number, a standalone marker). After
 editing the plan, rerun the plan step and read the affected block rows'
 samples again: a decapitated sample is the tell, and it is visible before
-anything is paid for.
+anything is paid for. Do this re-look **before you resolve the last
+null**: with one row still open the plan step stops at the handoff again;
+with none open it translates the book.
 
 Non-null rows (prose spine, headings, poetry) may also be changed if their
 samples convince you, but the nulls are the required work. Hold a non-null
 override to the same name-then-rule discipline, and **record every one in
 the step-6 report**: the user should see where you disagreed with the
 plan's defaults, not discover it in the output. Edit **only** the `action`,
-`decided_by` and `content_type` fields. Validation is fail-closed: a typo'd
+`decided_by` and `content_type` fields; `key`, `scope`, `disposition` and
+the rest are the tool's (`disposition` stays `null`). Validation is fail-closed: a typo'd
 action, missing hash or edited book is a hard error on the next run, never
 a silent default.
 
@@ -135,7 +146,10 @@ are consumed in **spine order**, so check which documents the first 8 units
 come from: a large nav or title page can absorb the whole budget (a 458 KB
 nav once ate all 20 units of a poetry smoke). When that happens, point the
 smoke at a body chapter with `--only_filelist <content doc>` rather than
-raising `--test_num`. Then read the partial `<book>_bilingual.epub` back
+raising `--test_num`. A `skip` whose signature is not among the first 8
+units cannot show in the smoke (the run says `N decided signature(s) do not
+occur in this run's partition`); check it at delivery instead. Then read
+the partial `<book>_bilingual.epub` back
 with the step-6 checklist and check `smoke.log` for error lines. The cache
 carries into the full run, so nothing paid here is re-paid, and the full
 run that follows takes `--resume`.
@@ -166,9 +180,9 @@ intentionally.
 
 | flag | values | default / recommended | choose otherwise when |
 |---|---|---|---|
-| `--plan-classify` | `auto`, `none`, `all`, `model`, `agent` | **`agent`**: this skill's hard constraint | never, inside this skill |
-| `--classify-model` (old name `--plan-classify-model`), `--classify-base-url`, `--classify-key` | a model id, or `jev` | **never passed** | never, inside this skill: agent mode never pre-fills the plan (an agent judges worse from pre-filled verdicts) and the run warns the flag is ignored. Outside the skill it gives `model`/`auto` a classifier of its own (`docs/features/plan-mode.md`) |
-| `--classify-min-confidence P` | 0 to 1, Jev-compatible classifiers only | **never passed** | not used in agent mode |
+| `--plan-classify` | `auto`, `none`, `all`, `model`, `agent` | **`agent`** | the user names a classifier: `auto` ("A classifier the user names" below) |
+| `--classify-model` (old name `--plan-classify-model`), `--classify-base-url`, `--classify-key` | a model id, or `jev` | **not passed** | the user names a classifier (below). With `agent` it is ignored, with a warning: agent mode never pre-fills the plan, because an agent judges worse from pre-filled verdicts |
+| `--classify-min-confidence P` | 0 to 1, Jev-compatible classifiers only | **not passed**: 0.95, measured | the user asks for more of Jev's skips kept; lower keeps more, at their risk |
 | `--plan-min-coverage` | 0.0–1.0 | **0.5** | a dictionary, critical edition or apparatus-heavy book legitimately translates less; lower it deliberately and say so |
 | `--exclude-translate-tags` | comma-separated tags; `""` excludes nothing | **`sup,code`** | the book puts real prose in one of those, or another tag is pure apparatus |
 | `--accumulated_num` | integer (tokens per request) | *unset*, derived per run: `1200` stock prompts, up to `1600` under a long `--prompt`, `800` off-schema; session runs keep the un-halved value; the run narrates its choice | the run keeps printing misalignment recoveries (shorten it), or the user wants fewer, larger requests for cost (`1` turns grouping off). `docs/evaluation/grouping-batch-size.md` |
@@ -211,6 +225,43 @@ intentionally.
 - `--parallel-workers` on codex, or with `--use_context session`: refused
   on the command line.
 
+## A classifier the user names
+
+Agent mode is the default because you judge better than a pre-filled plan.
+When the user asks for a classifier by name ("use Jev", "let gpt-5.6-luna
+decide the skips"), that is their call: use it, say in the choices block
+that the plan is the classifier's, not yours, and still read its skips.
+
+```bash
+python make_book.py --book_name "$BOOK" "${ROUTE[@]}" --language "$LANG" \
+  --plan-classify auto --classify-model jev "${CONTEXT[@]}" \
+  --quiet --test --test_num 8 > smoke.log 2>&1
+```
+
+- **Which classifier.** `jev` is TypeSafe's (reads `JEV_API_KEY` or
+  `TYPESAFE_API_KEY`); `--provider openai-jev` from the shipped example
+  does the same in one word. Featherless's keyless demo is
+  `--classify-model featherless-ai/Qwen3.8-27B-classifier
+  --classify-base-url https://simple-jev-demo-api.featherless.ai/v1/classifier`.
+  Any chat model id works too. Gateways and key rules:
+  `docs/providers.md#jev-and-jev-compatible-classifiers`.
+- **There is no handoff.** The classifier decides every row, and the run
+  goes straight on to translate. So the first run is the smoke above
+  (classification covers the whole book whatever `--test` says, and the
+  run says so), then the full run is the same command with `--resume` in
+  place of `--test --test_num 8`, output to `run.log`.
+- **Read its skips before the full run.** In `<book>_plan.json` each
+  row's `content_type` carries the verdict and its confidence: `jev
+  verdict skip, confidence 0.98`, or `jev verdict skip at confidence 0.62,
+  below the gate: translate` for a skip the gate turned back. Report the
+  skips and their confidences to the user; overrule one only by telling
+  them.
+- **The gate.** A Jev skip below 0.95 becomes `translate`; about nine of
+  ten do on the measured corpus, and what remains is apparatus.
+  `--classify-min-confidence 0.5` keeps more skips (9 against 1 on the
+  test book). Only on a Jev-compatible classifier; the run warns
+  otherwise.
+
 ## Halt / resume: safe by construction
 
 - **Progress saves after every chapter** and on interrupt or crash. To halt
@@ -243,6 +294,8 @@ one late chapter:
 - are `id` attributes and internal fragment links intact?
 - did the plan's `skip` decisions actually hold?
 - is there any delimiter or JSON residue in the text?
+- is any translation byte-identical to its original (an echo, not a
+  translation)?
 
 A zero exit code and a clean log do not answer any of those.
 
@@ -261,6 +314,9 @@ Route-wide lines (schema verdicts, retries, codex, session) are in
 |---|---|
 | `refused the … request shape; using a simpler one` | classification's ladder descended a rung. Informational |
 | a `--test` run printing its request count, or that classification covers the whole book regardless of `--test` | **not a failure.** Compatibility narration; the smoke recipe triggers both by design |
+| `--test_num counts units, not requests: this slice is 8 unit(s) in 2 request(s). A slice this small may never reach a group rollover or a session compaction` | **not a failure.** The smoke is for markup and skips, not for rollovers; leave `--test_num` at 8 |
+| `N decided signature(s) do not occur in this run's partition and were left untouched` | informational: those rows are not in this `--test` slice or `--only_filelist` selection; they apply in the full run |
+| `skipped characters: user-excluded=N, excluded-tag=M` | characters, not units, that the plan's `skip` rows and excluded tags keep out of the translation |
 | `N misaligned batches this run — … lower --max-batch-units or --accumulated_num` | the model keeps miscounting large batches; follow the hint on the next run |
 | `… N invented (⟦…⟧) — reconciled` | the model typed a marker token where none belongs; the run scrubbed it. Informational, worth a read-back look only if it repeats |
 | fingerprint refusal on `--resume` | book file or plan changed since the cache was written; delete the cache only if that was intentional. A checkpoint refusal naming language/prompt/model means the resume flags differ from the original run's: rerun with the original flags, or delete the checkpoint |
@@ -269,4 +325,4 @@ Route-wide lines (schema verdicts, retries, codex, session) are in
 | coverage-gate error / empty plan | the plan skips nearly everything: re-check the plan |
 | `--only_filelist / --exclude_filelist names N document(s) this book does not have` | a typo, caught before anything is paid for; the message lists the near matches |
 | legacy-cache refusal | the cache came from an old tag-mode run: delete it |
-| `… names a classifier, and --plan-classify agent … it is ignored this run` | a `--classify-model`, `--classify-base-url` or `--classify-key` flag, or an entry's `classify_model`, rode along; drop it (agent mode asks no model) |
+| `… names a classifier, and --plan-classify agent … it is ignored this run` | a `--classify-model`, `--classify-base-url` or `--classify-key` flag, or an entry's `classify_model`, rode along; drop it (agent mode asks no model), or switch to `auto` if the user named that classifier |
