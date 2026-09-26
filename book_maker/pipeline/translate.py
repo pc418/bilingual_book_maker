@@ -30,6 +30,7 @@ from .bundle import TRANSLATE_RESULT, TRANSLATE_STATE, sha256_file, sha256_text
 from .errors import PipelineError
 from .messages import (
     BILINGUAL_EDITED,
+    BILINGUAL_EDITED_EXPORT,
     BILINGUAL_MARKDOWN_SAVED,
     SETTINGS_CHANGED,
     STAGE_COMPLETE,
@@ -417,6 +418,35 @@ def translate_bundle(bundle, bbm_options, *, pandoc, main=None):
     return bundle.bilingual_markdown
 
 
+class BilingualEdited(PipelineError):
+    """The refusal of a hand-edited `book_bilingual.md`.
+
+    Its own type so the `--to-epub` route, which knows the copy beside the
+    PDF it writes, can name that copy too (`naming_copy`): the harness
+    export writes only inside the bundle (lead 260925, Codex review
+    01a0dc74, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md). Raised as it
+    is, from the staged harness, it names the export alone.
+    """
+
+    def __init__(self, bundle):
+        super().__init__(
+            BILINGUAL_EDITED_EXPORT.format(bundle=shlex.quote(str(bundle.root))),
+            stage=STAGE,
+        )
+        self.bundle = bundle
+
+    def naming_copy(self, copy):
+        """The same refusal, naming the export and then the copy."""
+        return PipelineError(
+            BILINGUAL_EDITED.format(
+                bundle=shlex.quote(str(self.bundle.root)),
+                bundle_epub=shlex.quote(str(self.bundle.epub)),
+                copy=shlex.quote(str(copy)),
+            ),
+            stage=self.stage,
+        )
+
+
 def _refuse_to_clobber_edits(bundle, manifest):
     """A hand-edited bilingual file is the deliverable, not scratch space."""
     if not bundle.bilingual_markdown.is_file():
@@ -427,9 +457,7 @@ def _refuse_to_clobber_edits(bundle, manifest):
     actual = sha256_file(bundle.bilingual_markdown)
     if recorded and recorded == actual:
         return
-    raise PipelineError(
-        BILINGUAL_EDITED.format(bundle=shlex.quote(str(bundle.root))), stage=STAGE
-    )
+    raise BilingualEdited(bundle)
 
 
 def _already_translated(bundle, manifest, stages, fingerprint):

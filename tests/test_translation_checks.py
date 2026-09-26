@@ -103,3 +103,48 @@ def test_a_target_whose_script_is_unknown_is_never_flagged():
 
 def test_a_greek_target_does_not_flag_greek():
     assert not suspected_echo(GREEK, GREEK, "el")
+
+
+# --------------------------------------------------------------------------
+# A script subtag in the target tag decides the target's script.
+# PIN (lead 260925, Codex review 01a0dc74,
+# docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md): `az-Cyrl` is Cyrillic,
+# `sr-Latn` is Latin only, Hans/Hant are Han, and a subtag the table does not
+# know is a script this check cannot tell: no warning.
+# --------------------------------------------------------------------------
+CYRILLIC = "Отец не вселяет страх, но изливает убеждение на всех слушающих."
+
+
+def test_a_cyrillic_echo_to_azerbaijani_in_cyrillic_says_nothing():
+    assert target_scripts("az-Cyrl") == frozenset({"CYRILLIC"})
+    assert not suspected_echo(CYRILLIC, CYRILLIC, "az-Cyrl")
+    # Azerbaijani without the subtag is written in Latin: the same echo is
+    # foreign to it.
+    assert suspected_echo(CYRILLIC, CYRILLIC, "az")
+
+
+def test_a_cyrillic_echo_to_serbian_in_latin_is_flagged():
+    assert suspected_echo(CYRILLIC, CYRILLIC, "sr-Latn")
+    assert suspected_echo(CYRILLIC, CYRILLIC, "sr-latn-RS")
+    # Serbian alone may be either script.
+    assert not suspected_echo(CYRILLIC, CYRILLIC, "sr")
+
+
+@pytest.mark.parametrize("tag", ["zh-Qaaa", "el-Zyyy", "en-Xabc"])
+def test_an_unknown_script_subtag_says_nothing(tag):
+    assert target_scripts(tag) is None
+    assert not suspected_echo(GREEK, GREEK, tag)
+    assert not suspected_echo(CYRILLIC, CYRILLIC, tag)
+
+
+@pytest.mark.parametrize("tag", ["zh-hans", "zh-Hans", "zh-Hant", "zh-Hans-CN"])
+def test_the_han_subtags_keep_flagging_a_greek_echo(tag):
+    assert target_scripts(tag) == frozenset({"HAN"})
+    assert suspected_echo(GREEK, GREEK, tag)
+    chinese = "父神并非以恐惧强行灌入，而是倾注劝诱，这是神谕中反复出现的说法。"
+    assert not suspected_echo(chinese, chinese, tag)
+
+
+def test_a_region_is_not_read_as_a_script():
+    assert target_scripts("pt-BR") == frozenset({"LATIN"})
+    assert target_scripts("de-1996") == frozenset({"LATIN"})

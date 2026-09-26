@@ -123,6 +123,62 @@ TARGET_SCRIPTS = {
 }
 
 
+# ISO 15924 script subtag (lowercased) -> the scripts `_script` names. A
+# script subtag in the target tag decides on its own: `az-Cyrl` is written
+# in Cyrillic whatever `az` alone would be, `sr-Latn` in Latin only. A
+# 4-letter subtag not listed here is a script this check cannot tell, and
+# nothing is flagged (lead 260925, Codex review 01a0dc74,
+# docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md).
+SCRIPT_SUBTAGS = {
+    "latn": _LATIN,
+    "cyrl": _CYRILLIC,
+    "arab": _ARABIC,
+    "deva": _DEVANAGARI,
+    "hans": frozenset({"HAN"}),
+    "hant": frozenset({"HAN"}),
+    "hani": frozenset({"HAN"}),
+    "bopo": frozenset({"BOPOMOFO"}),
+    "jpan": frozenset({"HAN", "KANA"}),
+    "hira": frozenset({"KANA"}),
+    "kana": frozenset({"KANA"}),
+    "hrkt": frozenset({"KANA"}),
+    "kore": frozenset({"HANGUL", "HAN"}),
+    "hang": frozenset({"HANGUL"}),
+    "grek": frozenset({"GREEK"}),
+    "hebr": frozenset({"HEBREW"}),
+    "beng": frozenset({"BENGALI"}),
+    "guru": frozenset({"GURMUKHI"}),
+    "gujr": frozenset({"GUJARATI"}),
+    "taml": frozenset({"TAMIL"}),
+    "telu": frozenset({"TELUGU"}),
+    "knda": frozenset({"KANNADA"}),
+    "mlym": frozenset({"MALAYALAM"}),
+    "sinh": frozenset({"SINHALA"}),
+    "thai": frozenset({"THAI"}),
+    "laoo": frozenset({"LAO"}),
+    "khmr": frozenset({"KHMER"}),
+    "mymr": frozenset({"MYANMAR"}),
+    "tibt": frozenset({"TIBETAN"}),
+    "geor": frozenset({"GEORGIAN"}),
+    "armn": frozenset({"ARMENIAN"}),
+    "ethi": frozenset({"ETHIOPIC"}),
+}
+
+
+def _script_subtag(subtags):
+    """The tag's script subtag, lowercased, or None.
+
+    In a BCP 47 tag it follows the language, or a 3-letter extended language
+    subtag: `zh-Hans`, `zh-yue-Hant`. A region or variant ends the search.
+    """
+    for subtag in subtags[1:3]:
+        if len(subtag) == 4 and subtag.isascii() and subtag.isalpha():
+            return subtag.lower()
+        if not (len(subtag) == 3 and subtag.isascii() and subtag.isalpha()):
+            return None
+    return None
+
+
 def _normalized(text):
     """NFC, whitespace runs collapsed to one space, ends stripped."""
     return re.sub(r"\s+", " ", unicodedata.normalize("NFC", str(text or ""))).strip()
@@ -140,12 +196,17 @@ def target_scripts(target_language):
     """The scripts `target_language` is written in, or None when unknown.
 
     Takes what `--language` takes: a tag (`zh-hans`, `pt-BR`) or a name the
-    tables know (`simplified chinese`).
+    tables know (`simplified chinese`). A script subtag wins over the
+    language (`az-Cyrl` is Cyrillic); an unknown one is None.
     """
     tag = language_code(target_language)
     if not tag:
         return None
-    return TARGET_SCRIPTS.get(tag.split("-", 1)[0].lower())
+    subtags = tag.split("-")
+    script = _script_subtag(subtags)
+    if script is not None:
+        return SCRIPT_SUBTAGS.get(script)
+    return TARGET_SCRIPTS.get(subtags[0].lower())
 
 
 def _unprotected(text):

@@ -37,7 +37,7 @@ from book_maker.pipeline.epub_export import (  # noqa: E402
 from book_maker.pipeline.errors import PipelineError  # noqa: E402
 from book_maker.pipeline.importer import import_markdown  # noqa: E402
 from book_maker.pipeline.messages import (  # noqa: E402
-    BILINGUAL_EDITED,
+    BILINGUAL_EDITED_EXPORT,
     PANDOC_REQUIRED,
     SETTINGS_CHANGED,
 )
@@ -193,7 +193,7 @@ def test_edited_bilingual_markdown_is_exported_without_retranslation(
     # A later translate run must not quietly overwrite that edit.
     with pytest.raises(PipelineError) as refused:
         translate_bundle(bundle, OPTIONS, pandoc=pandoc)
-    assert refused.value.detail == BILINGUAL_EDITED.format(bundle=bundle.root)
+    assert refused.value.detail == BILINGUAL_EDITED_EXPORT.format(bundle=bundle.root)
     assert "译:改过的第一段。" in bundle.bilingual_markdown.read_text(encoding="utf-8")
 
 
@@ -1034,12 +1034,14 @@ def test_a_heading_with_a_stray_emphasis_marker_keeps_its_id_out_of_the_text(
 
 
 # --------------------------------------------------------------------------
-# Mending a translation by hand: the harness export refreshes the copy
-# beside the PDF, and nothing is translated or recorded as translated.
-# PIN (lead 260925 with astra consult,
-# docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md): no new main-CLI flag; the
-# supported `tools/pdf_to_book.py export` is the way on, and the make_book
-# refusal names it with the real bundle path.
+# Mending a translation by hand: the harness export rebuilds the bundle's own
+# EPUB and writes nothing else; nothing is translated or recorded as
+# translated. The `--to-epub` route's refusal names both steps, the export
+# and the copy over the file beside the PDF.
+# PIN (lead 260925, Codex review 01a0dc74,
+# docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md): the export no longer
+# copies anything beside the PDF (it could not tell the route's copy from an
+# unrelated or edited file of the same name); no new main-CLI flag.
 # --------------------------------------------------------------------------
 EDIT_FROM = "译:第一段。"
 EDIT_TO = "译:手工修订的第一段。"
@@ -1097,40 +1099,47 @@ def provenance(bundle):
     )
 
 
+def outside(root, bundle):
+    """Every file under `root` but outside `bundle`, with its bytes."""
+    return {
+        path: path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and bundle.root not in path.parents
+    }
+
+
 @pytest.mark.parametrize(
     "pages, copy_name",
     [(None, "paper_bilingual.epub"), ("1-2", "paper_pages-1-2_bilingual.epub")],
 )
-def test_harness_export_puts_a_hand_edit_into_the_copy_beside_the_pdf(
-    tmp_path, pandoc, fake_format, request, capsys, pages, copy_name
+def test_harness_export_rebuilds_the_bundle_s_book_and_nothing_beside_the_pdf(
+    tmp_path, pandoc, fake_format, request, pages, copy_name
 ):
     pdf, bundle = route_bundle(tmp_path, pandoc, pages)
     translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    # A book beside the PDF under the route's own name: the export must not
+    # touch it, whether it is the route's copy, an edited one or another.
+    copy = tmp_path / copy_name
+    copy.write_bytes(b"a book the operator keeps beside the PDF")
     edit(bundle)
     before = provenance(bundle)
+    untouched = outside(tmp_path, bundle)
     FakeTranslator.instances = []
     request.getfixturevalue("nothing_translates")
 
-    code = load_harness().main(["--pandoc", pandoc, "export", str(bundle.root)])
-    out = capsys.readouterr().out
-    assert code == 0, out
+    assert load_harness().main(["--pandoc", pandoc, "export", str(bundle.root)]) == 0
 
-    copy = tmp_path / copy_name
-    assert copy.is_file()
-    assert EDIT_TO in epub_text(copy)
-    assert EDIT_FROM not in epub_text(copy)
-    assert copy.read_bytes() == bundle.epub.read_bytes()
-    assert (
-        f"Exported {bundle.epub}; the copy beside the PDF, {copy}, is refreshed."
-        in out.replace("\n", "")
-    )
+    assert EDIT_TO in epub_text(bundle.epub)
+    assert EDIT_FROM not in epub_text(bundle.epub)
+    assert copy.read_bytes() == b"a book the operator keeps beside the PDF"
+    assert outside(tmp_path, bundle) == untouched
     assert FakeTranslator.instances == []
     # The machine translation's record is exactly what it was: its
     # fingerprint, the hash of the file it wrote, its stage.
     assert provenance(bundle) == before
 
 
-def test_after_the_export_an_ordinary_rerun_still_refuses_and_names_it(
+def test_after_the_export_an_ordinary_rerun_still_refuses_and_names_both_steps(
     tmp_path, pandoc, fake_format
 ):
     from book_maker.pipeline.to_epub import pdf_to_epub
@@ -1152,12 +1161,16 @@ def test_after_the_export_an_ordinary_rerun_still_refuses_and_names_it(
     assert refused.value.stage == "translate"
     assert refused.value.detail == (
         "Bilingual Markdown was edited; rebuild the EPUB from it with: "
-        f"python tools/pdf_to_book.py export {bundle.root}"
+        f"python tools/pdf_to_book.py export {bundle.root}, then copy "
+        f"{bundle.root / 'book_bilingual.epub'} over "
+        f"{tmp_path / 'paper_pages-1-2_bilingual.epub'}."
     )
     assert EDIT_TO in bundle.bilingual_markdown.read_text(encoding="utf-8")
 
 
-def test_the_refusal_quotes_a_bundle_path_with_a_space(tmp_path, pandoc, fake_format):
+def test_the_refusal_quotes_every_path_with_a_space(tmp_path, pandoc, fake_format):
+    from book_maker.pipeline.to_epub import pdf_to_epub
+
     spaced = tmp_path / "my papers"
     spaced.mkdir()
     pdf, bundle = route_bundle(spaced, pandoc)
@@ -1166,6 +1179,19 @@ def test_the_refusal_quotes_a_bundle_path_with_a_space(tmp_path, pandoc, fake_fo
     with pytest.raises(PipelineError) as refused:
         translate_bundle(bundle, OPTIONS, pandoc=pandoc)
     assert refused.value.detail.endswith(f"export '{bundle.root}'")
+
+    with pytest.raises(PipelineError) as refused:
+        pdf_to_epub(
+            pdf,
+            ["--book_name", str(pdf), "--to-epub", *OPTIONS],
+            pandoc=pandoc,
+            prepare_stage=lambda *a, **k: None,
+            figure_stage=lambda *a, **k: None,
+        )
+    assert refused.value.detail.endswith(
+        f"export '{bundle.root}', then copy '{bundle.epub}' over "
+        f"'{spaced / 'paper_bilingual.epub'}'."
+    )
 
 
 def test_a_sample_stays_a_sample_through_the_harness_export(
@@ -1181,6 +1207,7 @@ def test_a_sample_stays_a_sample_through_the_harness_export(
     assert load_harness().main(["--pandoc", pandoc, "export", str(bundle.root)]) == 0
 
     assert bundle.read_manifest()["translation"]["sample"] is True
-    book = epub_text(tmp_path / "paper_bilingual.epub")
+    book = epub_text(bundle.epub)
     assert "手工修订的标题" in book
     assert "(sample)" in book
+    assert not (tmp_path / "paper_bilingual.epub").exists()

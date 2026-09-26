@@ -16,10 +16,21 @@ UNSUPPORTED_STRUCTURE = (
 SETTINGS_CHANGED = (
     "Source or translation settings changed; start a new translation bundle."
 )
-# {bundle} is the bundle's path, shell-quoted so the command can be pasted
-# (lead 260925, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md: the harness
-# export is the supported way to rebuild from a hand-edited file).
+# A hand-edited book_bilingual.md is refused, never overwritten. Every path
+# is shell-quoted so the command can be pasted. The harness export rebuilds
+# only the bundle's own EPUB and writes nothing beside the PDF (lead 260925,
+# Codex review 01a0dc74, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md), so
+# the `--to-epub` route's refusal names both steps: {bundle} is the bundle,
+# {bundle_epub} the EPUB the export writes in it, {copy} the file beside the
+# PDF this run would have written. The lead's text, verbatim.
 BILINGUAL_EDITED = (
+    "Bilingual Markdown was edited; rebuild the EPUB from it with: "
+    "python tools/pdf_to_book.py export {bundle}, then copy {bundle_epub} "
+    "over {copy}."
+)
+# The same refusal from the staged harness (`translate`, `run`), where there
+# is no copy beside a PDF: only the export.
+BILINGUAL_EDITED_EXPORT = (
     "Bilingual Markdown was edited; rebuild the EPUB from it with: "
     "python tools/pdf_to_book.py export {bundle}"
 )
@@ -366,9 +377,6 @@ PANDOC_ON_PATH = (
 )
 TO_EPUB_BUNDLE = "Working bundle: {path}"
 TO_EPUB_COPY = "Bilingual EPUB saved beside the PDF: {path}"
-# The harness export of a `--to-epub` bundle refreshes that copy too (lead
-# 260925): {epub} is the bundle's book, {copy} the one beside the PDF.
-EXPORTED_BESIDE = "Exported {epub}; the copy beside the PDF, {copy}, is refreshed."
 TRANSLATION_REUSED = (
     "Translation reused: {path} (same source and settings; delete it to "
     "translate again)."

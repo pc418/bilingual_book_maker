@@ -12,6 +12,7 @@ unparseable = "unparseable" # valid spelling; keeps reappearing, pinned for good
 # Owner 250925: a typos hit is accepted here, never respelled in code or fixtures.
 flate = "flate" # PDF FlateDecode filter
 parms = "parms" # PDF DecodeParms key
+beng = "beng" # ISO 15924 script subtag for Bengali (translation_checks)
 mis = "mis" # test fixture token
 nd = "nd" # test fixture token
 ue = "ue" # test fixture token

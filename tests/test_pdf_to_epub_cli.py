@@ -538,6 +538,53 @@ class TestTheStages:
         to_epub.pdf_to_epub(pdf, TRANSLATION, **stages([]))
         assert not list(pdf.parent.glob("*.part"))
 
+    # PIN (lead 260925, Codex review 01a0dc74,
+    # docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md): the partial file
+    # behind the copy is this invocation's own, so concurrent runs writing
+    # the same book neither share nor delete each other's.
+    def test_each_copy_goes_through_its_own_partial_file(
+        self, pdf, no_pandoc_lookup, monkeypatch
+    ):
+        used = []
+        real = to_epub.shutil.copyfile
+
+        def records(src, dst):
+            used.append(Path(dst))
+            return real(src, dst)
+
+        monkeypatch.setattr(to_epub.shutil, "copyfile", records)
+        to_epub.pdf_to_epub(pdf, TRANSLATION, **stages([]))
+        # the fake translate stage leaves no record; a rerun must not see an edit
+        to_epub.bundle_path(pdf).joinpath("book_bilingual.md").unlink()
+        to_epub.pdf_to_epub(pdf, TRANSLATION, **stages([]))
+        assert len(used) == 2 and used[0] != used[1]
+        assert all(path.parent == pdf.parent for path in used)
+        # the book a reader opens keeps the bundle EPUB's permissions, not
+        # the owner-only ones of a temporary file
+        book = pdf.parent / "book_bilingual.epub"
+        built = to_epub.bundle_path(pdf) / "book_bilingual.epub"
+        assert book.stat().st_mode & 0o777 == built.stat().st_mode & 0o777
+        assert not list(pdf.parent.glob("*.part"))
+
+    def test_a_copy_that_dies_removes_only_its_own_partial_file(
+        self, pdf, no_pandoc_lookup, monkeypatch
+    ):
+        # another export's partial file, under the name every run once shared
+        theirs = pdf.parent / "book_bilingual.epub.part"
+        theirs.write_bytes(b"another run's half-written book")
+        ours = []
+
+        def dies(src, dst):
+            ours.append(Path(dst))
+            Path(dst).write_bytes(b"half")
+            raise OSError("disk full")
+
+        monkeypatch.setattr(to_epub.shutil, "copyfile", dies)
+        with pytest.raises(PipelineError):
+            to_epub.pdf_to_epub(pdf, TRANSLATION, **stages([]))
+        assert ours and ours[0] != theirs and not ours[0].exists()
+        assert theirs.read_bytes() == b"another run's half-written book"
+
     def test_the_translation_options_are_parsed_before_anything_is_extracted(
         self, pdf, no_pandoc_lookup
     ):
@@ -801,71 +848,3 @@ class TestOcrReplaceLayer:
                 **fakes,
             )
         assert handed == [True, False]
-
-
-# --------------------------------------------------------------------------
-# Which copy beside a PDF the harness export refreshes (`beside_copy`)
-# PIN (lead 260925, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md): only a
-# `--to-epub` bundle's own copy; never a file beside a PDF the bundle was
-# not extracted from.
-# --------------------------------------------------------------------------
-from book_maker.pipeline.bundle import Bundle, sha256_file  # noqa: E402
-
-
-def extracted_bundle(root, pdf, kind="pdf"):
-    bundle = Bundle(root).create()
-    bundle.update_manifest(
-        source={
-            "origin": str(pdf),
-            "kind": kind,
-            "origin_sha256": sha256_file(pdf),
-        }
-    )
-    return bundle
-
-
-@pytest.mark.parametrize(
-    "name, expected",
-    [
-        ("book_book", "book_bilingual.epub"),
-        ("book_pages-1-2_book", "book_pages-1-2_bilingual.epub"),
-        ("book_pages-1,3,5-7_book", "book_pages-1,3,5-7_bilingual.epub"),
-    ],
-)
-def test_the_route_s_bundle_names_its_copy(pdf, name, expected):
-    bundle = extracted_bundle(pdf.parent / name, pdf)
-    assert to_epub.beside_copy(bundle) == pdf.parent / expected
-
-
-def test_a_bundle_moved_with_its_pdf_still_finds_it(pdf, tmp_path):
-    # the manifest records where the PDF was; the bundle looks beside itself
-    bundle = extracted_bundle(tmp_path / "book_book", pdf)
-    moved = tmp_path / "moved"
-    moved.mkdir()
-    (moved / "book.pdf").write_bytes(pdf.read_bytes())
-    (tmp_path / "book_book").rename(moved / "book_book")
-    assert to_epub.beside_copy(Bundle(moved / "book_book")) == (
-        moved / "book_bilingual.epub"
-    )
-
-
-def test_a_bundle_the_harness_wrote_elsewhere_gets_no_copy(pdf, tmp_path):
-    assert to_epub.beside_copy(extracted_bundle(tmp_path / "out", pdf)) is None
-    # beside the PDF, but named for another one
-    assert to_epub.beside_copy(extracted_bundle(tmp_path / "other_book", pdf)) is None
-    assert to_epub.beside_copy(extracted_bundle(tmp_path / "bookish_book", pdf)) is None
-
-
-def test_a_changed_or_missing_pdf_gets_no_copy(pdf, tmp_path):
-    bundle = extracted_bundle(tmp_path / "book_book", pdf)
-    pdf.write_bytes(b"%PDF-1.7\n%another edition\n")
-    assert to_epub.beside_copy(bundle) is None
-    pdf.unlink()
-    assert to_epub.beside_copy(bundle) is None
-
-
-def test_a_markdown_import_gets_no_copy(tmp_path):
-    source = tmp_path / "book.md"
-    source.write_text("# Book\n", encoding="utf-8")
-    bundle = extracted_bundle(tmp_path / "book_book", source, kind="markdown")
-    assert to_epub.beside_copy(bundle) is None

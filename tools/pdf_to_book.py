@@ -45,7 +45,6 @@ from book_maker.pipeline.stages import (  # noqa: E402
     prepare,
     source_kind,
 )
-from book_maker.pipeline.to_epub import beside_copy, copy_beside  # noqa: E402
 from book_maker.pipeline.translate import check_options, translate_bundle  # noqa: E402
 
 __all__ = [
@@ -294,18 +293,16 @@ def main(argv=None):
             bundle = Bundle(options.bundle)
             if options.figure_policy is not None:
                 render_figures(bundle, _extracted_pdf(bundle), options.figure_policy)
-            built = export_epub(
+            # The bundle's own EPUB only: nothing beside the PDF is written,
+            # even for a `--to-epub` bundle (lead 260925, Codex review
+            # 01a0dc74: which file there is the route's copy cannot be told
+            # safely from a bundle). The route's refusal names the copy step.
+            export_epub(
                 bundle,
                 pandoc=pandoc,
                 title=options.title,
                 language=options.language,
             )
-            # A `--to-epub` bundle's book is also the copy beside its PDF,
-            # the file a reader opens: after a hand edit, it follows.
-            copy = beside_copy(bundle)
-            if copy is not None:
-                copy_beside(built, copy)
-                print(messages.EXPORTED_BESIDE.format(epub=built, copy=copy))
             print(messages.STAGE_COMPLETE.format(stage="export"))
         elif command == "run":
             # The translation command line is validated first: `run` must
