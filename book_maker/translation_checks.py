@@ -21,6 +21,7 @@ echo, or a source already in the target's script, is never flagged.
 import re
 import unicodedata
 
+from book_maker.markdown_spans import CODE_SPAN, MATH_SPANS
 from book_maker.utils import language_code
 
 # The least number of letters, after protected content is removed, that
@@ -38,16 +39,15 @@ MIN_FOREIGN_SHARE = 0.6
 # names or a title, which may rightly stay as it is. Chosen, not measured.
 MAX_CAPITALISED_SHARE = 0.5
 
-# What is never judged: the placeholders the loaders plant, code, maths,
-# URLs, markup and identifiers. Removed before letters are counted, so a
-# block that is nothing but these says nothing.
+# What is never judged: code, maths, URLs, markup and identifiers. Removed
+# before letters are counted, so a block that is nothing but these says
+# nothing. The one caller (the reading edition) judges the source block as
+# written and the reply after its placeholders are restored, and a fenced
+# code block is never sent, so neither placeholders nor fences reach here.
+# The text is whitespace-collapsed first, so a code span needs no DOTALL.
 _PROTECTED = [
-    re.compile(r"⟦[^⟦⟧]*⟧"),  # inline markers (loader/markers.py)
-    re.compile(r"@@BBM_MD_PROTECT_\d+@@"),  # the Markdown loader's tokens
-    re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL),  # fenced code
-    re.compile(r"(`+).*?\1", re.DOTALL),  # code spans
-    re.compile(r"\$\$.+?\$\$|\\\[.+?\\\]|\\\(.+?\\\)", re.DOTALL),  # display maths
-    re.compile(r"(?<![\\$])\$(?![\s$])(?:[^$\n\\]|\\.)+?(?<![\s\\])\$(?!\d)"),
+    CODE_SPAN,
+    *(re.compile(pattern, flags) for pattern, flags in MATH_SPANS),
     re.compile(r"\]\([^)\s]*(?:\s+\"[^\"]*\")?\)"),  # a link's target, not its text
     re.compile(r"<(?:https?://|mailto:)[^>\s]+>"),  # autolinks
     re.compile(r"(?:https?://|www\.)\S+"),  # bare URLs

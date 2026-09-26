@@ -29,6 +29,7 @@ from pathlib import Path
 
 from book_maker.loader.disclosure import CREDIT_CLASS, CREDIT_PREFIX, credit_name
 from book_maker.loader.md_loader import MarkdownBookLoader
+from book_maker.markdown_spans import CODE_SPAN, MATH_SPANS
 from book_maker.redaction import redact
 from book_maker.translation_checks import suspected_echo
 
@@ -46,18 +47,9 @@ HEADING_ID = re.compile(r"\s*\{#([A-Za-z0-9_\-:.]+)\}\s*$")
 HEADING_ATTRIBUTES = re.compile(r"\s+\{((?:[#.][^\s{}]+|[\w-]+=)[^{}]*)\}\s*$")
 
 # Spans the ordinary Markdown path does not protect, added here so the
-# reading edition can carry them through a translation unchanged. Display
-# forms come first: `$$...$$` must not be eaten by the inline `$...$` rule.
-# The inline rule is Pandoc's own `tex_math_dollars` shape -- no space after
-# the opening `$`, none before the closing one, and no digit after it -- so
-# `$5 and $10` and `$5-$10` stay prose here exactly as they do in Pandoc.
-EXTRA_PROTECTED = [
-    (r"\$\$.+?\$\$", re.DOTALL),
-    (r"\\\[.+?\\\]", re.DOTALL),
-    (r"\\\(.+?\\\)", re.DOTALL),
-    (r"(?<![\\$])\$(?![\s$])(?:[^$\n\\]|\\.)+?(?<![\s\\])\$(?!\d)", 0),
-    (r"\[\^[^\]\s]+\]", 0),
-]
+# reading edition can carry them through a translation unchanged: maths
+# (`markdown_spans.MATH_SPANS`, display forms first) and footnote references.
+EXTRA_PROTECTED = [*MATH_SPANS, (r"\[\^[^\]\s]+\]", 0)]
 
 # Blocks kept once, in the source language, and never sent to the model.
 FOOTNOTE_DEFINITION = re.compile(r"^\[\^[^\]\s]+\]:")
@@ -78,9 +70,6 @@ TRANSLATION_ONLY_DROP = re.compile(
 LIST_MARKER = re.compile(
     r"^(?P<mark>[-*+]|\(?[0-9]+[.)]|\(?[a-zA-Z]{1,4}[.)]|#{1,6})(?=\s|$)"
 )
-
-
-CODE_SPAN = re.compile(r"(`+).*?\1")
 
 
 def _escape_emphasis(text):
@@ -116,6 +105,10 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
     # The bundle whose manifest records what the run noticed; None outside
     # the harness.
     _bundle = None
+    # Each assembly's stamped heading lines (`_heading_line`), and the
+    # `source.md` lines of blocks that came back as their source.
+    _stamped_headings = None
+    echo_lines = ()
 
     # -- where the files go -------------------------------------------
     def _state_path(self, md_name):
@@ -243,13 +236,14 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         Wired here only, for the reading edition. The plain Markdown,
         EPUB, txt and srt loaders do not run this check.
         """
-        target = self._language_tag or getattr(self, "target_language", None)
+        target = self._language_tag or self.target_language
         lines = []
         for batch, translated in zip(batches, translated_batches):
             if not translated or len(translated) != len(batch.block_texts):
                 continue
-            block_lines = batch.block_lines or (None,) * len(batch.block_texts)
-            for source, reply, line in zip(batch.block_texts, translated, block_lines):
+            for source, reply, line in zip(
+                batch.block_texts, translated, batch.block_lines
+            ):
                 if line is not None and suspected_echo(source, reply, target):
                     lines.append(line)
         return lines
@@ -325,9 +319,8 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
             text = replacement
         attribute = f"{{#{identifier}{suffix}}}"
         line = f"{hashes} {text} {attribute}"
-        stamped = getattr(self, "_stamped_headings", None)
-        if stamped is not None:
-            stamped[line] = (hashes, text, attribute, identifier)
+        if self._stamped_headings is not None:
+            self._stamped_headings[line] = (hashes, text, attribute, identifier)
         return line
 
     def _settle_heading_attributes(self, result):
@@ -338,10 +331,16 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         literal `{#...}` then shows in the heading and in the contents.
         Asked of Pandoc once for the whole book; a heading it misreads has
         its `*` and `_` escaped, which prints them as the source printed
-        them (skill field test 260925).
+        them (skill field test 260925). Only a heading with a `*` or `_` in
+        its text can be misread that way, or changed by the escape, so only
+        those are asked about; a book with none makes no Pandoc call.
         """
-        stamped = getattr(self, "_stamped_headings", None) or {}
-        indexes = [i for i, item in enumerate(result) if item in stamped]
+        stamped = self._stamped_headings
+        indexes = [
+            i
+            for i, item in enumerate(result)
+            if item in stamped and re.search(r"[*_]", stamped[item][1])
+        ]
         if not indexes or not self._pandoc:
             return result
         lines = [result[i] for i in indexes]
@@ -450,7 +449,7 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         translation's line is dropped first (`translation.limitations`), so
         a rerun that no longer echoes leaves nothing stale behind.
         """
-        warning = echo_warning(getattr(self, "echo_lines", None) or [])
+        warning = echo_warning(self.echo_lines)
         if warning:
             print(warning)
         if self._bundle is None:

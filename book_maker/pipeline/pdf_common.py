@@ -366,21 +366,18 @@ def strip_control_characters(markdown_text):
     markers) the removed characters stood on; one after the unplaced tail
     marker is named "unplaced", one before any marker is not named.
     """
-    matches = list(CONTROL_CHARACTER.finditer(markdown_text))
-    if not matches:
+    stripped, count = CONTROL_CHARACTER.subn("", markdown_text)
+    if not count:
         return markdown_text, 0, []
-    markers = [(m.start(), m.group(1)) for m in PAGE_MARKER.finditer(markdown_text)]
-    tail = markdown_text.find(UNPLACED_MARKER)
+    numbered = numbered_pages(markdown_text)
+    parts = PAGE_MARKER.split(numbered)
     pages = []
-    for match in matches:
-        if tail != -1 and match.start() > tail:
-            page = "unplaced"
-        else:
-            before = [number for start, number in markers if start < match.start()]
-            page = before[-1] if before else None
-        if page is not None and page not in pages:
-            pages.append(page)
-    return CONTROL_CHARACTER.sub("", markdown_text), len(matches), pages
+    for number, body in zip(parts[1::2], parts[2::2]):
+        if number not in pages and CONTROL_CHARACTER.search(body):
+            pages.append(number)
+    if CONTROL_CHARACTER.search(markdown_text[len(numbered) :]):
+        pages.append("unplaced")
+    return stripped, count, pages
 
 
 def dense_pages(markdown_text, limit=PAGE_CHARS_LIMIT):

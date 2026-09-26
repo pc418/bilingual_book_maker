@@ -198,6 +198,16 @@ def inspect(text, *, root, pandoc, for_translation=False):
     return report
 
 
+def _with_lines(text, pattern):
+    """`(match, 1-based line number)` for each match of `pattern` in `text`,
+    newlines counted once over the whole scan."""
+    last_pos, last_line = 0, 1
+    for match in pattern.finditer(text):
+        last_line += text.count("\n", last_pos, match.start())
+        last_pos = match.start()
+        yield match, last_line
+
+
 class _Walker:
     def __init__(self, report, root, *, for_translation=False):
         self.report = report
@@ -223,21 +233,15 @@ class _Walker:
 
     # -- raw text -----------------------------------------------------
     def scan_raw(self, text):
-        for match in CONTROL_CHARACTER.finditer(text):
+        for match, line in _with_lines(text, CONTROL_CHARACTER):
             self.problem(
-                f"control character U+{ord(match.group()):04X}",
-                f"line {text.count(chr(10), 0, match.start()) + 1}",
+                f"control character U+{ord(match.group()):04X}", f"line {line}"
             )
         text = blank_out_code(text)
-        for match in REFERENCE_IMAGE.finditer(text):
-            self.problem(
-                "reference-style image",
-                f"line {text.count(chr(10), 0, match.start()) + 1}",
-            )
-        for match in HTML_IMAGE.finditer(text):
-            self.problem(
-                "HTML image", f"line {text.count(chr(10), 0, match.start()) + 1}"
-            )
+        for match, line in _with_lines(text, REFERENCE_IMAGE):
+            self.problem("reference-style image", f"line {line}")
+        for match, line in _with_lines(text, HTML_IMAGE):
+            self.problem("HTML image", f"line {line}")
 
     # -- blocks -------------------------------------------------------
     def blocks(self, blocks, top=True):
