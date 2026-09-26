@@ -30,11 +30,16 @@ from pathlib import Path
 from book_maker.loader.disclosure import CREDIT_CLASS, CREDIT_PREFIX, credit_name
 from book_maker.loader.md_loader import MarkdownBookLoader
 from book_maker.redaction import redact
+from book_maker.translation_checks import suspected_echo
 
 from .bundle import TRANSLATE_RESULT, TRANSLATE_STATE, TRANSLATE_TEMP, sha256_text
+from .messages import ECHO_UNRESOLVED
 from .preflight import MARKDOWN_FORMAT, parse_markdown, run_tool
 
 TRANSLATION_CLASS = "bbm-translation"
+
+# How many echoed blocks the warning names before it counts the rest.
+ECHO_LINES_NAMED = 10
 
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 HEADING_ID = re.compile(r"\s*\{#([A-Za-z0-9_\-:.]+)\}\s*$")
@@ -108,6 +113,9 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
     # Pandoc's identifiers for the source headings, in document order.
     _heading_ids = ()
     _pandoc = None
+    # The bundle whose manifest records what the run noticed; None outside
+    # the harness.
+    _bundle = None
 
     # -- where the files go -------------------------------------------
     def _state_path(self, md_name):
@@ -128,7 +136,7 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         return str(self._temp_file)
 
     # -- what never reaches the model ----------------------------------
-    def _flush_paragraph(self, current_paragraph):
+    def _flush_paragraph(self, current_paragraph, line=None):
         """A paragraph, unless it is a structure that is carried as it is.
 
         Three shapes are kept once, in the source language, and never sent
@@ -160,10 +168,10 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
                     ],
                     stdin_text=json.dumps(ast),
                 ).stdout.strip()
-                self._append_block([normalized], translatable=True)
+                self._append_block([normalized], translatable=True, line=line)
                 return
         self._append_block(
-            current_paragraph, translatable=not self._is_carried_block(text)
+            current_paragraph, translatable=not self._is_carried_block(text), line=line
         )
 
     @staticmethod
@@ -220,7 +228,31 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         self.untranslated_batches = sum(
             1 for translated in translated_batches if not translated
         )
+        self.echo_lines = self._echoed_lines(batches, translated_batches)
         return super()._assemble_render_items(render_items, batches, translated_batches)
+
+    def _echoed_lines(self, batches, translated_batches):
+        """The `source.md` lines of blocks that came back as their source.
+
+        Judged on every pair the book is assembled from, resumed batches
+        included, so the report covers the whole book and not only what
+        this process translated. Warning only: the block is kept as the
+        model returned it (T3, lead 260925 with astra consult, rescoped to
+        detection; docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md).
+
+        Wired here only, for the reading edition. The plain Markdown,
+        EPUB, txt and srt loaders do not run this check.
+        """
+        target = self._language_tag or getattr(self, "target_language", None)
+        lines = []
+        for batch, translated in zip(batches, translated_batches):
+            if not translated or len(translated) != len(batch.block_texts):
+                continue
+            block_lines = batch.block_lines or (None,) * len(batch.block_texts)
+            for source, reply, line in zip(batch.block_texts, translated, block_lines):
+                if line is not None and suspected_echo(source, reply, target):
+                    lines.append(line)
+        return lines
 
     def _emit_pair(self, result, source_text, translated_text):
         self.pair_count += 1
@@ -408,7 +440,28 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
     # -- completion ------------------------------------------------------
     def make_bilingual_book(self):
         super().make_bilingual_book()
+        self._report_echoes()
         self._write_completion_record()
+
+    def _report_echoes(self):
+        """Say once which blocks came back identical, and record them.
+
+        On a bundle the warning is also a manifest limitation. The previous
+        translation's line is dropped first (`translation.limitations`), so
+        a rerun that no longer echoes leaves nothing stale behind.
+        """
+        warning = echo_warning(getattr(self, "echo_lines", None) or [])
+        if warning:
+            print(warning)
+        if self._bundle is None:
+            return
+        previous = (self._bundle.read_manifest().get("translation") or {}).get(
+            "limitations"
+        )
+        self._bundle.drop_limitations(previous or [])
+        recorded = [warning] if warning else []
+        self._bundle.add_limitations(recorded)
+        self._bundle.update_manifest(translation={"limitations": recorded})
 
     def _write_completion_record(self):
         """Proof, on disk, that the book was finished.
@@ -439,6 +492,17 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         )
 
 
+def echo_warning(lines):
+    """`ECHO_UNRESOLVED` for these `source.md` lines, or None when there are none."""
+    if not lines:
+        return None
+    named = ", ".join(f"line {line}" for line in lines[:ECHO_LINES_NAMED])
+    rest = len(lines) - ECHO_LINES_NAMED
+    if rest > 0:
+        named += f" and {rest} more"
+    return ECHO_UNRESOLVED.format(count=len(lines), blocks=named)
+
+
 def reading_edition_loader_class(
     bundle, *, language_tag=None, heading_ids=(), pandoc=None
 ):
@@ -457,5 +521,6 @@ def reading_edition_loader_class(
         _language_tag = language_tag
         _heading_ids = tuple(heading_ids)
         _pandoc = pandoc
+        _bundle = bundle
 
     return BundleMarkdownLoader

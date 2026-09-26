@@ -21,12 +21,16 @@ from .helper import translate_list_or_singles
 class MarkdownBlock:
     text: str
     translatable: bool = True
+    # 1-based line in the source file where the block starts: the block's
+    # stable identity for anything reported back to the operator.
+    line: int | None = None
 
 
 @dataclass(frozen=True)
 class MarkdownBatch:
     block_texts: list[str]
     breadcrumb: str = ""
+    block_lines: tuple = ()
 
 
 class MarkdownBookLoader(BaseBookLoader):
@@ -54,6 +58,8 @@ class MarkdownBookLoader(BaseBookLoader):
         parallel_workers=1,
     ) -> None:
         self.md_name = md_name
+        # What --language asked for, as the translator is given it.
+        self.target_language = language
         self.translate_model = model(
             key,
             language,
@@ -126,61 +132,70 @@ class MarkdownBookLoader(BaseBookLoader):
         if len(lines) >= 2 and lines[0].strip() == "---":
             for end in range(1, len(lines)):
                 if lines[end].strip() == "---":
-                    self._append_block(lines[: end + 1], translatable=False)
+                    self._append_block(lines[: end + 1], translatable=False, line=1)
                     i = end + 1
                     break
 
         current_paragraph = []
+
+        def flush(end):
+            # A paragraph is the run of lines just before `end`, so its first
+            # line is known without tracking it separately.
+            self._flush_paragraph(
+                current_paragraph, line=end - len(current_paragraph) + 1
+            )
 
         while i < len(lines):
             line = lines[i]
             stripped = line.strip()
 
             if self._is_fence_start(stripped):
-                self._flush_paragraph(current_paragraph)
+                flush(i)
                 current_paragraph = []
+                start = i
                 fence_lines, i = self._collect_fence(lines, i)
-                self._append_block(fence_lines, translatable=False)
+                self._append_block(fence_lines, translatable=False, line=start + 1)
                 continue
 
             if self._is_table_start(lines, i):
-                self._flush_paragraph(current_paragraph)
+                flush(i)
                 current_paragraph = []
+                start = i
                 table_lines, i = self._collect_table(lines, i)
-                self._append_block(table_lines, translatable=False)
+                self._append_block(table_lines, translatable=False, line=start + 1)
                 continue
 
             if self._is_pass_through_line(stripped):
-                self._flush_paragraph(current_paragraph)
+                flush(i)
                 current_paragraph = []
-                self._append_block([line], translatable=False)
+                self._append_block([line], translatable=False, line=i + 1)
                 i += 1
                 continue
 
             if not line.strip():
                 if current_paragraph:
-                    self._flush_paragraph(current_paragraph)
+                    flush(i)
                     current_paragraph = []
             elif line.strip().startswith("#"):
                 if current_paragraph:
-                    self._flush_paragraph(current_paragraph)
+                    flush(i)
                     current_paragraph = []
-                self._append_block([line], translatable=True)
+                self._append_block([line], translatable=True, line=i + 1)
             else:
                 current_paragraph.append(line)
             i += 1
 
         if current_paragraph:
-            self._flush_paragraph(current_paragraph)
+            flush(i)
 
-    def _append_block(self, lines, translatable=True):
+    def _append_block(self, lines, translatable=True, line=None):
         text = "\n".join(lines)
-        block = MarkdownBlock(text=text, translatable=translatable)
+        block = MarkdownBlock(text=text, translatable=translatable, line=line)
         self.md_blocks.append(block)
 
-    def _flush_paragraph(self, current_paragraph):
+    def _flush_paragraph(self, current_paragraph, line=None):
         if current_paragraph:
-            self._append_block(current_paragraph, translatable=True)
+            self._append_block(current_paragraph, translatable=True, line=line)
 
     @staticmethod
     def _is_fence_start(stripped_line):
@@ -289,7 +304,13 @@ class MarkdownBookLoader(BaseBookLoader):
                 return
 
             batch_index = len(batches)
-            batches.append(MarkdownBatch(batch_texts, batch_breadcrumb))
+            batches.append(
+                MarkdownBatch(
+                    batch_texts,
+                    batch_breadcrumb,
+                    tuple(block.line for block in batch),
+                )
+            )
             render_items.append(("batch", batch_index))
 
             translated_count += len(batch)

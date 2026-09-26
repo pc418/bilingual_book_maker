@@ -27,6 +27,15 @@ SUBMISSION_UNKNOWN = (
     "Extraction submission outcome is unknown; do not resubmit until the "
     "provider job is checked."
 )
+# T3 of the 260925 skill field test: a block the model handed back unchanged,
+# in a script the target does not use (`translation_checks.suspected_echo`).
+# The lead's text, verbatim; {blocks} is "line N" of source.md, the first
+# ten, then "and K more".
+ECHO_UNRESOLVED = (
+    "Warning: {count} block(s) came back identical to the original: {blocks}. "
+    "A quotation the book already renders nearby may rightly stay; otherwise "
+    "translate it in book_bilingual.md and export the bundle."
+)
 PANDOC_REQUIRED = (
     "Pandoc is required for EPUB export. Install it or provide --pandoc PATH."
 )
