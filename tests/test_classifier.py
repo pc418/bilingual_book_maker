@@ -252,6 +252,16 @@ class TestTheSessionBackend:
         backend = SessionBackend(Translator(session=Session([])))
         assert not backend.can(_q(trunk="T", image_png=b"png"))
 
+    def test_a_text_question_dispatched_to_it_is_refused_by_name(self):
+        """The session answers through `open()` and plan mode's own loop;
+        `Classifier.ask` reaching it says so instead of an AttributeError
+        (Codex review 01a0dde0, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md)."""
+        translator = Translator(session=Session([]))
+        backend = SessionBackend(translator)
+        assert backend.can(_q(trunk="T"))
+        with pytest.raises(NotImplementedError, match="own conversation"):
+            backend.ask(_q(trunk="T"))
+
 
 def test_the_codex_agent_cannot_see_images():
     """A codex classifier has a session and no image channel: an image

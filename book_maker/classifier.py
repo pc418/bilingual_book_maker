@@ -344,6 +344,15 @@ class SessionBackend:
             return "a plain conversation carries no image"
         return f"{type(self.translator).__name__} cannot hold a classifier session"
 
+    def ask(self, question):
+        # A session answers only through its own turn loop (`open`, then
+        # plan mode's session entry). Said, not an AttributeError, when a
+        # caller dispatches a text question here (Codex review 01a0dde0).
+        raise NotImplementedError(
+            "the session backend answers through its own conversation "
+            "(SessionBackend.open), not Classifier.ask"
+        )
+
 
 # --------------------------------------------------------------------------
 # The classifier
