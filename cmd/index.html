@@ -2420,6 +2420,10 @@ sections after it provide additional notes for selected workflows.</p>
 <td>PDF only, with <code>--to-epub</code>: leave display formulas as <code>&lt;!-- formula-not-decoded --&gt;</code> placeholders instead of cropping each one from the page as an image. The parser finds equations but never reads them, so the pictures are the only reason the mathematics reaches the book at all; they cost no model and no measurable time. Inline mathematics inside a paragraph is not a formula region and is not covered either way.</td>
 </tr>
 <tr>
+<td><code>--pdf-image-dpi N</code></td>
+<td>PDF, <code>--to-epub</code>: figure sharpness in DPI of the PDF's own page size; default 200, 300 for tiny labels; a rerun at another value redraws the figures only</td>
+</tr>
+<tr>
 <td><code>--img-model MODEL</code></td>
 <td>PDF only, with <code>--to-epub</code>: a vision model that corrects the layout detector's region roles (text, heading, title, caption, footnote, code) from a page image before export. Off unless named here or as the provider entry's <code>img_model</code>; <code>none</code> turns that off. Never the run's own model by fallback. About 3k prompt tokens per page.</td>
 </tr>

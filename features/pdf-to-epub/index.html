@@ -2328,6 +2328,10 @@ python<span class="w"> </span>make_book.py<span class="w"> </span>--book_name<sp
 <td>Leave display formulas as <code>&lt;!-- formula-not-decoded --&gt;</code> placeholders. Almost never what you want: the parser never reads equations, so without the pictures the mathematics is missing.</td>
 </tr>
 <tr>
+<td><code>--pdf-image-dpi N</code></td>
+<td>How sharp the figures are, in dots per inch of the PDF's own page size (72 to 600). Default 200: sharp on a tablet or a high-density e-reader; 150 for a smaller book, 300 for figures with tiny labels. A rerun at another value redraws the figures only; the extraction and the translation are kept. Formulas keep their own resolution. A figure that is a single embedded picture keeps that picture's own resolution when it is lower, and no figure goes above 5.6 megapixels.</td>
+</tr>
+<tr>
 <td><code>--img-model MODEL</code></td>
 <td>A vision model that corrects region roles from the page image. Off unless named here or as the provider entry's <code>img_model</code>; never the translating model by fallback. <code>none</code> turns an entry's model off. See <a href="#correcting-region-roles-with-a-vision-model">Correcting region roles</a>.</td>
 </tr>
