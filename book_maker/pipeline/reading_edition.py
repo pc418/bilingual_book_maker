@@ -75,6 +75,21 @@ LIST_MARKER = re.compile(
 )
 
 
+CODE_SPAN = re.compile(r"(`+).*?\1")
+
+
+def _escape_emphasis(text):
+    """`text` with every unescaped `*` and `_` outside code spans escaped."""
+    parts = []
+    last = 0
+    for match in CODE_SPAN.finditer(text):
+        parts.append(re.sub(r"(?<!\\)([*_])", r"\\\1", text[last : match.start()]))
+        parts.append(match.group(0))
+        last = match.end()
+    parts.append(re.sub(r"(?<!\\)([*_])", r"\\\1", text[last:]))
+    return "".join(parts)
+
+
 class ReadingEditionMarkdownLoader(MarkdownBookLoader):
     """Bilingual Markdown written for a reading edition rather than a diff."""
 
@@ -189,7 +204,9 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         self._used_ids = {}
         self._heading_serial = 0
         self._pending_ids = list(self._heading_ids)
+        self._stamped_headings = {}
         result = super()._render_bilingual_result(translate_missing)
+        result = self._settle_heading_attributes(result)
         if translate_missing:
             # Only a finished book is stamped. The partial file an
             # interrupted run leaves behind is not a translation of the
@@ -274,7 +291,37 @@ class ReadingEditionMarkdownLoader(MarkdownBookLoader):
         suffix = f" {attributes}" if attributes else ""
         if replacement is not None:
             text = replacement
-        return f"{hashes} {text} {{#{identifier}{suffix}}}"
+        attribute = f"{{#{identifier}{suffix}}}"
+        line = f"{hashes} {text} {attribute}"
+        stamped = getattr(self, "_stamped_headings", None)
+        if stamped is not None:
+            stamped[line] = (hashes, text, attribute, identifier)
+        return line
+
+    def _settle_heading_attributes(self, result):
+        """Every stamped heading's `{#id}` read by Pandoc as its attribute.
+
+        An emphasis opener that never closes (an OCR'd `## *习题5.22`, a
+        stray `**`) makes Pandoc read the attribute as heading text: the
+        literal `{#...}` then shows in the heading and in the contents.
+        Asked of Pandoc once for the whole book; a heading it misreads has
+        its `*` and `_` escaped, which prints them as the source printed
+        them (skill field test 260925).
+        """
+        stamped = getattr(self, "_stamped_headings", None) or {}
+        indexes = [i for i, item in enumerate(result) if item in stamped]
+        if not indexes or not self._pandoc:
+            return result
+        lines = [result[i] for i in indexes]
+        blocks = parse_markdown(self._pandoc, "\n\n".join(lines)).get("blocks", [])
+        if len(blocks) != len(lines):
+            return result
+        for index, line, block in zip(indexes, lines, blocks):
+            hashes, text, attribute, identifier = stamped[line]
+            if block.get("t") == "Header" and block["c"][1][0] == identifier:
+                continue
+            result[index] = f"{hashes} {_escape_emphasis(text)} {attribute}"
+        return result
 
     def _next_identifier(self, fallback):
         """The identifier Pandoc already gave this heading, if we have it.

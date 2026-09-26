@@ -991,3 +991,43 @@ def test_a_control_character_inside_a_code_fence_is_refused_too(tmp_path, pandoc
     with pytest.raises(PipelineError) as refused:
         import_markdown(bundle, book, pandoc=pandoc)
     assert "control character U+0001 at line 6" in refused.value.detail
+
+
+# PIN: lead 260925, skill field test, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md
+# -- an OCR'd `## *习题5.22` (an emphasis opener that never closes) made
+# Pandoc read the appended `{#习题5.22}` as heading text, and the EPUB
+# showed it in the <h2> and in the contents. Every heading id we stamp
+# must parse as the heading's attribute; legitimate emphasis stays.
+def test_a_heading_with_a_stray_emphasis_marker_keeps_its_id_out_of_the_text(
+    tmp_path, pandoc, fake_format
+):
+    text = (
+        "# Book\n\nOpening prose.\n\n## *习题5.22\n\nAn exercise.\n\n"
+        "## **Stray start\n\nMore.\n\n## Notes on *Hamlet*\n\nEnd.\n"
+    )
+    bundle = prepared(tmp_path, pandoc, text)
+    translate_bundle(bundle, OPTIONS, pandoc=pandoc)
+    bilingual = bundle.bilingual_markdown.read_text(encoding="utf-8")
+
+    headers = [
+        block
+        for block in blocks(pandoc, bilingual)
+        if block["t"] == "Header" and block["c"][0] == 2
+    ]
+    from book_maker.pipeline.preflight import plain_text
+
+    shown = [plain_text(block["c"][2]) for block in headers]
+    assert shown == ["*习题5.22", "**Stray start", "Notes on Hamlet"]
+    assert all("{#" not in title for title in shown)
+    # The emphasis a heading really has is kept as emphasis.
+    assert any(inline["t"] == "Emph" for inline in headers[2]["c"][2])
+
+    export_epub(bundle, pandoc=pandoc)
+    with zipfile.ZipFile(bundle.epub) as archive:
+        book = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.endswith((".xhtml", ".ncx"))
+        )
+    assert "{#" not in book
+    assert "*习题5.22" in book
