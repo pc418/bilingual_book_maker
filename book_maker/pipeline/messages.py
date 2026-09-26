@@ -250,14 +250,17 @@ FIGURE_CAPPED = "Figure {id} on page {page} would be {mp:.1f} MP at {policy}; dr
 FIGURES_NATIVE = "{count} of them kept at the resolution of the picture embedded in the PDF, below {policy}: more pixels would add none of its detail."
 FIGURE_FALLBACK_MISSING = "Figure {id} on page {page} could not be drawn ({err}), and docling's picture for it ({path}) is missing too; delete the bundle directory to extract again."
 # A bundle whose source.md names drawn figures must carry their record,
-# one record per named figure (Codex review 260925): without it a changed
-# policy would draw nothing and look like success. {problem} is one of the
-# four FIGURE_RECORD_* fragments below.
+# a record for every named figure (Codex review 260925): without it a
+# changed policy would draw nothing and look like success. {problem} is
+# one of the three FIGURE_RECORD_* fragments below.
 FIGURE_RECORD_BROKEN = "source.md names {count} drawn figure(s), but .work/extraction/figures.json {problem}; the figures cannot be drawn. Delete the bundle directory to extract again."
 FIGURE_RECORD_MISSING = "is missing"
 FIGURE_RECORD_UNREADABLE = "cannot be read"
 FIGURE_RECORD_UNLISTED = "does not list {ids}"
-FIGURE_RECORD_UNNAMED = "lists figures source.md does not name: {ids}"
+# A recorded figure the operator removed from source.md (lead 260925: the
+# route tells operators to edit source.md before translating): skipped,
+# its file left alone, said once per run.
+FIGURES_UNREFERENCED = "{count} figure(s) in .work/extraction/figures.json are no longer named in source.md and were not drawn: {ids}."
 # `--pdf-image-dpi` (owner 260925: the PDF's real physical DPI, default
 # 200; {default} is formatted from `pdf_figures.FIGURE_POLICY_DEFAULT`).
 FIGURE_DPI_BODY = (

@@ -43,13 +43,13 @@ from book_maker.pipeline.messages import (  # noqa: E402
     FIGURE_RECORD_BROKEN,
     FIGURE_RECORD_MISSING,
     FIGURE_RECORD_UNLISTED,
-    FIGURE_RECORD_UNNAMED,
     FIGURE_RECORD_UNREADABLE,
     FIGURE_RENDER_FAILED,
     FIGURES_DRAWN,
     FIGURES_LEGACY,
     FIGURES_NATIVE,
     FIGURES_REDRAWN,
+    FIGURES_UNREFERENCED,
 )
 from book_maker.pipeline.pdf_figures import (  # noqa: E402
     FIGURE_POLICY_DEFAULT,
@@ -554,9 +554,10 @@ def test_a_bundle_from_before_figures_were_drawn_is_left_alone(
 
 # PIN (Codex review 260925, lead's fix list; docs/260925-feat-PDF_FIGURE_RENDER*):
 # legacy is decided from source.md alone. A bundle whose source.md names
-# stable figures must carry a record listing exactly those figures, else
-# the run stops before anything is drawn or reused -- a missing record
-# must never look like a legacy bundle and skip a requested redraw.
+# stable figures must carry a record for each of them, else the run stops
+# before anything is drawn or reused -- a missing record must never look
+# like a legacy bundle and skip a requested redraw. A record source.md no
+# longer names is the operator's edit and is only skipped (lead 260925).
 @pytest.mark.parametrize(
     "damage, count, problem",
     [
@@ -564,11 +565,6 @@ def test_a_bundle_from_before_figures_were_drawn_is_left_alone(
         ("corrupt", 2, FIGURE_RECORD_UNREADABLE),
         ("not-a-list", 2, FIGURE_RECORD_UNREADABLE),
         ("reference-without-record", 2, FIGURE_RECORD_UNLISTED.format(ids="p0001-02")),
-        (
-            "record-without-reference",
-            1,
-            FIGURE_RECORD_UNNAMED.format(ids="p0001-02"),
-        ),
     ],
 )
 def test_a_broken_figure_record_stops_before_anything_is_drawn(
@@ -588,13 +584,8 @@ def test_a_broken_figure_record_stops_before_anything_is_drawn(
         path.write_text('[{"id": ', encoding="utf-8")
     elif damage == "not-a-list":
         path.write_text('{"id": "p0001-01"}', encoding="utf-8")
-    elif damage == "reference-without-record":
-        pdf_figures.write_records(path, records(bundle)[:1])
     else:
-        text = bundle.source.read_text(encoding="utf-8")
-        bundle.source.write_text(
-            text.replace("![](assets/figures/p0001-02.png)\n", ""), encoding="utf-8"
-        )
+        pdf_figures.write_records(path, records(bundle)[:1])
 
     def never(*args, **kwargs):
         raise AssertionError("drawn despite a broken record")
@@ -609,6 +600,51 @@ def test_a_broken_figure_record_stops_before_anything_is_drawn(
             count=count, problem=problem
         )
     assert bundle.read_manifest()["figures"] == drawn
+
+
+def test_a_figure_removed_from_source_md_is_skipped_with_one_line(tmp_path, capsys):
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO])
+    bundle = drawn_bundle(
+        tmp_path, pdf, [("p0001-01", PHOTO_BOX), ("p0001-02", PHOTO_BOX)]
+    )
+    policy = FigurePolicy("dpi", 144)
+    pdf_figures.render_figures(bundle, pdf, policy)
+    removed = bundle.root / "assets/figures/p0001-02.png"
+    kept = removed.read_bytes()
+    text = bundle.source.read_text(encoding="utf-8")
+    bundle.source.write_text(
+        text.replace("![](assets/figures/p0001-02.png)\n", ""), encoding="utf-8"
+    )
+    line = FIGURES_UNREFERENCED.format(count=1, ids="p0001-02")
+    capsys.readouterr()
+    # The rest is drawn: the record set changed, so this run draws again.
+    block = pdf_figures.render_figures(bundle, pdf, policy)
+    out = capsys.readouterr().out
+    assert out.count(line) == 1
+    assert block["count"] == 1 and list(block["files"]) == ["p0001-01"]
+    assert "Figures: 1 drawn at 144 DPI" in out
+    assert removed.read_bytes() == kept
+    # The next run reuses the drawing (the skipped record forces nothing)
+    # and says the line again, once.
+    block_again = pdf_figures.render_figures(bundle, pdf, policy)
+    out = capsys.readouterr().out
+    assert block_again == block
+    assert out.count(line) == 1
+    assert "Figures:" not in out
+    assert removed.read_bytes() == kept
+
+
+def test_the_skipped_figures_line_names_ten_and_counts_the_rest(tmp_path, capsys):
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO])
+    names = [f"p0001-{n:02d}" for n in range(1, 13)]
+    bundle = drawn_bundle(tmp_path, pdf, [(name, PHOTO_BOX) for name in names])
+    bundle.source.write_text("# No figures left\n", encoding="utf-8")
+    capsys.readouterr()
+    block = pdf_figures.render_figures(bundle, pdf, FIGURE_POLICY_DEFAULT)
+    ids = ", ".join(names[:10]) + " and 2 more"
+    out = capsys.readouterr().out
+    assert out.count(FIGURES_UNREFERENCED.format(count=12, ids=ids)) == 1
+    assert block["count"] == 0 and block["files"] == {}
 
 
 def test_a_broken_record_names_ten_figures_and_counts_the_rest(tmp_path):
@@ -1236,9 +1272,7 @@ def test_an_edited_record_is_drawn_again(tmp_path, pandoc, device, capsys):
     capsys.readouterr()
     block = pdf_figures.render_figures(bundle, pdf, policy)
     assert "Figures: 2 drawn at 144 DPI" in capsys.readouterr().out
-    assert block["records_sha256"] == pdf_figures.sha256_bytes(
-        pdf_figures.records_path(bundle).read_bytes()
-    )
+    assert block["records_sha256"] == pdf_figures.records_digest(records(bundle))
     assert block["files"]["p0002-01"]["size"] > 0
 
 

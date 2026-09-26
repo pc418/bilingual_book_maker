@@ -43,13 +43,13 @@ from .messages import (
     FIGURE_RECORD_BROKEN,
     FIGURE_RECORD_MISSING,
     FIGURE_RECORD_UNLISTED,
-    FIGURE_RECORD_UNNAMED,
     FIGURE_RECORD_UNREADABLE,
     FIGURE_RENDER_FAILED,
     FIGURES_DRAWN,
     FIGURES_LEGACY,
     FIGURES_NATIVE,
     FIGURES_REDRAWN,
+    FIGURES_UNREFERENCED,
     PDF_IMAGE_DPI_INVALID,
 )
 
@@ -474,12 +474,14 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
     - source.md names no drawn figure and there is no `figures.json`: a
       bundle made before this step. It is left exactly as it is, and
       `FIGURES_LEGACY` is said once if it names docling's pictures.
-    - Otherwise the record must list exactly the figures source.md names
+    - Otherwise the record must list every figure source.md names
       (`_read_records`), or the run stops (`FIGURE_RECORD_BROKEN`) before
-      anything is drawn or reused.
+      anything is drawn or reused. A recorded figure source.md no longer
+      names (the operator removed it) is skipped -- not drawn, not
+      counted, its file left alone -- with `FIGURES_UNREFERENCED`.
     - The manifest's block matches (`_still_drawn`: policy, revision, the
-      record's digest, every file's size and hash, nothing failed): nothing
-      is drawn.
+      digest of the named figures' records, every file's size and hash,
+      nothing failed): nothing is drawn.
     - Otherwise every figure is drawn again. One that cannot be drawn gets
       docling's picture under its name, a line and a limitation, and is
       tried again on the next run; with docling's picture gone too the run
@@ -498,8 +500,10 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
         if LEGACY_PICTURE.search(text):
             print(FIGURES_LEGACY)
         return None
-    raw, records = _read_records(path, named)
-    digest = sha256_bytes(raw)
+    records, skipped = _read_records(path, named)
+    if skipped:
+        print(FIGURES_UNREFERENCED.format(count=len(skipped), ids=_ids(skipped)))
+    digest = records_digest(records)
     old = manifest.get("figures")
     wanted = policy.to_manifest()
     if _still_drawn(bundle, old, wanted, digest, records):
@@ -587,12 +591,14 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
 
 
 def _read_records(path, named):
-    """`(raw bytes, records)` of `figures.json`, one record per name in `named`.
+    """`(records, skipped)` from `figures.json`: the records of the figures
+    in `named`, and the paths of the recorded figures it does not name.
 
     `named` are the bundle-relative figure paths source.md references. A
-    record that is missing, cannot be read, leaves a named figure out or
-    lists one source.md does not name stops the run: the figures would
-    otherwise be drawn wrong or not at all while the run looks fine.
+    record file that is missing, cannot be read or leaves a named figure
+    out stops the run: the figures would otherwise be drawn wrong or not
+    at all while the run looks fine. A recorded figure source.md does not
+    name was removed by the operator and is only skipped.
     """
 
     def broken(problem):
@@ -622,10 +628,17 @@ def _read_records(path, named):
     unlisted = sorted(set(named) - set(listed))
     if unlisted:
         raise broken(FIGURE_RECORD_UNLISTED.format(ids=_ids(unlisted)))
-    unnamed = sorted(set(listed) - set(named))
-    if unnamed:
-        raise broken(FIGURE_RECORD_UNNAMED.format(ids=_ids(unnamed)))
-    return raw, records
+    wanted = set(named)
+    skipped = sorted(set(listed) - wanted)
+    return [r for r in records if r["file"] in wanted], skipped
+
+
+def records_digest(records):
+    """The reuse check's digest of the records drawn: the named figures'
+    only, so a skipped record never forces a redraw."""
+    return sha256_bytes(
+        json.dumps(records, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    )
 
 
 def _ids(paths, shown=10):
