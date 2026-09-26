@@ -244,6 +244,11 @@ FIGURE_RENDER_FAILED = (
     "Figure {id} on page {page} could not be drawn at {policy} ({err}); "
     "it keeps docling's 72 DPI picture."
 )
+# Codex astra follow-ups (260925): the megapixel ceiling, a lone embedded
+# picture kept at its own resolution, a fallback that is not there.
+FIGURE_CAPPED = "Figure {id} on page {page} would be {mp:.1f} MP at {policy}; drawn at {dpi} DPI instead, the {cap:.1f} MP most e-readers accept."
+FIGURES_NATIVE = "{count} of them kept at the resolution of the picture embedded in the PDF, below {policy}: more pixels would add none of its detail."
+FIGURE_FALLBACK_MISSING = "Figure {id} on page {page} could not be drawn ({err}), and docling's picture for it ({path}) is missing too; delete the bundle directory to extract again."
 # `--pdf-image-dpi` (owner 260925: the PDF's real physical DPI, default
 # 200; {default} is formatted from `pdf_figures.FIGURE_POLICY_DEFAULT`).
 FIGURE_DPI_BODY = (

@@ -35,11 +35,15 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .bundle import ASSETS_DIR
+from .bundle import ASSETS_DIR, sha256_bytes, sha256_file
+from .errors import PipelineError
 from .messages import (
+    FIGURE_CAPPED,
+    FIGURE_FALLBACK_MISSING,
     FIGURE_RENDER_FAILED,
     FIGURES_DRAWN,
     FIGURES_LEGACY,
+    FIGURES_NATIVE,
     FIGURES_REDRAWN,
     PDF_IMAGE_DPI_INVALID,
 )
@@ -53,8 +57,24 @@ FIGURES_FILE = "figures.json"
 # `IMAGE_DIR`, spelled here so this module never imports the adapter).
 DOCLING_IMAGE_DIR = "images"
 # Bumped when the drawing itself changes (crop, encoding), so every bundle
-# drawn by the older code is drawn again on its next run.
-FIGURE_REVISION = 1
+# drawn by the older code is drawn again on its next run. 2: padding, the
+# megapixel ceiling, the native resolution of a lone embedded picture.
+FIGURE_REVISION = 2
+# No figure bitmap above this many pixels (Codex astra 260925,
+# docs/260925-docs-PDF_IMAGE_FIDELITY_DESIGN.md): the ceiling most
+# e-readers accept for one image. Applied to every policy after padding,
+# before anything is rendered; the figure's shown width is unchanged.
+FIGURE_MAX_PIXELS = 5_600_000
+# Room around a detected figure box, per side, in points (provisional):
+# docling's box can shave an axis label or a stroke. Each side stops
+# `pdf_formula.PAD_CLEAR` short of the nearest unrelated item and at the
+# page edge; no minimum.
+FIGURE_PAD_PT = 2.0
+# How far a lone embedded picture's placement may fall short of the padded
+# crop and still be the figure: the padding plus half a point. Nothing
+# else may intersect the crop (`native_dpi`), so what it leaves out is
+# blank page.
+NATIVE_COVER_TOLERANCE = FIGURE_PAD_PT + 0.5
 
 POLICY_KINDS = ("dpi", "page-width", "figure-px")
 # `figure-px`: the height is held to this many times the asked width, so a
@@ -228,7 +248,9 @@ def name_pictures(document, out_dir):
     them (`iterate_items`, reading order). A picture without a page or a
     written file keeps what docling gave it; there is nothing to draw.
     Each record: `id`, `page`, `bbox` (`[left, top, right, bottom]`, points,
-    displayed frame, top-left origin), `file` (bundle-relative), `width`
+    displayed frame, top-left origin: docling's box as detected), `crop`
+    (the same frame: the box drawn, `figure_crop`), `file`
+    (bundle-relative), `width`
     (percent of the page width), `fallback` (docling's file, relative to
     `out_dir`; the extraction writes it bundle-relative into figures.json).
     """
@@ -237,6 +259,7 @@ def name_pictures(document, out_dir):
 
     target = Path(out_dir) / FIGURE_DIR
     counts, records = {}, []
+    others = page_boxes(document)
     for item, _level in document.iterate_items(with_groups=False):
         if not isinstance(item, PictureItem) or not item.prov:
             continue
@@ -259,17 +282,100 @@ def name_pictures(document, out_dir):
         shutil.copyfile(source, target / name)
         item.image.uri = Path(FIGURE_DIR) / name
         bbox = [round(float(v), 3) for v in (box.l, box.t, box.r, box.b)]
+        crop = figure_crop(
+            bbox, (size.width, size.height), others.get(prov.page_no) or []
+        )
         records.append(
             {
                 "id": ident,
                 "page": prov.page_no,
                 "bbox": bbox,
+                "crop": [round(v, 3) for v in crop],
                 "file": f"{ASSETS_DIR}/{FIGURE_DIR}/{name}",
                 "width": display_width(bbox, size.width),
                 "fallback": f"{DOCLING_IMAGE_DIR}/{source.name}",
             }
         )
     return records
+
+
+def page_boxes(document):
+    """`{page: [[left, top, right, bottom], ...]}` of every positioned item,
+    top-left origin, the frame of a record's `bbox` (the same walk as
+    `pdf_formula.neighbours`, turned the way `name_pictures` turns a
+    picture's box)."""
+    boxes = {}
+    for item, _level in document.iterate_items(with_groups=False):
+        for prov in getattr(item, "prov", None) or []:
+            page = document.pages.get(prov.page_no)
+            if page is None:
+                continue
+            box = prov.bbox.to_top_left_origin(page_height=page.size.height)
+            boxes.setdefault(prov.page_no, []).append(
+                [float(box.l), float(box.t), float(box.r), float(box.b)]
+            )
+    return boxes
+
+
+def figure_crop(box, page_size, others, pad=FIGURE_PAD_PT):
+    """`box` grown by up to `pad` points per side: `[left, top, right, bottom]`.
+
+    Top-left origin, points. Each side stops `pdf_formula.PAD_CLEAR` short
+    of the nearest item in that direction and at the page edge; no
+    minimum, so a caption 1.5 pt below leaves 0.5 pt. Items inside the
+    figure box (its own labels, the picture itself) do not count; one
+    that overlaps the box's edge leaves no padding on the sides it
+    reaches past; one off a corner holds both of that corner's sides.
+    """
+    from .pdf_formula import PAD_CLEAR
+
+    left, top, right, bottom = (float(v) for v in box)
+    width, height = (float(v) for v in page_size)
+    room = {"left": pad, "top": pad, "right": pad, "bottom": pad}
+    inside = 0.5
+    for o_left, o_top, o_right, o_bottom in others:
+        if (
+            o_left >= left - inside
+            and o_top >= top - inside
+            and o_right <= right + inside
+            and o_bottom <= bottom + inside
+        ):
+            continue
+        if (
+            o_right <= left - pad
+            or o_left >= right + pad
+            or o_bottom <= top - pad
+            or o_top >= bottom + pad
+        ):
+            continue
+        if o_right > left and o_left < right and o_bottom > top and o_top < bottom:
+            # Over the box's edge: no room on each side it reaches past.
+            if o_left < left:
+                room["left"] = 0.0
+            if o_top < top:
+                room["top"] = 0.0
+            if o_right > right:
+                room["right"] = 0.0
+            if o_bottom > bottom:
+                room["bottom"] = 0.0
+            continue
+        gaps = {}
+        if o_top >= bottom:
+            gaps["bottom"] = o_top - bottom
+        if o_bottom <= top:
+            gaps["top"] = top - o_bottom
+        if o_left >= right:
+            gaps["right"] = o_left - right
+        if o_right <= left:
+            gaps["left"] = left - o_right
+        for side, gap in gaps.items():
+            room[side] = min(room[side], max(0.0, gap - PAD_CLEAR))
+    return [
+        max(0.0, left - room["left"]),
+        max(0.0, top - room["top"]),
+        min(width, right + room["right"]),
+        min(height, bottom + room["bottom"]),
+    ]
 
 
 def _reference(record):
@@ -356,9 +462,13 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
     - No completed PDF extraction (a Markdown import, a stub stage): nothing.
     - No `figures.json`: a bundle made before this step. It is left exactly
       as it is, and `FIGURES_LEGACY` is said once if it has pictures.
-    - The manifest's block has this policy and revision: nothing is drawn.
+    - The manifest's block matches (`_still_drawn`: policy, revision, the
+      record's digest, every file's size and hash, nothing failed): nothing
+      is drawn.
     - Otherwise every figure is drawn again. One that cannot be drawn gets
-      docling's picture under its name, a line and a limitation.
+      docling's picture under its name, a line and a limitation, and is
+      tried again on the next run; with docling's picture gone too the run
+      stops (`FIGURE_FALLBACK_MISSING`).
     """
     manifest = bundle.read_manifest()
     extract = ((manifest.get("stages") or {}).get("extract") or {}).get("status")
@@ -371,31 +481,55 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
         ):
             print(FIGURES_LEGACY)
         return None
-    records = json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_bytes()
+    records = json.loads(raw.decode("utf-8"))
+    digest = sha256_bytes(raw)
     old = manifest.get("figures")
     wanted = policy.to_manifest()
-    if old and old.get("policy") == wanted and old.get("revision") == FIGURE_REVISION:
+    if _still_drawn(bundle, old, wanted, digest, records):
         return old
 
     # Forgotten before the first file is touched: a drawing interrupted
     # half-way is then drawn again on the next run, whatever it asks for.
     forget(bundle)
-    failed, lines, total = [], [], 0
-    for record, error in _draw_all(pdf_path, records, bundle.root, policy):
+    failed, lines, total, files, native = [], [], 0, {}, 0
+    masked = masked_sizes(pdf_path)
+    for record, outcome in _draw_all(pdf_path, records, bundle.root, policy, masked):
         destination = bundle.root / record["file"]
-        if error is not None:
-            _fallback(bundle.root / record["fallback"], destination)
+        if isinstance(outcome, BaseException):
+            _fallback(record, bundle.root / record["fallback"], destination, outcome)
             line = FIGURE_RENDER_FAILED.format(
                 id=record["id"],
                 page=record["page"],
                 policy=policy.describe(),
-                err=f"{type(error).__name__}: {error}",
+                err=f"{type(outcome).__name__}: {outcome}",
             )
             print(line)
             failed.append(record["id"])
             lines.append(line)
-        if destination.is_file():
-            total += destination.stat().st_size
+            state = {}
+        else:
+            state = outcome
+            if state.get("capped_mp") is not None:
+                print(
+                    FIGURE_CAPPED.format(
+                        id=record["id"],
+                        page=record["page"],
+                        mp=state["capped_mp"],
+                        policy=policy.describe(),
+                        dpi=round(state["effective_scale"] * 72),
+                        cap=FIGURE_MAX_PIXELS / 1_000_000,
+                    )
+                )
+            if state.get("native_dpi") is not None:
+                native += 1
+        size = destination.stat().st_size
+        total += size
+        files[record["id"]] = {
+            "size": size,
+            "sha256": sha256_file(destination),
+            **{k: v for k, v in state.items() if k != "capped_mp"},
+        }
     block = {
         "policy": wanted,
         "revision": FIGURE_REVISION,
@@ -404,11 +538,19 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
         "failed": failed,
         # This drawing's own lines, so the next drawing takes them back.
         "limitations": lines,
+        # What the reuse check compares (`_still_drawn`); never part of the
+        # translation's identity (translate._translated_assets).
+        "records_sha256": digest,
+        "files": files,
     }
     bundle.update_manifest(figures=block)
     bundle.add_limitations(lines)
     if records:
-        if old and old.get("policy"):
+        if (
+            old
+            and old.get("policy")
+            and (old.get("policy") != wanted or old.get("revision") != FIGURE_REVISION)
+        ):
             print(
                 FIGURES_REDRAWN.format(
                     policy=policy.describe(),
@@ -422,7 +564,30 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
                 size=human_size(total),
             )
         )
+        if native:
+            print(FIGURES_NATIVE.format(count=native, policy=policy.describe()))
     return block
+
+
+def _still_drawn(bundle, old, wanted, digest, records):
+    """Whether the recorded drawing is exactly what is on disk now."""
+    if not old or old.get("policy") != wanted:
+        return False
+    if old.get("revision") != FIGURE_REVISION:
+        return False
+    if old.get("records_sha256") != digest or old.get("failed"):
+        return False
+    files = old.get("files") or {}
+    for record in records:
+        entry = files.get(record["id"])
+        destination = bundle.root / record["file"]
+        if not entry or not destination.is_file():
+            return False
+        if destination.stat().st_size != entry.get("size"):
+            return False
+        if sha256_file(destination) != entry.get("sha256"):
+            return False
+    return True
 
 
 def _describe_recorded(block):
@@ -435,15 +600,95 @@ def _describe_recorded(block):
     return text
 
 
-def _fallback(source, destination):
-    """docling's 72 DPI picture under the figure's own name."""
-    if Path(source).is_file():
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, destination)
+def _fallback(record, source, destination, error):
+    """docling's 72 DPI picture under the figure's own name, or a refusal.
+
+    A figure file left as it was would claim a drawing that never happened,
+    so without docling's picture the run stops and says how to recover.
+    """
+    try:
+        data = Path(source).read_bytes()
+        _check_png(data)
+    except Exception as missing:
+        raise PipelineError(
+            FIGURE_FALLBACK_MISSING.format(
+                id=record["id"],
+                page=record["page"],
+                err=f"{type(error).__name__}: {error}",
+                path=source,
+            ),
+            stage="figures",
+        ) from missing
+    _replace(destination, lambda partial: partial.write_bytes(data))
 
 
-def _draw_all(pdf_path, records, root, policy):
-    """`(record, error or None)` for each record, drawn page by page.
+def _check_png(data):
+    """Raise unless `data` is an image Pillow can read (a PNG signature
+    without Pillow)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("not a PNG")
+        return
+    import io
+
+    with Image.open(io.BytesIO(data)) as image:
+        image.verify()
+
+
+def _replace(destination, write):
+    """Write through a sibling and a rename: a figure file is never half
+    written, and never a leftover under assets/, where every file is hashed."""
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(f".{destination.name}.part")
+    try:
+        write(partial)
+        os.replace(partial, destination)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+
+
+_WIDTH = re.compile(rb"/Width\s+(\d+)(?![\d\s]*R\b)")
+_HEIGHT = re.compile(rb"/Height\s+(\d+)(?![\d\s]*R\b)")
+
+
+def masked_sizes(pdf_path):
+    """The pixel sizes of the PDF's masked pictures, or None if unknown.
+
+    pypdfium2 does not say whether an image object carries a `/SMask` or
+    `/Mask` (whose resolution can be higher than the picture's own), so
+    the file's image dictionaries are read as bytes, the same scan as
+    `pdf_render.has_jbig2_mask`, and a picture on the page whose size is
+    one of these is not trusted with the native path. An unmasked picture
+    that happens to share a masked one's size is only drawn normally.
+    None -- the file cannot be read, or a masked picture's size is not
+    written plainly -- means no picture is trusted.
+    """
+    from .pdf_render import _STREAM_OBJECT
+
+    try:
+        data = Path(pdf_path).read_bytes()
+    except OSError:
+        return None
+    sizes = set()
+    if b"Mask" not in data:
+        return sizes
+    for match in _STREAM_OBJECT.finditer(data):
+        dictionary = match.group(3)
+        if b"/Image" not in dictionary or not re.search(rb"/S?Mask\b", dictionary):
+            continue
+        width, height = _WIDTH.search(dictionary), _HEIGHT.search(dictionary)
+        if not width or not height:
+            return None
+        sizes.add((int(width.group(1)), int(height.group(1))))
+    return sizes
+
+
+def _draw_all(pdf_path, records, root, policy, masked=None):
+    """`(record, state dict or the exception)` for each record, page by page.
 
     One page is open at a time, and each bitmap is released before the
     next is drawn: a long illustrated book must not hold its pages.
@@ -471,34 +716,66 @@ def _draw_all(pdf_path, records, root, policy):
             try:
                 for record in pages[number]:
                     try:
-                        _draw(page, record, policy, Path(root) / record["file"])
+                        state = _draw(
+                            page,
+                            record,
+                            policy,
+                            Path(root) / record["file"],
+                            masked=masked,
+                        )
                     except Exception as err:
                         yield record, err
                     else:
-                        yield record, None
+                        yield record, state or {}
             finally:
                 page.close()
     finally:
         document.close()
 
 
-def _draw(page, record, policy, destination):
-    """Render one record's box from `page` at `policy` into `destination`.
+def _crop_of(record):
+    """The box drawn: the padded crop from the extraction, else the bbox
+    (a record written before padding)."""
+    return [float(v) for v in (record.get("crop") or record["bbox"])]
 
-    The crop is the formula crop's own (`pdf_formula._crop`: the page as
-    rendered, CropBox after /Rotate, margins clamped to it), with no
-    padding: a figure box is drawn as docling found it.
+
+def _draw(page, record, policy, destination, *, masked=None):
+    """Render one record's crop from `page` at `policy` into `destination`.
+
+    Returns the figure's state: `requested_scale` (the policy's),
+    `effective_scale` (what was drawn), `native_dpi` when the figure is
+    one embedded picture drawn at its own resolution, and `capped_mp`
+    (the megapixels the policy asked for) when the ceiling held it back.
+
+    The margins come from the formula crop's own frame
+    (`pdf_formula._crop`: the page as rendered, CropBox after /Rotate,
+    clamped to it). The bitmap is never allocated above
+    `FIGURE_MAX_PIXELS`: the scale is settled before `render`.
     """
     from .pdf_formula import _crop
 
     width, height = (float(v) for v in page.get_size())
-    left, top, right, bottom = (float(v) for v in record["bbox"])
-    scale = figure_scale(record["bbox"], (width, height), policy)
+    requested = figure_scale(record["bbox"], (width, height), policy)
+    left, top, right, bottom = _crop_of(record)
     margins, _share = _crop(
         page, (left, height - bottom, right, height - top), 0.0, (0.0, 0.0)
     )
     if margins is None:
         raise ValueError(f"the figure box {record['bbox']} is outside the page")
+    crop_w = width - margins[0] - margins[2]
+    crop_h = height - margins[1] - margins[3]
+    scale = requested
+    state = {"requested_scale": round(requested, 6)}
+    native = native_dpi(page, (left, top, right, bottom), masked)
+    if native is not None and native / 72.0 < scale:
+        scale = native / 72.0
+        state["native_dpi"] = round(native, 2)
+    capped = capped_scale(crop_w, crop_h, scale)
+    if capped < scale:
+        wide, high = pixel_size(crop_w, crop_h, scale)
+        state["capped_mp"] = wide * high / 1_000_000
+        scale = capped
+    state["effective_scale"] = round(scale, 6)
     bitmap = page.render(
         scale=scale, crop=_snapped(margins, (width, height), scale), rotation=0
     )
@@ -509,19 +786,91 @@ def _draw(page, record, policy, destination):
                 converted = image.convert("RGB")
                 image.close()
                 image = converted
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            partial = destination.with_name(destination.name + ".part")
-            try:
-                image.save(partial, format="PNG", optimize=True)
-                os.replace(partial, destination)
-            except BaseException:
-                # Never left under assets/, where every file is hashed.
-                partial.unlink(missing_ok=True)
-                raise
+            _replace(
+                destination,
+                lambda partial: image.save(partial, format="PNG", optimize=True),
+            )
         finally:
             image.close()
     finally:
         bitmap.close()
+    return state
+
+
+def pixel_size(crop_w, crop_h, scale):
+    """The bitmap `_snapped` asks pypdfium2 for: whole pixels per side."""
+    return max(1, round(crop_w * scale)), max(1, round(crop_h * scale))
+
+
+def capped_scale(crop_w, crop_h, scale, limit=FIGURE_MAX_PIXELS):
+    """`scale`, or the largest below it whose bitmap stays within `limit`.
+
+    Decided from the crop's size in points, before anything is rendered;
+    the rounded pixel counts are checked and the scale stepped down until
+    they fit.
+    """
+    area = crop_w * crop_h
+    if area <= 0:
+        return scale
+    scale = min(scale, math.sqrt(limit / area))
+    while True:
+        w, h = pixel_size(crop_w, crop_h, scale)
+        if w * h <= limit:
+            return scale
+        scale *= 0.999
+
+
+def native_dpi(page, crop, masked=None):
+    """The resolution of the one picture that is this figure, or None.
+
+    All must hold, else None (the figure is rendered normally): the page
+    is not rotated; exactly one top-level page object of any type (text,
+    path, shading, form, image) intersects `crop`, and it is an image;
+    its matrix has no rotation, skew or flip; its placement covers the
+    figure's detected box within `NATIVE_COVER_TOLERANCE`. The DPI is
+    the image's pixel size over its placed size in points (the larger of
+    the two axes), never the file's metadata. Its pixel size must not be
+    one of `masked` (`masked_sizes`); `masked` None trusts no picture.
+    """
+    import pypdfium2.raw as raw
+
+    if masked is None or page.get_rotation() % 360:
+        return None
+    crop_l, crop_t, crop_r, crop_b = crop
+    box_l, box_b, box_r, box_t = page.get_cropbox()
+    hits = []
+    for obj in page.get_objects(max_depth=0):
+        left, bottom, right, top = obj.get_bounds()
+        shown = (left - box_l, box_t - top, right - box_l, box_t - bottom)
+        if (
+            shown[0] < crop_r
+            and shown[2] > crop_l
+            and shown[1] < crop_b
+            and shown[3] > crop_t
+        ):
+            hits.append(obj)
+            if len(hits) > 1:
+                return None
+    if len(hits) != 1 or hits[0].type != raw.FPDF_PAGEOBJ_IMAGE:
+        return None
+    image = hits[0]
+    matrix = image.get_matrix()
+    a, b, c, d, e, f = matrix.get()
+    if abs(b) > 1e-6 or abs(c) > 1e-6 or a <= 0 or d <= 0:
+        return None
+    placed = (e - box_l, box_t - (f + d), e + a - box_l, box_t - f)
+    tolerance = NATIVE_COVER_TOLERANCE
+    if not (
+        placed[0] <= crop_l + tolerance
+        and placed[1] <= crop_t + tolerance
+        and placed[2] >= crop_r - tolerance
+        and placed[3] >= crop_b - tolerance
+    ):
+        return None
+    px_w, px_h = image.get_px_size()
+    if px_w <= 0 or px_h <= 0 or (px_w, px_h) in masked:
+        return None
+    return max(px_w * 72.0 / a, px_h * 72.0 / d)
 
 
 def _snapped(margins, page_size, scale):
@@ -538,12 +887,11 @@ def _snapped(margins, page_size, scale):
     width, height = page_size
     page_w = math.ceil(width * scale)
     page_h = math.ceil(height * scale)
-    box_w = round((width - left - right) * scale)
-    box_h = round((height - bottom - top) * scale)
+    box_w, box_h = pixel_size(width - left - right, height - bottom - top, scale)
     left_px = min(round(left * scale), page_w - 1)
     top_px = min(round(top * scale), page_h - 1)
-    box_w = max(1, min(box_w, page_w - left_px))
-    box_h = max(1, min(box_h, page_h - top_px))
+    box_w = min(box_w, page_w - left_px)
+    box_h = min(box_h, page_h - top_px)
     pixels = (left_px, page_h - top_px - box_h, page_w - left_px - box_w, top_px)
     return tuple(max(0.0, (count - 1e-6) / scale) if count else 0.0 for count in pixels)
 

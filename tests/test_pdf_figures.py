@@ -29,16 +29,21 @@ from pipeline_helpers import (  # noqa: E402
     FakeTranslator,
     pandoc_or_skip,
     register_fake_format,
+    write_image_pdf,
     write_pdf,
 )
 
 from book_maker.pipeline import docling_parser, pdf_figures, pdf_formula  # noqa: E402
 from book_maker.pipeline.bundle import Bundle  # noqa: E402
+from book_maker.pipeline.errors import PipelineError  # noqa: E402
 from book_maker.pipeline.messages import (  # noqa: E402
     DEVICE_SELECTED,
+    FIGURE_CAPPED,
+    FIGURE_FALLBACK_MISSING,
     FIGURE_RENDER_FAILED,
     FIGURES_DRAWN,
     FIGURES_LEGACY,
+    FIGURES_NATIVE,
     FIGURES_REDRAWN,
 )
 from book_maker.pipeline.pdf_figures import (  # noqa: E402
@@ -370,6 +375,9 @@ def test_each_picture_is_named_by_its_page_and_order_with_its_width(
     # Top-left origin, points, the page's displayed frame.
     assert figures[0]["bbox"] == [72.0, 142.0, 372.0, 392.0]
     assert figures[1]["bbox"] == [100.0, 492.0, 253.0, 692.0]
+    # The box drawn: 2 pt of room on every side, nothing near either.
+    assert figures[0]["crop"] == [70.0, 140.0, 374.0, 394.0]
+    assert figures[1]["crop"] == [98.0, 490.0, 255.0, 694.0]
     assert [r["file"] for r in figures] == [
         "assets/figures/p0002-01.png",
         "assets/figures/p0002-02.png",
@@ -441,10 +449,21 @@ def test_the_first_draw_writes_the_figures_and_the_manifest_block(
         in out
     )
     assert FIGURES_REDRAWN.split("{")[0] not in out
-    # 2 px per point: the 300-point figure is 600 px wide, drawn from the
-    # page, not docling's 300-px picture.
+    assert "kept at the resolution of the picture" not in out
+    # 2 px per point: the 300-point figure and 2 pt of padding each side
+    # are 608 px wide, drawn from the page, not docling's 300-px picture.
     with Image.open(files[0]) as image:
-        assert abs(image.width - 600) <= 1
+        assert abs(image.width - 608) <= 1
+    # Each file's state, for the reuse check: size, hash, the scales.
+    state = block["files"]["p0002-01"]
+    assert state["size"] == files[0].stat().st_size
+    assert state["requested_scale"] == state["effective_scale"] == 2.0
+    assert "native_dpi" not in state
+    # Written through a sibling and a rename: nothing else is left.
+    assert sorted(p.name for p in files[0].parent.iterdir()) == [
+        "p0002-01.png",
+        "p0002-02.png",
+    ]
     assert bundle.source.read_bytes() == before
 
 
@@ -454,10 +473,10 @@ def test_a_figure_that_cannot_be_drawn_keeps_docling_s_picture(
     bundle, pdf = extracted(tmp_path, pandoc)
     real = pdf_figures._draw
 
-    def failing(page, record, policy, destination):
+    def failing(page, record, policy, destination, **kwargs):
         if record["id"] == "p0002-02":
             raise RuntimeError("injected")
-        return real(page, record, policy, destination)
+        return real(page, record, policy, destination, **kwargs)
 
     monkeypatch.setattr(pdf_figures, "_draw", failing)
     capsys.readouterr()
@@ -636,7 +655,7 @@ def test_another_policy_redraws_the_figures_and_nothing_else(
     new_pixels = figure.read_bytes()
     assert new_pixels != old_pixels
     with Image.open(figure) as image:
-        assert abs(image.width - 900) <= 1  # 300 points at 3 px per point
+        assert abs(image.width - 912) <= 1  # 304 points at 3 px per point
     # The book beside the PDF was rebuilt with the new pixels.
     new_media, body = _epub_images(book)
     assert new_pixels in new_media.values() and old_pixels not in new_media.values()
@@ -877,3 +896,321 @@ def test_an_image_alone_in_its_paragraph_is_centred_and_one_in_prose_is_not(
     assert len(standalone) == 1 and 'style="width:60.0%"' in standalone[0]
     inline = re.search(r"A sentence with (<img[^>]*>) inside it", body)
     assert inline and "bbm-figure" not in inline.group(1)
+
+
+# --------------------------------------------------------------------------
+# Codex astra follow-ups (260925, docs/260925-docs-PDF_IMAGE_FIDELITY_DESIGN.md):
+# padding, the megapixel ceiling, a lone embedded picture's own resolution,
+# the reuse check on the files themselves, a fallback that is not there.
+# --------------------------------------------------------------------------
+def test_the_padding_stops_short_of_a_caption_and_is_whole_elsewhere():
+    box = [100.0, 100.0, 300.0, 300.0]
+    caption = [100.0, 301.5, 300.0, 320.0]  # 1.5 pt below the figure
+    crop = pdf_figures.figure_crop(box, LETTER, [caption])
+    # 1 pt of clearance leaves 0.5 pt below; 2 pt on the other sides.
+    assert crop == pytest.approx([98.0, 98.0, 302.0, 300.5])
+
+
+def test_the_padding_is_clipped_to_the_page():
+    crop = pdf_figures.figure_crop([0.0, 1.0, 612.0, 791.0], LETTER, [])
+    assert crop == pytest.approx([0.0, 0.0, 612.0, 792.0])
+
+
+def test_the_padding_ignores_what_lies_inside_the_figure():
+    box = [100.0, 100.0, 300.0, 300.0]
+    inside = [[110.0, 110.0, 150.0, 120.0], list(box)]  # a label, the picture
+    crop = pdf_figures.figure_crop(box, LETTER, inside)
+    assert crop == pytest.approx([98.0, 98.0, 302.0, 302.0])
+
+
+def test_an_item_over_the_edge_leaves_no_padding_on_its_side():
+    box = [100.0, 100.0, 300.0, 300.0]
+    overlapping = [250.0, 150.0, 350.0, 160.0]  # reaches past the right edge
+    beside = [301.5, 400.0, 320.0, 420.0]  # below-right, 100 pt down: far
+    crop = pdf_figures.figure_crop(box, LETTER, [overlapping, beside])
+    assert crop == pytest.approx([98.0, 98.0, 300.0, 302.0])
+
+
+A3 = (841.89, 1190.55)
+
+
+def drawn_bundle(tmp_path, pdf, figures):
+    """A bundle whose extraction completed with `figures` recorded.
+
+    Each figure is `(id, bbox)` on page 1, its crop as the extraction pads
+    it (nothing else on the page), and a docling fallback picture on disk.
+    """
+    _render_or_skip()
+    from PIL import Image
+
+    bundle = Bundle(tmp_path / "bundle").create()
+    bundle.set_stage("extract", "completed")
+    images = bundle.work_file("extraction") / "images"
+    images.mkdir(parents=True)
+    records = []
+    with pypdfium_page(pdf) as page:
+        size = tuple(float(v) for v in page.get_size())
+    for ident, bbox in figures:
+        Image.new("RGB", (8, 8), "green").save(images / f"{ident}.png")
+        records.append(
+            {
+                "id": ident,
+                "page": 1,
+                "bbox": list(bbox),
+                "crop": pdf_figures.figure_crop(bbox, size, []),
+                "file": f"assets/figures/{ident}.png",
+                "width": pdf_figures.display_width(bbox, size[0]),
+                "fallback": f".work/extraction/images/{ident}.png",
+            }
+        )
+    pdf_figures.write_records(pdf_figures.records_path(bundle), records)
+    return bundle
+
+
+class pypdfium_page:
+    def __init__(self, pdf):
+        import pypdfium2
+
+        self.document = pypdfium2.PdfDocument(str(pdf))
+
+    def __enter__(self):
+        self.page = self.document[0]
+        return self.page
+
+    def __exit__(self, *exc):
+        self.page.close()
+        self.document.close()
+
+
+def test_a_figure_past_the_megapixel_ceiling_is_drawn_below_it(
+    tmp_path, monkeypatch, capsys
+):
+    _render_or_skip()
+    import pypdfium2
+
+    pdf = write_image_pdf(tmp_path / "a3.pdf", [], size=A3)
+    bundle = drawn_bundle(tmp_path, pdf, [("p0001-01", (0.0, 0.0) + A3)])
+    bitmaps = []
+    render = pypdfium2.PdfPage.render
+
+    def spy(self, **kwargs):
+        bitmap = render(self, **kwargs)
+        bitmaps.append((bitmap.width, bitmap.height))
+        return bitmap
+
+    monkeypatch.setattr(pypdfium2.PdfPage, "render", spy)
+    capsys.readouterr()
+    block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 200))
+    out = capsys.readouterr().out
+    # A full A3 page at 200 DPI is 2339 x 3307 px, 7.7 MP: never allocated.
+    assert len(bitmaps) == 1
+    width, height = bitmaps[0]
+    assert width * height <= pdf_figures.FIGURE_MAX_PIXELS
+    state = block["files"]["p0001-01"]
+    assert state["requested_scale"] == pytest.approx(200 / 72)
+    dpi = round(state["effective_scale"] * 72)
+    assert 169 <= dpi <= 171
+    line = FIGURE_CAPPED.format(
+        id="p0001-01", page=1, mp=7.7, policy="200 DPI", dpi=dpi, cap=5.6
+    )
+    assert out.count(line) == 1, out
+    # The shown width is the page's, whatever the pixels.
+    assert pdf_figures.records_path(bundle).read_text().count('"width": 100') == 1
+
+
+def test_the_ceiling_steps_down_until_the_rounded_bitmap_fits():
+    for crop in [(841.89, 1190.55), (1000.3, 1000.7), (5000.0, 13.3)]:
+        scale = pdf_figures.capped_scale(*crop, 600 / 72)
+        w, h = pdf_figures.pixel_size(*crop, scale)
+        assert w * h <= pdf_figures.FIGURE_MAX_PIXELS
+    # Under the ceiling nothing changes.
+    assert pdf_figures.capped_scale(300.0, 200.0, 200 / 72) == 200 / 72
+
+
+# One 96 x 72 px picture placed at 72 x 54 pt: 96 DPI. Its box on a Letter
+# page, top-left origin: [100, 138, 172, 192].
+PHOTO = (72, 0, 0, 54, 100, 600)
+PHOTO_BOX = (100.0, 138.0, 172.0, 192.0)
+
+
+@pytest.mark.parametrize(
+    "shape, native",
+    [
+        ({"placements": [PHOTO]}, 96.0),
+        ({"placements": [PHOTO], "label": (110, 620, "Label")}, None),
+        ({"placements": [(0, 54, -72, 0, 172, 600)]}, None),  # rotated
+        ({"placements": [(36, 0, 0, 54, 100, 600), (36, 0, 0, 54, 136, 600)]}, None),
+        ({"placements": [PHOTO], "smask": True}, None),
+        ({"placements": [PHOTO], "rotate": 90}, None),
+    ],
+    ids=["alone", "text-over-it", "rotated", "two-rasters", "soft-mask", "page-turned"],
+)
+def test_only_a_lone_plain_picture_keeps_its_own_resolution(
+    tmp_path, capsys, shape, native
+):
+    _render_or_skip()
+    from PIL import Image
+
+    pdf = write_image_pdf(tmp_path / "photo.pdf", **shape)
+    bundle = drawn_bundle(tmp_path, pdf, [("p0001-01", PHOTO_BOX)])
+    capsys.readouterr()
+    block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 200))
+    out = capsys.readouterr().out
+    state = block["files"]["p0001-01"]
+    record = json.loads(pdf_figures.records_path(bundle).read_text())[0]
+    crop_w = record["crop"][2] - record["crop"][0]
+    with Image.open(bundle.root / record["file"]) as image:
+        drawn = image.width
+    note = FIGURES_NATIVE.format(count=1, policy="200 DPI")
+    if native is None:
+        assert "native_dpi" not in state
+        assert state["effective_scale"] == pytest.approx(200 / 72)
+        assert note not in out
+        if "rotate" not in shape:
+            assert drawn == round(crop_w * 200 / 72)
+    else:
+        assert state["native_dpi"] == native
+        assert state["effective_scale"] == pytest.approx(native / 72)
+        assert drawn == round(crop_w * native / 72)
+        # Right after the drawn line, once.
+        drawn_line = out.splitlines().index(
+            FIGURES_DRAWN.format(
+                count=1, policy="200 DPI", size=pdf_figures.human_size(block["bytes"])
+            )
+        )
+        assert out.splitlines()[drawn_line + 1] == note
+        assert out.count(note) == 1
+
+
+def test_a_picture_sharper_than_the_policy_is_drawn_at_the_policy(tmp_path, capsys):
+    _render_or_skip()
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO], pixels=(400, 300))
+    bundle = drawn_bundle(tmp_path, pdf, [("p0001-01", PHOTO_BOX)])
+    block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 200))
+    assert "native_dpi" not in block["files"]["p0001-01"]
+    assert "kept at the resolution" not in capsys.readouterr().out
+
+
+def test_a_deleted_figure_file_is_drawn_again(tmp_path, pandoc, device, capsys):
+    bundle, pdf = extracted(tmp_path, pandoc)
+    policy = FigurePolicy("dpi", 144)
+    pdf_figures.render_figures(bundle, pdf, policy)
+    capsys.readouterr()
+    assert pdf_figures.render_figures(bundle, pdf, policy) is not None
+    assert "Figures:" not in capsys.readouterr().out  # all in place: reused
+    target = bundle.root / records(bundle)[1]["file"]
+    target.unlink()
+    pdf_figures.render_figures(bundle, pdf, policy)
+    assert "Figures: 2 drawn at 144 DPI" in capsys.readouterr().out
+    assert target.is_file()
+
+
+def test_a_replaced_figure_file_is_drawn_again(tmp_path, pandoc, device, capsys):
+    bundle, pdf = extracted(tmp_path, pandoc)
+    policy = FigurePolicy("dpi", 144)
+    pdf_figures.render_figures(bundle, pdf, policy)
+    target = bundle.root / records(bundle)[0]["file"]
+    drawn = target.read_bytes()
+    target.write_bytes(drawn[:-1] + b"\x00")  # same size, other bytes
+    capsys.readouterr()
+    pdf_figures.render_figures(bundle, pdf, policy)
+    assert "Figures: 2 drawn at 144 DPI" in capsys.readouterr().out
+    assert target.read_bytes() == drawn
+
+
+def test_an_edited_record_is_drawn_again(tmp_path, pandoc, device, capsys):
+    bundle, pdf = extracted(tmp_path, pandoc)
+    policy = FigurePolicy("dpi", 144)
+    pdf_figures.render_figures(bundle, pdf, policy)
+    figures = records(bundle)
+    figures[0]["crop"] = figures[0]["bbox"]
+    pdf_figures.write_records(pdf_figures.records_path(bundle), figures)
+    capsys.readouterr()
+    block = pdf_figures.render_figures(bundle, pdf, policy)
+    assert "Figures: 2 drawn at 144 DPI" in capsys.readouterr().out
+    assert block["records_sha256"] == pdf_figures.sha256_bytes(
+        pdf_figures.records_path(bundle).read_bytes()
+    )
+    assert block["files"]["p0002-01"]["size"] > 0
+
+
+def test_a_failed_figure_is_tried_again_on_every_run(
+    tmp_path, pandoc, device, capsys, monkeypatch
+):
+    bundle, pdf = extracted(tmp_path, pandoc)
+    real = pdf_figures._draw
+
+    def failing(page, record, policy, destination, **kwargs):
+        if record["id"] == "p0002-02":
+            raise RuntimeError("injected")
+        return real(page, record, policy, destination, **kwargs)
+
+    monkeypatch.setattr(pdf_figures, "_draw", failing)
+    policy = FigurePolicy("dpi", 144)
+    line = FIGURE_RENDER_FAILED.format(
+        id="p0002-02", page=2, policy="144 DPI", err="RuntimeError: injected"
+    )
+    for _run in range(2):
+        capsys.readouterr()
+        block = pdf_figures.render_figures(bundle, pdf, policy)
+        assert capsys.readouterr().out.count(line) == 1
+        assert block["failed"] == ["p0002-02"]
+        assert bundle.read_manifest()["limitations"].count(line) == 1
+    monkeypatch.setattr(pdf_figures, "_draw", real)
+    block = pdf_figures.render_figures(bundle, pdf, policy)
+    assert block["failed"] == []
+    assert line not in bundle.read_manifest()["limitations"]
+
+
+@pytest.mark.parametrize("damage", ["missing", "unreadable"])
+def test_a_figure_with_no_fallback_stops_the_run(
+    tmp_path, pandoc, device, monkeypatch, damage
+):
+    bundle, pdf = extracted(tmp_path, pandoc)
+    record = records(bundle)[1]
+    fallback = bundle.root / record["fallback"]
+    if damage == "missing":
+        fallback.unlink()
+    else:
+        fallback.write_bytes(b"not a picture")
+    real = pdf_figures._draw
+
+    def failing(page, record, policy, destination, **kwargs):
+        if record["id"] == "p0002-02":
+            raise RuntimeError("injected")
+        return real(page, record, policy, destination, **kwargs)
+
+    monkeypatch.setattr(pdf_figures, "_draw", failing)
+    with pytest.raises(PipelineError) as caught:
+        pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 144))
+    assert str(caught.value) == FIGURE_FALLBACK_MISSING.format(
+        id="p0002-02", page=2, err="RuntimeError: injected", path=fallback
+    )
+    # Nothing claims the drawing: the next run draws again.
+    assert "figures" not in bundle.read_manifest()
+
+
+def test_a_figure_file_is_replaced_whole_or_not_at_all(tmp_path):
+    target = tmp_path / "figures" / "p0001-01.png"
+    target.parent.mkdir()
+    target.write_bytes(b"old")
+
+    def broken(partial):
+        partial.write_bytes(b"half")
+        raise OSError("disk full")
+
+    with pytest.raises(OSError):
+        pdf_figures._replace(target, broken)
+    assert target.read_bytes() == b"old"
+    assert [p.name for p in target.parent.iterdir()] == ["p0001-01.png"]
+    pdf_figures._replace(target, lambda partial: partial.write_bytes(b"new"))
+    assert target.read_bytes() == b"new"
+    assert [p.name for p in target.parent.iterdir()] == ["p0001-01.png"]
+
+
+def test_the_drawing_revision_is_two():
+    # Bumped once for padding, the ceiling and the native path, so a bundle
+    # drawn by revision 1 is drawn again once.
+    assert pdf_figures.FIGURE_REVISION == 2
+    assert pdf_figures.FIGURE_MAX_PIXELS == 5_600_000
+    assert pdf_figures.FIGURE_PAD_PT == 2.0

@@ -317,3 +317,92 @@ def write_pdf(
     )
     path.write_bytes(bytes(out))
     return path
+
+
+def write_image_pdf(
+    path,
+    placements,
+    size=(612.0, 792.0),
+    pixels=(96, 72),
+    label=None,
+    rotate=None,
+    smask=False,
+):
+    """A one-page PDF drawing an embedded RGB picture once per placement.
+
+    `placements` are `cm` matrices `(a, b, c, d, e, f)` in PDF points; each
+    draws its own image object (`/Im0`, `/Im1`, ...) of `pixels` size.
+    `label=(x, y, text)` writes a line of text; `rotate` writes `/Rotate`;
+    `smask` gives the first picture a soft mask.
+    """
+    px_w, px_h = pixels
+    data = bytes(
+        (x * 255 // max(1, px_w - 1), y * 255 // max(1, px_h - 1), 128)[c]
+        for y in range(px_h)
+        for x in range(px_w)
+        for c in range(3)
+    )
+    objects = []
+
+    def add(body):
+        objects.append(body)
+        return len(objects)
+
+    catalog = add(b"")
+    tree = add(b"")
+    font = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    mask = None
+    if smask:
+        alpha = bytes(200 for _ in range(px_w * px_h))
+        mask = add(
+            b"<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+            b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Length %d >>\nstream\n"
+            % (px_w, px_h, len(alpha))
+            + alpha
+            + b"\nendstream"
+        )
+    images = []
+    for index, _matrix in enumerate(placements):
+        extra = b" /SMask %d 0 R" % mask if (mask and index == 0) else b""
+        images.append(
+            add(
+                b"<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+                b"/ColorSpace /DeviceRGB /BitsPerComponent 8%s /Length %d >>\n"
+                b"stream\n" % (px_w, px_h, extra, len(data)) + data + b"\nendstream"
+            )
+        )
+    content = b""
+    for index, matrix in enumerate(placements):
+        numbers = b" ".join(b"%.4f" % float(v) for v in matrix)
+        content += b"q %s cm /Im%d Do Q\n" % (numbers, index)
+    if label:
+        x, y, text = label
+        content += b"BT /F1 10 Tf %.2f %.2f Td (%s) Tj ET\n" % (x, y, text.encode())
+    stream = add(
+        b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream"
+    )
+    xobjects = b" ".join(b"/Im%d %d 0 R" % (i, n) for i, n in enumerate(images))
+    turn = b" /Rotate %d" % rotate if rotate else b""
+    page = add(
+        b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %.2f %.2f]%s "
+        b"/Resources << /Font << /F1 %d 0 R >> /XObject << %s >> >> "
+        b"/Contents %d 0 R >>" % (tree, size[0], size[1], turn, font, xobjects, stream)
+    )
+    objects[catalog - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % tree
+    objects[tree - 1] = b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page
+    out = bytearray(b"%PDF-1.7\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        catalog,
+        xref,
+    )
+    path.write_bytes(bytes(out))
+    return path
