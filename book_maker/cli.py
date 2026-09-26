@@ -3679,6 +3679,7 @@ def main(argv=None, *, markdown_loader_class=None):
             print(f"classifier: {escape(e.classify_translator.describe())}")
 
     separate = getattr(e, "classify_translator", None)
+    classified_by_said = False
     if (
         plan_auto
         and book_type == "epub"
@@ -3690,6 +3691,7 @@ def main(argv=None, *, markdown_loader_class=None):
         # the run translator's own verdict.
         plan_auto = False
         print(f"plan mode: on (classified by {escape(separate.describe())})")
+        classified_by_said = True
         e.plan_mode = True
         e.plan_auto = True
         e.plan_fallback_tags = options.translate_tags
@@ -3724,6 +3726,18 @@ def main(argv=None, *, markdown_loader_class=None):
             e.plan_classify = "model"
         else:
             print(f"plan mode: off ({reason})")
+    elif (
+        not classified_by_said
+        and book_type == "epub"
+        and getattr(e, "plan_mode", False)
+        and getattr(e, "plan_classify", None) == "model"
+        and getattr(separate, "separate", False)
+    ):
+        # Model mode asked for by flag (`--classify-model`, `--plan-classify
+        # model`) says the same line as `auto` with a provider classifier:
+        # the operator sees who plans the book either way (lead 260925,
+        # skill field test; docs/features/plan-mode.md promises it).
+        print(f"plan mode: on (classified by {escape(separate.describe())})")
 
     try:
         e.make_bilingual_book()

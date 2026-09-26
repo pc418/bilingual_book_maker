@@ -318,11 +318,42 @@ def test_a_fixed_engine_plans_with_the_provider_s_classifier(tmp_path, mode):
     assert "classifier: cls-model at https://cls.example/v1" in out
     assert "offline model list: ['cls-model']" in out
     assert "llm classification:" in out
-    if not mode:
-        assert "plan mode: on (classified by cls-model" in out
+    # PIN: lead 260925, skill field test,
+    # docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md -- the same line on
+    # every path a separate classifier plans the book, once.
+    assert out.count("plan mode: on (classified by cls-model") == 1
     plan = json.loads((tmp_path / f"{BOOK.stem}_plan.json").read_text())
     assert {row["decided_by"] for row in plan["signatures"]} <= {"llm", "rule"}
     assert any(row["decided_by"] == "llm" for row in plan["signatures"])
+
+
+# PIN: lead 260925, skill field test, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md
+# -- `--classify-model` typed on the command line printed only the
+# `classifier:` line, while a provider entry's classifier also printed
+# `plan mode: on (classified by ...)`. Both paths say the plan-mode line.
+def test_a_classifier_typed_on_the_command_line_says_plan_mode_is_on(tmp_path):
+    src = tmp_path / BOOK.name
+    src.write_bytes(BOOK.read_bytes())
+    proc = _cli_in(
+        tmp_path,
+        "--book_name",
+        str(src),
+        "--api_format",
+        "google",
+        "--classify-model",
+        "cls-model",
+        "--classify-base-url",
+        "https://cls.example/v1",
+        "--classify-key",
+        "sk-cls",
+        "--test",
+        "--test_num",
+        "1",
+    )
+    out = " ".join(proc.stdout.split())
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "classifier: cls-model at https://cls.example/v1" in out
+    assert out.count("plan mode: on (classified by cls-model") == 1
 
 
 def test_naming_a_model_for_a_fixed_engine_fails_loud(tmp_path):
