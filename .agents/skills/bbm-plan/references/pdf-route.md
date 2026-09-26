@@ -192,11 +192,12 @@ late section:
   run names such blocks (`… block(s) came back identical to the original
   …`); keeping one the book already renders nearby may be right. Tell the
   user which; to mend one, write the translation into its
-  `bbm-translation` div in `<name>_book/book_bilingual.md` and run
-  `python tools/pdf_to_book.py export <name>_book`, which rebuilds the
-  EPUB and the copy beside the PDF. Rerunning the `make_book.py` command
-  instead is refused (`Bilingual Markdown was edited; rebuild the EPUB
-  from it with: …`) and rebuilds nothing.
+  `bbm-translation` div in `<name>_book/book_bilingual.md`, run
+  `python tools/pdf_to_book.py export <name>_book`, then copy
+  `<name>_book/book_bilingual.epub` over `<name>_bilingual.epub` (the
+  export writes only inside the bundle). Rerunning the `make_book.py`
+  command instead is refused and names these two steps; it rebuilds
+  nothing.
 
 Then report the settings used (the run prints the OCR engine and languages,
 the device and, with `--img-model`, the image model's token line), what the
