@@ -36,6 +36,7 @@ from book_maker.endpoints import (
     JEV_FORMAT,
     SOURCE_CLI,
     SOURCE_PROVIDER,
+    apply_run_extras,
 )
 from book_maker.pipeline.messages import (
     HELP_OCR_ENGINE_CLI,
@@ -3435,20 +3436,20 @@ def main(argv=None, *, markdown_loader_class=None):
             # which is what every result file already on disk was written
             # under.
             e.translate_model.language_field_tag = target.tag
-    price_table = getattr(options, "price_table", None)
-    if price_table is not None and hasattr(e.translate_model, "usage"):
-        # the bar shows what was spent instead of token counts
-        e.translate_model.usage.prices = price_table
-    # --no-thinking, on the same routes and for the same reason: it is a
-    # field in the request body. The table above has already stopped the
-    # codex route and warned every route that builds no body of ours, so
-    # this is only the routes that carry it.
-    if options.no_thinking and translate_model.SUPPORTS_REQUEST_EXTRAS:
-        e.translate_model.no_thinking = True
-    # Request extras, on the routes that build a request these can join.
-    # Setting an arbitrary attribute on the others used to print success and
-    # then silently drop the fields.
-    if options.extra_body or options.extra_headers:
+    # The price table (the bar shows what was spent instead of token
+    # counts), --no-thinking and the request extras, each on the routes that
+    # carry it: --no-thinking is a field in the request body, and the table
+    # above has already stopped the codex route and warned every route that
+    # builds no body of ours. Setting an arbitrary attribute on the others
+    # used to print success and then silently drop the fields.
+    try:
+        extras = apply_run_extras(e.translate_model, options)
+    except SystemExit as err:
+        print(f"[bold red]Error:[/bold red] {err}")
+        exit(1)
+    if (
+        options.extra_body or options.extra_headers
+    ) and not translate_model.SUPPORTS_REQUEST_EXTRAS:
         extras_given = [
             flag
             for flag, value in (
@@ -3457,68 +3458,33 @@ def main(argv=None, *, markdown_loader_class=None):
             )
             if value
         ]
-        if not translate_model.SUPPORTS_REQUEST_EXTRAS:
-            # Named by capability, not by format: `groq`, `xai`, `litellm`
-            # and `orcarouter` are the openai request path and do take them,
-            # and naming the format would have told those runs otherwise.
-            print(
-                f"[bold yellow]Warning:[/bold yellow] "
-                f"{' and '.join(extras_given)} "
-                f"{'is' if len(extras_given) == 1 else 'are'} ignored by the "
-                f"{api_format} route, which builds no request they could "
-                f"join; the run continues without them."
-            )
-        else:
-            extras = {}
-            for flag, dest in (
-                ("--extra_body", "extra_body"),
-                ("--extra_headers", "extra_headers"),
-            ):
-                raw = getattr(options, dest)
-                if not raw:
-                    continue
-                try:
-                    parsed = json.loads(raw)
-                except json.JSONDecodeError as ex:
-                    print(f"[bold red]Error:[/bold red] invalid JSON in {flag}: {ex}")
-                    exit(1)
-                if not isinstance(parsed, dict):
-                    # A list or a bare string would be accepted by the SDK
-                    # and rejected by the endpoint, one paid request later.
-                    print(
-                        f"[bold red]Error:[/bold red] {flag} must be a JSON "
-                        f"object, not {type(parsed).__name__}."
-                    )
-                    exit(1)
-                extras[dest] = parsed
-            if "extra_headers" in extras and not all(
-                isinstance(v, str) for v in extras["extra_headers"].values()
-            ):
-                # httpx raises on a non-string header value, deep in the
-                # first request rather than here.
-                print(
-                    "[bold red]Error:[/bold red] --extra_headers values must "
-                    "all be strings."
-                )
-                exit(1)
-            e.translate_model.set_request_extras(**extras)
-            if "extra_body" in extras:
-                # Through redact(): a body field is not where a credential
-                # belongs, but a gateway that wants the key in the body gets
-                # it repeated here, and the echo must not print it either.
-                print(
-                    f"[bold blue]--extra_body:[/bold blue] "
-                    f"{escape(redact(str(extras['extra_body'])))}"
-                )
-            if "extra_headers" in extras:
-                # Names only. A header is where a credential goes —
-                # Authorization, X-API-Key — and echoing the value would put
-                # it in every log and CI artifact the run touches.
-                names = ", ".join(sorted(extras["extra_headers"]))
-                print(
-                    f"[bold blue]--extra_headers:[/bold blue] {escape(names)} "
-                    f"(values not shown)"
-                )
+        # Named by capability, not by format: `groq`, `xai`, `litellm`
+        # and `orcarouter` are the openai request path and do take them,
+        # and naming the format would have told those runs otherwise.
+        print(
+            f"[bold yellow]Warning:[/bold yellow] "
+            f"{' and '.join(extras_given)} "
+            f"{'is' if len(extras_given) == 1 else 'are'} ignored by the "
+            f"{api_format} route, which builds no request they could "
+            f"join; the run continues without them."
+        )
+    if "extra_body" in extras:
+        # Through redact(): a body field is not where a credential belongs,
+        # but a gateway that wants the key in the body gets it repeated
+        # here, and the echo must not print it either.
+        print(
+            f"[bold blue]--extra_body:[/bold blue] "
+            f"{escape(redact(str(extras['extra_body'])))}"
+        )
+    if "extra_headers" in extras:
+        # Names only. A header is where a credential goes — Authorization,
+        # X-API-Key — and echoing the value would put it in every log and CI
+        # artifact the run touches.
+        names = ", ".join(sorted(extras["extra_headers"]))
+        print(
+            f"[bold blue]--extra_headers:[/bold blue] {escape(names)} "
+            f"(values not shown)"
+        )
     # other options
     if options.sentence_mode:
         e.sentence_mode = True

@@ -457,7 +457,6 @@ class TestJevCompatibleEndpoints:
     )
     def test_the_detection_matrix(self, model, base, wire):
         assert endpoints.is_jev_wire(model, base) is wire
-        assert endpoints.is_jev(model, base) is wire  # F's name, an alias
 
     @pytest.mark.parametrize(
         "base, url",

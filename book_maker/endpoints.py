@@ -48,6 +48,7 @@ at module level (the CLI imports this module).
 
 from dataclasses import dataclass, replace
 from os import environ as env
+from typing import Callable, Optional
 from urllib.parse import urlparse
 
 SOURCE_CLI = "cli"
@@ -167,14 +168,89 @@ def run_choice(model, api_base, key, api_format):
     )
 
 
+def _host(api_base):
+    return (urlparse(api_base or "").hostname or "").lower()
+
+
 def _host_in(api_base, suffix):
     """Whether `api_base`'s host is `suffix` or a subdomain of it."""
-    host = (urlparse(api_base or "").hostname or "").lower()
+    host = _host(api_base)
     return host == suffix or host.endswith("." + suffix)
 
 
 def _base_path(api_base):
     return (urlparse(api_base or "").path or "").rstrip("/").lower()
+
+
+def _is_jev_id(model):
+    """A TypeSafe Jev id: the last segment is `jev` or starts with `jev-`
+    (a gateway namespaces it: `typesafe-ai/jev`)."""
+    last = (model or "").strip().lower().rsplit("/", 1)[-1]
+    return last == JEV_ALIAS or last.startswith(JEV_ALIAS + "-")
+
+
+def _is_featherless_classifier_id(model):
+    name = (model or "").strip().lower()
+    return name.startswith(FEATHERLESS_NAMESPACE) and name.endswith("-classifier")
+
+
+@dataclass(frozen=True)
+class JevHost:
+    """A host known to serve the Jev wire, and what is known about it.
+
+    `host` is matched exactly, or with its subdomains when `subdomains`.
+    `owns_id` picks the model ids whose default address is `default_base`.
+    `path` is the request path appended after `/v1` (`jev_request_url`),
+    `env_keys` the variables read implicitly for this host alone,
+    `keyless` whether it takes no key at all, and `wire` whether the host
+    alone makes a (model, base) pair Jev.
+    """
+
+    host: str
+    subdomains: bool
+    owns_id: Optional[Callable[[str], bool]]
+    default_base: Optional[str]
+    path: str
+    env_keys: tuple
+    keyless: bool
+    wire: bool
+
+
+# Most specific first: the keyless demo is a featherless.ai host, and any
+# other featherless.ai address also serves an OpenAI-compatible chat API, so
+# it is not Jev by its host alone (lead 260924).
+JEV_HOSTS = (
+    JevHost(SIMPLE_JEV_DEMO_HOST, False, None, None, "/classifier", (), True, True),
+    JevHost(
+        JEV_HOST_SUFFIX,
+        True,
+        _is_jev_id,
+        JEV_DEFAULT_BASE,
+        "/systemone",
+        JEV_ENV_KEYS,
+        False,
+        True,
+    ),
+    JevHost(
+        FEATHERLESS_HOST_SUFFIX,
+        True,
+        _is_featherless_classifier_id,
+        FEATHERLESS_DEFAULT_BASE,
+        "/classifier",
+        FEATHERLESS_ENV_KEYS,
+        False,
+        False,
+    ),
+)
+
+
+def _jev_host(api_base):
+    """The `JEV_HOSTS` row `api_base` calls, or None."""
+    host = _host(api_base)
+    for row in JEV_HOSTS:
+        if host == row.host or (row.subdomains and host.endswith("." + row.host)):
+            return row
+    return None
 
 
 def is_jev_wire(model, api_base=""):
@@ -190,19 +266,12 @@ def is_jev_wire(model, api_base=""):
     `--classify-base-url https://api.featherless.ai/v1` with a chat model
     stays a chat model.
     """
-    name = (model or "").strip().lower()
-    last = name.rsplit("/", 1)[-1]
-    if last == JEV_ALIAS or last.startswith(JEV_ALIAS + "-"):
+    if _is_jev_id(model) or (model or "").strip().lower().endswith("-classifier"):
         return True
-    if name.endswith("-classifier"):
-        return True
-    if _host_in(api_base, JEV_HOST_SUFFIX) or jev_keyless(api_base):
+    row = _jev_host(api_base)
+    if row is not None and row.wire:
         return True
     return _base_path(api_base).endswith(JEV_WIRE_PATHS)
-
-
-# The name packet F gave it.
-is_jev = is_jev_wire
 
 
 def jev_default_base(model):
@@ -213,12 +282,9 @@ def jev_default_base(model):
     Simple Jev; any other `-classifier` id has no default (lead 260924,
     packet J fix round: it is never sent to typesafe.ai).
     """
-    name = (model or "").strip().lower()
-    last = name.rsplit("/", 1)[-1]
-    if last == JEV_ALIAS or last.startswith(JEV_ALIAS + "-"):
-        return JEV_DEFAULT_BASE
-    if name.startswith(FEATHERLESS_NAMESPACE) and name.endswith("-classifier"):
-        return FEATHERLESS_DEFAULT_BASE
+    for row in JEV_HOSTS:
+        if row.owns_id is not None and row.owns_id(model):
+            return row.default_base
     return None
 
 
@@ -236,25 +302,22 @@ def jev_request_url(api_base):
     path = _base_path(base)
     if path.endswith(JEV_WIRE_PATHS):
         return base
-    tail = "/classifier" if _host_in(base, FEATHERLESS_HOST_SUFFIX) else "/systemone"
+    row = _jev_host(base)
+    tail = row.path if row is not None else "/systemone"
     return base + (tail if path.endswith("/v1") else "/v1" + tail)
 
 
 def jev_env_keys(api_base):
     """The key variables read implicitly for a Jev-wire address: only the
     ones its host owns, none for the keyless demo or any other host."""
-    if _host_in(api_base, JEV_HOST_SUFFIX):
-        return JEV_ENV_KEYS
-    if jev_keyless(api_base):
-        return ()
-    if _host_in(api_base, FEATHERLESS_HOST_SUFFIX):
-        return FEATHERLESS_ENV_KEYS
-    return ()
+    row = _jev_host(api_base)
+    return row.env_keys if row is not None else ()
 
 
 def jev_keyless(api_base):
     """Whether the address is the documented keyless Simple Jev demo."""
-    return (urlparse(api_base or "").hostname or "").lower() == SIMPLE_JEV_DEMO_HOST
+    row = _jev_host(api_base)
+    return row is not None and row.keyless
 
 
 def _address(api_base, api_format):
@@ -289,8 +352,9 @@ def _bound_env_key(provider, model, sidecar_base, env_key):
 
     if sidecar_base:
         return env_key, sidecar_base, infer_api_format(sidecar_base, model)
-    if is_jev_wire(model, "") and jev_default_base(model):
-        return env_key, jev_default_base(model), JEV_FORMAT
+    default = jev_default_base(model)
+    if default:
+        return env_key, default, JEV_FORMAT
     return env_key, provider.api_base, provider.api_format
 
 
@@ -319,8 +383,6 @@ def _key(explicit, bound, choice, run, with_key, flag):
         choice.api_base, choice.api_format, bound[1], bound[2]
     )
     if choice.api_format == JEV_FORMAT:
-        if bound_here and env.get(bound[0]):
-            return env[bound[0]]
         names = ((bound[0],) if bound_here else ()) + jev_env_keys(choice.api_base)
         found = next((env[n] for n in names if env.get(n)), "")
         if found:
@@ -341,12 +403,15 @@ def _key(explicit, bound, choice, run, with_key, flag):
         choice.api_base, choice.api_format, run.api_base, run.api_format
     ):
         return run.key
-    if bound_here and env.get(bound[0]):
-        return env[bound[0]]
     from book_maker.cli import resolve_api_key
 
     try:
-        return resolve_api_key(choice.api_format, None, choice.api_base, ())
+        return resolve_api_key(
+            choice.api_format,
+            None,
+            choice.api_base,
+            (bound[0],) if bound_here else (),
+        )
     except SystemExit as err:
         raise SystemExit(
             f"{err} For {choice.model} at {choice.where()}, pass {flag}."
@@ -355,7 +420,12 @@ def _key(explicit, bound, choice, run, with_key, flag):
 
 def _choose(model, base, run, source, *, image):
     """The endpoint (format and base) for `model`, before the key."""
-    from book_maker.cli import infer_api_format, normalize_api_base
+    from book_maker.cli import (
+        FORMAT_DEFAULT_BASES,
+        LLM_FORMATS,
+        infer_api_format,
+        normalize_api_base,
+    )
 
     unsupported = IMG_ENDPOINT_UNSUPPORTED if image else CLASSIFY_ENDPOINT_UNSUPPORTED
     # An address of its own speaks the format it resolves to, jev included
@@ -373,62 +443,43 @@ def _choose(model, base, run, source, *, image):
             base = jev_default_base(model)
             if base is None:
                 raise SystemExit(CLASSIFIER_WITHOUT_BASE.format(model=model))
-        wire = JEV_DEFAULT_MODEL if model.strip().lower() == JEV_ALIAS else model
-        return EndpointChoice(
-            model=wire,
-            api_base=base.rstrip("/"),
-            key=None,
-            api_format=JEV_FORMAT,
-            source=source,
-            own_base=True,
-        )
-    if base:
-        return EndpointChoice(
-            model=model,
-            api_base=normalize_api_base(base, api_format),
-            key=None,
-            api_format=api_format,
-            source=source,
-            own_base=True,
-        )
-    # A run on a fixed engine (google, deepl ...) has no model to ask, so a
-    # classify model named without an address speaks the format its id
-    # implies, at that format's own host (lead ruling 260923, Codex finding
-    # 4: `--api_format google --classify-model gpt-5.6-luna` classifies on
-    # OpenAI). Only the OpenAI shape carries the schema channel.
-    from book_maker.cli import FORMAT_DEFAULT_BASES, LLM_FORMATS
-
-    if not image and run.api_format not in LLM_FORMATS:
+        if model.strip().lower() == JEV_ALIAS:
+            model = JEV_DEFAULT_MODEL
+        base, api_format, own = base.rstrip("/"), JEV_FORMAT, True
+    elif base:
+        base, own = normalize_api_base(base, api_format), True
+    elif not image and run.api_format not in LLM_FORMATS:
+        # A run on a fixed engine (google, deepl ...) has no model to ask, so
+        # a classify model named without an address speaks the format its id
+        # implies, at that format's own host (lead ruling 260923, Codex
+        # finding 4: `--api_format google --classify-model gpt-5.6-luna`
+        # classifies on OpenAI). Only the OpenAI shape carries the schema
+        # channel.
         api_format = infer_api_format("", model)
-        own = FORMAT_DEFAULT_BASES.get(api_format, "")
+        base = FORMAT_DEFAULT_BASES.get(api_format, "")
         if api_format != "openai":
             raise SystemExit(
                 unsupported.format(
-                    base=own or f"the {api_format} endpoint", api_format=api_format
+                    base=base or f"the {api_format} endpoint", api_format=api_format
                 )
             )
-        return EndpointChoice(
-            model=model,
-            api_base=own,
-            key=None,
-            api_format=api_format,
-            source=source,
-            own_base=True,
-        )
-    # The run's endpoint with another model. Its format has to have the
-    # channel the step asks through: images only on the OpenAI shape;
-    # classification on any route that can be asked a question.
-    if image and not _reads_images(run.api_format):
-        raise SystemExit(
-            unsupported.format(base=run.where(), api_format=run.api_format)
-        )
+        own = True
+    else:
+        # The run's endpoint with another model. Its format has to have the
+        # channel the step asks through: images only on the OpenAI shape;
+        # classification on any route that can be asked a question.
+        if image and not _reads_images(run.api_format):
+            raise SystemExit(
+                unsupported.format(base=run.where(), api_format=run.api_format)
+            )
+        base, api_format, own = run.api_base, run.api_format, False
     return EndpointChoice(
         model=model,
-        api_base=run.api_base,
+        api_base=base,
         key=None,
-        api_format=run.api_format,
+        api_format=api_format,
         source=source,
-        own_base=False,
+        own_base=own,
     )
 
 
@@ -445,25 +496,7 @@ def resolve_image_endpoint(options, run, provider, *, with_key=True):
     `options` carries `img_model`, `img_base_url`, `img_key`; `run` is the
     run's `EndpointChoice`; `provider` the `ProviderRoute` or None.
     """
-    model = (getattr(options, "img_model", None) or "").strip()
-    base = (getattr(options, "img_base_url", None) or "").strip()
-    explicit_key = getattr(options, "img_key", None) or ""
-    if model.lower() == IMG_OFF:
-        return None
-    if base and not model:
-        raise SystemExit(IMG_BASE_WITHOUT_MODEL)
-    bound = None
-    if model:
-        source = SOURCE_CLI
-    elif provider is not None and provider.img_model:
-        model, base = provider.img_model, provider.img_base_url
-        bound = _bound_env_key(provider, model, base, provider.img_env_key)
-        source = SOURCE_PROVIDER
-    else:
-        return None
-    choice = _choose(model, base, run, source, image=True)
-    key = _key(explicit_key, bound, choice, run, with_key, "--img-key")
-    return replace(choice, key=key)
+    return _resolve("img", options, run, provider, with_key)
 
 
 def resolve_classify_endpoint(options, run, provider, *, with_key=True):
@@ -473,23 +506,92 @@ def resolve_classify_endpoint(options, run, provider, *, with_key=True):
     was. `options.classify_model` is either spelling of the flag
     (`--plan-classify-model` is the old name).
     """
-    model = (getattr(options, "classify_model", None) or "").strip()
-    base = (getattr(options, "classify_base_url", None) or "").strip()
-    explicit_key = getattr(options, "classify_key", None) or ""
+    return _resolve("classify", options, run, provider, with_key)
+
+
+def _resolve(kind, options, run, provider, with_key):
+    """One chain (`kind` "img" or "classify"): the `--{kind}-*` flags, else
+    the provider entry's `{kind}_*` fields, else off (img) or the run's own
+    endpoint (classify)."""
+    image = kind == "img"
+    model = (getattr(options, f"{kind}_model", None) or "").strip()
+    base = (getattr(options, f"{kind}_base_url", None) or "").strip()
+    explicit_key = getattr(options, f"{kind}_key", None) or ""
+    if image and model.lower() == IMG_OFF:
+        return None
     if base and not model:
-        raise SystemExit(CLASSIFY_BASE_WITHOUT_MODEL)
+        raise SystemExit(
+            IMG_BASE_WITHOUT_MODEL if image else CLASSIFY_BASE_WITHOUT_MODEL
+        )
     bound = None
     if model:
         source = SOURCE_CLI
-    elif provider is not None and provider.classify_model:
-        model, base = provider.classify_model, provider.classify_base_url
-        bound = _bound_env_key(provider, model, base, provider.classify_env_key)
+    elif provider is not None and getattr(provider, f"{kind}_model"):
+        model = getattr(provider, f"{kind}_model")
+        base = getattr(provider, f"{kind}_base_url")
+        env_key = getattr(provider, f"{kind}_env_key")
+        bound = _bound_env_key(provider, model, base, env_key)
         source = SOURCE_PROVIDER
     else:
-        return run
-    choice = _choose(model, base, run, source, image=False)
-    key = _key(explicit_key, bound, choice, run, with_key, "--classify-key")
+        return None if image else run
+    choice = _choose(model, base, run, source, image=image)
+    key = _key(explicit_key, bound, choice, run, with_key, f"--{kind}-key")
     return replace(choice, key=key)
+
+
+def request_extras(options):
+    """`{"extra_body": {...}, "extra_headers": {...}}` from the run's
+    `--extra_body` / `--extra_headers`, each a JSON object; SystemExit
+    naming the flag for anything else (bad JSON, not an object, a header
+    value that is not a string)."""
+    import json
+
+    extras = {}
+    for flag, dest in (
+        ("--extra_body", "extra_body"),
+        ("--extra_headers", "extra_headers"),
+    ):
+        raw = getattr(options, dest, None)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as ex:
+            raise SystemExit(f"invalid JSON in {flag}: {ex}")
+        if not isinstance(parsed, dict):
+            # A list or a bare string would be accepted by the SDK and
+            # rejected by the endpoint, one paid request later.
+            raise SystemExit(
+                f"{flag} must be a JSON object, not {type(parsed).__name__}."
+            )
+        extras[dest] = parsed
+    if "extra_headers" in extras and not all(
+        isinstance(v, str) for v in extras["extra_headers"].values()
+    ):
+        # httpx raises on a non-string header value, deep in the first
+        # request rather than here.
+        raise SystemExit("--extra_headers values must all be strings.")
+    return extras
+
+
+def apply_run_extras(translator, options, *, extras=True):
+    """The run's request options on `translator`, each where the route
+    carries it: the price table (the bar shows what was spent), `--no-
+    thinking`, and, with `extras`, `--extra_body` / `--extra_headers`
+    (`request_extras`, whose SystemExit propagates). Returns the extras
+    set, {} when none were."""
+    prices = getattr(options, "price_table", None)
+    if prices is not None and hasattr(translator, "usage"):
+        translator.usage.prices = prices
+    carries = getattr(translator, "SUPPORTS_REQUEST_EXTRAS", False)
+    if getattr(options, "no_thinking", False) and carries:
+        translator.no_thinking = True
+    if not (extras and carries):
+        return {}
+    found = request_extras(options)
+    if found:
+        translator.set_request_extras(**found)
+    return found
 
 
 def build_translator(choice, options, language, prompt_config=None):
@@ -498,13 +600,12 @@ def build_translator(choice, options, language, prompt_config=None):
     The same constructor arguments a loader passes that matter outside
     translation (temperature, source language, the prompt sections, the
     session budget a classifier conversation rolls over at), the model list
-    of the one model, the run's prices, and `--no-thinking` where the route
-    carries it. `--extra_body` / `--extra_headers` follow only on the run's
-    own address: a header block is where a gateway's credential goes, and
-    it must not travel to another host.
+    of the one model, and the run's request options (`apply_run_extras`):
+    its prices and `--no-thinking` where the route carries it, and
+    `--extra_body` / `--extra_headers` only on the run's own address: a
+    header block is where a gateway's credential goes, and it must not
+    travel to another host.
     """
-    import json
-
     from book_maker.translator import FORMAT_DICT
     from book_maker.utils import prompt_config_to_kwargs
 
@@ -519,27 +620,7 @@ def build_translator(choice, options, language, prompt_config=None):
         source_lang=getattr(options, "source_lang", "auto"),
         **prompt_config_to_kwargs(prompt_config),
     )
-    if not choice.own_base:
-        extras = {}
-        for dest in ("extra_body", "extra_headers"):
-            raw = getattr(options, dest, None)
-            if not raw:
-                continue
-            try:
-                parsed = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
-                continue  # the run's own parse refuses it, in its words
-            if isinstance(parsed, dict):
-                extras[dest] = parsed
-        if extras and getattr(translator, "SUPPORTS_REQUEST_EXTRAS", False):
-            translator.set_request_extras(**extras)
-    prices = getattr(options, "price_table", None)
-    if prices is not None and hasattr(translator, "usage"):
-        translator.usage.prices = prices
-    if getattr(options, "no_thinking", False) and getattr(
-        translator, "SUPPORTS_REQUEST_EXTRAS", False
-    ):
-        translator.no_thinking = True
+    apply_run_extras(translator, options, extras=not choice.own_base)
     if getattr(options, "quiet", False) and hasattr(translator, "quiet"):
         translator.quiet = True
     if choice.model:
