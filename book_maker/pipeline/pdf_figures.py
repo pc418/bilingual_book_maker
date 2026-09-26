@@ -457,10 +457,27 @@ def clear_assets(bundle):
 LEGACY_PICTURE = re.compile(
     r"!\[[^\]\n]*\]\(<?" + ASSETS_DIR + r"/images/(?!formula_)[^)\n]+\)"
 )
-# A drawn figure as source.md names it: `](assets/figures/p0003-01.png`.
+# A drawn figure as source.md shows it: an image, `![...](assets/figures/
+# p0003-01.png...)`, never a plain link.
 DRAWN_REFERENCE = re.compile(
-    r"\]\(<?(" + ASSETS_DIR + "/" + FIGURE_DIR + r"/p\d{4,}-\d{2,}\.png)(?=[>)\s])"
+    r"!\[[^\]\n]*\]\(<?("
+    + ASSETS_DIR
+    + "/"
+    + FIGURE_DIR
+    + r"/p\d{4,}-\d{2,}\.png)(?=[>)\s])"
 )
+# What the book will not show: HTML comments and fenced code blocks. An
+# operator who comments a figure out, or quotes its line in code, has
+# removed it (Codex re-verify 260925: the raw-text match still drew it).
+_HIDDEN = re.compile(
+    r"<!--.*?-->|^(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^(?P=fence)[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def shown_markdown(text):
+    """`text` without the parts a reader never sees as images."""
+    return _HIDDEN.sub("", text)
 
 
 def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
@@ -492,6 +509,7 @@ def render_figures(bundle, pdf_path, policy=FIGURE_POLICY_DEFAULT):
     if extract != "completed":
         return None
     text = bundle.source.read_text(encoding="utf-8") if bundle.source.is_file() else ""
+    text = shown_markdown(text)
     named = sorted(set(DRAWN_REFERENCE.findall(text)))
     path = records_path(bundle)
     if not named and not path.exists():

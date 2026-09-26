@@ -1448,3 +1448,37 @@ def test_the_mask_scan_never_reads_the_whole_file_at_once(tmp_path, monkeypatch)
     )
     assert pdf_figures.masked_sizes(pdf, chunk=4096, overlap=1024) == {(96, 72)}
     assert reads and all(0 < size <= 4096 for size in reads)
+
+
+@pytest.mark.parametrize(
+    "hide",
+    [
+        lambda line: "<!-- " + line.strip() + " -->\n",
+        lambda line: "```\n" + line + "```\n",
+        lambda line: line.replace("![]", "[a link]"),
+    ],
+    ids=["commented-out", "in-a-code-block", "a-plain-link"],
+)
+def test_a_figure_the_book_does_not_show_is_not_drawn(tmp_path, capsys, hide):
+    # PIN: Codex re-verify 260925 (docs/260925-feat-PDF_FIGURE_RENDER.md):
+    # only a Markdown image names a figure; a comment, a fenced block or a
+    # plain link does not.
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO])
+    bundle = drawn_bundle(
+        tmp_path, pdf, [("p0001-01", PHOTO_BOX), ("p0001-02", PHOTO_BOX)]
+    )
+    text = bundle.source.read_text(encoding="utf-8")
+    line = next(
+        row + "\n" for row in text.splitlines() if "assets/figures/p0001-02.png" in row
+    )
+    bundle.source.write_text(text.replace(line, hide(line)), encoding="utf-8")
+    capsys.readouterr()
+    block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 144))
+    out = capsys.readouterr().out
+    assert list(block["files"]) == ["p0001-01"]
+    assert out.count(FIGURES_UNREFERENCED.format(count=1, ids="p0001-02")) == 1
+
+
+def test_shown_markdown_keeps_prose_and_drops_comments_and_fences():
+    text = "a\n<!-- ![](x) -->\nb\n```\n![](y)\n```\nc ![](z)\n"
+    assert pdf_figures.shown_markdown(text) == "a\n\nb\n\nc ![](z)\n"
