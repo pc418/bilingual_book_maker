@@ -18,7 +18,6 @@ from book_maker.classifier import (
     Reply,
     SchemaBackend,
     SessionBackend,
-    parse_labels,
 )
 from book_maker.loader.classify import classify_plan
 from book_maker.translator.base_translator import UsageMeter
@@ -249,30 +248,9 @@ class Session:
 
 
 class TestTheSessionBackend:
-    def test_a_turn_is_the_prompt_and_the_reply_is_labels(self):
-        session = Session(["X, y."])
-        t = Translator(session=session)
-        c = Classifier(t, None, prefer=SESSION_FIRST)
-        answer = c.ask(_q(trunk="TRUNK", prompt="turn"))
-        assert answer.backend == "session"
-        assert answer.values == {"a": "x", "b": "y"}
-        assert session.started == ["TRUNK"] and session.asked == ["turn"]
-
-    def test_a_reply_that_does_not_parse_answers_nothing(self):
-        t = Translator(session=Session(["x, y, x"]))
-        c = Classifier(t, None, prefer=SESSION_FIRST)
-        assert c.ask(_q(trunk="T")).values == {}
-
     def test_it_carries_no_image(self):
         backend = SessionBackend(Translator(session=Session([])))
         assert not backend.can(_q(trunk="T", image_png=b"png"))
-
-    def test_parse_labels_is_strict_about_count_and_set(self):
-        cands = {"a": ("x", "y"), "b": ("x", "y")}
-        assert parse_labels("x,y", cands) == {"a": "x", "b": "y"}
-        assert parse_labels("x", cands) == {}
-        assert parse_labels("x,z", cands) == {}
-        assert parse_labels(None, cands) == {}
 
 
 def test_the_codex_agent_cannot_see_images():

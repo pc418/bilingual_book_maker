@@ -310,36 +310,12 @@ class Conversation:
         return reply
 
 
-def parse_labels(reply, candidates):
-    """`{id: label}` from a comma-separated reply, or {} when it does not parse.
-
-    One label per candidate, in the candidates' order. Case, surrounding
-    whitespace and a trailing period are tolerated; a count that does not
-    match, or a word outside its candidate's answers, is a reply not
-    understood -- and taking the first N of a longer list is the tempting
-    leniency that trusts an ordering already in doubt.
-    """
-    if not isinstance(reply, str):
-        return {}
-    ids = list(candidates)
-    tokens = reply.strip().split(",")
-    if len(tokens) != len(ids):
-        return {}
-    labels = {}
-    for cid, token in zip(ids, tokens):
-        word = token.strip().rstrip(".").strip().lower()
-        if word not in candidates[cid]:
-            return {}
-        labels[cid] = word
-    return labels
-
-
 class SessionBackend:
-    """A held plain conversation: the question as a turn, labels as a reply.
-
-    For an endpoint that returns no JSON (the codex route, a gateway that
-    answers prose whatever `response_format` says). Text only. `open`
-    starts nothing: it asks the translator for its session object once.
+    """A held plain conversation, for an endpoint that returns no JSON (the
+    codex route, a gateway that answers prose whatever `response_format`
+    says). Text only. Never asked through `Classifier.ask`: plan mode's
+    session entry takes its conversation (`open`) and runs its own turn
+    loop. `open` asks the translator for its session object once.
     """
 
     name = "session"
@@ -348,7 +324,6 @@ class SessionBackend:
         self.translator = translator
         self.model = model
         self._session = session
-        self._conversation = None
 
     def open(self):
         """The translator's session object, or None when it has none."""
@@ -368,20 +343,6 @@ class SessionBackend:
         if question.image_png is not None:
             return "a plain conversation carries no image"
         return f"{type(self.translator).__name__} cannot hold a classifier session"
-
-    def ask(self, question):
-        session = self.open()
-        if session is None:
-            raise NoBackend(self.why_not(question))
-        if self._conversation is None or self._conversation.trunk != question.trunk:
-            self._conversation = Conversation(session, question.trunk, session.budget())
-        text, usage = _metered(
-            self.translator, lambda: self._conversation.ask(question.prompt)
-        )
-        reply = Reply(parse_labels(text, question.candidates))
-        reply.text = text
-        reply.usage = usage
-        return reply
 
 
 # --------------------------------------------------------------------------
@@ -457,9 +418,8 @@ class Classifier:
 
         The first in preference order that can, except that a structured
         channel with no JSON verdict yields a text question to a backend
-        after it that can take it (the rule `session_classify_engaged` has
-        always stated: below `json_object` and able to hold a conversation,
-        the conversation is asked).
+        after it that can take it (below `json_object` and able to hold a
+        conversation, the conversation is asked).
         """
         able = [backend for backend in self.ordered() if backend.can(question)]
         if not able:

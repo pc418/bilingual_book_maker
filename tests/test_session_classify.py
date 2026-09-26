@@ -22,7 +22,6 @@ import pytest
 from book_maker.loader.classify import (
     can_session_classify,
     classify_plan,
-    session_classify_engaged,
 )
 from book_maker.loader.classify.model import PlanClassifyFatal
 from book_maker.loader.classify.session import (
@@ -213,7 +212,6 @@ class TestEngaging:
                 return "{}"
 
         assert not can_session_classify(PromptOnly("k", "zh-hans"))
-        assert not session_classify_engaged(PromptOnly("k", "zh-hans"))
 
     def test_the_ladder_opens_at_five_units_per_turn(self):
         _decisions, _candidates, session = _run(
@@ -1118,25 +1116,12 @@ class TestSchemaCapableRoutesAreUntouched:
 
         session = FakeSession(reply)
         translator = SchemaCapable(session, verdict)
-        assert not session_classify_engaged(translator)
 
         decisions, _candidates = classify_plan(_ledger_with(SIX), translator)
         assert translator.asked_json
         assert translator.sessions_opened == 0
         assert not session.starts
         assert {v for v, _ in decisions.values()} == {"translate"}
-
-    @pytest.mark.parametrize("verdict", [False, "unsupported", "request rejected: 400"])
-    def test_anything_below_it_engages_the_session(self, verdict):
-        translator = SchemaCapable(FakeSession(lambda text: "skip"), verdict)
-        assert session_classify_engaged(translator)
-
-    def test_a_probe_that_raises_is_not_a_verdict(self):
-        class Broken(SchemaCapable):
-            def _probe_verdict(self, model=None):
-                raise RuntimeError("no route to host")
-
-        assert session_classify_engaged(Broken(FakeSession(lambda text: "skip")))
 
 
 class TestMTRoutesAreUntouched:
@@ -1146,7 +1131,6 @@ class TestMTRoutesAreUntouched:
 
         translator = FORMAT_DICT[route].__new__(FORMAT_DICT[route])
         assert not can_session_classify(translator)
-        assert not session_classify_engaged(translator)
 
     def test_the_classifier_still_refuses_them_loudly(self):
         from book_maker.loader.classify.model import PlanClassifyError

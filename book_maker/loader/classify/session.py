@@ -48,11 +48,15 @@ from ...classifier import (
     Classifier,
     Conversation,
     can_session_classify,
-    has_schema_verdict,
 )
 from ...session_context import estimate_tokens
 from .candidates import gather_candidates
-from .model import PlanClassifyError, PlanClassifyFatal, describe_candidate
+from .model import (
+    PlanClassifyError,
+    PlanClassifyFatal,
+    describe_candidate,
+    verdict_rules,
+)
 
 # Signatures per turn, most first; `None` is the floor, where no turn is
 # asked at all. Five is the top because the trunk is the expensive part of
@@ -117,34 +121,24 @@ def stop_line(remaining):
     return line
 
 
-TRUNK = """\
-You are preparing a bilingual EPUB. I will show you content signatures from \
-it, a few at a time. For each one, decide whether it is better to translate \
-its text or keep it as is.
-Answer "translate" for book content a reader wants translated: prose, verse, \
-dialogue, headings, captions.
-Answer "skip" for text to keep as is: running heads, page or line numbers, \
-manuscript sigla, cross-reference labels, publisher boilerplate, decorative \
-markers.
-Answer "unsure" only if the samples genuinely do not settle it. When they \
-are merely thin, prefer translate: translating something unnecessary is \
-cheap, losing content is not.
-If the samples show more than one kind of content, answer translate — a \
-signature verdict applies to every occurrence, and there is no \
-per-occurrence override.
-A "block:" signature is a block of text of that shape. An "inline:" \
-signature is markup *inside* a sentence; skipping it leaves its text in \
-place, untranslated, and splits the sentence around it — so skip one only \
-when it is genuinely apparatus.
-
-Reply with one verdict per signature, in the order I list them, separated by \
-commas, and nothing else. Five signatures, five verdicts:
-
-skip,translate,unsure,translate,skip
-
-No numbering, no explanation, no words but the verdicts. When a message \
-lists fewer than five signatures, reply with that many verdicts, in the \
-same form."""
+TRUNK = "\n".join(
+    [
+        "You are preparing a bilingual EPUB. I will show you content "
+        "signatures from it, a few at a time. For each one, decide whether it "
+        "is better to translate its text or keep it as is.",
+        *verdict_rules(),
+        "",
+        "Reply with one verdict per signature, in the order I list them, "
+        "separated by commas, and nothing else. Five signatures, five "
+        "verdicts:",
+        "",
+        "skip,translate,unsure,translate,skip",
+        "",
+        "No numbering, no explanation, no words but the verdicts. When a "
+        "message lists fewer than five signatures, reply with that many "
+        "verdicts, in the same form.",
+    ]
+)
 
 
 def build_trunk():
@@ -331,23 +325,6 @@ def parse_verdicts(reply, count):
             return None
         verdicts.append(word)
     return verdicts
-
-
-def session_classify_engaged(translator, model=None):
-    """Whether classification should run over a plain session.
-
-    Below `json_object` and able to hold a conversation. Schema-capable
-    routes keep the JSON path; google and the other MT engines can hold no
-    conversation, so plan classification stays off there as before. This is
-    the default preference order of `Classifier` (`schema`, then `session`)
-    asked of a text question; `--plan-classify agent|all` puts the session
-    first instead.
-    """
-    if isinstance(translator, Classifier):
-        return translator.text_backend() == "session"
-    return can_session_classify(translator) and not has_schema_verdict(
-        translator, model
-    )
 
 
 class _Conversation(Conversation):

@@ -131,21 +131,7 @@ def build_prompt(candidates):
         "You are preparing a bilingual EPUB. For each content signature "
         "below, decide whether it is better to translate its text or keep "
         "it as is.",
-        'Answer "translate" for book content a reader wants translated: '
-        "prose, verse, dialogue, headings, captions.",
-        'Answer "skip" for text to keep as is: running heads, page or line '
-        "numbers, manuscript sigla, cross-reference labels, publisher "
-        "boilerplate, decorative markers.",
-        'Answer "unsure" only if the samples genuinely do not settle it. '
-        "When they are merely thin, prefer translate: translating something "
-        "unnecessary is cheap, losing content is not.",
-        "If the samples show more than one kind of content, answer "
-        "translate — a signature verdict applies to every occurrence, and "
-        "there is no per-occurrence override.",
-        'A "block:" signature is a block of text of that shape. An '
-        '"inline:" signature is markup *inside* a sentence; skipping it '
-        "leaves its text in place, untranslated, and splits the sentence "
-        "around it — so skip one only when it is genuinely apparatus.",
+        *verdict_rules(),
         "",
     ]
     for i, c in enumerate(candidates, 1):
@@ -274,9 +260,10 @@ class _Budget:
 # state (jev) is sent these instead of `build_prompt`'s paragraph (packet J,
 # 260924): the state is the numbered signatures alone (`build_context`), each
 # question points at one of them (`candidate_pointer`), and each answer is
-# described by the prompt's own words (`CRITERIA`, verbatim from
-# `build_prompt`, pinned by a test). `build_prompt` itself is unchanged: it is
-# what the schema and session backends send, and it is audited
+# described by the prompt's own words (`CRITERIA`, from which `build_prompt`
+# and the session trunk build their answer sentences; the assembled texts are
+# pinned in tests/test_classify_prompt_pin.py). `build_prompt` is what the
+# schema backend sends, and it is audited
 # (docs/260920-feat-CLASSIFY_LADDER_PROMPT_AUDIT.md). There is no "unsure"
 # option on that channel: a low-confidence answer falls back instead.
 CRITERIA = {
@@ -290,6 +277,29 @@ CRITERIA = {
         "markers"
     ),
 }
+
+
+def verdict_rules():
+    """The lines after the opening sentence that every plan-classifier
+    prompt carries: `build_prompt` (the schema channel) and the session
+    `TRUNK`. The two answer sentences are `CRITERIA`'s own words, so a Jev
+    option and the prompt cannot describe an answer differently.
+    """
+    return [
+        *(f'Answer "{label}" for {words}.' for label, words in CRITERIA.items()),
+        'Answer "unsure" only if the samples genuinely do not settle it. '
+        "When they are merely thin, prefer translate: translating something "
+        "unnecessary is cheap, losing content is not.",
+        "If the samples show more than one kind of content, answer "
+        "translate — a signature verdict applies to every occurrence, and "
+        "there is no per-occurrence override.",
+        'A "block:" signature is a block of text of that shape. An '
+        '"inline:" signature is markup *inside* a sentence; skipping it '
+        "leaves its text in place, untranslated, and splits the sentence "
+        "around it — so skip one only when it is genuinely apparatus.",
+    ]
+
+
 POINTER = (
     'Signature {index} ("{key}"): translate its text, or skip it (keep it as '
     "is)? Answer translate when its samples are thin or show more than one "

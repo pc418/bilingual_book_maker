@@ -547,25 +547,20 @@ def build_translator(choice, options, language, prompt_config=None):
     return translator
 
 
-def build_classifier(
-    choice, run_translator, options, language, prompt_config=None, *, prefer=None
-):
+def build_classifier(choice, run_translator, options, language, prompt_config=None):
     """The run's `Classifier`, from its classify choice.
 
     The run's own choice asks the run's translator, as plan mode always did.
     A named model gets a translator of its own (`build_translator`), so its
     requests are metered apart and reported on their own line. `jev` has
-    only its own backend. `prefer` is the backend order (the session first
-    under `--plan-classify agent|all`).
+    only its own backend.
     """
-    from book_maker.classifier import DEFAULT_PREFER, Classifier, JevBackend
+    from book_maker.classifier import Classifier, JevBackend
 
-    prefer = prefer or DEFAULT_PREFER
     if choice is None or choice.source == SOURCE_RUN:
         return Classifier(
             run_translator,
             None,
-            prefer=prefer,
             source=SOURCE_RUN,
             base=getattr(choice, "api_base", None) or None,
         )
@@ -589,7 +584,6 @@ def build_classifier(
     return Classifier(
         translator,
         choice.model or None,
-        prefer=prefer,
         source=choice.source,
         base=choice.api_base or None,
         separate=True,

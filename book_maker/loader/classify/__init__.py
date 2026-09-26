@@ -35,11 +35,7 @@ from .model import (
     PlanUnresolvedError,
     classify_plan as classify_with_schema,
 )
-from .session import (
-    can_session_classify,
-    classify_over_session,
-    session_classify_engaged,
-)
+from .session import can_session_classify, classify_over_session
 from .all import decide_everything
 
 MODES = ("all", "model", "agent")
@@ -139,5 +135,4 @@ __all__ = [
     "decide_everything",
     "gather_candidates",
     "mode_policy",
-    "session_classify_engaged",
 ]
