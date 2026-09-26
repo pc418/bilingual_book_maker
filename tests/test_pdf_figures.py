@@ -1042,8 +1042,17 @@ PHOTO_BOX = (100.0, 138.0, 172.0, 192.0)
         ({"placements": [(36, 0, 0, 54, 100, 600), (36, 0, 0, 54, 136, 600)]}, None),
         ({"placements": [PHOTO], "smask": True}, None),
         ({"placements": [PHOTO], "rotate": 90}, None),
+        ({"placements": [PHOTO], "empty_form": (130, 640)}, 96.0),
     ],
-    ids=["alone", "text-over-it", "rotated", "two-rasters", "soft-mask", "page-turned"],
+    ids=[
+        "alone",
+        "text-over-it",
+        "rotated",
+        "two-rasters",
+        "soft-mask",
+        "page-turned",
+        "empty-anchor",
+    ],
 )
 def test_only_a_lone_plain_picture_keeps_its_own_resolution(
     tmp_path, capsys, shape, native
@@ -1214,3 +1223,18 @@ def test_the_drawing_revision_is_two():
     assert pdf_figures.FIGURE_REVISION == 2
     assert pdf_figures.FIGURE_MAX_PIXELS == 5_600_000
     assert pdf_figures.FIGURE_PAD_PT == 2.0
+
+
+@pytest.mark.parametrize(
+    "box, native",
+    [
+        ((98.5, 138.0, 172.0, 192.0), 96.0),  # docling 1.5 pt loose: the picture
+        ((90.0, 138.0, 172.0, 192.0), None),  # 10 pt of the box it does not fill
+    ],
+)
+def test_the_picture_must_fill_the_detected_box(tmp_path, box, native):
+    _render_or_skip()
+    pdf = write_image_pdf(tmp_path / "photo.pdf", [PHOTO])
+    bundle = drawn_bundle(tmp_path, pdf, [("p0001-01", box)])
+    block = pdf_figures.render_figures(bundle, pdf, FigurePolicy("dpi", 200))
+    assert block["files"]["p0001-01"].get("native_dpi") == native

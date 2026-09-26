@@ -70,11 +70,13 @@ FIGURE_MAX_PIXELS = 5_600_000
 # `pdf_formula.PAD_CLEAR` short of the nearest unrelated item and at the
 # page edge; no minimum.
 FIGURE_PAD_PT = 2.0
-# How far a lone embedded picture's placement may fall short of the padded
-# crop and still be the figure: the padding plus half a point. Nothing
-# else may intersect the crop (`native_dpi`), so what it leaves out is
-# blank page.
-NATIVE_COVER_TOLERANCE = FIGURE_PAD_PT + 0.5
+# How far a lone embedded picture's placement may fall short of docling's
+# detected box and still be the figure. Nothing else may intersect the
+# padded crop (`native_dpi`), so what the picture leaves out is blank
+# page. Measured: docling's box stood 1.56 pt left of a lone 150 DPI
+# plot (mit_lecnotes12 page 5); a tolerance on the crop of the padding
+# plus half a point refused it.
+NATIVE_COVER_TOLERANCE = FIGURE_PAD_PT
 
 POLICY_KINDS = ("dpi", "page-width", "figure-px")
 # `figure-px`: the height is held to this many times the asked width, so a
@@ -766,7 +768,7 @@ def _draw(page, record, policy, destination, *, masked=None):
     crop_h = height - margins[1] - margins[3]
     scale = requested
     state = {"requested_scale": round(requested, 6)}
-    native = native_dpi(page, (left, top, right, bottom), masked)
+    native = native_dpi(page, (left, top, right, bottom), masked, record["bbox"])
     if native is not None and native / 72.0 < scale:
         scale = native / 72.0
         state["native_dpi"] = round(native, 2)
@@ -820,14 +822,16 @@ def capped_scale(crop_w, crop_h, scale, limit=FIGURE_MAX_PIXELS):
         scale *= 0.999
 
 
-def native_dpi(page, crop, masked=None):
+def native_dpi(page, crop, masked=None, box=None):
     """The resolution of the one picture that is this figure, or None.
 
     All must hold, else None (the figure is rendered normally): the page
     is not rotated; exactly one top-level page object of any type (text,
-    path, shading, form, image) intersects `crop`, and it is an image;
-    its matrix has no rotation, skew or flip; its placement covers the
-    figure's detected box within `NATIVE_COVER_TOLERANCE`. The DPI is
+    path, shading, form, image) intersects `crop`, and it is an image --
+    an object whose bounds are a single point (an empty form, a link
+    anchor) paints nothing and is not counted; its matrix has no
+    rotation, skew or flip; its placement covers `box` (the detected box;
+    `crop` when not given) within `NATIVE_COVER_TOLERANCE`. The DPI is
     the image's pixel size over its placed size in points (the larger of
     the two axes), never the file's metadata. Its pixel size must not be
     one of `masked` (`masked_sizes`); `masked` None trusts no picture.
@@ -842,6 +846,8 @@ def native_dpi(page, crop, masked=None):
     for obj in page.get_objects(max_depth=0):
         left, bottom, right, top = obj.get_bounds()
         shown = (left - box_l, box_t - top, right - box_l, box_t - bottom)
+        if right <= left and top <= bottom:
+            continue
         if (
             shown[0] < crop_r
             and shown[2] > crop_l
@@ -859,12 +865,13 @@ def native_dpi(page, crop, masked=None):
     if abs(b) > 1e-6 or abs(c) > 1e-6 or a <= 0 or d <= 0:
         return None
     placed = (e - box_l, box_t - (f + d), e + a - box_l, box_t - f)
+    cover_l, cover_t, cover_r, cover_b = box if box is not None else crop
     tolerance = NATIVE_COVER_TOLERANCE
     if not (
-        placed[0] <= crop_l + tolerance
-        and placed[1] <= crop_t + tolerance
-        and placed[2] >= crop_r - tolerance
-        and placed[3] >= crop_b - tolerance
+        placed[0] <= cover_l + tolerance
+        and placed[1] <= cover_t + tolerance
+        and placed[2] >= cover_r - tolerance
+        and placed[3] >= cover_b - tolerance
     ):
         return None
     px_w, px_h = image.get_px_size()
