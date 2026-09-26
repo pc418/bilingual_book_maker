@@ -20,7 +20,7 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
-from .bundle import Bundle, parse_ocr_lang, parse_pages
+from .bundle import Bundle, parse_ocr_lang, parse_pages, sha256_file
 from .epub_export import export_epub
 from .errors import PipelineError
 from .messages import PANDOC_ON_PATH, PANDOC_REQUIRED, TO_EPUB_BUNDLE, TO_EPUB_COPY
@@ -215,12 +215,20 @@ def pdf_to_epub(
     translate_stage(bundle, options, pandoc=executable)
     built = export_stage(bundle, pandoc=executable)
 
-    # Only now, with a validated book in the bundle: a copy made from a
-    # failed export would put a broken EPUB under the name a reader opens.
     destination = epub_path(pdf, pages)
-    # Through a sibling and a rename: a copy that dies halfway must not
-    # leave a truncated file under the name a reader opens, and a previous
-    # good book under that name survives until the new one is complete.
+    copy_beside(built, destination)
+    print(TO_EPUB_COPY.format(path=destination))
+    return destination
+
+
+def copy_beside(built, destination):
+    """Put the bundle's validated EPUB under the name a reader opens.
+
+    Only after the export validated it: a copy made from a failed export
+    would put a broken EPUB there. Through a sibling and a rename: a copy
+    that dies halfway must not leave a truncated file under that name, and
+    a previous good book under it survives until the new one is complete.
+    """
     partial = destination.with_name(destination.name + ".part")
     try:
         shutil.copyfile(built, partial)
@@ -228,5 +236,34 @@ def pdf_to_epub(
     except OSError as err:
         partial.unlink(missing_ok=True)
         raise PipelineError(f"could not save {destination}: {err}", stage="export")
-    print(TO_EPUB_COPY.format(path=destination))
-    return destination
+
+
+def beside_copy(bundle):
+    """The `<name>_bilingual.epub` this bundle's book is copied to, or None.
+
+    For the harness export of a bundle `--to-epub` made (lead 260925): an
+    operator who mended `book_bilingual.md` by hand rebuilds the book with
+    `tools/pdf_to_book.py export`, and the copy beside the PDF must follow,
+    or the file a reader opens keeps the old text.
+
+    Only a bundle that is this route's own: its manifest names a PDF, the
+    bundle sits beside a file of that name with the recorded bytes, and its
+    directory is that PDF's `<stem>_book` or `<stem>_pages-..._book` (whose
+    book name follows from it, as `epub_path` makes it). The PDF is looked
+    for beside the bundle rather than at the recorded path, so a bundle
+    moved together with its PDF still finds it. A bundle the harness wrote
+    elsewhere (`--output`), or one whose PDF changed, gets no copy.
+    """
+    source = bundle.read_manifest().get("source") or {}
+    if source.get("kind") != "pdf" or not source.get("origin"):
+        return None
+    name = bundle.root.name
+    if not name.endswith(BUNDLE_SUFFIX):
+        return None
+    selection = name[: -len(BUNDLE_SUFFIX)]
+    pdf = bundle.root.parent / Path(source["origin"]).name
+    if selection != pdf.stem and not selection.startswith(f"{pdf.stem}_pages-"):
+        return None
+    if not pdf.is_file() or sha256_file(pdf) != source.get("origin_sha256"):
+        return None
+    return pdf.parent / f"{selection}{EPUB_SUFFIX}"

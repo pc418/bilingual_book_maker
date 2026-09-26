@@ -16,8 +16,12 @@ UNSUPPORTED_STRUCTURE = (
 SETTINGS_CHANGED = (
     "Source or translation settings changed; start a new translation bundle."
 )
+# {bundle} is the bundle's path, shell-quoted so the command can be pasted
+# (lead 260925, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md: the harness
+# export is the supported way to rebuild from a hand-edited file).
 BILINGUAL_EDITED = (
-    "Bilingual Markdown was edited; export it or use a new output directory."
+    "Bilingual Markdown was edited; rebuild the EPUB from it with: "
+    "python tools/pdf_to_book.py export {bundle}"
 )
 SUBMISSION_UNKNOWN = (
     "Extraction submission outcome is unknown; do not resubmit until the "
@@ -353,6 +357,9 @@ PANDOC_ON_PATH = (
 )
 TO_EPUB_BUNDLE = "Working bundle: {path}"
 TO_EPUB_COPY = "Bilingual EPUB saved beside the PDF: {path}"
+# The harness export of a `--to-epub` bundle refreshes that copy too (lead
+# 260925): {epub} is the bundle's book, {copy} the one beside the PDF.
+EXPORTED_BESIDE = "Exported {epub}; the copy beside the PDF, {copy}, is refreshed."
 TRANSLATION_REUSED = (
     "Translation reused: {path} (same source and settings; delete it to "
     "translate again)."

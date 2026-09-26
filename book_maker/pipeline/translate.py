@@ -23,6 +23,7 @@ import hashlib
 import io
 import json
 import re
+import shlex
 from pathlib import Path
 
 from .bundle import TRANSLATE_RESULT, TRANSLATE_STATE, sha256_file, sha256_text
@@ -426,7 +427,9 @@ def _refuse_to_clobber_edits(bundle, manifest):
     actual = sha256_file(bundle.bilingual_markdown)
     if recorded and recorded == actual:
         return
-    raise PipelineError(BILINGUAL_EDITED, stage=STAGE)
+    raise PipelineError(
+        BILINGUAL_EDITED.format(bundle=shlex.quote(str(bundle.root))), stage=STAGE
+    )
 
 
 def _already_translated(bundle, manifest, stages, fingerprint):

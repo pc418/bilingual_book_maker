@@ -60,6 +60,10 @@ docling cuts each page into regions and labels them: text, heading, title, capti
 
 The decisions are kept in `<name>_book/.work/extraction/decisions.json`. At the end of the extraction the run prints the pass's token usage on its own line: `Image model (<model> at <address>): …`.
 
+## Mend a translation by hand
+
+If a translated paragraph is wrong, correct it in `<name>_book/book_bilingual.md`, then run `python tools/pdf_to_book.py export path/to/<name>_book` from the repository folder. The book in the working folder and its copy beside the PDF are rebuilt from your edit; nothing is extracted or translated again, and no key is needed.
+
 ## Recommended commands
 
 Every PDF starts with two pages and a few translated blocks (`--pages 1-2 --test`), then a read of `source.md`. The command for a novel, a textbook, a paper, a scanned book, a scan with a bad text layer and a Chinese scan, and the install and device for macOS, Linux with NVIDIA, Windows, a CPU-only machine and Docker, are on [Recommended settings for PDF](recommended-pdf.md).
@@ -115,7 +119,7 @@ Every failure on this route prints one line starting with `Error:`, before anyth
 
 - **`Translation reused: … (same source and settings; delete it to translate again).`** Information. Delete `book_bilingual.md` to translate again.
 - **`Error: translate failed: Source or translation settings changed; start a new translation bundle.`** You changed the model, the language or `source.md` after a partial translation. Rerun with the original settings, or move the bundle aside and start over.
-- **`Error: … Bilingual Markdown was edited; export it or use a new output directory.`** You edited `book_bilingual.md` by hand. That is allowed, but the run will not overwrite it.
+- **`Error: … Bilingual Markdown was edited; rebuild the EPUB from it with: python tools/pdf_to_book.py export <name>_book`** You edited `book_bilingual.md` by hand. That is allowed, but the run will not overwrite it. Run the command the line names (it carries your folder's full path) to rebuild the book and its copy beside the PDF from your edit; see [Mend a translation by hand](#mend-a-translation-by-hand). To translate again instead, delete `book_bilingual.md`.
 - **`EPUB navigation is invalid: …`** The headings do not form a usable table of contents. Fix the heading levels in `source.md` (one `#` title, then `##`, `###`) and rerun.
 - **`Interrupted. Rerun the same command to resume.`** Ctrl+C. Rerun; the stages that finished are not repeated.
 
