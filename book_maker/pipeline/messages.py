@@ -45,8 +45,7 @@ SUBMISSION_UNKNOWN = (
 ECHO_UNRESOLVED = (
     "Warning: {count} block(s) came back identical to the original: {blocks}. "
     "A quotation the book already renders nearby may rightly stay; otherwise "
-    "translate it in book_bilingual.md, export the bundle and copy its EPUB "
-    "over the one beside the PDF."
+    "translate it in book_bilingual.md and export the bundle."
 )
 PANDOC_REQUIRED = (
     "Pandoc is required for EPUB export. Install it or provide --pandoc PATH."
