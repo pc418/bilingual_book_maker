@@ -78,7 +78,7 @@ FIGURE_PAD_PT = 2.0
 # How far a lone embedded picture's placement may fall short of docling's
 # detected box and still be the figure. Nothing else may intersect the
 # padded crop (`native_dpi`), so what the picture leaves out is blank
-# page. Measured: docling's box stood 1.56 pt left of a lone 150 DPI
+# page. Measured: docling's box stood 1.56 pt left of a lone 173 DPI
 # plot (mit_lecnotes12 page 5); a tolerance on the crop of the padding
 # plus half a point refused it.
 NATIVE_COVER_TOLERANCE = FIGURE_PAD_PT
