@@ -140,11 +140,13 @@ def can_session_classify(translator):
     Derived from the implementation, as `supports_structured_json` is, so a
     route cannot advertise a session it never built. Asked without opening
     one: `classify_session` may cost a request (the codex route opens a
-    thread).
+    thread). `translator` is an instance or the route's class: the CLI's
+    compatibility pass asks before any translator is built.
     """
     from .translator.base_translator import Base
 
-    factory = getattr(type(translator), "classify_session", None)
+    cls = translator if isinstance(translator, type) else type(translator)
+    factory = getattr(cls, "classify_session", None)
     return factory is not None and factory is not Base.classify_session
 
 

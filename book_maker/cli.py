@@ -33,6 +33,9 @@ from book_maker.endpoints import (
     HELP_IMG_KEY,
     HELP_IMG_MODEL,
     IMG_BASE_WITHOUT_MODEL,
+    JEV_FORMAT,
+    SOURCE_CLI,
+    SOURCE_PROVIDER,
 )
 from book_maker.pipeline.messages import (
     HELP_OCR_ENGINE_CLI,
@@ -956,17 +959,9 @@ def resolve_classify_mode(options, book_type=None):
     return mode, plan_auto
 
 
-def _route_can_session_classify(translate_model):
-    """Whether this route's class can hold a classifier conversation.
-
-    The class, not an instance: the compatibility pass runs before any
-    translator is built. `can_session_classify` asks the same question of
-    the same attribute, so the two answers cannot drift.
-    """
-    from book_maker.translator.base_translator import Base
-
-    factory = getattr(translate_model, "classify_session", None)
-    return factory is not None and factory is not Base.classify_session
+# The name the compatibility tests import; `can_session_classify` takes the
+# route's class as well as an instance.
+_route_can_session_classify = can_session_classify
 
 
 def plan_mode_expected(facts):
@@ -983,11 +978,11 @@ def plan_mode_expected(facts):
         return True
     if not facts.plan_auto or facts.translate_tags_given:
         return False
-    if getattr(facts, "classifier_resolved", False):
+    if facts.classifier_owner == "separate":
         return True  # the resolved classifier plans it, whatever the route
     if facts.api_format == PLAN_AUTO_FORMAT:
         return True
-    return _route_can_session_classify(facts.translate_model)
+    return can_session_classify(facts.translate_model)
 
 
 # ---------------------------------------------------------- flag compatibility
@@ -1112,9 +1107,9 @@ def _c35_ignoring_classifier(f):
 
     if getattr(f.options, "classify_min_confidence", None) is None:
         return None
-    choice = f.classify_choice
-    if choice is None:
+    if f.classifier_owner is None:
         return "this run asks no classifier and"
+    choice = f.classify_choice
     if is_jev_wire(choice.model, choice.api_base):
         return None
     model = choice.model or (f.model_names[0] if f.model_names else "")
@@ -1235,7 +1230,7 @@ COMPAT_RULES = (
         and f.api_format not in LLM_FORMATS
         # a resolved classifier (cli or provider) is asked instead of this
         # format (lead ruling 260923, Codex finding 4)
-        and not f.classifier_resolved,
+        and f.classifier_owner != "separate",
         lambda f: (
             f"{f.classify_flag} asks an LLM to rule on every plan "
             f"signature, and the "
@@ -1306,7 +1301,7 @@ COMPAT_RULES = (
         lambda f: f.api_format == "codex"
         and f.plan_mode
         and f.classify_mode not in NEVER_CLASSIFIES
-        and not f.classifier_resolved,
+        and f.classifier_owner != "separate",
         lambda f: (
             f"the codex route classifies the plan in a thread of its own, "
             f"and codex sends {CODEX_CLASSIFIER_PREAMBLE_TOKENS} tokens of "
@@ -1322,7 +1317,7 @@ COMPAT_RULES = (
         and not f.translate_tags_given
         and f.api_format in LLM_FORMATS
         and f.api_format != PLAN_AUTO_FORMAT
-        and not _route_can_session_classify(f.translate_model),
+        and not can_session_classify(f.translate_model),
         lambda f: (
             f"the {f.api_format} route does not plan automatically: it "
             f"offers no JSON-schema verdict and holds no classifier "
@@ -1780,8 +1775,8 @@ def is_separate_classifier(choice):
     named (cli or provider) and on a route that can be asked."""
     return (
         choice is not None
-        and choice.source in ("cli", "provider")
-        and (choice.api_format in LLM_FORMATS or choice.api_format == "jev")
+        and choice.source in (SOURCE_CLI, SOURCE_PROVIDER)
+        and (choice.api_format in LLM_FORMATS or choice.api_format == JEV_FORMAT)
     )
 
 
@@ -1802,14 +1797,8 @@ def _typed_classify_flag(options):
     """The classify flag the command typed first, for a message naming it."""
     if getattr(options, "classify_model_flag", ""):
         return options.classify_model_flag
-    for flag, dest in (
-        ("--classify-model", "classify_model"),
-        ("--classify-base-url", "classify_base_url"),
-        ("--classify-key", "classify_key"),
-    ):
-        if getattr(options, dest, None):
-            return flag
-    return "--classify-model"
+    typed = classify_flags_typed(options)
+    return typed[0] if typed else "--classify-model"
 
 
 def preview_endpoint(options):
@@ -1919,7 +1908,7 @@ def dry_run_plan_divergence(facts):
     """
     api_format = facts.api_format or PLAN_AUTO_FORMAT
     translator = facts.translate_model or FORMAT_DICT.get(api_format)
-    can_talk = translator is not None and _route_can_session_classify(translator)
+    can_talk = translator is not None and can_session_classify(translator)
     if (
         facts.translate_tags_given
         or facts.options.plan_classify == "none"
@@ -2079,7 +2068,9 @@ def run_facts(options, given, **resolved):
         key_given=given.key,
         source_language=source_evidence(options.source_lang),
         batch_units=GENERAL_GROUP_MAX_UNITS,
-        # a classifier other than the run's translator (see main)
+        # set by a caller that knows a classifier other than the run's
+        # translator is resolved without handing over its choice (the
+        # compatibility tests); `main` passes the choice itself
         classifier_resolved=False,
         # the classify choice resolved without a key (see main); None where
         # nothing classifies (not an epub, or --plan-classify all/agent)
@@ -2090,6 +2081,15 @@ def run_facts(options, given, **resolved):
     # reading the file again.
     facts.prompt_config, facts.prompt_error = read_prompt_config(options.prompt_arg)
     facts.__dict__.update(resolved)
+    # Who classifies this run's plan: None when nothing does, "separate" for
+    # a classifier other than the run's translator (cli or provider), "run"
+    # for the run's own translator. The rows read this one fact.
+    if facts.classifier_resolved or is_separate_classifier(facts.classify_choice):
+        facts.classifier_owner = "separate"
+    elif facts.classify_choice is None:
+        facts.classifier_owner = None
+    else:
+        facts.classifier_owner = "run"
     facts.plan_mode = plan_mode_expected(facts)
     facts.classify_flag = (
         getattr(options, "classify_model_flag", "")
@@ -3236,19 +3236,17 @@ def main(argv=None, *, markdown_loader_class=None):
     # Which mode --plan-classify and --classify-model asked for. Resolved
     # here because the compatibility table asks about it.
     classify_mode, plan_auto = resolve_classify_mode(options, book_type)
-    # Whether a classifier other than the run's translator will be asked
-    # (`--classify-model`, the provider's classify_model), resolved here
-    # without a key because two rows depend on it (A10, and whether `auto`
-    # plans on a route that could not classify by itself). A choice that
-    # cannot be made is refused now, in its own words.
-    classifier_resolved = False
+    # Who will classify (`--classify-model`, the provider's classify_model,
+    # else the run's own translator), resolved here without a key because
+    # rows depend on it (A10, A11, C35, and whether `auto` plans on a route
+    # that could not classify by itself). A choice that cannot be made is
+    # refused now, in its own words.
     previewed_classify_choice = None
     if book_type == "epub" and classify_mode not in NEVER_CLASSIFIES:
         try:
             previewed_classify_choice = preview_classify_choice(
                 options, model_names, api_format
             )
-            classifier_resolved = is_separate_classifier(previewed_classify_choice)
         except SystemExit as err:
             print(f"[bold red]Error: {escape(redact(str(err)))}[/bold red]")
             exit(1)
@@ -3266,7 +3264,6 @@ def main(argv=None, *, markdown_loader_class=None):
         classify_mode=classify_mode,
         plan_auto=plan_auto,
         batch_units=batch_units,
-        classifier_resolved=classifier_resolved,
         classify_choice=previewed_classify_choice,
     )
     check_compatibility(facts)
