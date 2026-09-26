@@ -1300,7 +1300,13 @@ COMPAT_RULES = (
     CompatRule(
         "A11",
         "warn",
-        lambda f: f.api_format == "codex" and f.plan_mode,
+        # Only when the codex route's own model will classify the plan:
+        # `agent` and `all` ask no model, and a separate classifier asks
+        # another one (lead 260925, skill field test).
+        lambda f: f.api_format == "codex"
+        and f.plan_mode
+        and f.classify_mode not in NEVER_CLASSIFIES
+        and not f.classifier_resolved,
         lambda f: (
             f"the codex route classifies the plan in a thread of its own, "
             f"and codex sends {CODEX_CLASSIFIER_PREAMBLE_TOKENS} tokens of "

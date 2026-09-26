@@ -1596,3 +1596,30 @@ def test_block_size_no_longer_claims_it_needs_single_translate():
     )
     assert "single_translate" not in help_text
     assert "--accumulated_num" in help_text
+
+
+# PIN: lead 260925, skill field test, docs/260925-docs-SKILL_FIELD_TEST_FRICTIONS.md
+# -- A11 (codex's ~17k-token classifier preamble) printed on
+# `--plan-classify agent`, which asks no model. It prints only when the
+# codex route's own model will classify the plan.
+@pytest.mark.parametrize(
+    "argv, resolved, fires",
+    [
+        ([], {}, True),
+        (["--plan-classify", "model"], {}, True),
+        (["--plan-classify", "agent"], {}, False),
+        (["--plan-classify", "all"], {}, False),
+        (["--plan-classify", "none"], {}, False),
+        (["--plan-classify", "model"], {"classifier_resolved": True}, False),
+        ([], {"classifier_resolved": True}, False),
+    ],
+)
+def test_the_codex_preamble_warning_needs_the_codex_model_to_classify(
+    argv, resolved, fires
+):
+    f = facts(
+        ["--book_name", "b.epub", "--api_format", "codex", *argv],
+        api_format="codex",
+        **resolved,
+    )
+    assert ("A11" in tripped(f)) is fires
